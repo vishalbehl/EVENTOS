@@ -22,7 +22,23 @@ export function OrganizationEmailStudio({ organizationId }: { organizationId: st
   const save = async (draft: StudioDraft) => replace(await organizationEmailTemplates.saveDraft(organizationId, draft.templateId, draft.expectedVersion, { name: draft.name, subject: draft.subject, preheader: draft.preheader ?? "", body_html: draft.bodyHtml, designer_json: draft.designerJson, editor_schema_version: draft.editorSchemaVersion }), draft.templateId);
   const publish = async (template: StudioTemplate, reason: string) => { setBusy(true); try { replace(await organizationEmailTemplates.publish(organizationId, template.id, template.version, reason.trim()), template.id); toast.success("Organisation email template published."); } catch (error) { toast.error(error instanceof Error ? error.message : "Template could not be published."); } finally { setBusy(false); } };
   const preview = async (draft: StudioDraft) => { const result = await organizationEmailTemplates.preview(organizationId, draft.templateId, { name: draft.name, subject: draft.subject, preheader: draft.preheader ?? "", body_html: draft.bodyHtml, designer_json: draft.designerJson, editor_schema_version: draft.editorSchemaVersion }); return { html: result.html, plainText: result.plain_text, diagnostics: result.diagnostics }; };
-  const sendTest = async (draft: StudioDraft, recipient: string) => { await organizationEmailTemplates.testSend(organizationId, draft.templateId, recipient, { name: draft.name, subject: draft.subject, preheader: draft.preheader ?? "", body_html: draft.bodyHtml, designer_json: draft.designerJson, editor_schema_version: draft.editorSchemaVersion }); toast.success(`Test email queued for ${recipient}.`); };
+  const sendTest = async (draft: StudioDraft, recipient: string) => {
+    const toastId = toast.loading(`Sending test email to ${recipient}...`);
+    try {
+      await organizationEmailTemplates.testSend(organizationId, draft.templateId, recipient, {
+        name: draft.name,
+        subject: draft.subject,
+        preheader: draft.preheader ?? "",
+        body_html: draft.bodyHtml,
+        designer_json: draft.designerJson,
+        editor_schema_version: draft.editorSchemaVersion,
+      });
+      toast.success(`Test email sent successfully to ${recipient}.`, { id: toastId });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to deliver test email.", { id: toastId });
+      throw error;
+    }
+  };
   const saveFragment = async (fragment: { name: string; componentKind: "BLOCK" | "SECTION"; documentFragment: Record<string, unknown> }) => { const stableKey = `${fragment.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "fragment"}-${Date.now().toString(36)}`; const saved = await organizationEmailComponents.create(organizationId, { name: fragment.name, stable_key: stableKey, component_kind: fragment.componentKind, category: "saved", document_fragment: fragment.documentFragment, preview_metadata: {} }); setFragmentRows((current) => [saved, ...current]); toast.success("Reusable email fragment saved."); };
   const fragments: StudioFragment[] = fragmentRows.map((row) => ({ id: row.id, name: row.name, category: row.category, componentKind: row.component_kind, scopeType: row.scope_type, documentFragment: row.document_fragment, editable: row.editable }));
   const assets: StudioAsset[] = assetRows.map((row) => ({ id: row.id, name: row.name, url: row.url, fileType: row.file_type, scopeType: row.scope_type, assetKind: row.asset_kind, sourceType: row.source_type, width: row.width ?? undefined, height: row.height ?? undefined, metadata: row.metadata }));

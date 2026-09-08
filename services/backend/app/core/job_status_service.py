@@ -12,6 +12,7 @@ from app.core.job_status import JobStatus, job_status_from_import
 from app.modules.files.models.file import DurableUpload
 from app.modules.registration.models.import_job import ImportJob
 from app.modules.events.models.event import Event
+from app.modules.files.infrastructure.repositories import DurableUploadRepository
 
 
 class JobStatusService:
@@ -21,20 +22,9 @@ class JobStatusService:
     async def upload(
         db: AsyncSession, upload_id: uuid.UUID, organization_id: uuid.UUID
     ) -> JobStatus:
-        row = await db.scalar(
-            select(DurableUpload).options(
-                load_only(
-                    DurableUpload.id,
-                    DurableUpload.status,
-                    DurableUpload.processing_error,
-                    DurableUpload.created_at,
-                    DurableUpload.updated_at,
-                    DurableUpload.completed_at,
-                )
-            ).where(
-                DurableUpload.id == upload_id,
-                DurableUpload.organization_id == organization_id,
-            )
+        row = await DurableUploadRepository(db).get_status(
+            upload_id=upload_id,
+            organization_id=organization_id,
         )
         if row is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found.")
@@ -48,6 +38,7 @@ class JobStatusService:
             progress=progress, stage=row.status, error=row.processing_error,
             created_at=row.created_at, updated_at=row.updated_at,
             completed_at=row.completed_at,
+            version=row.version,
         )
 
     @staticmethod

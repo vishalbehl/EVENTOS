@@ -60,6 +60,24 @@ async def admin_list_roles(
         return response
 
 
+@admin_router.get("/roles/cursor", response_model=CursorPage[RoleResponse])
+async def admin_cursor_roles(
+    support_scope: PlatformSupportScopeDependency,
+    cursor: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    search: Optional[str] = Query(None),
+    service: RoleService = Depends(get_role_service),
+):
+    """Cursor-compatible support listing; the offset route remains unchanged."""
+    async with TenantContextGuard.scoped(service.db, support_scope.organization_id):
+        return await service.repository.cursor_page(
+            support_scope.organization_id,
+            cursor=cursor,
+            limit=limit,
+            search=search,
+        )
+
+
 @admin_router.post("/roles", response_model=RoleSummary, status_code=status.HTTP_201_CREATED)
 async def admin_create_role(
     payload: AdminRoleCreate,

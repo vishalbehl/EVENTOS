@@ -28,7 +28,9 @@ import {
   Edit3,
   Check,
   Globe,
-  HardDrive
+  HardDrive,
+  RotateCcw,
+  Lock
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -529,7 +531,7 @@ export default function AdminDevicesPage() {
       )}
 
       {/* ───────────────────────────────────────────────────────────── */}
-      {/* STEP 2: LIVE DISCOVERED DEVICES (CARD STYLE 3-COLUMN VIEW)     */}
+      {/* STEP 2: LIVE DISCOVERED DEVICES (TABULAR VIEW)                */}
       {/* ───────────────────────────────────────────────────────────── */}
       <div className="space-y-4">
         <div className="bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -538,14 +540,14 @@ export default function AdminDevicesPage() {
               <Search className="w-5 h-5 text-[var(--pri)]" /> Live Discovered Subnet Devices ({discoveredDevices.length})
             </h3>
             <p className="text-xs text-[var(--muted)] mt-0.5">
-              {discoveredDevices.length} device{discoveredDevices.length === 1 ? "" : "s"} detected on {currentAdapter?.subnet || "active network"}, including this workstation{localDevice ? ` (${localDevice.ip_address})` : ""}. Each row is tied to the live IP, MAC, interface, and discovery source.
+              {discoveredDevices.length} device{discoveredDevices.length === 1 ? "" : "s"} detected on {currentAdapter?.subnet || "active network"}, including this workstation{localDevice ? ` (${localDevice.ip_address})` : ""}.
             </p>
           </div>
 
           <Button
             onClick={() => scanSelectedNetwork()}
             disabled={isScanning || !selectedAdapterName}
-            className="h-9 px-4 text-xs font-bold bg-[var(--pri)] text-[var(--primary-contrast)] gap-1.5 shrink-0"
+            className="h-9 px-4 text-xs font-bold bg-[var(--pri)] text-[var(--primary-contrast)] gap-1.5 shrink-0 cursor-pointer"
           >
             <Activity className={cn("w-3.5 h-3.5", isScanning && "animate-spin")} />
             {isScanning ? "Scanning Subnet..." : "Re-Scan Subnet"}
@@ -559,116 +561,120 @@ export default function AdminDevicesPage() {
               {isScanning ? "Scanning subnet for connected client nodes..." : "No connected devices detected on this subnet yet"}
             </h4>
             <p className="text-xs text-[var(--muted)] max-w-md mx-auto">
-              Make sure client laptops, kiosks, thermal printers, or barcode scanners are powered on and connected to this Ethernet switch or Wi-Fi network.
+              Make sure client laptops, kiosks, thermal printers, or barcode scanners are powered on and connected to this venue network.
             </p>
             {!isScanning && (
               <Button
                 onClick={() => scanSelectedNetwork()}
-                className="bg-[var(--pri)] text-[var(--primary-contrast)] text-xs font-bold h-9"
+                className="bg-[var(--pri)] text-[var(--primary-contrast)] text-xs font-bold h-9 cursor-pointer"
               >
                 Scan Subnet Now
               </Button>
             )}
           </div>
         ) : (
-          /* 3-Column Card Style for Live Discovered Devices */
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {discoveredDevices.map((dev, idx) => (
-              <div
-                key={idx}
-                className="bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm space-y-4 flex flex-col justify-between hover:border-[var(--pri)] transition-all"
-              >
-                <div className="space-y-3.5">
-                  {/* Card Header with Hostname and Media Type Badge */}
-                  <div className="flex items-start justify-between gap-2 border-b border-[var(--border)] pb-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-9 h-9 rounded-xl bg-[var(--surf)] border border-[var(--border)] flex items-center justify-center text-[var(--pri)] font-bold">
-                        <Laptop className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h4 className="text-sm font-black text-[var(--text)]">{dev.hostname || `Node-${dev.ip_address.split('.').pop()}`}</h4>
-                      <span className="text-[10px] text-[var(--muted)] font-mono block">{dev.vendor || "Network Client"}{dev.is_local ? " · THIS WORKSTATION" : ""}</span>
-                      </div>
-                    </div>
-
-                    <span
-                      className={cn(
-                        "px-2 py-0.5 text-[9px] font-black uppercase rounded-md border",
-                        dev.media_type === "Wi-Fi"
-                          ? "bg-blue-500/10 text-blue-500 border-blue-500/20"
-                          : "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-                      )}
-                    >
-                      {dev.media_type}
-                    </span>
-                  </div>
-
-                  {/* Hardware Metrics (IP, MAC, Vendor) */}
-                  <div className="space-y-2">
-                    <div className="p-2.5 rounded-xl bg-[var(--surf)] border border-[var(--border)] flex justify-between items-center text-xs font-bold">
-                      <span className="text-[10px] font-black uppercase text-[var(--muted)]">Client IP:</span>
-                      <span className="font-mono text-[var(--acc)] font-bold">{dev.ip_address}</span>
-                    </div>
-
-                    <div className="p-2.5 rounded-xl bg-[var(--surf)] border border-[var(--border)] flex justify-between items-center text-xs font-bold">
-                      <span className="text-[10px] font-black uppercase text-[var(--muted)]">Hardware MAC:</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-mono text-[var(--text)] text-xs">{dev.mac_address}</span>
-                        <button
-                          onClick={() => copyToClipboard(dev.mac_address, "MAC Address")}
-                          className="text-[var(--muted)] hover:text-[var(--text)] p-1 rounded transition-colors"
-                          title="Copy MAC Address"
+          <div className="bg-[var(--card)] rounded-2xl border border-[var(--border)] shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-[var(--surf)] border-b border-[var(--border)] text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">
+                  <tr>
+                    <th className="py-3.5 px-4">Device / Hostname</th>
+                    <th className="py-3.5 px-4">Client IP</th>
+                    <th className="py-3.5 px-4">Hardware MAC</th>
+                    <th className="py-3.5 px-4">Interface / Media</th>
+                    <th className="py-3.5 px-4">Binding Status</th>
+                    <th className="py-3.5 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)] font-medium">
+                  {discoveredDevices.map((dev, idx) => (
+                    <tr key={idx} className="hover:bg-[var(--surf)]/40 transition-colors">
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-lg bg-[var(--surf)] border border-[var(--border)] flex items-center justify-center text-[var(--pri)] shrink-0">
+                            <Laptop className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <span className="font-bold text-[var(--text)] block">
+                              {dev.hostname || `Node-${dev.ip_address.split('.').pop()}`}
+                            </span>
+                            <span className="text-[10px] text-[var(--muted)] font-mono">
+                              {dev.vendor || "Network Client"}
+                              {dev.is_local ? " · THIS WORKSTATION" : ""}
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4 font-mono font-bold text-[var(--acc)]">
+                        {dev.ip_address}
+                      </td>
+                      <td className="py-3.5 px-4 font-mono text-[var(--text)]">
+                        <div className="flex items-center gap-1.5">
+                          <span>{dev.mac_address}</span>
+                          <button
+                            onClick={() => copyToClipboard(dev.mac_address, "MAC Address")}
+                            className="text-[var(--muted)] hover:text-[var(--text)] p-1 rounded transition-colors cursor-pointer"
+                            title="Copy MAC Address"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <span
+                          className={cn(
+                            "px-2 py-0.5 text-[9px] font-black uppercase rounded-md border inline-flex items-center gap-1",
+                            dev.media_type === "Wi-Fi"
+                              ? "bg-blue-500/10 text-blue-500 border-blue-500/20"
+                              : "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
+                          )}
                         >
-                          <Copy className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Registration Status Banner */}
-                    <div className="p-2 rounded-xl bg-[var(--surf)] border border-[var(--border)] flex justify-between items-center text-[10px] font-bold">
-                      <span className="uppercase text-[var(--muted)] font-black">Binding State:</span>
-                      {dev.is_registered ? (
-                        <span className="px-2 py-0.5 font-black uppercase rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-                          Bound: {dev.bound_device_name || dev.bound_device_id}
+                          {dev.media_type === "Wi-Fi" ? <Wifi className="w-2.5 h-2.5" /> : <Network className="w-2.5 h-2.5" />}
+                          {dev.media_type}
                         </span>
-                      ) : (
-                        <span className="px-2 py-0.5 font-black uppercase rounded bg-amber-500/10 text-amber-500 border border-amber-500/20">
-                          Unassigned Node
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center justify-between text-[9px] font-semibold text-[var(--muted)]">
-                      <span>Interface: <span className="font-mono text-[var(--text)]">{dev.interface_name}</span></span>
-                      <span>{dev.discovery_source || "neighbor table"}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Bottom Action Button */}
-                {dev.is_registered ? (
-                  <Button
-                    variant="outline"
-                    onClick={() => handleOpenBindModal(dev)}
-                    className="w-full h-8 text-xs font-bold border-[var(--border)] bg-[var(--surf)] text-[var(--text)] hover:bg-[var(--raised)] gap-1.5"
-                  >
-                    <Edit3 className="w-3.5 h-3.5 text-[var(--pri)]" /> Edit Device Binding
-                  </Button>
-                ) : (
-                  <Button
-                    onClick={() => handleOpenBindModal(dev)}
-                    className="w-full h-8 text-xs font-bold bg-[var(--pri)] text-[var(--primary-contrast)] gap-1.5 shadow-sm"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Bind as Workstation
-                  </Button>
-                )}
-              </div>
-            ))}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        {dev.is_registered ? (
+                          <span className="px-2 py-0.5 text-[10px] font-black uppercase rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 inline-block">
+                            Bound: {dev.bound_device_name || dev.bound_device_id}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 text-[10px] font-black uppercase rounded bg-amber-500/10 text-amber-500 border border-amber-500/20 inline-block">
+                            Unassigned Node
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 text-right">
+                        {dev.is_registered ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleOpenBindModal(dev)}
+                            className="h-7 text-xs font-bold border-[var(--border)] bg-[var(--surf)] text-[var(--text)] hover:bg-[var(--raised)] gap-1 cursor-pointer"
+                          >
+                            <Edit3 className="w-3 h-3 text-[var(--pri)]" /> Edit
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            onClick={() => handleOpenBindModal(dev)}
+                            className="h-7 text-xs font-bold bg-[var(--pri)] text-[var(--primary-contrast)] gap-1 shadow-xs cursor-pointer"
+                          >
+                            <Plus className="w-3 h-3" /> Bind
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
 
       {/* ───────────────────────────────────────────────────────────── */}
-      {/* STEP 3 & 4: REGISTERED AUTHORIZED WORKSTATIONS DASHBOARD      */}
+      {/* STEP 3 & 4: REGISTERED AUTHORIZED WORKSTATIONS (TABULAR VIEW) */}
       {/* ───────────────────────────────────────────────────────────── */}
       <div className="space-y-4">
         <div className="bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -677,14 +683,14 @@ export default function AdminDevicesPage() {
               <ShieldCheck className="w-5 h-5 text-emerald-500" /> Authorized Multi-Workstations ({workstations.length})
             </h3>
             <p className="text-xs text-[var(--muted)] mt-0.5">
-              Workstations bound to hardware MAC addresses with assigned terminal roles and station checkpoints (stored in database)
+              Workstations bound to hardware MAC addresses with assigned terminal roles and station checkpoints
             </p>
           </div>
 
           <Button
             variant="outline"
             onClick={fetchWorkstations}
-            className="h-9 text-xs font-bold border-[var(--border)] bg-[var(--surf)] text-[var(--text)] gap-1.5"
+            className="h-9 text-xs font-bold border-[var(--border)] bg-[var(--surf)] text-[var(--text)] gap-1.5 cursor-pointer"
           >
             <RefreshCw className="w-3.5 h-3.5" /> Refresh List
           </Button>
@@ -695,97 +701,125 @@ export default function AdminDevicesPage() {
             <MonitorSmartphone className="w-10 h-10 mx-auto text-[var(--muted)]" />
             <h4 className="text-sm font-black text-[var(--text)]">No Authorized Workstations Registered</h4>
             <p className="text-xs text-[var(--muted)] max-w-md mx-auto">
-              Use the subnet scanner above to discover client terminals, kiosks, or printers, and click "Bind as Workstation" to register them into the database.
+              Use the subnet scanner above to discover client terminals, kiosks, or printers, and click "Bind" to register them into the database.
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {workstations.map((ws) => (
-              <div
-                key={ws.id}
-                className="bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm space-y-4 flex flex-col justify-between hover:border-[var(--pri)] transition-all"
-              >
-                <div className="space-y-3">
-                  {/* Card Top */}
-                  <div className="flex items-start justify-between gap-2 border-b border-[var(--border)] pb-3">
-                    <div className="space-y-1">
-                      <h4 className="text-base font-black text-[var(--text)]">{ws.device_name}</h4>
-                      <div className="flex flex-wrap gap-1">
-                        <span className="px-2 py-0.5 text-[9px] font-black uppercase rounded-md bg-[var(--surf)] border border-[var(--border)] text-[var(--acc)]">
-                          {ws.device_type.replace("_", " ")}
-                        </span>
-                        <span className="px-2 py-0.5 text-[9px] font-bold rounded-md bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+          <div className="bg-[var(--card)] rounded-2xl border border-[var(--border)] shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-[var(--surf)] border-b border-[var(--border)] text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">
+                  <tr>
+                    <th className="py-3.5 px-4">Workstation / Device ID</th>
+                    <th className="py-3.5 px-4">Assigned Desk / Gate</th>
+                    <th className="py-3.5 px-4">Type & Mode</th>
+                    <th className="py-3.5 px-4">IP & MAC Address</th>
+                    <th className="py-3.5 px-4">Live Status</th>
+                    <th className="py-3.5 px-4">Snapshot</th>
+                    <th className="py-3.5 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)] font-medium">
+                  {workstations.map((ws) => (
+                    <tr key={ws.id} className="hover:bg-[var(--surf)]/40 transition-colors">
+                      <td className="py-3.5 px-4">
+                        <div className="font-bold text-[var(--text)]">{ws.device_name}</div>
+                        <span className="font-mono text-[10px] text-[var(--muted)]">{ws.id}</span>
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 inline-block">
                           {ws.room_name || "Main Entrance Intake"}
                         </span>
-                        {ws.mode && <span className="px-2 py-0.5 text-[9px] font-black uppercase rounded-md bg-blue-500/10 text-blue-600 border border-blue-500/20">{ws.mode}</span>}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => handlePingWorkstation(ws.id, ws.device_name)}
-                        disabled={pingingId === ws.id}
-                        className="p-1.5 rounded-lg border border-[var(--border)] bg-[var(--surf)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--pri)] transition-all cursor-pointer"
-                        title="Test Connection / Ping"
-                      >
-                        <Activity className={cn("w-3.5 h-3.5", pingingId === ws.id && "animate-spin text-[var(--pri)]")} />
-                      </button>
-
-                      <button
-                        onClick={() => handleUnbindWorkstation(ws.id, ws.device_name)}
-                        disabled={deletingId === ws.id}
-                        className="p-1.5 rounded-lg border border-[var(--border)] bg-[var(--surf)] text-[var(--muted)] hover:text-red-500 hover:border-red-500 transition-all cursor-pointer"
-                        title="Unbind / Delete Workstation"
-                      >
-                        <Trash2 className={cn("w-3.5 h-3.5", deletingId === ws.id && "animate-spin")} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Hardware & Network Metrics */}
-                  <div className="space-y-2">
-                    <div className="p-2.5 rounded-xl bg-[var(--surf)] border border-[var(--border)] flex justify-between items-center text-xs font-bold">
-                      <span className="text-[10px] font-black uppercase text-[var(--muted)]">Hardware MAC:</span>
-                      <span className="font-mono text-[var(--text)]">{ws.mac_address || "N/A"}</span>
-                    </div>
-
-                    <div className="p-2.5 rounded-xl bg-[var(--surf)] border border-[var(--border)] flex justify-between items-center text-xs font-bold">
-                      <span className="text-[10px] font-black uppercase text-[var(--muted)]">Client IP:</span>
-                      <span className="font-mono text-[var(--acc)]">{ws.ip_address || "DHCP Assigned"}</span>
-                    </div>
-
-                    <div className="p-2.5 rounded-xl bg-[var(--surf)] border border-[var(--border)] flex justify-between items-center text-xs font-bold">
-                      <span className="text-[10px] font-black uppercase text-[var(--muted)]">Hostname:</span>
-                      <span className="text-[var(--text)]">{ws.hostname || "Workstation Node"}</span>
-                    </div>
-                    <div className="p-2.5 rounded-xl bg-[var(--surf)] border border-[var(--border)] flex justify-between items-center text-xs font-bold">
-                      <span className="text-[10px] font-black uppercase text-[var(--muted)]">Replica:</span>
-                      <span className="text-[var(--text)]">{ws.assignment_status || "not provisioned"} · v{ws.snapshot_version ?? 0}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Footer with Status and Ping */}
-                <div className="pt-2 border-t border-[var(--border)] flex items-center justify-between text-[10px] font-bold text-[var(--muted)]">
-                  <span className="flex items-center gap-1.5">
-                    <span className={cn("w-2 h-2 rounded-full", ws.status === "online" ? "bg-emerald-500" : "bg-zinc-400")} />
-                    Status: {ws.status.toUpperCase()}
-                  </span>
-                  <div className="flex items-center gap-3">
-                  <button onClick={() => handleResyncWorkstation(ws.id, ws.device_name)} disabled={resyncingId === ws.id || ws.assignment_status === "revoked"} className="text-[var(--pri)] hover:underline disabled:opacity-40">
-                    {resyncingId === ws.id ? "Scheduling…" : "Re-sync"}
-                  </button>
-                  <button onClick={() => handleRevokeWorkstation(ws.id, ws.device_name)} disabled={ws.assignment_status === "revoked"} className="text-red-500 hover:underline disabled:opacity-40">Revoke</button>
-                  <button
-                    onClick={() => handlePingWorkstation(ws.id, ws.device_name)}
-                    className="text-[var(--pri)] hover:underline flex items-center gap-1"
-                  >
-                    Ping Station ➔
-                  </button>
-                  </div>
-                </div>
-              </div>
-            ))}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="flex flex-wrap gap-1">
+                          <span className="px-2 py-0.5 text-[9px] font-black uppercase rounded-md bg-[var(--surf)] border border-[var(--border)] text-[var(--acc)]">
+                            {ws.device_type?.replace("_", " ") || "registration_desk"}
+                          </span>
+                          {ws.mode && (
+                            <span className="px-2 py-0.5 text-[9px] font-black uppercase rounded-md bg-blue-500/10 text-blue-600 border border-blue-500/20">
+                              {ws.mode}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="font-mono font-bold text-[var(--acc)] text-xs">{ws.ip_address || "DHCP Assigned"}</div>
+                        <div className="flex items-center gap-1 text-[10px] font-mono text-[var(--muted)]">
+                          <span>{ws.mac_address || "N/A"}</span>
+                          {ws.mac_address && (
+                            <button
+                              onClick={() => copyToClipboard(ws.mac_address || "", "MAC")}
+                              className="hover:text-[var(--text)] p-0.5 cursor-pointer"
+                              title="Copy MAC"
+                            >
+                              <Copy className="w-2.5 h-2.5" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-1.5 font-bold">
+                          <span className={cn("w-2 h-2 rounded-full", ws.status === "online" ? "bg-emerald-500 animate-pulse" : "bg-zinc-400")} />
+                          <span className="capitalize">{ws.status}</span>
+                        </div>
+                        <span className="text-[10px] text-[var(--muted)] block">{ws.last_seen || "Active Session"}</span>
+                      </td>
+                      <td className="py-3.5 px-4 font-mono font-bold text-[var(--text)]">
+                        {ws.snapshot_version !== undefined ? `v${ws.snapshot_version}` : "—"}
+                      </td>
+                      <td className="py-3.5 px-4 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handlePingWorkstation(ws.id, ws.device_name)}
+                            disabled={pingingId === ws.id}
+                            className="h-7 px-2 text-[11px] font-bold border-[var(--border)] bg-[var(--surf)] text-[var(--text)] hover:border-[var(--pri)] gap-1 cursor-pointer"
+                            title="Ping Latency Test"
+                          >
+                            <Activity className={cn("w-3 h-3", pingingId === ws.id && "animate-spin text-[var(--pri)]")} />
+                            <span className="hidden md:inline">Ping</span>
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleResyncWorkstation(ws.id, ws.device_name)}
+                            disabled={resyncingId === ws.id || ws.assignment_status === "revoked"}
+                            className="h-7 px-2 text-[11px] font-bold border-[var(--border)] bg-[var(--surf)] text-[var(--text)] gap-1 cursor-pointer"
+                            title="Schedule Snapshot Re-sync"
+                          >
+                            <RotateCcw className={cn("w-3 h-3 text-[var(--pri)]", resyncingId === ws.id && "animate-spin")} />
+                            <span className="hidden md:inline">Re-sync</span>
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleRevokeWorkstation(ws.id, ws.device_name)}
+                            disabled={ws.assignment_status === "revoked"}
+                            className="h-7 px-2 text-[11px] font-bold border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 gap-1 cursor-pointer"
+                            title="Revoke Workstation"
+                          >
+                            <Lock className="w-3 h-3" />
+                            <span className="hidden md:inline">Revoke</span>
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleUnbindWorkstation(ws.id, ws.device_name)}
+                            disabled={deletingId === ws.id}
+                            className="h-7 px-2 text-[11px] font-bold border-red-500/30 bg-red-500/5 text-red-600 dark:text-red-400 hover:bg-red-500/10 gap-1 cursor-pointer"
+                            title="Delete / Unbind"
+                          >
+                            <Trash2 className={cn("w-3 h-3", deletingId === ws.id && "animate-spin")} />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>

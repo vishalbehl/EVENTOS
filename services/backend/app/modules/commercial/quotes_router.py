@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.tenant_context import TenantContextGuard
+from app.core.cache import cache_service
 from app.dependencies import OrganizerOrAbove, StepUpAuth, get_db
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.audit.models.audit_domain_tables import DataExport
@@ -23,6 +24,10 @@ from app.modules.commercial.models import (
     QuoteApprovalStep,
     QuoteApprovalWorkflow,
 )
+from app.modules.technology_services.models import ServiceRequest, VenueOpsFulfilmentHandoff
+from app.modules.technology_services.events import dispatch_staged_event, stage_event
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
+from app.core.concurrency import require_if_match
 from app.modules.commercial.quote_schemas import (
     QuoteCreate,
     QuoteApprovalDecision,
@@ -76,6 +81,16 @@ PROPOSAL_SHARE_ISSUER = "Event-os"
 PROPOSAL_SHARE_AUDIENCE = "proposal-client"
 
 
+async def _invalidate_venue_ops_quote_cache(
+    organization_id: uuid.UUID, event_id: uuid.UUID | None
+) -> None:
+    """Invalidate recommendation/request-state reads only after commit succeeds."""
+    if event_id is not None:
+        await cache_service.invalidate_domain(
+            "venue_ops_recommendations", organization_id, event_id
+        )
+
+
 def _has_platform_scope(user) -> bool:
     return bool(
         user.role == "super_admin"
@@ -106,8 +121,13 @@ async def _validate_scope(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
     if service_request_id:
-        # ServiceRequest validation removed since technology_services module is deleted
-        pass
+        request = await db.scalar(select(ServiceRequest.id).where(
+            ServiceRequest.id == service_request_id,
+            ServiceRequest.organization_id == organization_id,
+            ServiceRequest.event_id == event_id,
+        ))
+        if not request:
+            raise HTTPException(status_code=404, detail="Service request not found.")
 
 
 def _audit(
@@ -371,7 +391,13 @@ async def create_quote(
         await db.flush()
         add_revision(db, quote, current_user.id, "Initial quote creation")
         db.add(_audit(quote, current_user, "QUOTE_CREATED"))
+        outbox = None
+        if quote.service_request_id:
+            outbox = stage_event(db, event_id=quote.event_id, name="venue_ops.quote.created", payload={"event_id": str(quote.event_id), "quote_id": str(quote.id), "request_id": str(quote.service_request_id), "entity_version": quote.version, "status": quote.status})
         await commit_transaction(db)
+        await _invalidate_venue_ops_quote_cache(target_org, quote.event_id)
+        if outbox is not None:
+            await dispatch_staged_event(db, outbox)
         return await load_quote(db, quote.id, target_org)
 
 
@@ -384,10 +410,154 @@ async def get_quote(
 ) -> CommercialQuote:
     target_org = _target_org(current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
-        quote = await load_quote(db, quote_id, target_org)
+        quote = await QuoteQueryService(db).get_quote(
+            organization_id=target_org, quote_id=quote_id
+        )
         if not quote:
             raise HTTPException(status_code=404, detail="Quote not found.")
         return quote
+
+
+@router.get("/quotes/{quote_id}/organiser-review")
+async def organiser_review_quote(
+    quote_id: uuid.UUID,
+    current_user: OrganizerOrAbove,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    async with TenantContextGuard.scoped(db, current_user.organization_id):
+        quote = await QuoteQueryService(db).get_quote(
+            organization_id=current_user.organization_id, quote_id=quote_id
+        )
+        if not quote or not quote.service_request_id:
+            raise HTTPException(status_code=404, detail="Venue Ops quote not found.")
+        result = _organiser_quote_out(quote)
+        proposal = await QuoteQueryService(db).get_proposal_for_quote(
+            organization_id=current_user.organization_id, quote_id=quote.id
+        )
+        if proposal:
+            exports = await QuoteQueryService(db).list_proposal_documents(
+                organization_id=current_user.organization_id, proposal_id=proposal.id
+            )
+            result["proposal"] = {"id": str(proposal.id), "proposal_number": proposal.proposal_number, "status": proposal.status, "current_version": proposal.current_version}
+            result["documents"] = [{"export_id": str(item.id), "proposal_version": item.source_version, "status": item.status, "file_format": item.file_format, "created_at": item.created_at, "completed_at": item.completed_at, "expires_at": item.expires_at, "failure_reason": item.failure_reason} for item in exports]
+        return result
+
+
+@router.get("/quotes/{quote_id}/documents")
+async def organiser_quote_documents(
+    quote_id: uuid.UUID,
+    current_user: OrganizerOrAbove,
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Quote-shaped Venue Ops document view backed by proposal exports."""
+    async with TenantContextGuard.scoped(db, current_user.organization_id):
+        quote = await QuoteQueryService(db).get_quote(
+            organization_id=current_user.organization_id, quote_id=quote_id
+        )
+        if not quote or not quote.service_request_id:
+            raise HTTPException(status_code=404, detail="Venue Ops quote not found.")
+        proposal = await QuoteQueryService(db).get_proposal_for_quote(
+            organization_id=current_user.organization_id, quote_id=quote.id
+        )
+        if not proposal:
+            return []
+        exports = await QuoteQueryService(db).list_proposal_documents(
+            organization_id=current_user.organization_id, proposal_id=proposal.id
+        )
+        return [{"export_id": str(item.id), "quote_id": str(quote.id), "proposal_id": str(proposal.id), "proposal_version": item.source_version, "status": item.status, "file_format": item.file_format, "created_at": item.created_at, "completed_at": item.completed_at, "expires_at": item.expires_at, "failure_reason": item.failure_reason} for item in exports]
+
+
+def _organiser_quote_out(quote: CommercialQuote) -> dict:
+    snapshot = quote_snapshot(quote)
+    snapshot.pop("internal_notes", None)
+    snapshot["id"] = snapshot.pop("quote_id")
+    snapshot["created_by"] = str(quote.created_by)
+    snapshot["created_at"] = quote.created_at
+    snapshot["updated_at"] = quote.updated_at
+    return snapshot
+
+
+@router.post("/quotes/{quote_id}/request-revision")
+async def organiser_request_quote_revision(
+    quote_id: uuid.UUID,
+    payload: dict,
+    current_user: OrganizerOrAbove,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128),
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    reason = str(payload.get("reason") or "").strip()
+    expected_version = require_if_match(if_match) if if_match is not None else int(payload.get("expected_version") or 0)
+    if len(reason) < 3: raise HTTPException(status_code=422, detail="A revision reason is required.")
+    async with TenantContextGuard.scoped(db, current_user.organization_id):
+        quote = await load_quote(db, quote_id, current_user.organization_id, for_update=True)
+        if not quote or not quote.service_request_id: raise HTTPException(status_code=404, detail="Venue Ops quote not found.")
+        fingerprint = request_fingerprint({"quote_id": str(quote_id), "action": "REVISION", "reason": reason, "expected_version": expected_version})
+        if quote.organiser_revision_idempotency_key == idempotency_key:
+            if quote.organiser_revision_request_hash != fingerprint: raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
+            return _organiser_quote_out(quote)
+        if quote.version != expected_version: raise HTTPException(status_code=409, detail="QUOTE_VERSION_CONFLICT")
+        if quote.status in {"ORGANISER_APPROVED", "DECLINED"}: raise HTTPException(status_code=409, detail="QUOTE_ALREADY_DECIDED")
+        quote.status = "REVISION_REQUESTED"
+        quote.version += 1
+        quote.organiser_revision_idempotency_key = idempotency_key
+        quote.organiser_revision_request_hash = fingerprint
+        add_revision(db, quote, current_user.id, reason)
+        db.add(_audit(quote, current_user, "QUOTE_REVISION_REQUESTED", reason=reason))
+        outbox = stage_event(db, event_id=quote.event_id, name="venue_ops.quote.revised", payload={"event_id": str(quote.event_id), "quote_id": str(quote.id), "request_id": str(quote.service_request_id), "entity_version": quote.version, "status": quote.status})
+        await commit_transaction(db)
+        await _invalidate_venue_ops_quote_cache(current_user.organization_id, quote.event_id)
+        await dispatch_staged_event(db, outbox)
+        return _organiser_quote_out(await load_quote(db, quote.id, current_user.organization_id))
+
+
+@router.post("/quotes/{quote_id}/organiser-decision")
+async def organiser_decide_quote(
+    quote_id: uuid.UUID,
+    payload: dict,
+    current_user: OrganizerOrAbove,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128),
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    action = str(payload.get("action") or "").upper()
+    reason = str(payload.get("reason") or "").strip()
+    expected_version = require_if_match(if_match) if if_match is not None else int(payload.get("expected_version") or 0)
+    if action not in {"APPROVE", "DECLINE", "DISCARD"} or len(reason) < 3:
+        raise HTTPException(status_code=422, detail="A valid decision and reason are required.")
+    async with TenantContextGuard.scoped(db, current_user.organization_id):
+        quote = await load_quote(db, quote_id, current_user.organization_id, for_update=True)
+        if not quote or not quote.service_request_id: raise HTTPException(status_code=404, detail="Venue Ops quote not found.")
+        fingerprint = request_fingerprint({"quote_id": str(quote_id), "action": action, "reason": reason, "expected_version": expected_version})
+        if quote.organiser_decision_idempotency_key == idempotency_key:
+            if quote.organiser_decision_request_hash != fingerprint: raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
+            return _organiser_quote_out(quote)
+        if quote.version != expected_version: raise HTTPException(status_code=409, detail="QUOTE_VERSION_CONFLICT")
+        if quote.status in {"ORGANISER_APPROVED", "DECLINED"}: raise HTTPException(status_code=409, detail="QUOTE_ALREADY_DECIDED")
+        quote.status = "ORGANISER_APPROVED" if action == "APPROVE" else "DECLINED"
+        quote.version += 1
+        quote.organiser_decision_idempotency_key = idempotency_key
+        quote.organiser_decision_request_hash = fingerprint
+        if action == "APPROVE":
+            existing_handoff = await db.scalar(select(VenueOpsFulfilmentHandoff).where(VenueOpsFulfilmentHandoff.quote_id == quote.id))
+            if existing_handoff is None:
+                handoff = VenueOpsFulfilmentHandoff(request_id=quote.service_request_id, quote_id=quote.id, organization_id=quote.organization_id, event_id=quote.event_id, approved_version=quote.version, locked_scope=quote_snapshot(quote))
+                db.add(handoff)
+            request = await db.scalar(select(ServiceRequest).where(ServiceRequest.id == quote.service_request_id, ServiceRequest.organization_id == quote.organization_id).with_for_update())
+            if request:
+                request.status = "FULFILMENT_PLANNING"
+                request.version = int(request.version or 1) + 1
+        db.add(_audit(quote, current_user, "QUOTE_ORGANISER_DECISION", reason=reason))
+        outbox = stage_event(db, event_id=quote.event_id, name="venue_ops.organiser_decision.recorded", payload={"event_id": str(quote.event_id), "quote_id": str(quote.id), "request_id": str(quote.service_request_id), "entity_version": quote.version, "status": quote.status})
+        fulfilment_outbox = None
+        if action == "APPROVE":
+            fulfilment_outbox = stage_event(db, event_id=quote.event_id, name="venue_ops.fulfilment.created", payload={"event_id": str(quote.event_id), "quote_id": str(quote.id), "request_id": str(quote.service_request_id), "entity_version": quote.version, "status": "PLANNING"})
+        await commit_transaction(db)
+        await _invalidate_venue_ops_quote_cache(current_user.organization_id, quote.event_id)
+        await dispatch_staged_event(db, outbox)
+        if fulfilment_outbox is not None:
+            await dispatch_staged_event(db, fulfilment_outbox)
+        return _organiser_quote_out(await load_quote(db, quote.id, current_user.organization_id))
 
 
 @router.patch("/quotes/{quote_id}", response_model=QuoteOut)
@@ -396,6 +566,7 @@ async def update_quote(
     payload: QuoteUpdate,
     current_user: OrganizerOrAbove,
     organization_id: uuid.UUID | None = Query(default=None),
+    if_match: str | None = Header(default=None, alias="If-Match"),
     db: AsyncSession = Depends(get_db),
 ) -> CommercialQuote:
     target_org = _target_org(current_user, organization_id)
@@ -405,7 +576,12 @@ async def update_quote(
             raise HTTPException(status_code=404, detail="Quote not found.")
         if quote.status != "DRAFT":
             raise HTTPException(status_code=409, detail="Only draft quotes can be edited.")
-        if quote.version != payload.expected_version:
+        expected_version = (
+            require_if_match(if_match) if if_match is not None else payload.expected_version
+        )
+        if quote.version != expected_version or (
+            if_match is not None and payload.expected_version != expected_version
+        ):
             raise HTTPException(status_code=409, detail="QUOTE_VERSION_CONFLICT")
 
         old_state = {"version": quote.version, "total_amount": str(quote.total_amount)}
@@ -420,7 +596,13 @@ async def update_quote(
         await db.flush()
         add_revision(db, quote, current_user.id, payload.reason)
         db.add(_audit(quote, current_user, "QUOTE_UPDATED", old_state, payload.reason))
+        outbox = None
+        if quote.service_request_id:
+            outbox = stage_event(db, event_id=quote.event_id, name="venue_ops.quote.revised", payload={"event_id": str(quote.event_id), "quote_id": str(quote.id), "request_id": str(quote.service_request_id), "entity_version": quote.version, "status": quote.status})
         await commit_transaction(db)
+        await _invalidate_venue_ops_quote_cache(target_org, quote.event_id)
+        if outbox is not None:
+            await dispatch_staged_event(db, outbox)
         return await load_quote(db, quote.id, target_org)
 
 
@@ -433,17 +615,14 @@ async def list_quote_revisions(
 ) -> list[CommercialQuoteRevision]:
     target_org = _target_org(current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
-        quote = await load_quote(db, quote_id, target_org)
+        quote = await QuoteQueryService(db).get_quote(
+            organization_id=target_org, quote_id=quote_id
+        )
         if not quote:
             raise HTTPException(status_code=404, detail="Quote not found.")
-        return list((await db.scalars(
-            select(CommercialQuoteRevision)
-            .where(
-                CommercialQuoteRevision.quote_id == quote_id,
-                CommercialQuoteRevision.organization_id == target_org,
-            )
-            .order_by(CommercialQuoteRevision.version.desc())
-        )).all())
+        return await QuoteQueryService(db).list_revisions(
+            organization_id=target_org, quote_id=quote_id
+        )
 
 
 @router.get("/quotes/{quote_id}/approval", response_model=QuoteApprovalWorkflowOut | None)
@@ -455,10 +634,14 @@ async def get_quote_approval(
 ) -> QuoteApprovalWorkflow | None:
     target_org = _target_org(current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
-        quote = await load_quote(db, quote_id, target_org)
+        quote = await QuoteQueryService(db).get_quote(
+            organization_id=target_org, quote_id=quote_id
+        )
         if not quote:
             raise HTTPException(status_code=404, detail="Quote not found.")
-        return await _load_approval(db, quote_id, target_org)
+        return await QuoteQueryService(db).get_approval(
+            organization_id=target_org, quote_id=quote_id
+        )
 
 
 @router.post("/quotes/{quote_id}/approval/submit", response_model=QuoteApprovalWorkflowOut)
@@ -528,7 +711,13 @@ async def submit_quote_for_approval(
         db.add(workflow)
         await db.flush()
         db.add(_approval_audit(quote, workflow, current_user, "QUOTE_APPROVAL_SUBMITTED", payload.reason))
+        outbox = None
+        if quote.service_request_id:
+            outbox = stage_event(db, event_id=quote.event_id, name="venue_ops.quote.revised", payload={"event_id": str(quote.event_id), "quote_id": str(quote.id), "request_id": str(quote.service_request_id), "entity_version": quote.version, "status": quote.status})
         await commit_transaction(db)
+        await _invalidate_venue_ops_quote_cache(target_org, quote.event_id)
+        if outbox is not None:
+            await dispatch_staged_event(db, outbox)
         return await _load_approval(db, quote_id, target_org)
 
 
@@ -605,7 +794,13 @@ async def decide_quote_approval_step(
             "QUOTE_APPROVED" if payload.action == "APPROVE" else "QUOTE_REJECTED",
             payload.reason,
         ))
+        outbox = None
+        if quote.service_request_id:
+            outbox = stage_event(db, event_id=quote.event_id, name="venue_ops.quote.created", payload={"event_id": str(quote.event_id), "quote_id": str(quote.id), "request_id": str(quote.service_request_id), "entity_version": quote.version, "status": quote.status})
         await commit_transaction(db)
+        await _invalidate_venue_ops_quote_cache(target_org, quote.event_id)
+        if outbox is not None:
+            await dispatch_staged_event(db, outbox)
         return await _load_approval(db, quote_id, target_org)
 
 
@@ -686,7 +881,83 @@ async def convert_quote_to_proposal(
             change_diff={"reason": payload.reason},
         ))
         await commit_transaction(db)
+        await _invalidate_venue_ops_quote_cache(target_org, quote.event_id)
         return await _load_proposal(db, proposal.id, target_org)
+
+
+@router.post("/proposals/{proposal_id}/send", response_model=ProposalOut)
+async def send_proposal_to_organiser(
+    proposal_id: uuid.UUID,
+    payload: dict,
+    current_user: OrganizerOrAbove,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128),
+    organization_id: uuid.UUID | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Freeze and expose an approved Venue Ops proposal in the organiser portal."""
+    target_org = _target_org(current_user, organization_id)
+    expected_version = int(payload.get("expected_version") or 0)
+    reason = str(payload.get("reason") or "").strip()
+    if len(reason) < 3:
+        raise HTTPException(status_code=422, detail="A send reason is required.")
+    idem = await begin_idempotent(
+        db,
+        organization_id=target_org,
+        actor_id=current_user.id,
+        operation="venue_ops.proposal.send",
+        key=idempotency_key,
+        payload={"proposal_id": str(proposal_id), "expected_version": expected_version, "reason": reason},
+    )
+    replay = replay_response(idem)
+    if replay is not None:
+        return replay[1]
+    async with TenantContextGuard.scoped(db, target_org):
+        proposal = await _load_proposal(db, proposal_id, target_org, for_update=True)
+        if not proposal or not proposal.quote_id:
+            raise HTTPException(status_code=404, detail="Venue Ops proposal not found.")
+        if proposal.current_version != expected_version:
+            raise HTTPException(status_code=409, detail="PROPOSAL_VERSION_CONFLICT")
+        if proposal.status not in {"DRAFT", "SENT"}:
+            raise HTTPException(status_code=409, detail="PROPOSAL_NOT_SENDABLE")
+        quote = await load_quote(db, proposal.quote_id, target_org, for_update=True)
+        if not quote or not quote.service_request_id:
+            raise HTTPException(status_code=409, detail="VENUE_OPS_QUOTE_LINK_MISSING")
+        if proposal.status == "DRAFT":
+            proposal.status = "SENT"
+            proposal.updated_at = datetime.now(timezone.utc)
+            if quote.status == "APPROVED":
+                quote.status = "SENT"
+                quote.version = int(quote.version or 1) + 1
+                quote.updated_at = datetime.now(timezone.utc)
+            db.add(AuditLog(
+                organization_id=target_org,
+                actor_user_id=current_user.id,
+                resource_type="proposal",
+                resource_id=proposal.id,
+                action_type="PROPOSAL_SENT_TO_ORGANISER",
+                actor_role=getattr(current_user, "platform_role", None) or current_user.role,
+                new_state={"proposal_version": proposal.current_version, "quote_id": str(quote.id), "quote_status": quote.status},
+                change_diff={"reason": reason},
+            ))
+        outbox = stage_event(
+            db,
+            event_id=proposal.event_id,
+            name="venue_ops.proposal.sent",
+            payload={
+                "event_id": str(proposal.event_id),
+                "request_id": str(quote.service_request_id),
+                "quote_id": str(quote.id),
+                "proposal_id": str(proposal.id),
+                "entity_version": proposal.current_version,
+                "status": proposal.status,
+            },
+        )
+        result = await _load_proposal(db, proposal.id, target_org)
+        response = ProposalOut.model_validate(result).model_dump(mode="json")
+        await complete_idempotent(db, idem, response_status=200, response_body=response, resource_id=proposal.id)
+        await commit_transaction(db)
+        await dispatch_staged_event(db, outbox)
+        return response
 
 
 @router.get("/proposals/{proposal_id}", response_model=ProposalOut)
@@ -698,7 +969,9 @@ async def get_proposal(
 ) -> Proposal:
     target_org = _target_org(current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
-        proposal = await _load_proposal(db, proposal_id, target_org)
+        proposal = await QuoteQueryService(db).get_proposal(
+            organization_id=target_org, proposal_id=proposal_id
+        )
         if not proposal or not proposal.quote_id:
             raise HTTPException(status_code=404, detail="Proposal not found.")
         return proposal
@@ -713,10 +986,14 @@ async def get_proposal_versions(
 ) -> list[ProposalVersion]:
     target_org = _target_org(current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
-        proposal = await _load_proposal(db, proposal_id, target_org)
+        proposal = await QuoteQueryService(db).get_proposal(
+            organization_id=target_org, proposal_id=proposal_id
+        )
         if not proposal or not proposal.quote_id:
             raise HTTPException(status_code=404, detail="Proposal not found.")
-        return list(reversed(proposal.versions))
+        return list(reversed(await QuoteQueryService(db).list_proposal_versions(
+            organization_id=target_org, proposal_id=proposal_id
+        )))
 
 
 @router.post("/proposals/{proposal_id}/documents", response_model=ProposalDocumentOut, status_code=status.HTTP_202_ACCEPTED)
@@ -837,14 +1114,9 @@ async def list_proposal_documents(
         proposal = await _load_proposal(db, proposal_id, target_org)
         if not proposal or not proposal.quote_id:
             raise HTTPException(status_code=404, detail="Proposal not found.")
-        exports = list((await db.scalars(
-            select(DataExport).where(
-                DataExport.organization_id == target_org,
-                DataExport.source_type == "proposal",
-                DataExport.source_id == proposal_id,
-                DataExport.export_type == "proposal_pdf",
-            ).order_by(DataExport.created_at.desc()).limit(20)
-        )).all())
+        exports = await QuoteQueryService(db).list_proposal_documents(
+            organization_id=target_org, proposal_id=proposal_id
+        )
         return [{
             "export_id": item.id, "proposal_id": proposal_id,
             "proposal_version": item.source_version, "status": item.status,
@@ -864,13 +1136,9 @@ async def get_proposal_document(
 ) -> dict:
     target_org = _target_org(current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
-        export = await db.scalar(select(DataExport).where(
-            DataExport.id == export_id,
-            DataExport.organization_id == target_org,
-            DataExport.source_type == "proposal",
-            DataExport.source_id == proposal_id,
-            DataExport.export_type == "proposal_pdf",
-        ))
+        export = await QuoteQueryService(db).get_proposal_document(
+            organization_id=target_org, proposal_id=proposal_id, export_id=export_id
+        )
         if not export:
             raise HTTPException(status_code=404, detail="Proposal document not found.")
         return {
@@ -893,13 +1161,9 @@ async def download_proposal_document(
     target_org = _target_org(current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
         proposal = await _load_proposal(db, proposal_id, target_org)
-        export = await db.scalar(select(DataExport).where(
-            DataExport.id == export_id,
-            DataExport.organization_id == target_org,
-            DataExport.source_type == "proposal",
-            DataExport.source_id == proposal_id,
-            DataExport.export_type == "proposal_pdf",
-        ))
+        export = await QuoteQueryService(db).get_proposal_document(
+            organization_id=target_org, proposal_id=proposal_id, export_id=export_id
+        )
         if not proposal or not export:
             raise HTTPException(status_code=404, detail="Proposal document not found.")
         if export.status != "COMPLETED" or not export.storage_key:
@@ -1004,10 +1268,9 @@ async def list_proposal_shares(
     async with TenantContextGuard.scoped(db, target_org):
         if not await _load_proposal(db, proposal_id, target_org):
             raise HTTPException(status_code=404, detail="Proposal not found.")
-        shares = list((await db.scalars(select(ProposalShare).where(
-            ProposalShare.organization_id == target_org,
-            ProposalShare.proposal_id == proposal_id,
-        ).order_by(ProposalShare.created_at.desc()))).all())
+        shares = await QuoteQueryService(db).list_proposal_shares(
+            organization_id=target_org, proposal_id=proposal_id
+        )
         return [_share_payload(share) for share in shares]
 
 
@@ -1021,17 +1284,14 @@ async def list_proposal_share_accesses(
 ) -> list[ProposalShareAccess]:
     target_org = _target_org(current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
-        share = await db.scalar(select(ProposalShare).where(
-            ProposalShare.id == share_id,
-            ProposalShare.proposal_id == proposal_id,
-            ProposalShare.organization_id == target_org,
-        ))
+        share = await QuoteQueryService(db).get_proposal_share(
+            organization_id=target_org, proposal_id=proposal_id, share_id=share_id
+        )
         if not share:
             raise HTTPException(status_code=404, detail="Proposal share not found.")
-        return list((await db.scalars(select(ProposalShareAccess).where(
-            ProposalShareAccess.organization_id == target_org,
-            ProposalShareAccess.share_id == share_id,
-        ).order_by(ProposalShareAccess.occurred_at.desc()).limit(100))).all())
+        return await QuoteQueryService(db).list_proposal_share_accesses(
+            organization_id=target_org, share_id=share_id
+        )
 
 
 @router.post("/proposals/{proposal_id}/shares/{share_id}/revoke", response_model=ProposalShareOut)

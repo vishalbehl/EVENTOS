@@ -17,5 +17,5 @@ def test_support_attachment_completion_verifies_storage_commits_and_queues_scan(
     assert "get_object_metadata" in source
     assert "VirusScan" in source
     assert "await self.db.commit()" in source
-    assert "scan_file_for_viruses.delay" in source
+    assert "scan_asset_for_viruses.delay" in source
     assert "await self.db.rollback()" in source

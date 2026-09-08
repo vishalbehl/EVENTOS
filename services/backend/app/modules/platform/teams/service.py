@@ -143,6 +143,8 @@ class TeamService:
     # Team Membership
     async def add_member(self, org_id: uuid.UUID, team_id: uuid.UUID, user_id: uuid.UUID) -> TeamMember:
         await self.get_team(org_id, team_id)
+        if await self.repository.get_user_for_organization(org_id, user_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
         # Check if already a member
         existing = await self.repository.get_member(team_id, user_id)
         if existing:
@@ -169,7 +171,7 @@ class TeamService:
 
     async def list_members(self, org_id: uuid.UUID, team_id: uuid.UUID) -> List[dict]:
         await self.get_team(org_id, team_id)
-        rows = await self.repository.list_members(team_id)
+        rows = await self.repository.list_members(org_id, team_id)
         members_out = []
         for member, user in rows:
             members_out.append({

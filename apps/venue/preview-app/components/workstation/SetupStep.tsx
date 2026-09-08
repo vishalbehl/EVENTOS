@@ -83,15 +83,18 @@ export function SetupStep({
           toast.error("PowerPoint save detected, but Venue Server assignment context is missing.");
           return;
         }
-        const deviceKey = typeof window !== "undefined" ? window.localStorage.getItem("eventos_srr_device_key") || undefined : undefined;
         const result = await (window as any).srrDesktop.uploadModifiedPresentation?.({
           filePath: data.filePath,
           speakerId: speaker.id,
           sessionSpeakerId: currentSession.session_speaker_id,
-          deviceKey,
+          expectedVersion: activeFile?.version,
         });
         if (result?.error) {
           toast.error(result.error);
+          return;
+        }
+        if (result?.status === "queued_offline") {
+          toast.info(`Presentation saved locally and queued for Venue Server sync (${result.operation_id}).`);
           return;
         }
         if (result?.file) {
@@ -164,8 +167,8 @@ export function SetupStep({
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {sessionList.map((sess, idx) => {
             const isSelected = activeSessionIdx === idx;
-            const fileCount = idx === 0 ? 4 : idx === 1 ? 2 : 1;
-            const statusLabel = isSelected ? "SELECTED" : idx === 1 ? "NEEDS REVIEW" : "READY";
+            const fileCount = sess.presentations?.length ?? 0;
+            const statusLabel = sess.status === "ready" ? "READY" : sess.status === "pending" ? "PENDING" : "NOT UPLOADED";
 
             return (
               <div
@@ -200,13 +203,13 @@ export function SetupStep({
                     <Badge variant="default" className="text-[9px] font-black uppercase px-2 py-0 shadow-xs">
                       Selected
                     </Badge>
-                  ) : statusLabel === "NEEDS REVIEW" ? (
+                  ) : statusLabel === "PENDING" ? (
                     <Badge className="border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400 text-[9px] font-bold uppercase px-2 py-0">
-                      Needs Review
+                      Pending
                     </Badge>
                   ) : (
                     <Badge className="border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-[9px] font-bold uppercase px-2 py-0">
-                      Ready
+                      {statusLabel === "NOT UPLOADED" ? "Not uploaded" : "Ready"}
                     </Badge>
                   )}
                 </div>
@@ -263,7 +266,7 @@ export function SetupStep({
                   <span>•</span>
                   <span className="flex items-center gap-1">
                     <Calendar className="size-2.5" />
-                    25 Aug 2026
+                    Event date unavailable
                   </span>
                 </div>
               </div>

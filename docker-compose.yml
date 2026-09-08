@@ -1,4 +1,8 @@
-version: "3.9"
+# Include the complete Venue Server stack, including its database, Redis,
+# object storage, migrations, and API. The former root venue-server image was
+# only a placeholder base image and could not run the application.
+include:
+  - path: services/venue/venue-server/docker-compose.yml
 
 services:
   backend:
@@ -10,8 +14,3 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/workers.Dockerfile
-
-  venue-server:
-    build:
-      context: .
-      dockerfile: infrastructure/docker/venue-server.Dockerfile

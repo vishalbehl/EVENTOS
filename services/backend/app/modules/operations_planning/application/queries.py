@@ -9,6 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.operations_planning.models import Milestone, Project, ProjectTask
 from app.modules.events.models.event import Event
+from app.modules.operations_planning.infrastructure.repositories import (
+    MilestoneRepository,
+    ProjectRepository,
+    ProjectTaskRepository,
+)
 
 
 class ProjectQueryService:
@@ -39,19 +44,10 @@ class ProjectQueryService:
         organization_id: uuid.UUID,
         limit: int = 100,
     ) -> list[Project]:
-        bounded_limit = max(1, min(limit, 200))
-        return list(
-            (
-                await self.db.scalars(
-                    select(Project)
-                    .where(
-                        Project.event_id == event_id,
-                        Project.organization_id == organization_id,
-                    )
-                    .order_by(Project.id.desc())
-                    .limit(bounded_limit)
-                )
-            ).all()
+        return await ProjectRepository(self.db).list_for_event(
+            event_id=event_id,
+            organization_id=organization_id,
+            limit=limit,
         )
 
     async def list_tasks(
@@ -61,24 +57,16 @@ class ProjectQueryService:
         organization_id: uuid.UUID,
         limit: int = 200,
     ) -> list[ProjectTask] | None:
-        project = await self.db.scalar(
-            select(Project.id).where(
-                Project.id == project_id,
-                Project.organization_id == organization_id,
-            )
+        project = await ProjectRepository(self.db).get_by_id(
+            project_id=project_id,
+            organization_id=organization_id,
         )
         if project is None:
             return None
-        bounded_limit = max(1, min(limit, 500))
-        return list(
-            (
-                await self.db.scalars(
-                    select(ProjectTask)
-                    .where(ProjectTask.project_id == project_id)
-                    .order_by(ProjectTask.id)
-                    .limit(bounded_limit)
-                )
-            ).all()
+        return await ProjectTaskRepository(self.db).list_for_project(
+            project_id=project_id,
+            organization_id=organization_id,
+            limit=limit,
         )
 
     async def get_project(
@@ -87,33 +75,21 @@ class ProjectQueryService:
         project_id: uuid.UUID,
         organization_id: uuid.UUID,
     ) -> tuple[Project, list[ProjectTask], list[Milestone]] | None:
-        project = await self.db.scalar(
-            select(Project).where(
-                Project.id == project_id,
-                Project.organization_id == organization_id,
-            )
+        project = await ProjectRepository(self.db).get_by_id(
+            project_id=project_id,
+            organization_id=organization_id,
         )
         if project is None:
             return None
 
-        tasks = list(
-            (
-                await self.db.scalars(
-                    select(ProjectTask)
-                    .where(ProjectTask.project_id == project.id)
-                    .order_by(ProjectTask.id)
-                    .limit(500)
-                )
-            ).all()
+        tasks = await ProjectTaskRepository(self.db).list_for_project(
+            project_id=project.id,
+            organization_id=organization_id,
+            limit=500,
         )
-        milestones = list(
-            (
-                await self.db.scalars(
-                    select(Milestone)
-                    .where(Milestone.project_id == project.id)
-                    .order_by(Milestone.id)
-                    .limit(200)
-                )
-            ).all()
+        milestones = await MilestoneRepository(self.db).list_for_project(
+            project_id=project.id,
+            organization_id=organization_id,
+            limit=200,
         )
         return project, tasks, milestones

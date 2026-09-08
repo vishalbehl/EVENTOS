@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import ForeignKey, String, Float, DateTime
+from sqlalchemy import ForeignKey, String, Float, DateTime, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -56,6 +56,7 @@ class PaymentTransaction(Base):
         index=True,
     )
     discount_applied: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -1,0 +1,66 @@
+
+> organiser-portal@1.0.0 dev
+> next dev --webpack --port 3001
+
+▲ Next.js 16.2.12 (webpack)
+- Local:         http://localhost:3001
+- Network:       http://192.168.56.1:3001
+- Environments: .env.local
+✓ Ready in 1704ms
+- Experiments (use with caution):
+  · optimizePackageImports
+
+○ Compiling /events/[eventId]/registration/roles ...
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/registration/roles 200 in 30.6s (next.js: 28.4s, application-code: 2.1s)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/registration/roles 200 in 161ms (next.js: 38ms, application-code: 124ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/registration/roles 200 in 245ms (next.js: 26ms, application-code: 219ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/registration/roles 200 in 528ms (next.js: 107ms, application-code: 420ms)
+○ Compiling /events/[eventId]/registration/categories ...
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/registration/categories 200 in 26.6s (next.js: 26.4s, application-code: 136ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/registration/categories 200 in 113ms (next.js: 24ms, application-code: 89ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/registration/categories 200 in 88ms (next.js: 11ms, application-code: 77ms)
+○ Compiling /events/[eventId]/design-studio/portals/designer ...
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/portals/designer 200 in 7.9s (next.js: 7.8s, application-code: 135ms)
+○ Compiling /events/[eventId]/design-studio/emails/designer ...
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 3.9min (next.js: 3.9min, application-code: 337ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 3.3min (next.js: 3.3min, application-code: 345ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 3.3min (next.js: 3.3min, application-code: 346ms)
+○ Compiling /events/[eventId]/venue-ops/requirements ...
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 373ms (next.js: 153ms, application-code: 219ms)
+ GET /events/00000000-0000-4000-8000-000000000005/venue-ops/requirements 200 in 57s (next.js: 56s, application-code: 1201ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 493ms (next.js: 49ms, application-code: 443ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 248ms (next.js: 52ms, application-code: 196ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 202ms (next.js: 30ms, application-code: 173ms)
+ GET /events/00000000-0000-4000-8000-000000000005/venue-ops/requirements 200 in 3.0s (next.js: 174ms, application-code: 2.8s)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 1184ms (next.js: 75ms, application-code: 1109ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 8.1s (next.js: 116ms, application-code: 8.0s)
+○ Compiling /login ...
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 799ms (next.js: 329ms, application-code: 470ms)
+ GET /events/00000000-0000-4000-8000-000000000005/venue-ops/requirements 200 in 336ms (next.js: 32ms, application-code: 304ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 824ms (next.js: 185ms, application-code: 639ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 8.5s (next.js: 562ms, application-code: 8.0s)
+ GET /login?expired=1 200 in 1651ms (next.js: 206ms, application-code: 1445ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 149ms (next.js: 41ms, application-code: 108ms)
+ GET /events/00000000-0000-4000-8000-000000000005/venue-ops/requirements 200 in 202ms (next.js: 21ms, application-code: 181ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 231ms (next.js: 51ms, application-code: 181ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 433ms (next.js: 23ms, application-code: 410ms)
+ GET /login?expired=1 200 in 630ms (next.js: 97ms, application-code: 533ms)
+ GET /login?expired=1 200 in 351ms (next.js: 21ms, application-code: 330ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 136ms (next.js: 30ms, application-code: 106ms)
+○ Compiling /_error ...
+ GET /events/00000000-0000-4000-8000-000000000005/venue-ops/requirements 500 in 84s (next.js: 22ms, application-code: 84s)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 16.7s (next.js: 11.9s, application-code: 4.8s)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 98s (next.js: 93s, application-code: 4.8s)
+ GET /events/00000000-0000-4000-8000-000000000005/venue-ops/requirements 200 in 5.8s (next.js: 156ms, application-code: 5.6s)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 1521ms (next.js: 51ms, application-code: 1470ms)
+ GET /events/00000000-0000-4000-8000-000000000005/venue-ops/requirements 200 in 1838ms (next.js: 206ms, application-code: 1632ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 1273ms (next.js: 39ms, application-code: 1234ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 482ms (next.js: 29ms, application-code: 454ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 892ms (next.js: 82ms, application-code: 809ms)
+ GET /events/00000000-0000-4000-8000-000000000005/venue-ops/requirements 200 in 370ms (next.js: 40ms, application-code: 330ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 172ms (next.js: 30ms, application-code: 143ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 427ms (next.js: 38ms, application-code: 388ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 237ms (next.js: 37ms, application-code: 200ms)
+ GET /events/00000000-0000-4000-8000-000000000005/venue-ops/requirements 200 in 241ms (next.js: 31ms, application-code: 210ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 1065ms (next.js: 108ms, application-code: 957ms)
+ GET /events/fcbbdcf6-6e6c-4b5a-ab36-d69bd7f3c269/design-studio/emails/designer 200 in 903ms (next.js: 738ms, application-code: 165ms)

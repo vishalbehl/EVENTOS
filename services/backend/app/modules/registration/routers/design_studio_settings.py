@@ -1,6 +1,6 @@
 import uuid
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,8 @@ from app.modules.events.models.event import Event
 from app.modules.registration.models.portal_theme_setting import PortalThemeSetting
 from app.core.dependencies.feature_gate import enforce_event_operation
 from app.core.cache import invalidate_event
+from app.core.concurrency import raise_version_conflict, require_if_match
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 
 router = APIRouter(prefix="/events/{event_id}/design-settings", tags=["Design Studio Settings"])
 
@@ -201,13 +203,41 @@ class EmailSettingsUpdate(BaseModel):
 # ROUTE HANDLERS
 # ─────────────────────────────────────────────────────────────
 
-async def _get_event_or_404(event_id: uuid.UUID, db: AsyncSession) -> Event:
+async def _get_event_or_404(
+    event_id: uuid.UUID, db: AsyncSession, *, for_update: bool = False
+) -> Event:
     stmt = select(Event).where(Event.id == event_id)
+    if for_update:
+        stmt = stmt.with_for_update()
     res = await db.execute(stmt)
     event = res.scalar_one_or_none()
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
     return event
+
+
+def _advance_event_settings_version(
+    event: Event, *, actor_user_id: uuid.UUID, if_match: Optional[str]
+) -> None:
+    """Serialize settings writes and optionally reject stale clients."""
+    if if_match is not None:
+        expected_version = require_if_match(if_match)
+        current_version = int(event.version or 1)
+        if current_version != expected_version:
+            raise_version_conflict(current_version)
+    event.version = int(event.version or 1) + 1
+    event.updated_by = actor_user_id
+
+
+async def _begin_settings_command(db: AsyncSession, *, event: Event, actor: User, operation: str, key: str | None, payload: dict[str, Any]):
+    return await begin_idempotent(
+        db,
+        organization_id=event.organization_id,
+        actor_id=actor.id,
+        operation=operation,
+        key=key or f"legacy-{uuid.uuid4()}",
+        payload=payload,
+    )
 
 
 # ── 1. PORTAL SETTINGS ───────────────────────────────────────
@@ -253,10 +283,16 @@ async def get_portal_settings(
 async def update_portal_settings(
     event_id: uuid.UUID,
     payload: PortalSettingsUpdate,
+    if_match: Optional[str] = Header(None, alias="If-Match"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
-    event = await _get_event_or_404(event_id, db)
+    event = await _get_event_or_404(event_id, db, for_update=True)
+    idem = await _begin_settings_command(db, event=event, actor=current_user, operation="registration.settings.portal.update", key=idempotency_key, payload={"event_id": str(event_id), "if_match": if_match, **payload.model_dump(mode="json", exclude_unset=True)})
+    replay = replay_response(idem)
+    if replay is not None:
+        return PortalSettingsResponse.model_validate(replay[1])
     await enforce_event_operation(db, event.organization_id, event.id, "branding.theme.manage", user_id=current_user.id)
     pts_stmt = select(PortalThemeSetting).where(PortalThemeSetting.event_id == event_id)
     pts_res = await db.execute(pts_stmt)
@@ -315,11 +351,15 @@ async def update_portal_settings(
         pts.extra_settings = extra
 
     event.registration_settings = reg_settings
+    _advance_event_settings_version(event, actor_user_id=current_user.id, if_match=if_match)
     await db.commit()
     await invalidate_event(event.organization_id, event.id)
     await db.refresh(pts)
 
-    return await get_portal_settings(event_id, db, current_user)
+    response = await get_portal_settings(event_id, db, current_user)
+    await complete_idempotent(db, idem, response_status=200, response_body=response.model_dump(mode="json"), resource_id=event.id)
+    await db.commit()
+    return response
 
 
 # ── 2. BADGE SETTINGS ────────────────────────────────────────
@@ -353,10 +393,16 @@ async def get_badge_settings(
 async def update_badge_settings(
     event_id: uuid.UUID,
     payload: BadgeSettingsUpdate,
+    if_match: Optional[str] = Header(None, alias="If-Match"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
-    event = await _get_event_or_404(event_id, db)
+    event = await _get_event_or_404(event_id, db, for_update=True)
+    idem = await _begin_settings_command(db, event=event, actor=current_user, operation="registration.settings.badges.update", key=idempotency_key, payload={"event_id": str(event_id), "if_match": if_match, **payload.model_dump(mode="json", exclude_unset=True)})
+    replay = replay_response(idem)
+    if replay is not None:
+        return BadgeSettingsResponse.model_validate(replay[1])
     await enforce_event_operation(db, event.organization_id, event.id, "badges.custom_design.manage", user_id=current_user.id)
     reg_settings = dict(getattr(event, "registration_settings", {}) or {})
     badge_design = dict(reg_settings.get("badge_design", {}))
@@ -366,10 +412,14 @@ async def update_badge_settings(
 
     reg_settings["badge_design"] = badge_design
     event.registration_settings = reg_settings
+    _advance_event_settings_version(event, actor_user_id=current_user.id, if_match=if_match)
 
     await db.commit()
     await invalidate_event(event.organization_id, event.id)
-    return await get_badge_settings(event_id, db, current_user)
+    response = await get_badge_settings(event_id, db, current_user)
+    await complete_idempotent(db, idem, response_status=200, response_body=response.model_dump(mode="json"), resource_id=event.id)
+    await db.commit()
+    return response
 
 
 # ── 3. CERTIFICATE SETTINGS ──────────────────────────────────
@@ -402,10 +452,16 @@ async def get_certificate_settings(
 async def update_certificate_settings(
     event_id: uuid.UUID,
     payload: CertificateSettingsUpdate,
+    if_match: Optional[str] = Header(None, alias="If-Match"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
-    event = await _get_event_or_404(event_id, db)
+    event = await _get_event_or_404(event_id, db, for_update=True)
+    idem = await _begin_settings_command(db, event=event, actor=current_user, operation="registration.settings.certificates.update", key=idempotency_key, payload={"event_id": str(event_id), "if_match": if_match, **payload.model_dump(mode="json", exclude_unset=True)})
+    replay = replay_response(idem)
+    if replay is not None:
+        return CertificateSettingsResponse.model_validate(replay[1])
     await enforce_event_operation(db, event.organization_id, event.id, "certificates.custom_design.manage", user_id=current_user.id)
     reg_settings = dict(getattr(event, "registration_settings", {}) or {})
     cert_design = dict(reg_settings.get("certificate_design", {}))
@@ -415,10 +471,14 @@ async def update_certificate_settings(
 
     reg_settings["certificate_design"] = cert_design
     event.registration_settings = reg_settings
+    _advance_event_settings_version(event, actor_user_id=current_user.id, if_match=if_match)
 
     await db.commit()
     await invalidate_event(event.organization_id, event.id)
-    return await get_certificate_settings(event_id, db, current_user)
+    response = await get_certificate_settings(event_id, db, current_user)
+    await complete_idempotent(db, idem, response_status=200, response_body=response.model_dump(mode="json"), resource_id=event.id)
+    await db.commit()
+    return response
 
 
 # ── 4. WEBSITE SETTINGS ──────────────────────────────────────
@@ -453,10 +513,16 @@ async def get_website_settings(
 async def update_website_settings(
     event_id: uuid.UUID,
     payload: WebsiteSettingsUpdate,
+    if_match: Optional[str] = Header(None, alias="If-Match"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
-    event = await _get_event_or_404(event_id, db)
+    event = await _get_event_or_404(event_id, db, for_update=True)
+    idem = await _begin_settings_command(db, event=event, actor=current_user, operation="registration.settings.website.update", key=idempotency_key, payload={"event_id": str(event_id), "if_match": if_match, **payload.model_dump(mode="json", exclude_unset=True)})
+    replay = replay_response(idem)
+    if replay is not None:
+        return WebsiteSettingsResponse.model_validate(replay[1])
     await enforce_event_operation(db, event.organization_id, event.id, "website.manage", user_id=current_user.id)
     reg_settings = dict(getattr(event, "registration_settings", {}) or {})
     web_settings = dict(reg_settings.get("website_settings", {}))
@@ -466,10 +532,14 @@ async def update_website_settings(
 
     reg_settings["website_settings"] = web_settings
     event.registration_settings = reg_settings
+    _advance_event_settings_version(event, actor_user_id=current_user.id, if_match=if_match)
 
     await db.commit()
     await invalidate_event(event.organization_id, event.id)
-    return await get_website_settings(event_id, db, current_user)
+    response = await get_website_settings(event_id, db, current_user)
+    await complete_idempotent(db, idem, response_status=200, response_body=response.model_dump(mode="json"), resource_id=event.id)
+    await db.commit()
+    return response
 
 
 # ── 5. EMAIL SETTINGS ────────────────────────────────────────
@@ -504,10 +574,16 @@ async def get_email_settings(
 async def update_email_settings(
     event_id: uuid.UUID,
     payload: EmailSettingsUpdate,
+    if_match: Optional[str] = Header(None, alias="If-Match"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
-    event = await _get_event_or_404(event_id, db)
+    event = await _get_event_or_404(event_id, db, for_update=True)
+    idem = await _begin_settings_command(db, event=event, actor=current_user, operation="registration.settings.emails.update", key=idempotency_key, payload={"event_id": str(event_id), "if_match": if_match, **payload.model_dump(mode="json", exclude_unset=True)})
+    replay = replay_response(idem)
+    if replay is not None:
+        return EmailSettingsResponse.model_validate(replay[1])
     await enforce_event_operation(db, event.organization_id, event.id, "communications.email_designer.manage", user_id=current_user.id)
     reg_settings = dict(getattr(event, "registration_settings", {}) or {})
     email_settings = dict(reg_settings.get("email_settings", {}))
@@ -517,7 +593,11 @@ async def update_email_settings(
 
     reg_settings["email_settings"] = email_settings
     event.registration_settings = reg_settings
+    _advance_event_settings_version(event, actor_user_id=current_user.id, if_match=if_match)
 
     await db.commit()
     await invalidate_event(event.organization_id, event.id)
-    return await get_email_settings(event_id, db, current_user)
+    response = await get_email_settings(event_id, db, current_user)
+    await complete_idempotent(db, idem, response_status=200, response_body=response.model_dump(mode="json"), resource_id=event.id)
+    await db.commit()
+    return response

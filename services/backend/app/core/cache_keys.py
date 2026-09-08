@@ -40,6 +40,30 @@ class TenantCacheKey:
         )
 
     @staticmethod
+    def event_pattern(event_id: uuid.UUID, organization_id: uuid.UUID) -> str:
+        """Return the only wildcard pattern allowed for one verified event."""
+        return TenantCacheKey.event(
+            event_id, "invalidation", organization_id=organization_id
+        ).rsplit(":", 1)[0] + ":*"
+
+    @staticmethod
+    def organization_pattern(organization_id: uuid.UUID) -> str:
+        """Return the only wildcard pattern allowed for one verified tenant."""
+        if not isinstance(organization_id, uuid.UUID):
+            raise TenantCacheKeyError("Organization cache patterns require a UUID.")
+        return f"{TenantCacheKey.PREFIX}:{organization_id}:*"
+
+    @staticmethod
+    def organization_domain_pattern(
+        organization_id: uuid.UUID, domain: str
+    ) -> str:
+        """Return a bounded pattern for one tenant-owned cache domain."""
+        if not isinstance(organization_id, uuid.UUID):
+            raise TenantCacheKeyError("Organization cache patterns require a UUID.")
+        normalized = _normalize_segment(domain)
+        return f"{TenantCacheKey.PREFIX}:{organization_id}:{normalized}:*"
+
+    @staticmethod
     def rate_limit_config(organization_id: uuid.UUID) -> str:
         return TenantCacheKey.build("rate-limit", "config", organization_id=organization_id)
 

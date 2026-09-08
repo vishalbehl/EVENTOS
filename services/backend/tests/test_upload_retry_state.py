@@ -34,6 +34,9 @@ async def test_retry_exhaustion_marks_nonterminal_upload_failed(monkeypatch):
         async def scalar(self, _statement):
             return row
 
+        async def flush(self):
+            return None
+
         async def commit(self):
             nonlocal committed
             committed = True

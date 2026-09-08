@@ -41,6 +41,13 @@ export default function SRRWorkspacePage() {
   const stations = srr.stations || [];
   const checkin = srr.checkin_node || {};
   const recentFiles = srr.recent_files || [];
+  const deliveryClass = (value: string) => value === "SYNCED"
+    ? "text-emerald-400"
+    : value === "FAILED" || value === "STALE"
+      ? "text-rose-400"
+      : value === "NOT_CONFIGURED"
+        ? "text-[var(--muted)]"
+        : "text-amber-400";
 
   return (
     <div className="mx-auto flex w-full max-w-[1720px] flex-col gap-6 pb-12">
@@ -57,7 +64,7 @@ export default function SRRWorkspacePage() {
             SRR Control & Fleet Manager
           </h1>
           <p className="text-xs font-semibold text-[var(--muted)]">
-            {stations.length} Stations · {checkin?.hostname || "1 Check-in Node"} · Operational Brain
+            {stations.length} Stations · {checkin?.hostname || "Check-in node not configured"} · Operational Brain
           </p>
         </div>
 
@@ -83,15 +90,28 @@ export default function SRRWorkspacePage() {
       {/* Top 2 Cards: SRR Master Status & Check-in Node Monitor */}
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         {/* SRR Status Banner */}
-        <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5 flex flex-col justify-between">
+        <div className={cn(
+          "rounded-2xl border p-5 flex flex-col justify-between",
+          srr.srr_status === "READY"
+            ? "border-emerald-500/30 bg-emerald-500/10"
+            : srr.srr_status === "OFFLINE"
+              ? "border-rose-500/30 bg-rose-500/10"
+              : "border-[var(--border)] bg-[var(--card)]"
+        )}>
           <div>
             <div className="flex items-center justify-between">
               <span className="font-mono text-[10px] font-black uppercase text-emerald-400">SRR CLUSTER STATE</span>
-              <span className="size-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className={cn(
+                "size-2 rounded-full",
+                srr.srr_status === "READY" ? "bg-emerald-400 animate-pulse" : srr.srr_status === "OFFLINE" ? "bg-rose-400" : "bg-[var(--muted)]"
+              )} />
             </div>
-            <div className="mt-2 text-2xl font-black text-emerald-300">● SRR READY</div>
+            <div className={cn(
+              "mt-2 text-2xl font-black",
+              srr.srr_status === "READY" ? "text-emerald-300" : srr.srr_status === "OFFLINE" ? "text-rose-300" : "text-[var(--muted)]"
+            )}>● {srr.srr_status || "UNKNOWN"}</div>
             <p className="mt-1 text-xs text-[var(--muted)]">
-              {stations.length} Stations Configured · Local Media Hub Active
+              {stations.length} Stations Configured · State derived from heartbeat and delivery evidence
             </p>
           </div>
           <div className="mt-4 flex items-center gap-2 font-mono text-[11px] text-emerald-400 font-bold">
@@ -109,25 +129,28 @@ export default function SRRWorkspacePage() {
                 CHECK-IN INTAKE NODE MONITOR
               </h3>
             </div>
-            <span className="font-mono text-[10px] font-bold text-emerald-400">● {checkin.status || "CONNECTED"}</span>
+            <span className={cn(
+              "font-mono text-[10px] font-bold",
+              checkin.status === "online" ? "text-emerald-400" : checkin.status === "offline" || checkin.status === "error" ? "text-rose-400" : "text-[var(--muted)]"
+            )}>● {checkin.status || "UNKNOWN"}</span>
           </div>
 
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 text-xs">
             <div>
               <span className="font-mono text-[9px] uppercase text-[var(--muted)]">Last QR Scan</span>
-              <div className="mt-0.5 font-mono font-bold text-[var(--text)]">{checkin.last_scan_time || "09:41:23"}</div>
+              <div className="mt-0.5 font-mono font-bold text-[var(--text)]">{checkin.last_scan_time || "No recent scan"}</div>
             </div>
             <div>
               <span className="font-mono text-[9px] uppercase text-[var(--muted)]">Speaker Scanned</span>
-              <div className="mt-0.5 font-bold text-[var(--text)]">{checkin.last_speaker || "Dr. Sharma"}</div>
+              <div className="mt-0.5 font-bold text-[var(--text)]">{checkin.last_speaker || "No speaker"}</div>
             </div>
             <div>
               <span className="font-mono text-[9px] uppercase text-[var(--muted)]">Assigned Station</span>
-              <div className="mt-0.5 font-mono font-bold text-[var(--acc)]">{checkin.assigned_station || "SRR-02"}</div>
+              <div className="mt-0.5 font-mono font-bold text-[var(--acc)]">{checkin.assigned_station || "No station assigned"}</div>
             </div>
             <div>
               <span className="font-mono text-[9px] uppercase text-[var(--muted)]">Intake State</span>
-              <div className="mt-0.5 font-bold text-emerald-400">{checkin.status_text || "READY FOR SPEAKER"}</div>
+              <div className="mt-0.5 font-bold text-emerald-400">{checkin.status_text || "Unknown"}</div>
             </div>
           </div>
         </div>
@@ -138,7 +161,7 @@ export default function SRRWorkspacePage() {
         <div className="flex items-center justify-between border-b border-[var(--border)] pb-4">
           <div>
             <h2 className="text-sm font-black uppercase tracking-wider text-[var(--text)]">
-              SRR STATIONS FLEET (5 WORKSTATIONS)
+              SRR STATIONS FLEET
             </h2>
             <p className="text-xs text-[var(--muted)]">Operator monitoring, speaker assignment, upload progress, and remote station intervention</p>
           </div>
@@ -167,7 +190,10 @@ export default function SRRWorkspacePage() {
                   <tr key={st.station_number} className="hover:bg-[var(--raised)] transition-colors">
                     <td className="p-3.5 font-mono font-bold text-[var(--text)]">
                       <div className="flex items-center gap-2">
-                        <span className="flex size-2 rounded-full bg-emerald-500" />
+                        <span className={cn(
+                          "flex size-2 rounded-full",
+                          st.status === "offline" ? "bg-rose-500" : st.status === "unknown" ? "bg-[var(--muted)]" : "bg-emerald-500"
+                        )} />
                         <span>{st.station_code}</span>
                       </div>
                       <div className="text-[10px] text-[var(--muted)]">{st.ip_address}</div>
@@ -180,11 +206,17 @@ export default function SRRWorkspacePage() {
                     <td className="p-3.5">
                       <span className={cn(
                         "rounded-lg px-2 py-0.5 font-mono text-[10px] font-black uppercase",
-                        isWorking
+                        st.status === "offline" || st.status === "error"
+                          ? "bg-rose-500/15 text-rose-400 border border-rose-500/30"
+                          : st.status === "locked"
+                            ? "bg-slate-500/15 text-slate-300 border border-slate-500/30"
+                            : isWorking
                           ? "bg-blue-500/15 text-blue-400 border border-blue-500/30"
                           : isUploading
-                          ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
-                          : "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                            ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                            : st.status === "unknown"
+                              ? "bg-slate-500/15 text-slate-300 border border-slate-500/30"
+                              : "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
                       )}>
                         ● {st.status_text}
                       </span>
@@ -195,11 +227,11 @@ export default function SRRWorkspacePage() {
                     </td>
 
                     <td className="p-3.5 font-mono text-[11px] text-[var(--text)]">
-                      {st.cpu_pct}% / {st.ram_pct}% / <span className={cn(st.disk_pct > 90 && "text-rose-400 font-bold")}>{st.disk_pct}%</span>
+                      {st.cpu_pct == null ? "—" : `${st.cpu_pct}%`} / {st.ram_pct == null ? "—" : `${st.ram_pct}%`} / <span className={cn(st.disk_pct != null && st.disk_pct > 90 && "text-rose-400 font-bold")}>{st.disk_pct == null ? "—" : `${st.disk_pct}%`}</span>
                     </td>
 
                     <td className="p-3.5 font-mono text-[10px] text-[var(--muted)]">
-                      v{st.agent_version}
+                      {st.agent_version ? `v${st.agent_version}` : "Unknown"}
                     </td>
 
                     <td className="p-3.5 text-right space-x-1.5">
@@ -267,17 +299,17 @@ export default function SRRWorkspacePage() {
                   <td className="p-3.5 font-mono text-[10px] text-[var(--muted)]">
                     {file.modified}
                   </td>
-                  <td className="p-3.5 text-center font-mono font-bold text-emerald-400">
+                  <td className={cn("p-3.5 text-center font-mono font-bold", deliveryClass(file.srr_status))}>
                     {file.srr_status}
                   </td>
-                  <td className="p-3.5 text-center font-mono font-bold text-emerald-400">
+                  <td className={cn("p-3.5 text-center font-mono font-bold", deliveryClass(file.tech_status))}>
                     {file.tech_status}
                   </td>
-                  <td className="p-3.5 text-center font-mono font-bold text-emerald-400">
+                  <td className={cn("p-3.5 text-center font-mono font-bold", deliveryClass(file.stage_status))}>
                     {file.stage_status}
                   </td>
                   <td className="p-3.5 text-right">
-                    <span className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-400">
+                    <span className={cn("rounded-lg border px-2 py-0.5 font-mono text-[10px] font-bold", file.distribution_status === "SYNCED" ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : file.distribution_status === "FAILED" || file.distribution_status === "STALE" ? "bg-rose-500/10 border-rose-500/30 text-rose-400" : "bg-amber-500/10 border-amber-500/30 text-amber-400")}>
                       ● {file.distribution_status}
                     </span>
                   </td>

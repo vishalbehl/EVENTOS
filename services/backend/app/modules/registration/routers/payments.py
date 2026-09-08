@@ -2,7 +2,7 @@ import logging
 import uuid
 from datetime import datetime
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,8 +13,9 @@ from app.modules.registration.models.promo_code import PromoCode
 from app.modules.registration.models.payment_transaction import PaymentTransaction
 from app.schemas.common import MessageResponse
 from app.core.dependencies.feature_gate import require_event_feature, require_event_operation
+from app.core.concurrency import require_if_match
 from app.modules.registration.application.commands import PaymentCommandService, PromoCodeCommandService
-from app.modules.registration.application.queries import PaymentTransactionQueryService
+from app.modules.registration.application.queries import PaymentTransactionQueryService, PromoCodeQueryService
 from app.schemas.cursor_pagination import CursorPage
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,7 @@ class PromoCodeResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    version: int = 1
 
     class Config:
         from_attributes = True
@@ -108,7 +110,7 @@ class TransactionResponse(BaseModel):
 # ── GET /config — read gateway settings ───────────────────────────────────
 
 @router.get("/config", response_model=PaymentConfigResponse)
-async def get_payment_config(event: CurrentEvent):
+async def get_payment_config(event: CurrentEvent, response: Response):
     settings = event.registration_settings or {}
 
     stripe_creds  = settings.get("stripe_credentials", {}) or {}
@@ -154,6 +156,8 @@ async def get_payment_config(event: CurrentEvent):
         },
     )
 
+    if response is not None:
+        response.headers["ETag"] = f'"{int(event.version or 1)}"'
     return PaymentConfigResponse(
         payment_enabled=settings.get("payment_enabled", False),
         active_gateway=settings.get("active_gateway", "simulated"),
@@ -181,19 +185,26 @@ async def update_payment_config(
     payload: PaymentConfigUpdateRequest,
     event: CurrentEvent,
     current_user: AdminOrAbove,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
 ):
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    effective_key = idempotency_key or f"legacy-payment-config-{uuid.uuid4()}"
     try:
-        await PaymentCommandService.update_config(
+        version = await PaymentCommandService.update_config(
             db,
             event=event,
             payload=payload,
             actor=current_user,
-            idempotency_key=idempotency_key,
+            idempotency_key=effective_key,
+            expected_version=expected_version,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if response is not None:
+        response.headers["ETag"] = f'"{version}"'
     return MessageResponse(message="Payment configuration updated successfully.")
 
 
@@ -204,13 +215,10 @@ async def list_promo_codes(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = (
-        select(PromoCode)
-        .where(PromoCode.event_id == event.id)
-        .order_by(PromoCode.created_at.desc())
+    return await PromoCodeQueryService(db).list_for_event(
+        organization_id=event.organization_id,
+        event_id=event.id,
     )
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
 
 
 @router.post(
@@ -240,8 +248,9 @@ async def update_promo_code(
     current_user: AdminOrAbove,
     db: AsyncSession = Depends(get_db),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
 ):
-    return await PromoCodeCommandService.update(db, event=event, promo_id=promo_id, payload=payload, actor=current_user, idempotency_key=idempotency_key)
+    return await PromoCodeCommandService.update(db, event=event, promo_id=promo_id, payload=payload, actor=current_user, idempotency_key=idempotency_key or f"legacy-promo-update-{uuid.uuid4()}", if_match=if_match)
 
 
 @router.delete(
@@ -255,8 +264,9 @@ async def delete_promo_code(
     current_user: AdminOrAbove,
     db: AsyncSession = Depends(get_db),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
 ):
-    await PromoCodeCommandService.delete(db, event=event, promo_id=promo_id, actor=current_user, idempotency_key=idempotency_key)
+    await PromoCodeCommandService.delete(db, event=event, promo_id=promo_id, actor=current_user, idempotency_key=idempotency_key or f"legacy-promo-delete-{uuid.uuid4()}", if_match=if_match)
     return MessageResponse(message="Promo code deleted successfully.")
 
 
@@ -274,29 +284,19 @@ async def list_transactions(
     page_size: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
-    from app.modules.registration.models.participant_registration import ParticipantRegistration  # noqa: PLC0415
-
-    stmt = (
-        select(PaymentTransaction, ParticipantRegistration)
-        .outerjoin(
-            ParticipantRegistration,
-            PaymentTransaction.registration_id == ParticipantRegistration.id,
-        )
-        .where(PaymentTransaction.event_id == event.id)
-        .order_by(PaymentTransaction.created_at.desc(), PaymentTransaction.id.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+    rows = await PaymentTransactionQueryService(db).list_legacy(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        page=page,
+        page_size=page_size,
     )
 
-    result = await db.execute(stmt)
-    rows = result.all()
-
     transactions = []
-    for tx, reg in rows:
+    for tx, registration_data in rows:
         reg_name = reg_email = None
-        if reg and reg.registration_data:
-            reg_name  = reg.registration_data.get("name")
-            reg_email = reg.registration_data.get("email")
+        if registration_data:
+            reg_name = registration_data.get("name")
+            reg_email = registration_data.get("email")
 
         transactions.append(
             TransactionResponse(

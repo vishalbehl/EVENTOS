@@ -141,7 +141,7 @@ export function useExportDownload(eventId: string) {
       console.error("Failed to parse auth storage token", e);
     }
 
-    const apiBase = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001") + "/api/v1";
+    const apiBase = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8002") + "/api/v1";
     const url = `${apiBase}/events/${eventId}/analytics/export?format=${format}`;
 
     const res = await fetch(url, {

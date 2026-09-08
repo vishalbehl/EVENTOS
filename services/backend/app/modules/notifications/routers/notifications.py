@@ -47,8 +47,16 @@ from app.modules.notifications.services.channel_delivery_service import (
     ChannelDeliveryService,
     batch_response,
 )
-from app.modules.notifications.application.queries import EmailLogQueryService
+from app.modules.notifications.application.queries import (
+    CommunicationDeliveryQueryService,
+    EmailLogQueryService,
+    EmailCampaignQueryService,
+    NotificationConfigurationQueryService,
+    EmailComponentQueryService,
+)
 from app.schemas.cursor_pagination import CursorPage
+from app.core.concurrency import require_if_match
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 from app.modules.notifications.tasks.channel_delivery_tasks import (
     dispatch_communication_batch,
 )
@@ -80,20 +88,9 @@ async def provider_channel_status(
     db: AsyncSession = Depends(get_db),
 ):
     """Return the selected organization's non-secret provider readiness."""
-    rows = (
-        await db.scalars(
-            select(OrganizationNotificationChannelConfig)
-            .where(
-                OrganizationNotificationChannelConfig.organization_id
-                == event.organization_id,
-                OrganizationNotificationChannelConfig.channel.in_(
-                    ["SMS", "WHATSAPP", "PUSH"]
-                ),
-                OrganizationNotificationChannelConfig.deleted_at.is_(None),
-            )
-            .order_by(OrganizationNotificationChannelConfig.channel)
-        )
-    ).all()
+    rows = await NotificationConfigurationQueryService(db).list_channels(
+        organization_id=event.organization_id
+    )
     by_channel = {row.channel: row for row in rows}
     return {
         "event_id": event.id,
@@ -257,33 +254,15 @@ async def list_provider_deliveries(
             "communications.push.send",
             user_id=actor.id,
         )
-    query = (
-        select(CommunicationDeliveryBatch)
-        .where(
-            CommunicationDeliveryBatch.organization_id
-            == event.organization_id,
-            CommunicationDeliveryBatch.event_id == event.id,
-            CommunicationDeliveryBatch.channel == channel,
-        )
-        .order_by(CommunicationDeliveryBatch.created_at.desc())
-        .limit(limit + 1)
+    rows, has_more, cursor_valid = await CommunicationDeliveryQueryService(db).list_batches(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        channel=channel,
+        cursor=cursor,
+        limit=limit,
     )
-    if cursor:
-        cursor_time = await db.scalar(
-            select(CommunicationDeliveryBatch.created_at).where(
-                CommunicationDeliveryBatch.id == cursor,
-                CommunicationDeliveryBatch.organization_id
-                == event.organization_id,
-                CommunicationDeliveryBatch.event_id == event.id,
-            )
-        )
-        if cursor_time is None:
-            raise HTTPException(status_code=404, detail="Cursor not found.")
-        query = query.where(
-            CommunicationDeliveryBatch.created_at < cursor_time
-        )
-    rows = (await db.scalars(query)).all()
-    has_more = len(rows) > limit
+    if not cursor_valid:
+        raise HTTPException(status_code=404, detail="Cursor not found.")
     page = rows[:limit]
     return {
         "items": [batch_response(row) for row in page],
@@ -406,16 +385,7 @@ async def list_components(
     """
     List reusable UI components. Returns global ones + event-specific ones.
     """
-    stmt = select(EmailComponent).where(
-        or_(
-            EmailComponent.event_id == event_id,
-            EmailComponent.event_id.is_(None)
-        ),
-        EmailComponent.deleted_at.is_(None),
-    ).order_by(EmailComponent.is_global.desc(), EmailComponent.name.asc())
-
-    result = await db.execute(stmt.execution_options(skip_tenant_filter=True))
-    return result.scalars().all()
+    return await EmailComponentQueryService(db).list_for_event(event_id=event_id)
 
 
 @router.post(
@@ -581,7 +551,12 @@ async def get_analytics(
     db: AsyncSession = Depends(get_db),
 ):
     """Fetch aggregated campaign analytics for the event."""
-    return await get_event_email_analytics(db, event.id, target_type=target_type)
+    return await get_event_email_analytics(
+        db,
+        event.id,
+        target_type=target_type,
+        organization_id=event.organization_id,
+    )
 
 
 @router.get("/logs", response_model=PaginatedEmailLogResponse, dependencies=[require_event_operation("communications.email.read")])
@@ -595,45 +570,10 @@ async def get_email_logs(
     db: AsyncSession = Depends(get_db),
 ):
     """Fetch email delivery logs with pagination and filtering."""
-    if target_type == "participant":
-        from app.modules.registration.models.participant import Participant
-        query = (
-            select(EmailLog)
-            .join(Participant, EmailLog.participant_id == Participant.id)
-            .where(Participant.event_id == event.id, Participant.deleted_at.is_(None))
-        )
-    else:
-        query = (
-            select(EmailLog)
-            .join(Speaker, EmailLog.speaker_id == Speaker.id)
-            .where(Speaker.event_id == event.id, Speaker.deleted_at.is_(None))
-        )
-
-    if campaign_id:
-        query = query.where(EmailLog.campaign_id == campaign_id)
-
-    if status:
-        query = query.where(EmailLog.status == status)
-
-    # Count total for pagination
-    count_query = select(func.count()).select_from(query.subquery())
-    total_result = await db.execute(count_query)
-    total = total_result.scalar_one()
-
-    # Apply pagination and sorting
-    result = await db.execute(
-        query.order_by(EmailLog.sent_at.desc())
-        .offset((page - 1) * limit)
-        .limit(limit)
+    return await EmailLogQueryService(db).list_legacy(
+        event_id=event.id, target_type=target_type,
+        campaign_id=campaign_id, status=status, page=page, limit=limit,
     )
-    logs = result.scalars().all()
-    
-    return {
-        "total": total,
-        "page": page,
-        "limit": limit,
-        "items": logs
-    }
 
 
 @router.get(
@@ -945,27 +885,12 @@ async def list_campaigns(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    q = select(EmailCampaign).where(
-        EmailCampaign.event_id == event.id,
-        EmailCampaign.target_type == target_type,
-        EmailCampaign.deleted_at.is_(None),
+    campaigns = await EmailCampaignQueryService(db).list_for_event(
+        event_id=event.id,
+        target_type=target_type,
+        user_id=current_user.id,
+        unrestricted=current_user.role in ["super_admin", "admin", "organiser"],
     )
-
-    # Restricted roles only see their own campaigns or those targeting their assigned nodes
-    if current_user.role not in ["super_admin", "admin", "organiser"]:
-        from app.modules.rbac.models.rbac import UserAccessNode
-        assigned_nodes = select(UserAccessNode.node_id).where(UserAccessNode.user_id == current_user.id)
-        
-        q = q.where(
-            or_(
-                EmailCampaign.created_by == current_user.id,
-                EmailCampaign.session_id_filter.in_(assigned_nodes),
-                EmailCampaign.room_id_filter.in_(assigned_nodes)
-            )
-        )
-
-    result = await db.execute(q.order_by(EmailCampaign.created_at.desc()))
-    campaigns = result.scalars().all()
     responses = []
     for campaign in campaigns:
         response = CampaignResponse.model_validate(campaign)
@@ -979,6 +904,25 @@ async def list_campaigns(
     return responses
 
 
+@router.get("/campaigns/page", response_model=CursorPage[dict], dependencies=[require_event_operation("communications.email.read")])
+async def list_campaigns_cursor(
+    event: CurrentEvent,
+    target_type: str = "speaker",
+    cursor: str | None = Query(None, max_length=512),
+    limit: int = Query(50, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await EmailCampaignQueryService(db).list_for_event_cursor(
+        event_id=event.id,
+        target_type=target_type,
+        user_id=current_user.id,
+        unrestricted=current_user.role in ["super_admin", "admin", "organiser"],
+        cursor=cursor,
+        limit=limit,
+    )
+
+
 @router.post(
     "/campaigns",
     response_model=CampaignResponse,
@@ -990,7 +934,18 @@ async def create_campaign(
     data: CampaignCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=8, max_length=200),
 ):
+    idem = await begin_idempotent(
+        db, organization_id=event.organization_id, actor_id=current_user.id,
+        operation="email_campaign.create",
+        key=idempotency_key or f"legacy-{uuid.uuid4()}",
+        payload=data.model_dump(mode="json"),
+    )
+    replay = replay_response(idem)
+    if replay is not None:
+        await db.commit()
+        return CampaignResponse.model_validate(replay[1])
     campaign = await EventCampaignMutationService.create(
         db,
         event=event,
@@ -999,7 +954,10 @@ async def create_campaign(
     )
     await db.commit()
     await db.refresh(campaign)
-    return CampaignResponse.model_validate(campaign)
+    response = CampaignResponse.model_validate(campaign)
+    await complete_idempotent(db, idem, response_status=201, response_body=response.model_dump(mode="json"), resource_id=campaign.id)
+    await db.commit()
+    return response
 
 
 @router.patch(
@@ -1013,17 +971,33 @@ async def update_campaign(
     event: CurrentEvent,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=8, max_length=200),
 ) -> CampaignResponse:
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    idem = await begin_idempotent(
+        db, organization_id=event.organization_id, actor_id=current_user.id,
+        operation="email_campaign.update", key=idempotency_key or f"legacy-{uuid.uuid4()}",
+        payload={"campaign_id": str(campaign_id), "version": expected_version, **data.model_dump(mode="json", exclude_unset=True)},
+    )
+    replay = replay_response(idem)
+    if replay is not None:
+        await db.commit()
+        return CampaignResponse.model_validate(replay[1])
     campaign, _, _ = await EventCampaignMutationService.update(
         db,
         event=event,
         campaign_id=campaign_id,
         payload=data,
         actor=current_user,
+        expected_version=expected_version,
     )
     await db.commit()
     await db.refresh(campaign)
-    return CampaignResponse.model_validate(campaign)
+    response = CampaignResponse.model_validate(campaign)
+    await complete_idempotent(db, idem, response_status=200, response_body=response.model_dump(mode="json"), resource_id=campaign.id)
+    await db.commit()
+    return response
 
 
 @router.post(
@@ -1038,17 +1012,30 @@ async def send_campaign_trigger(
     campaign_id: uuid.UUID,
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
+    if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=8, max_length=200),
+    actor: User = Depends(get_current_user),
 ):
     """Trigger the celery task for an email campaign."""
     await enforce_event_feature(db, event.organization_id, event.id, "FEAT_BULK_EMAIL")
     from app.modules.notifications.tasks.email_tasks import process_email_campaign
     
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    idem = await begin_idempotent(
+        db, organization_id=event.organization_id, actor_id=actor.id,
+        operation="email_campaign.send", key=idempotency_key or f"legacy-{uuid.uuid4()}",
+        payload={"campaign_id": str(campaign_id), "version": expected_version},
+    )
+    replay = replay_response(idem)
+    if replay is not None:
+        await db.commit()
+        return MessageResponse.model_validate(replay[1])
     result = await db.execute(
         select(EmailCampaign).where(
             EmailCampaign.id == campaign_id,
             EmailCampaign.event_id == event.id,
             EmailCampaign.deleted_at.is_(None),
-        )
+        ).with_for_update()
     )
     campaign = result.scalar_one_or_none()
     if not campaign:
@@ -1056,14 +1043,19 @@ async def send_campaign_trigger(
     
     if campaign.status != "draft":
         raise HTTPException(status_code=400, detail="Only draft campaigns can be sent.")
+    if expected_version is not None and campaign.version != expected_version:
+        raise HTTPException(status_code=409, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": campaign.version})
 
     campaign.status = "sending"
+    campaign.version += 1
+    response = MessageResponse(message="Campaign dispatch initiated.")
+    await complete_idempotent(db, idem, response_status=200, response_body=response.model_dump(mode="json"), resource_id=campaign.id)
     await db.commit()
 
     # Dispatch to Celery
     process_email_campaign.delay(str(campaign_id), str(event.organization_id))
     
-    return MessageResponse(message="Campaign dispatch initiated.")
+    return response
 
 
 @router.delete(
@@ -1076,22 +1068,38 @@ async def delete_campaign(
     event: CurrentEvent,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=8, max_length=200),
 ):
     """Delete an email campaign."""
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    idem = await begin_idempotent(
+        db, organization_id=event.organization_id, actor_id=current_user.id,
+        operation="email_campaign.archive", key=idempotency_key or f"legacy-{uuid.uuid4()}",
+        payload={"campaign_id": str(campaign_id), "version": expected_version},
+    )
+    replay = replay_response(idem)
+    if replay is not None:
+        await db.commit()
+        return MessageResponse.model_validate(replay[1])
     _, outcome = await EventCampaignMutationService.archive(
         db,
         event=event,
         campaign_id=campaign_id,
         actor=current_user,
+        expected_version=expected_version,
     )
     await db.commit()
-    return MessageResponse(
+    response = MessageResponse(
         message=(
             "Campaign is already archived."
             if outcome == "ALREADY_ARCHIVED"
             else "Campaign archived and remains recoverable."
         )
     )
+    await complete_idempotent(db, idem, response_status=200, response_body=response.model_dump(mode="json"), resource_id=campaign_id)
+    await db.commit()
+    return response
 
 
 @router.post(
@@ -1104,7 +1112,17 @@ async def restore_campaign(
     event: CurrentEvent,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=8, max_length=200),
 ) -> CampaignResponse:
+    idem = await begin_idempotent(
+        db, organization_id=event.organization_id, actor_id=current_user.id,
+        operation="email_campaign.restore", key=idempotency_key or f"legacy-{uuid.uuid4()}",
+        payload={"campaign_id": str(campaign_id)},
+    )
+    replay = replay_response(idem)
+    if replay is not None:
+        await db.commit()
+        return CampaignResponse.model_validate(replay[1])
     campaign, _ = await EventCampaignMutationService.restore(
         db,
         event=event,
@@ -1113,7 +1131,10 @@ async def restore_campaign(
     )
     await db.commit()
     await db.refresh(campaign)
-    return CampaignResponse.model_validate(campaign)
+    response = CampaignResponse.model_validate(campaign)
+    await complete_idempotent(db, idem, response_status=200, response_body=response.model_dump(mode="json"), resource_id=campaign.id)
+    await db.commit()
+    return response
 
 
 @router.get("/recipients", dependencies=[require_event_operation("communications.email.read")])

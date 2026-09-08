@@ -7,7 +7,9 @@ TERMINAL_UPLOAD_STATES = frozenset({"ready", "failed", "quarantined", "deleted"}
 UPLOAD_TRANSITIONS = {
     "created": {"uploading", "deleted"},
     "uploading": {"uploaded", "failed", "deleted"},
-    "uploaded": {"verifying", "failed", "deleted"},
+    # Integrity failures are terminal and can be established before the
+    # verification state is entered (for example, object size/checksum).
+    "uploaded": {"verifying", "quarantined", "failed", "deleted"},
     "verifying": {"scanning", "failed", "quarantined"},
     "scanning": {"processing", "ready", "failed", "quarantined"},
     "processing": {"ready", "failed", "quarantined"},

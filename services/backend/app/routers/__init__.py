@@ -121,8 +121,12 @@ api_router.include_router(permissions_admin_router)
 api_router.include_router(support_router.router)
 api_router.include_router(events.router)
 api_router.include_router(organisations.router)
-api_router.include_router(sessions.router)
+# Register fixed session-builder paths before the generic /sessions/{session_id}
+# routes. Starlette resolves matching routes in registration order, so placing
+# the dynamic router first makes values such as "builder-snapshot" fail UUID
+# validation instead of reaching their intended handlers.
 api_router.include_router(session_builder_router)
+api_router.include_router(sessions.router)
 api_router.include_router(tracks_router)
 api_router.include_router(speakers.router)
 api_router.include_router(abstracts_router)

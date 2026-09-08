@@ -162,7 +162,7 @@ export default function ParticipantRegistrationPage() {
   const downloadTemplate = async () => {
     try {
       const token = getStoredToken();
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001"}/api/v1/events/${eventId}/participants/import-template`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8002"}/api/v1/events/${eventId}/participants/import-template`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!response.ok) throw new Error(await response.text());

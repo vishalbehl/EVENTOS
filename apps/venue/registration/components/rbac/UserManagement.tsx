@@ -294,7 +294,7 @@ export function UserManagement() {
     setIsFetchingEvents(true);
     toast.info("Syncing system registry...", { id: "rbac-event-sync" });
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/events`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8002"}/api/v1/events`, { headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) {
         const data = await res.json();
         const eventList = Array.isArray(data) ? data : (data.data || []);
@@ -324,8 +324,8 @@ export function UserManagement() {
     setRooms([]);
     try {
       const [sRes, rRes] = await Promise.all([
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/events/${eventId}/sessions`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/events/${eventId}/rooms`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8002"}/api/v1/events/${eventId}/sessions`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8002"}/api/v1/events/${eventId}/rooms`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
       
       if (sRes.ok) {

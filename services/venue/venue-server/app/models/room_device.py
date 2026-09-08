@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import INET, MACADDR, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -65,11 +65,16 @@ class RoomDevice(Base):
     mac_address: Mapped[Optional[str]] = mapped_column(MACADDR, nullable=True)
     os_version: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     app_version: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    enrollment_token_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    enrollment_token_prefix: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    enrollment_token_revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_server_sequence: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # online | offline | error | maintenance
     status: Mapped[str] = mapped_column(
         String(30), nullable=False, default="offline", index=True
     )
+    scan_mode: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     last_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

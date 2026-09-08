@@ -14,14 +14,28 @@ from app.modules.identity.models.refresh_token import RefreshToken
 from app.modules.identity.models.user import User
 from app.modules.rbac.models.organization_member import OrganizationMember
 from app.core.cache import invalidate_organization
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 
 
 class OrganizationMemberCommandService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def resend_invitation(self, *, organization_id, member_id, actor, if_match: int) -> OrganizationMember:
+    async def resend_invitation(self, *, organization_id, member_id, actor, if_match: int, idempotency_key: str | None = None) -> OrganizationMember:
         try:
+            idem = None
+            if idempotency_key:
+                idem = await begin_idempotent(
+                    self.db, organization_id=organization_id, actor_id=actor.id,
+                    operation="organiser.member.invitation.resend", key=idempotency_key,
+                    payload={"member_id": str(member_id), "if_match": if_match},
+                )
+                if replay_response(idem) is not None:
+                    member = await self._member_by_id(organization_id, member_id)
+                    if member is None:
+                        raise RuntimeError("Completed invitation idempotency resource is missing.")
+                    await self.db.commit()
+                    return member
             member = await self._pending_member(organization_id, member_id)
             if member is None:
                 raise HTTPException(status_code=404, detail={"code": "PENDING_INVITATION_NOT_FOUND"})
@@ -31,6 +45,12 @@ class OrganizationMemberCommandService:
             member.version = int(member.version or 1) + 1
             self._audit(organization_id, actor, member.id, "ORGANIZATION_INVITATION_RESENT",
                         None, {"invite_email": member.invite_email, "version": member.version})
+            if idem is not None:
+                await complete_idempotent(
+                    self.db, idem, response_status=200,
+                    response_body={"id": str(member.id), "version": member.version},
+                    resource_id=member.id,
+                )
             await self.db.commit()
             await invalidate_organization(organization_id)
             return member
@@ -38,8 +58,21 @@ class OrganizationMemberCommandService:
             await self.db.rollback()
             raise
 
-    async def revoke_invitation(self, *, organization_id, member_id, actor, if_match: int) -> OrganizationMember:
+    async def revoke_invitation(self, *, organization_id, member_id, actor, if_match: int, idempotency_key: str | None = None) -> OrganizationMember:
         try:
+            idem = None
+            if idempotency_key:
+                idem = await begin_idempotent(
+                    self.db, organization_id=organization_id, actor_id=actor.id,
+                    operation="organiser.member.invitation.revoke", key=idempotency_key,
+                    payload={"member_id": str(member_id), "if_match": if_match},
+                )
+                if replay_response(idem) is not None:
+                    member = await self._member_by_id(organization_id, member_id)
+                    if member is None:
+                        raise RuntimeError("Completed invitation idempotency resource is missing.")
+                    await self.db.commit()
+                    return member
             member = await self._pending_member(organization_id, member_id)
             if member is None:
                 raise HTTPException(status_code=404, detail={"code": "PENDING_INVITATION_NOT_FOUND"})
@@ -50,6 +83,12 @@ class OrganizationMemberCommandService:
             member.version = int(member.version or 1) + 1
             self._audit(organization_id, actor, member.id, "ORGANIZATION_INVITATION_REVOKED",
                         old, {"is_active": False, "version": member.version})
+            if idem is not None:
+                await complete_idempotent(
+                    self.db, idem, response_status=200,
+                    response_body={"id": str(member.id), "version": member.version},
+                    resource_id=member.id,
+                )
             await self.db.commit()
             await invalidate_organization(organization_id)
             return member
@@ -57,8 +96,21 @@ class OrganizationMemberCommandService:
             await self.db.rollback()
             raise
 
-    async def update_role(self, *, organization_id, member_id, actor, org_role: str, if_match: int, reason: str) -> OrganizationMember:
+    async def update_role(self, *, organization_id, member_id, actor, org_role: str, if_match: int, reason: str, idempotency_key: str | None = None) -> OrganizationMember:
         try:
+            idem = None
+            if idempotency_key:
+                idem = await begin_idempotent(
+                    self.db, organization_id=organization_id, actor_id=actor.id,
+                    operation="organiser.member.role.update", key=idempotency_key,
+                    payload={"member_id": str(member_id), "org_role": org_role, "reason": reason, "if_match": if_match},
+                )
+                if replay_response(idem) is not None:
+                    member = await self._member_by_id(organization_id, member_id)
+                    if member is None:
+                        raise RuntimeError("Completed member idempotency resource is missing.")
+                    await self.db.commit()
+                    return member
             member = await self._accepted_member(organization_id, member_id)
             if member is None:
                 raise HTTPException(status_code=404, detail={"code": "MEMBER_NOT_FOUND"})
@@ -77,6 +129,12 @@ class OrganizationMemberCommandService:
             self._audit(organization_id, actor, member.id, "ORGANIZATION_MEMBER_ROLE_CHANGED",
                         {"org_role": old_role, "version": if_match},
                         {"org_role": org_role, "reason": reason, "version": member.version})
+            if idem is not None:
+                await complete_idempotent(
+                    self.db, idem, response_status=200,
+                    response_body={"id": str(member.id), "org_role": member.org_role, "version": member.version},
+                    resource_id=member.id,
+                )
             await self.db.commit()
             await invalidate_organization(organization_id)
             return member
@@ -84,8 +142,21 @@ class OrganizationMemberCommandService:
             await self.db.rollback()
             raise
 
-    async def update_status(self, *, organization_id, member_id, actor, is_active: bool, if_match: int, reason: str) -> OrganizationMember:
+    async def update_status(self, *, organization_id, member_id, actor, is_active: bool, if_match: int, reason: str, idempotency_key: str | None = None) -> OrganizationMember:
         try:
+            idem = None
+            if idempotency_key:
+                idem = await begin_idempotent(
+                    self.db, organization_id=organization_id, actor_id=actor.id,
+                    operation="organiser.member.status.update", key=idempotency_key,
+                    payload={"member_id": str(member_id), "is_active": is_active, "reason": reason, "if_match": if_match},
+                )
+                if replay_response(idem) is not None:
+                    member = await self._member_by_id(organization_id, member_id)
+                    if member is None:
+                        raise RuntimeError("Completed member idempotency resource is missing.")
+                    await self.db.commit()
+                    return member
             member = await self._accepted_member(organization_id, member_id)
             if member is None:
                 raise HTTPException(status_code=404, detail={"code": "MEMBER_NOT_FOUND"})
@@ -108,6 +179,12 @@ class OrganizationMemberCommandService:
             action = "ORGANIZATION_MEMBER_REACTIVATED" if is_active else "ORGANIZATION_MEMBER_SUSPENDED"
             self._audit(organization_id, actor, member.id, action, old,
                         {"is_active": is_active, "reason": reason, "version": member.version})
+            if idem is not None:
+                await complete_idempotent(
+                    self.db, idem, response_status=200,
+                    response_body={"id": str(member.id), "is_active": member.is_active, "version": member.version},
+                    resource_id=member.id,
+                )
             await self.db.commit()
             await invalidate_organization(organization_id)
             return member
@@ -183,6 +260,12 @@ class OrganizationMemberCommandService:
             OrganizationMember.id == member_id,
             OrganizationMember.organization_id == organization_id,
             OrganizationMember.accepted_at.is_not(None),
+        ).with_for_update())
+
+    async def _member_by_id(self, organization_id, member_id):
+        return await self.db.scalar(select(OrganizationMember).where(
+            OrganizationMember.id == member_id,
+            OrganizationMember.organization_id == organization_id,
         ).with_for_update())
 
     @staticmethod

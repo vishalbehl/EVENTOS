@@ -8,6 +8,8 @@ from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
+from app.schemas.cursor_pagination import CursorPage, decode_cursor, encode_cursor, bounded_page_size
 
 from app.modules.agenda.models import Room, Session
 from app.modules.events.models.event import Event
@@ -23,7 +25,13 @@ from app.modules.integrations.models.integrations_domain_tables import (
 )
 from app.modules.integrations.models.webhook import Webhook
 from app.modules.developer.models.developer_registry import ApiKey
-from app.modules.platform.models.organization_console import OrganizationLocation
+from app.modules.platform.models.organization_console import (
+    OrganizationLocation,
+    OrganizationDocument,
+    OrganizationApprovalRule,
+    OrganizationAttentionState,
+)
+from app.modules.files.models.file import Asset
 from app.modules.platform.models.organization_console import (
     CommercialAccessRequest,
     OrganizationBrandProfile,
@@ -37,7 +45,11 @@ from app.modules.platform.models.organization_console import (
 from app.modules.platform.models.feature import FeatureCatalog
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
 from app.modules.billing.models.subscription import Addon, OrganizationAddon
+from app.modules.billing.models.subscription import SubscriptionTransaction
+from app.modules.billing.models.billing_domain_tables import Invoice, OrganizationBillingProfile, PaymentMethod
+from app.modules.billing.models.org_credits import OrgCredit
 from app.modules.rbac.models.organization_member import OrganizationMember
+from app.modules.rbac.models.rbac import Permission, Role, RolePermission, UserRoleAssignment
 from app.modules.identity.models.user import User
 from app.modules.rbac.models.user_assignment import UserEventAssignment
 
@@ -620,6 +632,154 @@ class OrganiserTeamQueryService:
             })
         return items, total
 
+    async def preview_member_access_loss(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        team_id: uuid.UUID,
+        member_id: uuid.UUID,
+    ) -> dict | None:
+        """Batch the read-only impact calculation for removing a team member."""
+        team = await self.db.execute(
+            select(OrganizationTeam.id, OrganizationTeam.owner_member_id).where(
+                OrganizationTeam.id == team_id,
+                OrganizationTeam.organization_id == organization_id,
+                OrganizationTeam.deleted_at.is_(None),
+            )
+        )
+        team_row = team.one_or_none()
+        member_exists = await self.db.scalar(
+            select(OrganizationMember.id).where(
+                OrganizationMember.id == member_id,
+                OrganizationMember.organization_id == organization_id,
+            )
+        )
+        membership_exists = await self.db.scalar(
+            select(OrganizationTeamMember.id).where(
+                OrganizationTeamMember.organization_id == organization_id,
+                OrganizationTeamMember.team_id == team_id,
+                OrganizationTeamMember.organization_member_id == member_id,
+            )
+        )
+        if not team_row or not member_exists or not membership_exists:
+            return None
+
+        other_team_ids = list((await self.db.scalars(
+            select(OrganizationTeamMember.team_id).where(
+                OrganizationTeamMember.organization_id == organization_id,
+                OrganizationTeamMember.organization_member_id == member_id,
+                OrganizationTeamMember.team_id != team_id,
+            )
+        )).all())
+        assignments = (await self.db.execute(
+            select(OrganizationTeamEvent.event_id, OrganizationTeamEvent.permissions, Event.name)
+            .join(Event, Event.id == OrganizationTeamEvent.event_id)
+            .where(
+                OrganizationTeamEvent.organization_id == organization_id,
+                OrganizationTeamEvent.team_id == team_id,
+                Event.organization_id == organization_id,
+                Event.deleted_at.is_(None),
+            )
+        )).all()
+        event_ids = [row.event_id for row in assignments]
+        retained_by_event: dict[uuid.UUID, set[str]] = {event_id: set() for event_id in event_ids}
+        if other_team_ids and event_ids:
+            permissions = (await self.db.execute(
+                select(OrganizationTeamEvent.event_id, OrganizationTeamEvent.permissions).where(
+                    OrganizationTeamEvent.organization_id == organization_id,
+                    OrganizationTeamEvent.event_id.in_(event_ids),
+                    OrganizationTeamEvent.team_id.in_(other_team_ids),
+                )
+            )).all()
+            for row in permissions:
+                retained_by_event[row.event_id].update(
+                    key for key, enabled in (row.permissions or {}).items() if enabled
+                )
+        impacts = []
+        for assignment in assignments:
+            granted = {key for key, enabled in (assignment.permissions or {}).items() if enabled}
+            lost = sorted(granted - retained_by_event.get(assignment.event_id, set()))
+            if lost:
+                impacts.append({
+                    "event_id": str(assignment.event_id),
+                    "event_name": assignment.name,
+                    "lost_capabilities": lost,
+                })
+        return {
+            "team_id": str(team_row.id),
+            "member_id": str(member_id),
+            "requires_owner_reassignment": team_row.owner_member_id == member_id,
+            "impacted_events": impacts,
+        }
+
+    async def preview_event_access_loss(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        team_id: uuid.UUID,
+        event_id: uuid.UUID,
+    ) -> dict | None:
+        """Batch the read-only impact calculation for removing a team event grant."""
+        assignment = (await self.db.execute(
+            select(OrganizationTeamEvent.permissions, Event.name)
+            .join(Event, Event.id == OrganizationTeamEvent.event_id)
+            .where(
+                OrganizationTeamEvent.organization_id == organization_id,
+                OrganizationTeamEvent.team_id == team_id,
+                OrganizationTeamEvent.event_id == event_id,
+                Event.organization_id == organization_id,
+                Event.deleted_at.is_(None),
+            )
+        )).one_or_none()
+        if assignment is None:
+            return None
+
+        member_ids = list((await self.db.scalars(
+            select(OrganizationTeamMember.organization_member_id).where(
+                OrganizationTeamMember.organization_id == organization_id,
+                OrganizationTeamMember.team_id == team_id,
+            )
+        )).all())
+        other_memberships = (await self.db.execute(
+            select(
+                OrganizationTeamMember.organization_member_id,
+                OrganizationTeamMember.team_id,
+            ).where(
+                OrganizationTeamMember.organization_id == organization_id,
+                OrganizationTeamMember.organization_member_id.in_(member_ids),
+                OrganizationTeamMember.team_id != team_id,
+            )
+        )).all() if member_ids else []
+        other_team_ids = {row.team_id for row in other_memberships}
+        permissions_by_team: dict[uuid.UUID, set[str]] = {team_id: set() for team_id in other_team_ids}
+        if other_team_ids:
+            permission_rows = (await self.db.execute(
+                select(OrganizationTeamEvent.team_id, OrganizationTeamEvent.permissions).where(
+                    OrganizationTeamEvent.organization_id == organization_id,
+                    OrganizationTeamEvent.event_id == event_id,
+                    OrganizationTeamEvent.team_id.in_(other_team_ids),
+                )
+            )).all()
+            for row in permission_rows:
+                permissions_by_team[row.team_id].update(
+                    key for key, enabled in (row.permissions or {}).items() if enabled
+                )
+        retained_by_member: dict[uuid.UUID, set[str]] = {member_id: set() for member_id in member_ids}
+        for row in other_memberships:
+            retained_by_member[row.organization_member_id].update(permissions_by_team.get(row.team_id, set()))
+        granted = {key for key, enabled in (assignment.permissions or {}).items() if enabled}
+        impacts = []
+        for member_id in member_ids:
+            lost = sorted(granted - retained_by_member.get(member_id, set()))
+            if lost:
+                impacts.append({"member_id": str(member_id), "lost_capabilities": lost})
+        return {
+            "team_id": str(team_id),
+            "event_id": str(event_id),
+            "event_name": assignment.name,
+            "impacted_members": impacts,
+        }
+
 
 class OrganiserMemberQueryService:
     """Bounded organization member projection with batched event assignments."""
@@ -629,15 +789,13 @@ class OrganiserMemberQueryService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def list_members(
-        self,
+    @staticmethod
+    def _member_filters(
         *,
         organization_id: uuid.UUID,
-        page: int,
-        page_size: int,
         search: str | None,
         member_status: str | None,
-    ) -> tuple[list[dict], int]:
+    ) -> list:
         filters = [OrganizationMember.organization_id == organization_id]
         if search and search.strip():
             term = f"%{search.strip()}%"
@@ -657,39 +815,9 @@ class OrganiserMemberQueryService:
             filters.extend([OrganizationMember.accepted_at.is_(None), OrganizationMember.is_active.is_(True)])
         elif member_status == "accepted":
             filters.append(OrganizationMember.accepted_at.is_not(None))
-        total = int(
-            await self.db.scalar(
-                select(func.count(OrganizationMember.id))
-                .outerjoin(User, OrganizationMember.user_id == User.id)
-                .where(*filters)
-            )
-            or 0
-        )
-        rows = (
-            await self.db.execute(
-                select(
-                    OrganizationMember.id,
-                    OrganizationMember.user_id,
-                    OrganizationMember.org_role,
-                    OrganizationMember.invite_email,
-                    OrganizationMember.accepted_at,
-                    OrganizationMember.invited_at,
-                    OrganizationMember.is_active,
-                    OrganizationMember.suspension_reason,
-                    OrganizationMember.version,
-                    User.first_name,
-                    User.last_name,
-                    User.email,
-                    User.is_2fa_enabled,
-                    User.last_login_at,
-                )
-                .outerjoin(User, OrganizationMember.user_id == User.id)
-                .where(*filters)
-                .order_by(OrganizationMember.invited_at.desc(), OrganizationMember.id)
-                .offset((page - 1) * page_size)
-                .limit(min(page_size, self.MAX_PAGE_SIZE))
-            )
-        ).all()
+        return filters
+
+    async def _serialize_rows(self, rows, *, organization_id: uuid.UUID) -> list[dict]:
         user_ids = [row.user_id for row in rows if row.user_id]
         event_ids_by_user: dict[uuid.UUID, list[str]] = {}
         if user_ids:
@@ -725,7 +853,116 @@ class OrganiserMemberQueryService:
                 "suspension_reason": row.suspension_reason,
                 "version": row.version,
             })
-        return items, total
+        return items
+
+    async def list_members(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        page: int,
+        page_size: int,
+        search: str | None,
+        member_status: str | None,
+    ) -> tuple[list[dict], int]:
+        filters = self._member_filters(
+            organization_id=organization_id,
+            search=search,
+            member_status=member_status,
+        )
+        total = int(
+            await self.db.scalar(
+                select(func.count(OrganizationMember.id))
+                .outerjoin(User, OrganizationMember.user_id == User.id)
+                .where(*filters)
+            )
+            or 0
+        )
+        rows = (
+            await self.db.execute(
+                select(
+                    OrganizationMember.id,
+                    OrganizationMember.user_id,
+                    OrganizationMember.org_role,
+                    OrganizationMember.invite_email,
+                    OrganizationMember.accepted_at,
+                    OrganizationMember.invited_at,
+                    OrganizationMember.is_active,
+                    OrganizationMember.suspension_reason,
+                    OrganizationMember.version,
+                    User.first_name,
+                    User.last_name,
+                    User.email,
+                    User.is_2fa_enabled,
+                    User.last_login_at,
+                )
+                .outerjoin(User, OrganizationMember.user_id == User.id)
+                .where(*filters)
+                .order_by(OrganizationMember.invited_at.desc(), OrganizationMember.id)
+                .offset((page - 1) * page_size)
+                .limit(min(page_size, self.MAX_PAGE_SIZE))
+            )
+        ).all()
+        return await self._serialize_rows(rows, organization_id=organization_id), total
+
+    async def list_members_cursor(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        cursor: str | None,
+        limit: int,
+        search: str | None,
+        member_status: str | None,
+    ) -> CursorPage[dict]:
+        """Cursor page for members using the stable invited-at/id key."""
+        bounded_limit = bounded_page_size(limit, default=50, maximum=self.MAX_PAGE_SIZE)
+        filters = self._member_filters(
+            organization_id=organization_id,
+            search=search,
+            member_status=member_status,
+        )
+        if cursor:
+            position = decode_cursor(cursor)
+            filters.append(
+                or_(
+                    OrganizationMember.invited_at < position.occurred_at,
+                    and_(
+                        OrganizationMember.invited_at == position.occurred_at,
+                        OrganizationMember.id < position.record_id,
+                    ),
+                )
+            )
+        statement = select(
+            OrganizationMember.id,
+            OrganizationMember.user_id,
+            OrganizationMember.org_role,
+            OrganizationMember.invite_email,
+            OrganizationMember.accepted_at,
+            OrganizationMember.invited_at,
+            OrganizationMember.is_active,
+            OrganizationMember.suspension_reason,
+            OrganizationMember.version,
+            User.first_name,
+            User.last_name,
+            User.email,
+            User.is_2fa_enabled,
+            User.last_login_at,
+        ).outerjoin(User, OrganizationMember.user_id == User.id).where(*filters)
+        rows = (await self.db.execute(
+            statement.order_by(
+                OrganizationMember.invited_at.desc(), OrganizationMember.id.desc()
+            ).limit(bounded_limit + 1)
+        )).all()
+        page_rows = rows[:bounded_limit]
+        has_next = len(rows) > bounded_limit
+        next_cursor = (
+            encode_cursor(page_rows[-1].invited_at, page_rows[-1].id)
+            if has_next and page_rows else None
+        )
+        return CursorPage(
+            items=await self._serialize_rows(page_rows, organization_id=organization_id),
+            next_cursor=next_cursor,
+            has_next=has_next,
+        )
 
 
 class OrganiserEntitlementQueryService:
@@ -929,6 +1166,517 @@ class OrganiserReportQueryService:
         ]
 
 
+class OrganiserDashboardQueryService:
+    """Single-query organization dashboard KPI projection."""
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def metrics(self, *, organization_id: uuid.UUID) -> dict[str, int | float]:
+        event_scope = select(Event.id).where(
+            Event.organization_id == organization_id,
+            Event.deleted_at.is_(None),
+        )
+        team_members = select(func.count(OrganizationMember.id)).where(
+            OrganizationMember.organization_id == organization_id,
+            OrganizationMember.user_id.is_not(None),
+            OrganizationMember.is_active.is_(True),
+        ).scalar_subquery()
+        registrations = select(func.count(Participant.id)).where(
+            Participant.event_id.in_(event_scope)
+        ).scalar_subquery()
+        revenue = select(func.coalesce(func.sum(PaymentTransaction.amount), 0.0)).where(
+            PaymentTransaction.event_id.in_(event_scope),
+            PaymentTransaction.status.in_(["completed", "captured", "success", "paid"]),
+        ).scalar_subquery()
+        storage = select(func.coalesce(func.sum(PresentationFile.file_size_bytes), 0)).where(
+            PresentationFile.event_id.in_(event_scope),
+            PresentationFile.deleted_at.is_(None),
+        ).scalar_subquery()
+        row = (await self.db.execute(select(
+            team_members.label("team_members"),
+            registrations.label("total_registrations"),
+            revenue.label("total_revenue"),
+            storage.label("storage_used_bytes"),
+        ))).one()
+        return {
+            "team_members": int(row.team_members or 0),
+            "total_registrations": int(row.total_registrations or 0),
+            "total_revenue": float(row.total_revenue or 0.0),
+            "storage_used_bytes": int(row.storage_used_bytes or 0),
+        }
+
+
+class OrganiserBillingQueryService:
+    """Bounded, explicit billing list projections for the organiser console."""
+
+    MAX_PAGE_SIZE = 100
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def get_invoice_for_download(
+        self, *, organization_id: uuid.UUID, invoice_id: uuid.UUID
+    ) -> Invoice | None:
+        return await self.db.scalar(
+            select(Invoice).options(load_only(
+                Invoice.id, Invoice.invoice_number, Invoice.stripe_invoice_id,
+                Invoice.issued_at, Invoice.due_date, Invoice.status,
+                Invoice.amount, Invoice.gst_amount, Invoice.total_amount_inr,
+                Invoice.currency,
+            )).where(
+                Invoice.id == invoice_id,
+                Invoice.organization_id == organization_id,
+            )
+        )
+
+    async def get_tax_profile(
+        self, *, organization_id: uuid.UUID
+    ) -> tuple[OrganizationBillingProfile | None, SubscriptionTransaction | None]:
+        """Load the authoritative billing profile and a bounded legacy fallback."""
+        profile = await self.db.scalar(
+            select(OrganizationBillingProfile).options(load_only(
+                OrganizationBillingProfile.billing_name,
+                OrganizationBillingProfile.billing_email,
+                OrganizationBillingProfile.billing_phone,
+                OrganizationBillingProfile.gst_number,
+                OrganizationBillingProfile.country,
+                OrganizationBillingProfile.currency,
+                OrganizationBillingProfile.version,
+                OrganizationBillingProfile.updated_at,
+            )).where(OrganizationBillingProfile.organization_id == organization_id)
+        )
+        if profile is not None:
+            return profile, None
+
+        latest = await self.db.scalar(
+            select(SubscriptionTransaction).options(load_only(
+                SubscriptionTransaction.billing_name,
+                SubscriptionTransaction.billing_email,
+                SubscriptionTransaction.billing_phone,
+                SubscriptionTransaction.gst_number,
+                SubscriptionTransaction.currency,
+                SubscriptionTransaction.updated_at,
+                SubscriptionTransaction.created_at,
+            )).where(
+                SubscriptionTransaction.organization_id == organization_id
+            ).order_by(
+                SubscriptionTransaction.created_at.desc(),
+                SubscriptionTransaction.id.desc(),
+            ).limit(1)
+        )
+        return None, latest
+
+    @staticmethod
+    def _page(page: int, page_size: int) -> tuple[int, int]:
+        bounded = min(max(page_size, 1), OrganiserBillingQueryService.MAX_PAGE_SIZE)
+        return max(page, 1), bounded
+
+    async def list_invoices(
+        self, *, organization_id: uuid.UUID, page: int, page_size: int, receipts_only: bool = False
+    ) -> tuple[list[Invoice], int]:
+        page, page_size = self._page(page, page_size)
+        filters = [Invoice.organization_id == organization_id]
+        if receipts_only:
+            filters.append(Invoice.paid_at.is_not(None))
+        total = int(await self.db.scalar(select(func.count(Invoice.id)).where(*filters)) or 0)
+        rows = list((await self.db.scalars(
+            select(Invoice).options(load_only(
+                Invoice.id, Invoice.invoice_number, Invoice.stripe_invoice_id,
+                Invoice.issued_at, Invoice.due_date, Invoice.paid_at,
+                Invoice.status, Invoice.total_amount_inr, Invoice.amount,
+                Invoice.gst_amount, Invoice.currency, Invoice.version,
+            )).where(*filters)
+            .order_by(Invoice.issued_at.desc(), Invoice.id.desc())
+            .offset((page - 1) * page_size).limit(page_size)
+        )).all())
+        return rows, total
+
+
+    async def list_transactions(
+        self, *, organization_id: uuid.UUID, page: int, page_size: int
+    ) -> tuple[list[SubscriptionTransaction], int]:
+        page, page_size = self._page(page, page_size)
+        filters = [SubscriptionTransaction.organization_id == organization_id]
+        total = int(await self.db.scalar(select(func.count(SubscriptionTransaction.id)).where(*filters)) or 0)
+        rows = list((await self.db.scalars(
+            select(SubscriptionTransaction).options(load_only(
+                SubscriptionTransaction.id, SubscriptionTransaction.provider_transaction_id,
+                SubscriptionTransaction.created_at, SubscriptionTransaction.provider,
+                SubscriptionTransaction.status, SubscriptionTransaction.amount,
+                SubscriptionTransaction.refunded_amount, SubscriptionTransaction.currency,
+                SubscriptionTransaction.reconciliation_status,
+            )).where(*filters)
+            .order_by(SubscriptionTransaction.created_at.desc(), SubscriptionTransaction.id.desc())
+            .offset((page - 1) * page_size).limit(page_size)
+        )).all())
+        return rows, total
+
+    async def list_payment_methods(
+        self, *, organization_id: uuid.UUID, page: int, page_size: int
+    ) -> tuple[list[PaymentMethod], int]:
+        page, page_size = self._page(page, page_size)
+        filters = [PaymentMethod.organization_id == organization_id]
+        total = int(await self.db.scalar(select(func.count(PaymentMethod.id)).where(*filters)) or 0)
+        rows = list((await self.db.scalars(
+            select(PaymentMethod).options(load_only(
+                PaymentMethod.id, PaymentMethod.provider, PaymentMethod.card_brand,
+                PaymentMethod.card_last4, PaymentMethod.is_default,
+                PaymentMethod.created_at,
+            )).where(*filters)
+            .order_by(PaymentMethod.is_default.desc(), PaymentMethod.created_at.desc(), PaymentMethod.id.desc())
+            .offset((page - 1) * page_size).limit(page_size)
+        )).all())
+        return rows, total
+
+    async def list_credits(
+        self, *, organization_id: uuid.UUID, page: int, page_size: int
+    ) -> tuple[list[OrgCredit], int]:
+        page, page_size = self._page(page, page_size)
+        filters = [OrgCredit.organization_id == organization_id]
+        total = int(await self.db.scalar(select(func.count(OrgCredit.id)).where(*filters)) or 0)
+        rows = list((await self.db.scalars(
+            select(OrgCredit).options(load_only(
+                OrgCredit.id, OrgCredit.amount_inr, OrgCredit.credit_type,
+                OrgCredit.reason, OrgCredit.is_used, OrgCredit.applied_at,
+                OrgCredit.expires_at,
+            )).where(*filters)
+            .order_by(OrgCredit.applied_at.desc(), OrgCredit.id.desc())
+            .offset((page - 1) * page_size).limit(page_size)
+        )).all())
+        return rows, total
+
+
+class OrganiserDocumentQueryService:
+    """Bounded current-document projection for the organiser console."""
+
+    MAX_PAGE_SIZE = 100
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def list_history(
+        self, *, organization_id: uuid.UUID, document_id: uuid.UUID
+    ) -> list[tuple] | None:
+        """Return one document group's bounded history as an explicit projection."""
+        group_id = await self.db.scalar(
+            select(OrganizationDocument.document_group_id).where(
+                OrganizationDocument.id == document_id,
+                OrganizationDocument.organization_id == organization_id,
+            )
+        )
+        if group_id is None:
+            return None
+        return (await self.db.execute(
+            select(
+                OrganizationDocument.id,
+                OrganizationDocument.revision,
+                OrganizationDocument.name,
+                OrganizationDocument.verification_status,
+                OrganizationDocument.is_current,
+                OrganizationDocument.created_at,
+                Asset.id.label("asset_id"),
+                Asset.processing_status.label("asset_processing_status"),
+                User.first_name,
+                User.last_name,
+                User.email,
+            )
+            .join(Asset, Asset.id == OrganizationDocument.asset_id)
+            .join(User, User.id == OrganizationDocument.created_by)
+            .where(
+                OrganizationDocument.organization_id == organization_id,
+                OrganizationDocument.document_group_id == group_id,
+            )
+            .order_by(OrganizationDocument.revision.desc(), OrganizationDocument.id.desc())
+            .limit(self.MAX_PAGE_SIZE)
+        )).all()
+
+    async def list_current(
+        self, *, organization_id: uuid.UUID, page: int, page_size: int
+    ) -> tuple[list[tuple], int]:
+        bounded = min(max(page_size, 1), self.MAX_PAGE_SIZE)
+        page = max(page, 1)
+        filters = [
+            OrganizationDocument.organization_id == organization_id,
+            OrganizationDocument.archived_at.is_(None),
+            OrganizationDocument.is_current.is_(True),
+        ]
+        total = int(await self.db.scalar(
+            select(func.count(OrganizationDocument.id)).where(*filters)
+        ) or 0)
+        rows = (await self.db.execute(
+            select(
+                OrganizationDocument.id,
+                OrganizationDocument.document_group_id,
+                OrganizationDocument.revision,
+                OrganizationDocument.name,
+                OrganizationDocument.document_type,
+                OrganizationDocument.expires_at,
+                OrganizationDocument.verification_status,
+                OrganizationDocument.version,
+                OrganizationDocument.updated_at,
+                Asset.id.label("asset_id"),
+                Asset.processing_status,
+                User.first_name,
+                User.last_name,
+                User.email,
+            )
+            .join(Asset, Asset.id == OrganizationDocument.asset_id)
+            .join(User, User.id == OrganizationDocument.created_by)
+            .where(*filters)
+            .order_by(OrganizationDocument.updated_at.desc(), OrganizationDocument.id.desc())
+            .offset((page - 1) * bounded)
+            .limit(bounded)
+        )).all()
+        return rows, total
+
+
+class OrganiserApprovalRuleQueryService:
+    """Bounded tenant-scoped approval-rule projection."""
+
+    MAX_PAGE_SIZE = 100
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def list_rules(
+        self, *, organization_id: uuid.UUID, page: int, page_size: int
+    ) -> tuple[list[OrganizationApprovalRule], int]:
+        bounded = min(max(page_size, 1), self.MAX_PAGE_SIZE)
+        page = max(page, 1)
+        filters = [
+            OrganizationApprovalRule.organization_id == organization_id,
+            OrganizationApprovalRule.archived_at.is_(None),
+        ]
+        total = int(await self.db.scalar(
+            select(func.count(OrganizationApprovalRule.id)).where(*filters)
+        ) or 0)
+        rows = list((await self.db.scalars(
+            select(OrganizationApprovalRule).options(load_only(
+                OrganizationApprovalRule.id,
+                OrganizationApprovalRule.name,
+                OrganizationApprovalRule.domain,
+                OrganizationApprovalRule.event_id,
+                OrganizationApprovalRule.approver_chain,
+                OrganizationApprovalRule.conditions,
+                OrganizationApprovalRule.status,
+                OrganizationApprovalRule.version,
+            )).where(*filters)
+            .order_by(OrganizationApprovalRule.name, OrganizationApprovalRule.id)
+            .offset((page - 1) * bounded)
+            .limit(bounded)
+        )).all())
+        return rows, total
+
+
+class OrganiserAccessQueryService:
+    """Tenant-scoped projections for organiser role and assignment screens."""
+
+    MAX_PAGE_SIZE = 100
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    @staticmethod
+    def _page(page: int, page_size: int) -> tuple[int, int]:
+        return max(page, 1), min(max(page_size, 1), OrganiserAccessQueryService.MAX_PAGE_SIZE)
+
+    async def list_roles(
+        self, *, organization_id: uuid.UUID, page: int, page_size: int, search: str | None
+    ) -> tuple[list[tuple], int]:
+        page, page_size = self._page(page, page_size)
+        filters = [
+            Role.deleted_at.is_(None),
+            or_(Role.organization_id == organization_id, Role.organization_id.is_(None)),
+        ]
+        if search and search.strip():
+            term = f"%{search.strip()}%"
+            filters.append(or_(Role.name.ilike(term), Role.description.ilike(term)))
+        total = int(await self.db.scalar(select(func.count(Role.id)).where(*filters)) or 0)
+        rows = (await self.db.execute(
+            select(
+                Role.id,
+                Role.name,
+                Role.description,
+                Role.is_system_role,
+                Role.version,
+                func.count(UserRoleAssignment.id).label("users_count"),
+            ).outerjoin(
+                UserRoleAssignment,
+                and_(
+                    UserRoleAssignment.role_id == Role.id,
+                    UserRoleAssignment.organization_id == organization_id,
+                ),
+            ).where(*filters)
+            .group_by(Role.id)
+            .order_by(Role.name.asc(), Role.id.asc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )).all()
+        return rows, total
+
+    async def list_assignments(
+        self, *, organization_id: uuid.UUID, scope: str, page: int, page_size: int, search: str | None
+    ) -> tuple[list[tuple], int]:
+        page, page_size = self._page(page, page_size)
+        filters = [
+            UserRoleAssignment.organization_id == organization_id,
+            Role.deleted_at.is_(None),
+            or_(Role.organization_id == organization_id, Role.organization_id.is_(None)),
+            UserRoleAssignment.event_id.is_not(None) if scope == "EVENT" else UserRoleAssignment.event_id.is_(None),
+            or_(UserRoleAssignment.event_id.is_(None), Event.organization_id == organization_id),
+        ]
+        if search and search.strip():
+            term = f"%{search.strip()}%"
+            filters.append(or_(
+                User.email.ilike(term), User.first_name.ilike(term), User.last_name.ilike(term),
+                Role.name.ilike(term), Event.name.ilike(term),
+            ))
+        base = select(UserRoleAssignment.id).join(Role, Role.id == UserRoleAssignment.role_id).join(
+            User, User.id == UserRoleAssignment.user_id
+        ).outerjoin(Event, Event.id == UserRoleAssignment.event_id).where(*filters)
+        total = int(await self.db.scalar(select(func.count()).select_from(base.subquery())) or 0)
+        rows = (await self.db.execute(
+            select(
+                UserRoleAssignment.id,
+                UserRoleAssignment.user_id,
+                UserRoleAssignment.role_id,
+                UserRoleAssignment.event_id,
+                UserRoleAssignment.assigned_at,
+                User.first_name.label("user_first_name"),
+                User.last_name.label("user_last_name"),
+                User.email.label("user_email"),
+                Role.name.label("role_name"),
+                Event.name.label("event_name"),
+            ).join(Role, Role.id == UserRoleAssignment.role_id)
+            .join(User, User.id == UserRoleAssignment.user_id)
+            .outerjoin(Event, Event.id == UserRoleAssignment.event_id)
+            .where(*filters)
+            .order_by(UserRoleAssignment.assigned_at.desc(), UserRoleAssignment.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )).all()
+        return rows, total
+
+    async def list_roles_cursor(self, *, organization_id: uuid.UUID, cursor: str | None = None,
+                                limit: int = 50, search: str | None = None) -> CursorPage[dict]:
+        bounded = bounded_page_size(limit, maximum=self.MAX_PAGE_SIZE)
+        filters = [Role.deleted_at.is_(None), or_(Role.organization_id == organization_id, Role.organization_id.is_(None))]
+        if search and search.strip():
+            term = f"%{search.strip()}%"
+            filters.append(or_(Role.name.ilike(term), Role.description.ilike(term)))
+        if cursor:
+            position = decode_cursor(cursor)
+            filters.append(or_(Role.created_at < position.occurred_at,
+                               and_(Role.created_at == position.occurred_at, Role.id < position.record_id)))
+        rows = (await self.db.execute(
+            select(Role.id, Role.name, Role.description, Role.is_system_role, Role.version, Role.created_at,
+                   func.count(UserRoleAssignment.id).label("users_count"))
+            .outerjoin(UserRoleAssignment, and_(UserRoleAssignment.role_id == Role.id,
+                                                UserRoleAssignment.organization_id == organization_id))
+            .where(*filters).group_by(Role.id).order_by(Role.created_at.desc(), Role.id.desc()).limit(bounded + 1)
+        )).all()
+        page_rows = rows[:bounded]
+        items = [{"id": str(row.id), "name": row.name, "description": row.description,
+                  "is_system_role": row.is_system_role, "users_count": row.users_count,
+                  "scope": "Global" if row.is_system_role else "Organisation", "status": "Active",
+                  "version": row.version} for row in page_rows]
+        has_next = len(rows) > bounded
+        next_cursor = encode_cursor(page_rows[-1].created_at, page_rows[-1].id) if has_next and page_rows else None
+        return CursorPage(items=items, next_cursor=next_cursor, has_next=has_next)
+
+    async def list_assignments_cursor(self, *, organization_id: uuid.UUID, scope: str,
+                                       cursor: str | None = None, limit: int = 50,
+                                       search: str | None = None) -> CursorPage[dict]:
+        bounded = bounded_page_size(limit, maximum=self.MAX_PAGE_SIZE)
+        filters = [UserRoleAssignment.organization_id == organization_id, Role.deleted_at.is_(None),
+                   or_(Role.organization_id == organization_id, Role.organization_id.is_(None)),
+                   UserRoleAssignment.event_id.is_not(None) if scope == "EVENT" else UserRoleAssignment.event_id.is_(None),
+                   or_(UserRoleAssignment.event_id.is_(None), Event.organization_id == organization_id)]
+        if search and search.strip():
+            term = f"%{search.strip()}%"
+            filters.append(or_(User.email.ilike(term), User.first_name.ilike(term), User.last_name.ilike(term),
+                               Role.name.ilike(term), Event.name.ilike(term)))
+        if cursor:
+            position = decode_cursor(cursor)
+            filters.append(or_(UserRoleAssignment.assigned_at < position.occurred_at,
+                               and_(UserRoleAssignment.assigned_at == position.occurred_at,
+                                    UserRoleAssignment.id < position.record_id)))
+        rows = (await self.db.execute(
+            select(UserRoleAssignment.id, UserRoleAssignment.user_id, UserRoleAssignment.role_id,
+                   UserRoleAssignment.event_id, UserRoleAssignment.assigned_at,
+                   User.first_name.label("user_first_name"), User.last_name.label("user_last_name"),
+                   User.email.label("user_email"), Role.name.label("role_name"), Event.name.label("event_name"))
+            .join(Role, Role.id == UserRoleAssignment.role_id).join(User, User.id == UserRoleAssignment.user_id)
+            .outerjoin(Event, Event.id == UserRoleAssignment.event_id).where(*filters)
+            .order_by(UserRoleAssignment.assigned_at.desc(), UserRoleAssignment.id.desc()).limit(bounded + 1)
+        )).all()
+        page_rows = rows[:bounded]
+        items = [{"id": str(row.id), "user_id": str(row.user_id),
+                  "user_name": f"{row.user_first_name} {row.user_last_name}".strip(), "user_email": row.user_email,
+                  "role_id": str(row.role_id), "role_name": row.role_name, "scope": scope,
+                  "event_id": str(row.event_id) if row.event_id else None, "event_name": row.event_name,
+                  "assigned_at": row.assigned_at.isoformat()} for row in page_rows]
+        has_next = len(rows) > bounded
+        next_cursor = encode_cursor(page_rows[-1].assigned_at, page_rows[-1].id) if has_next and page_rows else None
+        return CursorPage(items=items, next_cursor=next_cursor, has_next=has_next)
+
+    async def effective_preview(
+        self, *, organization_id: uuid.UUID, user_id: uuid.UUID, role_id: uuid.UUID, event_id: uuid.UUID | None
+    ) -> dict[str, Any]:
+        member_id = await self.db.scalar(select(OrganizationMember.id).where(
+            OrganizationMember.organization_id == organization_id,
+            OrganizationMember.user_id == user_id,
+            OrganizationMember.is_active.is_(True),
+        ))
+        role = await self.db.execute(select(Role.id, Role.name).where(
+            Role.id == role_id,
+            Role.deleted_at.is_(None),
+            or_(Role.organization_id == organization_id, Role.organization_id.is_(None)),
+        ))
+        role_row = role.one_or_none()
+        event_exists = True
+        if event_id:
+            event_exists = bool(await self.db.scalar(select(Event.id).where(
+                Event.id == event_id,
+                Event.organization_id == organization_id,
+                Event.deleted_at.is_(None),
+            )))
+        proposed = set((await self.db.scalars(
+            select(Permission.code).join(RolePermission, RolePermission.permission_id == Permission.id).where(
+                RolePermission.role_id == role_id
+            )
+        )).all())
+        assignment_filters = [
+            UserRoleAssignment.organization_id == organization_id,
+            UserRoleAssignment.user_id == user_id,
+        ]
+        assignment_filters.append(
+            or_(UserRoleAssignment.event_id.is_(None), UserRoleAssignment.event_id == event_id)
+            if event_id else UserRoleAssignment.event_id.is_(None)
+        )
+        existing = set((await self.db.scalars(
+            select(Permission.code).join(RolePermission, RolePermission.permission_id == Permission.id)
+            .join(UserRoleAssignment, UserRoleAssignment.role_id == RolePermission.role_id)
+            .where(*assignment_filters)
+        )).all())
+        duplicate = bool(await self.db.scalar(select(UserRoleAssignment.id).where(
+            UserRoleAssignment.organization_id == organization_id,
+            UserRoleAssignment.user_id == user_id,
+            UserRoleAssignment.role_id == role_id,
+            UserRoleAssignment.event_id == event_id if event_id else UserRoleAssignment.event_id.is_(None),
+        )))
+        return {
+            "member_found": bool(member_id),
+            "role_name": role_row.name if role_row else None,
+            "role_found": bool(role_row),
+            "event_found": event_exists,
+            "proposed": proposed,
+            "existing": existing,
+            "duplicate": duplicate,
+        }
+
+
 class OrganiserAttentionQueryService:
     """Bounded needs-attention candidate projection with event aggregates."""
 
@@ -936,6 +1684,57 @@ class OrganiserAttentionQueryService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def get_event_target(
+        self,
+        *,
+        event_id: uuid.UUID,
+        organization_id: uuid.UUID | None = None,
+    ) -> tuple | None:
+        """Load only the event identity needed by the attention projection."""
+        statement = select(Event.id, Event.organization_id, Event.deleted_at).where(
+            Event.id == event_id
+        )
+        if organization_id is not None:
+            statement = statement.where(Event.organization_id == organization_id)
+        return (await self.db.execute(statement.limit(1))).one_or_none()
+
+    async def get_candidate(
+        self, *, organization_id: uuid.UUID, event_id: uuid.UUID
+    ) -> tuple | None:
+        """Load one event's attention counters in a single bounded projection."""
+        sessions_without_rooms = select(func.count(Session.id)).where(
+            Session.event_id == Event.id, Session.room_id.is_(None)
+        ).correlate(Event).scalar_subquery()
+        pending_speakers = select(func.count(Speaker.id)).where(
+            Speaker.event_id == Event.id, Speaker.upload_status == "pending"
+        ).correlate(Event).scalar_subquery()
+        pending_registrations = select(func.count(Participant.id)).where(
+            Participant.event_id == Event.id,
+            Participant.approval_status.in_(["PENDING_REVIEW", "Pending"]),
+        ).correlate(Event).scalar_subquery()
+        payment_pending = select(func.count(PaymentTransaction.id)).where(
+            PaymentTransaction.event_id == Event.id,
+            PaymentTransaction.status.in_(["pending", "failed"]),
+        ).correlate(Event).scalar_subquery()
+        total_rooms = select(func.count(Room.id)).where(
+            Room.event_id == Event.id, Room.is_active.is_(True)
+        ).correlate(Event).scalar_subquery()
+        return (await self.db.execute(
+            select(
+                Event.id,
+                Event.updated_at,
+                sessions_without_rooms.label("sessions_without_rooms"),
+                pending_speakers.label("pending_speakers"),
+                pending_registrations.label("pending_registrations"),
+                payment_pending.label("payment_pending"),
+                total_rooms.label("total_rooms"),
+            ).where(
+                Event.id == event_id,
+                Event.organization_id == organization_id,
+                Event.deleted_at.is_(None),
+            )
+        )).one_or_none()
 
     async def list_candidates(self, *, organization_id: uuid.UUID) -> list[tuple]:
         sessions_without_rooms = select(func.count(Session.id)).where(
@@ -973,6 +1772,44 @@ class OrganiserAttentionQueryService:
                 )
                 .order_by(Event.start_date, Event.id)
                 .limit(self.MAX_EVENTS)
+            )
+        ).all()
+
+    async def list_task_states(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        task_keys: list[str],
+        limit: int = 100,
+    ) -> list[tuple]:
+        """Load attention state and owner display fields in one bounded projection."""
+        if not task_keys:
+            return []
+        bounded_limit = max(1, min(int(limit), 100))
+        return (
+            await self.db.execute(
+                select(
+                    OrganizationAttentionState.task_key,
+                    OrganizationAttentionState.status,
+                    OrganizationAttentionState.snoozed_until,
+                    OrganizationAttentionState.version,
+                    OrganizationAttentionState.owner_user_id,
+                    User.id.label("owner_id"),
+                    User.first_name,
+                    User.last_name,
+                    User.email,
+                )
+                .select_from(OrganizationAttentionState)
+                .outerjoin(User, User.id == OrganizationAttentionState.owner_user_id)
+                .where(
+                    OrganizationAttentionState.organization_id == organization_id,
+                    OrganizationAttentionState.task_key.in_(task_keys),
+                )
+                .order_by(
+                    OrganizationAttentionState.task_key.asc(),
+                    OrganizationAttentionState.version.desc(),
+                )
+                .limit(bounded_limit)
             )
         ).all()
 

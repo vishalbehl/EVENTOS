@@ -230,7 +230,7 @@ export function getAssetUrl(path: string | null | undefined): string {
   if (!path) return "";
   if (path.startsWith("http")) return path;
   
-  const base = process.env.NEXT_PUBLIC_ASSETS_URL || "http://127.0.0.1:8001/api/v1/storage/assets";
+  const base = process.env.NEXT_PUBLIC_ASSETS_URL || "http://127.0.0.1:8002/api/v1/storage/assets";
   return `${base}/${path}`;
 }
 

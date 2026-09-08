@@ -1,12 +1,15 @@
 import { io, Socket } from 'socket.io-client';
 
 const getSocketUrl = () => {
+  const configuredUrl = process.env.NEXT_PUBLIC_WS_URL || process.env.NEXT_PUBLIC_API_URL;
+  if (configuredUrl) return configuredUrl.replace(/\/$/, "");
+
   if (typeof window !== 'undefined') {
     const host = window.location.hostname;
     if (host === 'localhost') return 'http://localhost:8000';
     if (host === '127.0.0.1') return 'http://127.0.0.1:8000';
   }
-  return process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:8000';
+  return 'http://localhost:8000';
 };
 
 class SocketService {
@@ -61,6 +64,11 @@ class SocketService {
   joinEvent(eventId: string) {
     if (!this.socket || !this.socket.connected) return;
     this.socket.emit('join_event_room', { event_id: eventId });
+  }
+
+  joinVenueOps(eventId: string) {
+    if (!this.socket || !this.socket.connected) return;
+    this.socket.emit('join_venue_ops_room', { event_id: eventId });
   }
 
   disconnect() {

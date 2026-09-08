@@ -56,6 +56,20 @@ async def test_get_session_snapshot_success(async_client, mock_db_session):
     assert sp["speaker_id"] == speaker_id
     assert sp["name"] == "Jane Doe"
     assert sp["file_path"] == "path/to/file.pptx"
+    assert data["snapshot_generated_at"] != "now"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_rejects_unknown_device_scope(async_client, mock_db_session):
+    mock_db_session.get.return_value = None
+    response = await async_client.get(
+        f"/api/v1/sessions/{str(uuid.uuid4())}/snapshot",
+        headers={
+            "X-Venue-Key": settings.VENUE_AUTH_KEY,
+            "X-Venue-Device-Id": str(uuid.uuid4()),
+        },
+    )
+    assert response.status_code == 403
 
 @pytest.mark.asyncio
 async def test_get_session_snapshot_not_found(async_client, mock_db_session):

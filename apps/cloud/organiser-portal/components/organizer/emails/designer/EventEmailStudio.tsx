@@ -13,19 +13,80 @@ import { eventEmailAssets, eventEmailComponents, eventEmailTemplates, type Email
 import { uploadEmailAsset } from "@/services/email-service";
 import { useOperationAccess } from "@/lib/capabilities";
 
-const VARIABLES = [{ key: "{{EventName}}", label: "Event name", required: true }, { key: "{{SpeakerName}}", label: "Speaker name" }, { key: "{{UploadLink}}", label: "Upload link" }, { key: "{{EventDate}}", label: "Event date" }, { key: "{{EventVenue}}", label: "Venue" }];
+const DEFAULT_VARIABLES = [
+  { key: "{{EventName}}", label: "Event name", required: true },
+  { key: "{{SpeakerName}}", label: "Speaker name" },
+  { key: "{{UploadLink}}", label: "Upload link" },
+  { key: "{{EventDate}}", label: "Event date" },
+  { key: "{{EventVenue}}", label: "Venue" }
+];
 const map = (row: EmailStudioRecord): StudioTemplate => ({ id: row.id, name: row.name, subject: row.subject, preheader: row.preheader ?? "", stableKey: row.stable_key, scopeType: row.scope_type, lifecycleState: row.lifecycle_state, version: row.version, designerJson: (row.designer_json as { root?: unknown } | null)?.root ? row.designer_json as StudioTemplate["designerJson"] : null, bodyHtml: row.body_html, editable: row.editable, effectiveOrigin: row.effective_origin, fallbackReason: row.fallback_reason });
 
 export function EventEmailStudio({ eventId }: { eventId: string }) {
   const emailDesignerAccess = useOperationAccess("communications.email_designer.manage");
-  const [rows, setRows] = useState<EmailStudioRecord[]>([]); const [fragmentRows, setFragmentRows] = useState<EmailFragmentRecord[]>([]); const [assetRows, setAssetRows] = useState<EmailAssetRecord[]>([]); const [activeId, setActiveId] = useState<string | null>(null); const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false);
-  const load = useCallback(async () => { setLoading(true); try { const [result, savedFragments, savedAssets] = await Promise.all([eventEmailTemplates.list(eventId), eventEmailComponents.list(eventId), eventEmailAssets.list(eventId)]); setRows(result); setFragmentRows(savedFragments); setAssetRows(savedAssets); setActiveId((current) => current && result.some((row) => row.id === current) ? current : null); } catch (error) { toast.error(error instanceof Error ? error.message : "Email templates are unavailable."); } finally { setLoading(false); } }, [eventId]);
+  const [rows, setRows] = useState<EmailStudioRecord[]>([]);
+  const [fragmentRows, setFragmentRows] = useState<EmailFragmentRecord[]>([]);
+  const [assetRows, setAssetRows] = useState<EmailAssetRecord[]>([]);
+  const [variables, setVariables] = useState<Array<{ key: string; label: string; required?: boolean; sampleValue?: string }>>(DEFAULT_VARIABLES);
+  const [sampleValues, setSampleValues] = useState<Record<string, string>>({});
+  const [sampleCollections, setSampleCollections] = useState<Record<string, Array<Record<string, string>>>>({});
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [result, savedFragments, savedAssets, context] = await Promise.all([
+        eventEmailTemplates.list(eventId),
+        eventEmailComponents.list(eventId),
+        eventEmailAssets.list(eventId),
+        eventEmailTemplates.getPreviewContext(eventId).catch(() => null),
+      ]);
+      setRows(result);
+      setFragmentRows(savedFragments);
+      setAssetRows(savedAssets);
+      if (context) {
+        if (context.variables && context.variables.length > 0) {
+          setVariables(context.variables);
+        }
+        if (context.sample_values) {
+          setSampleValues(context.sample_values);
+        }
+        if (context.sample_collections) {
+          setSampleCollections(context.sample_collections);
+        }
+      }
+      setActiveId((current) => current && result.some((row) => row.id === current) ? current : null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Email templates are unavailable.");
+    } finally {
+      setLoading(false);
+    }
+  }, [eventId]);
+
   useEffect(() => { void load(); }, [load]);
   const replace = (saved: EmailStudioRecord, priorId: string) => { setRows((current) => [saved, ...current.filter((row) => row.id !== priorId && row.id !== saved.id)]); setActiveId(saved.id); };
   const save = async (draft: StudioDraft) => { const saved = await eventEmailTemplates.saveDraft(eventId, draft.templateId, draft.expectedVersion, { name: draft.name, subject: draft.subject, preheader: draft.preheader ?? "", body_html: draft.bodyHtml, designer_json: draft.designerJson, editor_schema_version: draft.editorSchemaVersion }); replace(saved, draft.templateId); };
   const publish = async (template: StudioTemplate, reason: string) => { setBusy(true); try { replace(await eventEmailTemplates.publish(eventId, template.id, template.version, reason.trim()), template.id); toast.success("Event email template published."); } catch (error) { toast.error(error instanceof Error ? error.message : "Template could not be published."); } finally { setBusy(false); } };
   const preview = async (draft: StudioDraft) => { const result = await eventEmailTemplates.preview(eventId, draft.templateId, { name: draft.name, subject: draft.subject, preheader: draft.preheader ?? "", body_html: draft.bodyHtml, designer_json: draft.designerJson, editor_schema_version: draft.editorSchemaVersion }); return { html: result.html, plainText: result.plain_text, diagnostics: result.diagnostics }; };
-  const sendTest = async (draft: StudioDraft, recipient: string) => { await eventEmailTemplates.testSend(eventId, draft.templateId, recipient, { name: draft.name, subject: draft.subject, preheader: draft.preheader ?? "", body_html: draft.bodyHtml, designer_json: draft.designerJson, editor_schema_version: draft.editorSchemaVersion }); toast.success(`Test email queued for ${recipient}.`); };
+  const sendTest = async (draft: StudioDraft, recipient: string) => {
+    const toastId = toast.loading(`Sending test email to ${recipient}...`);
+    try {
+      await eventEmailTemplates.testSend(eventId, draft.templateId, recipient, {
+        name: draft.name,
+        subject: draft.subject,
+        preheader: draft.preheader ?? "",
+        body_html: draft.bodyHtml,
+        designer_json: draft.designerJson,
+        editor_schema_version: draft.editorSchemaVersion
+      });
+      toast.success(`Test email sent successfully to ${recipient}.`, { id: toastId });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to deliver test email.", { id: toastId });
+      throw error;
+    }
+  };
   const saveFragment = async (fragment: { name: string; componentKind: "BLOCK" | "SECTION"; documentFragment: Record<string, unknown> }) => { const stableKey = `${fragment.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "fragment"}-${Date.now().toString(36)}`; const saved = await eventEmailComponents.create(eventId, { name: fragment.name, stable_key: stableKey, component_kind: fragment.componentKind, category: "saved", document_fragment: fragment.documentFragment, preview_metadata: {} }); setFragmentRows((current) => [saved, ...current]); toast.success("Reusable email fragment saved."); };
   const fragments: StudioFragment[] = fragmentRows.map((row) => ({ id: row.id, name: row.name, category: row.category, componentKind: row.component_kind, scopeType: row.scope_type, documentFragment: row.document_fragment, editable: row.editable }));
   const assets: StudioAsset[] = assetRows.map((row) => ({ id: row.id, name: row.name, url: row.url, fileType: row.file_type, scopeType: row.scope_type, assetKind: row.asset_kind, sourceType: row.source_type, width: row.width ?? undefined, height: row.height ?? undefined, metadata: row.metadata }));
@@ -57,7 +118,29 @@ export function EventEmailStudio({ eventId }: { eventId: string }) {
       />
     </div>
   ) : (
-    <EmailBuilderStudio templates={templates} fragments={fragments} assets={assets} activeTemplateId={activeId} variables={VARIABLES} scopeLabel="Event design studio" busy={busy} readOnly={false} onSelectTemplate={setActiveId} onRequestCreateNew={() => setCreateOpen(true)} onSaveDraft={save} onDeleteTemplate={deleteTemplate} onDuplicateTemplate={duplicateTemplate} onPublish={publish} onPreview={preview} onSendTest={sendTest} onSaveFragment={saveFragment} onUploadAsset={upload} onExit={() => setActiveId(null)} />
+    <EmailBuilderStudio
+      templates={templates}
+      fragments={fragments}
+      assets={assets}
+      activeTemplateId={activeId}
+      variables={variables}
+      sampleValues={sampleValues}
+      sampleCollections={sampleCollections}
+      scopeLabel="Event design studio"
+      busy={busy}
+      readOnly={false}
+      onSelectTemplate={setActiveId}
+      onRequestCreateNew={() => setCreateOpen(true)}
+      onSaveDraft={save}
+      onDeleteTemplate={deleteTemplate}
+      onDuplicateTemplate={duplicateTemplate}
+      onPublish={publish}
+      onPreview={preview}
+      onSendTest={sendTest}
+      onSaveFragment={saveFragment}
+      onUploadAsset={upload}
+      onExit={() => setActiveId(null)}
+    />
   );
 
   return (

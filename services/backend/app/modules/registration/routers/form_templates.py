@@ -84,6 +84,7 @@ async def update_form_template(
     payload: FormTemplateUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
     """
@@ -99,7 +100,7 @@ async def update_form_template(
     if not target_uuid:
         raise HTTPException(status_code=404, detail="Form template not found")
 
-    return await FormTemplateCommandService.update(db, template_id=target_uuid, payload=payload, actor=current_user, idempotency_key=idempotency_key)
+    return await FormTemplateCommandService.update(db, template_id=target_uuid, payload=payload, actor=current_user, if_match=if_match, idempotency_key=idempotency_key)
 
 
 @router.post("/{template_id}/duplicate", response_model=FormTemplateResponse, status_code=status.HTTP_201_CREATED)
@@ -130,6 +131,7 @@ async def delete_form_template(
     template_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
     """
@@ -145,5 +147,5 @@ async def delete_form_template(
     if not target_uuid:
         raise HTTPException(status_code=404, detail="Form template not found")
 
-    await FormTemplateCommandService.delete(db, template_id=target_uuid, actor=current_user, idempotency_key=idempotency_key)
+    await FormTemplateCommandService.delete(db, template_id=target_uuid, actor=current_user, if_match=if_match, idempotency_key=idempotency_key)
     return None

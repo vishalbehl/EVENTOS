@@ -174,7 +174,7 @@ export const useSessionBuilderStore = create<SessionBuilderState>((set, get) => 
   eventStartDate: null,
   eventEndDate: null,
 
-  viewMode: "kanban",
+  viewMode: "timeline",
   selectedDate: formatLocalDate(new Date()),
   selectedSessionId: null,
   searchQuery: "",

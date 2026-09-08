@@ -1,12 +1,14 @@
 from pathlib import Path
-from typing import Optional
+import hmac
+import ipaddress
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Header, Request, status
 import httpx
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.routers.auth import require_admin
+from app.routers.auth import BEARER, X_VENUE_KEY, get_current_user, require_admin
 from app.database import get_database
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select
@@ -23,6 +25,34 @@ from app.models.venue_capacity_rule import VenueCapacityRule
 from app.models.operational_control import VenueInstallation
 
 router = APIRouter(prefix="/api/v1/venue/admin", tags=["admin_setup"])
+
+
+async def require_admin_or_local_bootstrap(
+    request: Request,
+    credentials: Any = Depends(BEARER),
+    venue_access_token: str | None = Cookie(default=None),
+    venue_key: str | None = Depends(X_VENUE_KEY),
+    db: AsyncSession = Depends(get_database),
+) -> Any:
+    # The desktop installer must reload a freshly configured local database
+    # before an administrator can log in. Keep this exception loopback-only and
+    # local-profile-only; staging/production always require an admin session.
+    host = request.client.host if request.client else ""
+    local_or_docker_host = host in {"127.0.0.1", "::1", "testclient"}
+    if not local_or_docker_host:
+        try:
+            local_or_docker_host = ipaddress.ip_address(host).is_private and ipaddress.ip_address(host) in ipaddress.ip_network("172.16.0.0/12")
+        except ValueError:
+            local_or_docker_host = False
+    if settings.DEPLOYMENT_PROFILE == "local" and local_or_docker_host:
+        if venue_key and hmac.compare_digest(venue_key, settings.VENUE_AUTH_KEY):
+            return None
+        # Local desktop bootstrap may not yet have the service environment
+        # key, but the request is still confined to the same machine.
+        if request.headers.get("X-Venue-Bootstrap") == "local-desktop":
+            return None
+    user = await get_current_user(credentials, venue_access_token, db)
+    return await require_admin(user)
 
 class CloudLoginRequest(BaseModel):
     email: str
@@ -441,24 +471,37 @@ class ReloadDatabaseRequest(BaseModel):
 @router.post("/reload-database")
 async def reload_database(
     payload: Optional[ReloadDatabaseRequest] = None,
+    _: Any = Depends(require_admin_or_local_bootstrap),
 ):
     """
     Hot-reloads the database connection pool in-memory without requiring server process restart.
     """
     try:
-        from app.database import reload_database_engine, async_engine, Base
+        import app.database as database_module
+        from app.database import Base
         import app.models
         from sqlalchemy import text
 
         new_url = payload.database_url if payload else None
-        target_url = await reload_database_engine(new_url)
+        target_url = await database_module.reload_database_engine(new_url)
 
-        # Ensure schemas and tables are initialized on the newly loaded database
-        schemas = ["identity", "events", "agenda", "design", "presentations", "registration", "speaker", "sponsors", "venue"]
-        async with async_engine.begin() as conn:
-            for s in schemas:
-                await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{s}";'))
-            await conn.run_sync(Base.metadata.create_all)
+        # reload_database_engine replaces the module-level engine. Always read
+        # it after the reload; retaining an imported pre-reload engine causes
+        # provisioning to query the previous database connection.
+        async with database_module.async_engine.begin() as conn:
+            if settings.DEPLOYMENT_PROFILE == "local":
+                # The local appliance may bootstrap an empty development DB.
+                schemas = ["identity", "events", "agenda", "design", "presentations", "registration", "speaker", "sponsors", "venue"]
+                for s in schemas:
+                    await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{s}";'))
+                await conn.run_sync(Base.metadata.create_all)
+            else:
+                # Production reloads must never hide schema drift by creating
+                # tables from models. Migrations are an explicit deployment
+                # step and startup will reject an outdated revision.
+                revision = (await conn.execute(text("SELECT version_num FROM alembic_version ORDER BY version_num DESC LIMIT 1"))).scalar_one_or_none()
+                if revision != settings.VENUE_REQUIRED_SCHEMA_REVISION:
+                    raise HTTPException(status_code=503, detail=f"Venue database migration required: expected {settings.VENUE_REQUIRED_SCHEMA_REVISION}, found {revision or 'none'}")
 
         from app.database import AsyncSessionLocal
         from app.routers.auth import ensure_bootstrap_admin

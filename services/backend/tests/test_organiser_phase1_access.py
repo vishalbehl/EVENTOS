@@ -341,7 +341,8 @@ async def test_organiser_team_update_rejects_stale_version(client: AsyncClient, 
         json={"name": "Programme operations", "description": "Updated"},
     )
     assert response.status_code == 409
-    assert response.json()["detail"] == {"code": "STALE_VERSION", "current_version": 2}
+    assert response.json()["detail"]["code"] == "RESOURCE_VERSION_CONFLICT"
+    assert response.json()["detail"]["details"]["current_version"] == 2
 
 
 @pytest.mark.asyncio
@@ -453,6 +454,7 @@ async def test_member_suspension_is_versioned_audited_and_reversible(client: Asy
         OrganizationMember.user_id == organizer.id,
     ))
     assert member is not None
+    member_id = member.id
     member.org_role = "admin"
     member.accepted_at = member.accepted_at or datetime.now(timezone.utc)
     member.is_active = True
@@ -460,7 +462,7 @@ async def test_member_suspension_is_versioned_audited_and_reversible(client: Asy
     await db.commit()
 
     suspended = await client.patch(
-        f"/api/v1/organiser/members/{member.id}/status",
+        f"/api/v1/organiser/members/{member_id}/status",
         headers={**auth_headers(super_admin), "If-Match": "1"},
         json={"is_active": False, "reason": "Temporary access review"},
     )
@@ -473,14 +475,14 @@ async def test_member_suspension_is_versioned_audited_and_reversible(client: Asy
     assert organizer.is_active is False
 
     stale = await client.patch(
-        f"/api/v1/organiser/members/{member.id}/status",
+        f"/api/v1/organiser/members/{member_id}/status",
         headers={**auth_headers(super_admin), "If-Match": "1"},
         json={"is_active": True, "reason": "Review complete"},
     )
     assert stale.status_code == 409
 
     reactivated = await client.patch(
-        f"/api/v1/organiser/members/{member.id}/status",
+        f"/api/v1/organiser/members/{member_id}/status",
         headers={**auth_headers(super_admin), "If-Match": "2"},
         json={"is_active": True, "reason": "Review complete"},
     )
@@ -492,7 +494,7 @@ async def test_member_suspension_is_versioned_audited_and_reversible(client: Asy
     assert organizer.is_active is True
     actions = set((await db.scalars(select(AuditLog.action_type).where(
         AuditLog.organization_id == organization.id,
-        AuditLog.resource_id == member.id,
+        AuditLog.resource_id == member_id,
     ))).all())
     assert {"ORGANIZATION_MEMBER_SUSPENDED", "ORGANIZATION_MEMBER_REACTIVATED"} <= actions
 
@@ -537,10 +539,11 @@ async def test_pending_invitation_resend_rotates_token_and_rejects_stale_version
     )
     db.add(member)
     await db.commit()
+    member_id = member.id
     original_token = member.invite_token
 
     resent = await client.post(
-        f"/api/v1/organiser/invitations/{member.id}/resend",
+        f"/api/v1/organiser/invitations/{member_id}/resend",
         headers={**auth_headers(organizer), "If-Match": "1"},
     )
     assert resent.status_code == 200, resent.text
@@ -549,13 +552,13 @@ async def test_pending_invitation_resend_rotates_token_and_rejects_stale_version
     assert member.invite_token != original_token
 
     stale = await client.post(
-        f"/api/v1/organiser/invitations/{member.id}/resend",
+        f"/api/v1/organiser/invitations/{member_id}/resend",
         headers={**auth_headers(organizer), "If-Match": "1"},
     )
     assert stale.status_code == 409
 
     revoked = await client.delete(
-        f"/api/v1/organiser/invitations/{member.id}",
+        f"/api/v1/organiser/invitations/{member_id}",
         headers={**auth_headers(organizer), "If-Match": "2"},
     )
     assert revoked.status_code == 204
@@ -565,33 +568,63 @@ async def test_pending_invitation_resend_rotates_token_and_rejects_stale_version
 
 
 @pytest.mark.asyncio
+async def test_pending_invitation_resend_replays_without_rotating_again(client: AsyncClient, db: AsyncSession, organization, organizer):
+    await make_owner(db, organization, organizer)
+    member = OrganizationMember(
+        organization_id=organization.id,
+        org_role="member",
+        invite_email=f"replay-{uuid.uuid4().hex[:8]}@example.test",
+        invite_token=uuid.uuid4().hex,
+        is_active=True,
+        version=1,
+    )
+    db.add(member)
+    await db.commit()
+    key = f"invite-replay-{uuid.uuid4()}"
+    headers = {**auth_headers(organizer), "If-Match": "1", "Idempotency-Key": key}
+
+    first = await client.post(f"/api/v1/organiser/invitations/{member.id}/resend", headers=headers)
+    assert first.status_code == 200, first.text
+    await db.refresh(member)
+    rotated_token = member.invite_token
+
+    replay = await client.post(f"/api/v1/organiser/invitations/{member.id}/resend", headers=headers)
+    assert replay.status_code == 200, replay.text
+    await db.refresh(member)
+    assert member.version == 2
+    assert member.invite_token == rotated_token
+
+
+@pytest.mark.asyncio
 async def test_member_role_change_is_versioned_and_audited(client: AsyncClient, db: AsyncSession, organization, organizer, super_admin):
+    organization_id = organization.id
     member = await db.scalar(select(OrganizationMember).where(
-        OrganizationMember.organization_id == organization.id,
+        OrganizationMember.organization_id == organization_id,
         OrganizationMember.user_id == organizer.id,
     ))
     assert member is not None
+    member_id = member.id
     member.org_role = "admin"
     member.accepted_at = member.accepted_at or datetime.now(timezone.utc)
     member.version = 1
     await db.commit()
 
     changed = await client.patch(
-        f"/api/v1/organiser/members/{member.id}/role",
+        f"/api/v1/organiser/members/{member_id}/role",
         headers={**auth_headers(super_admin), "If-Match": "1"},
         json={"org_role": "billing_only", "reason": "Finance responsibilities changed"},
     )
     assert changed.status_code == 200, changed.text
-    assert changed.json() == {"id": str(member.id), "org_role": "billing_only", "version": 2}
+    assert changed.json() == {"id": str(member_id), "org_role": "billing_only", "version": 2}
     stale = await client.patch(
-        f"/api/v1/organiser/members/{member.id}/role",
+        f"/api/v1/organiser/members/{member_id}/role",
         headers={**auth_headers(super_admin), "If-Match": "1"},
         json={"org_role": "member", "reason": "Stale update attempt"},
     )
     assert stale.status_code == 409
     audit = await db.scalar(select(AuditLog).where(
-        AuditLog.organization_id == organization.id,
-        AuditLog.resource_id == member.id,
+        AuditLog.organization_id == organization_id,
+        AuditLog.resource_id == member_id,
         AuditLog.action_type == "ORGANIZATION_MEMBER_ROLE_CHANGED",
     ))
     assert audit is not None

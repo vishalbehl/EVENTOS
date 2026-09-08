@@ -19,11 +19,16 @@ class VenueSettings(BaseSettings):
     )
     PUBLIC_BASE_URL: str = "http://127.0.0.1:8001"
     VENUE_CA_CERT_PATH: str = ""
+    VENUE_REQUIRED_SCHEMA_REVISION: str = "20260904_1500"
+    VENUE_DELIVERY_MAX_ATTEMPTS: int = 5
+    VENUE_MAX_PRESENTATION_BYTES: int = 2 * 1024 * 1024 * 1024
 
     # Security (Local Auth Key for Kiosks/Displays)
     VENUE_AUTH_KEY: str = "dev_venue_auth_key_1234567890123456"  # Provisioned by the installer; never use a shared default.
     VENUE_AUTH_SECRET: str = "dev_venue_auth_secret_longer_than_32_characters_123456"
-    VENUE_ACCESS_TOKEN_MINUTES: int = 480
+    # Human sessions are deliberately short-lived; the refresh cookie is the
+    # renewal mechanism and device credentials are managed separately.
+    VENUE_ACCESS_TOKEN_MINUTES: int = 30
     VENUE_BOOTSTRAP_ADMIN_USERNAME: str = "admin"
     VENUE_BOOTSTRAP_ADMIN_EMAIL: str = "admin@eventos.com"
     VENUE_BOOTSTRAP_ADMIN_PASSWORD: str = "admin123"
@@ -66,12 +71,20 @@ class VenueSettings(BaseSettings):
         if profile not in {"local", "staging", "production"}:
             raise ValueError("DEPLOYMENT_PROFILE must be one of: local, staging, production")
         self.DEPLOYMENT_PROFILE = profile
+        if self.VENUE_DELIVERY_MAX_ATTEMPTS < 1:
+            raise ValueError("VENUE_DELIVERY_MAX_ATTEMPTS must be at least 1")
+        if self.VENUE_MAX_PRESENTATION_BYTES < 1:
+            raise ValueError("VENUE_MAX_PRESENTATION_BYTES must be greater than zero")
+        if not 5 <= self.VENUE_ACCESS_TOKEN_MINUTES <= 120:
+            raise ValueError("VENUE_ACCESS_TOKEN_MINUTES must be between 5 and 120")
         if profile == "production":
             errors: list[str] = []
-            if len(self.VENUE_AUTH_KEY) < 24:
+            if len(self.VENUE_AUTH_KEY) < 24 or self.VENUE_AUTH_KEY == "dev_venue_auth_key_1234567890123456":
                 errors.append("VENUE_AUTH_KEY must be rotated")
-            if len(self.VENUE_AUTH_SECRET) < 32:
+            if len(self.VENUE_AUTH_SECRET) < 32 or self.VENUE_AUTH_SECRET == "dev_venue_auth_secret_longer_than_32_characters_123456":
                 errors.append("VENUE_AUTH_SECRET must be a rotated secret of at least 32 characters")
+            if self.VENUE_BOOTSTRAP_ADMIN_PASSWORD == "admin123":
+                errors.append("VENUE_BOOTSTRAP_ADMIN_PASSWORD must be changed before production")
             if self.CLOUD_API_KEY == "dev_internal_secret_do_not_use_in_prod":
                 errors.append("CLOUD_API_KEY must not use the development default")
             if self.REGISTRATION_FETCH_SOURCE_TYPE == "cloud" and len(self.CLOUD_DEVICE_KEY) < 32:

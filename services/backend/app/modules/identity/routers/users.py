@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +30,10 @@ from app.modules.identity.services.mfa_service import (
 from app.core.encryption import encrypt
 from app.config import settings
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.modules.identity.application.queries import UserQueryService
+from app.schemas.cursor_pagination import CursorPage
+from app.core.concurrency import require_if_match, raise_version_conflict
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -41,23 +45,7 @@ async def list_users(
     db: AsyncSession = Depends(get_db),
 ) -> List[UserResponse]:
     """Retrieve all users in the system with their assignments."""
-    q = select(User).options(
-        selectinload(User.assignments).selectinload(UserEventAssignment.event)
-    ).order_by(User.created_at.desc())
-    if role:
-        q = q.where(User.role == role)
-    if current_user.role != "super_admin":
-        q = q.where(User.organization_id == current_user.organization_id)
-        # An organizer can only see lower roles
-        q = q.where(User.role.in_([
-            "admin", "registration_manager", "registration_coordinator", 
-            "registration_reviewer", "badge_manager", "checkin_staff", 
-            "registration_viewer", "speaker_manager", "session_manager", 
-            "room_manager", "venue_operator", "technician", "volunteer", "viewer"
-        ]))
-    
-    result = await db.execute(q)
-    return result.scalars().all()
+    return await UserQueryService(db).list_users(actor=current_user, role=role)
 
 
 @router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED, summary="Create new user")
@@ -68,6 +56,15 @@ async def create_user(
     db: AsyncSession = Depends(get_db),
 ) -> UserResponse:
     """Create a new user with a specific role and organization."""
+    operation = await begin_idempotent(
+        db, organization_id=current_user.organization_id, actor_id=current_user.id,
+        operation="identity.user.create", key=idempotency_key,
+        payload=payload.model_dump(mode="json"),
+    )
+    replay = replay_response(operation)
+    if replay:
+        await db.rollback()
+        return replay[1]
     if current_user.role != "super_admin":
         if payload.role in ["super_admin", "organiser"]:
             raise HTTPException(
@@ -133,19 +130,29 @@ async def create_user(
             selectinload(User.assignments).selectinload(UserEventAssignment.event)
         ).where(User.id == user.id)
     )
-    return result.scalar_one()
+    response = UserResponse.model_validate(result.scalar_one()).model_dump(mode="json")
+    await complete_idempotent(db, operation, response_status=201, response_body=response, resource_id=user.id)
+    await db.commit()
+    return response
+
+
+@router.get("/cursor", response_model=CursorPage[UserResponse], summary="Cursor-paginated users")
+async def list_users_cursor(
+    current_user: OrganizerOrAbove,
+    cursor: Optional[str] = None,
+    role: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+) -> CursorPage[UserResponse]:
+    return await UserQueryService(db).cursor_users(actor=current_user, cursor=cursor, role=role, limit=limit)
 
 
 
 @router.get("/me", response_model=UserResponse, summary="Get current user profile")
 async def get_me(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> UserResponse:
     """Fetch current user's full profile including assignments."""
-    result = await db.execute(
-        select(User).options(
-            selectinload(User.assignments).selectinload(UserEventAssignment.event)
-        ).where(User.id == current_user.id)
-    )
-    return result.scalar_one()
+    user = await UserQueryService(db).get(user_id=current_user.id, actor=current_user)
+    return user
 
 
 @router.patch("/me", response_model=UserResponse, summary="Update current user profile")
@@ -153,9 +160,12 @@ async def update_me(
     payload: UserProfileUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
 ) -> UserResponse:
     """Update limited fields on the current user's profile."""
     update_data = payload.model_dump(exclude_unset=True)
+    if if_match is not None and int(current_user.version or 1) != require_if_match(if_match):
+        raise_version_conflict(int(current_user.version or 1))
     
     if "email" in update_data and update_data["email"] != current_user.email:
         # Check if email exists
@@ -165,14 +175,11 @@ async def update_me(
             
     for field, value in update_data.items():
         setattr(current_user, field, value)
-    
+    current_user.version = int(current_user.version or 1) + 1
     await db.commit()
     await db.refresh(current_user)
     
-    result = await db.execute(
-        select(User).options(selectinload(User.assignments)).where(User.id == current_user.id)
-    )
-    return result.scalar_one()
+    return await UserQueryService(db).get(user_id=current_user.id, actor=current_user)
 
 
 @router.get("/{user_id}", response_model=UserResponse, summary="Get user by ID")
@@ -181,11 +188,7 @@ async def get_user(
     current_user: OrganizerOrAbove,
     db: AsyncSession = Depends(get_db),
 ) -> UserResponse:
-    q = select(User).options(selectinload(User.assignments)).where(User.id == user_id)
-    if current_user.role != "super_admin":
-        q = q.where(User.organization_id == current_user.organization_id)
-    result = await db.execute(q)
-    user = result.scalar_one_or_none()
+    user = await UserQueryService(db).get(user_id=user_id, actor=current_user)
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
     return user
@@ -197,11 +200,24 @@ async def update_user(
     payload: UserUpdate,
     current_user: OrganizerOrAbove,
     db: AsyncSession = Depends(get_db),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ) -> UserResponse:
+    operation = None
+    if idempotency_key:
+        operation = await begin_idempotent(db, organization_id=current_user.organization_id, actor_id=current_user.id,
+            operation="identity.user.update", key=idempotency_key,
+            payload={"user_id": str(user_id), "payload": payload.model_dump(mode="json"), "if_match": if_match})
+        replay = replay_response(operation)
+        if replay:
+            await db.rollback()
+            return replay[1]
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
+    if if_match is not None and int(user.version or 1) != require_if_match(if_match):
+        raise_version_conflict(int(user.version or 1))
 
     if current_user.role != "super_admin":
         # Organisers can only edit within their own org
@@ -234,14 +250,14 @@ async def update_user(
 
     for field, value in update_data.items():
         setattr(user, field, value)
-    
+    user.version = int(user.version or 1) + 1
     await db.commit()
     await db.refresh(user)
-    
-    result = await db.execute(
-        select(User).options(selectinload(User.assignments)).where(User.id == user.id)
-    )
-    return result.scalar_one()
+    response = UserResponse.model_validate(await UserQueryService(db).get(user_id=user.id, actor=current_user)).model_dump(mode="json")
+    if operation is not None:
+        await complete_idempotent(db, operation, response_status=200, response_body=response, resource_id=user.id)
+        await db.commit()
+    return response
 
 
 
@@ -250,14 +266,27 @@ async def delete_user(
     user_id: uuid.UUID,
     current_user: SuperAdminOnly,
     db: AsyncSession = Depends(get_db),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ) -> MessageResponse:
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot delete your own account.")
+    operation = None
+    if idempotency_key:
+        operation = await begin_idempotent(db, organization_id=current_user.organization_id, actor_id=current_user.id,
+            operation="identity.user.delete", key=idempotency_key,
+            payload={"user_id": str(user_id), "if_match": if_match})
+        replay = replay_response(operation)
+        if replay:
+            await db.rollback()
+            return replay[1]
         
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
+    if if_match is not None and int(user.version or 1) != require_if_match(if_match):
+        raise_version_conflict(int(user.version or 1))
     
     if user.role == "super_admin":
         count_res = await db.execute(select(func.count()).select_from(User).where(User.role == "super_admin"))
@@ -280,8 +309,11 @@ async def delete_user(
     await db.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
     await db.execute(delete(MfaDevice).where(MfaDevice.user_id == user.id))
     await db.commit()
-    
-    return MessageResponse(message="User account deactivated and personal profile data removed.")
+    response = {"message": "User account deactivated and personal profile data removed."}
+    if operation is not None:
+        await complete_idempotent(db, operation, response_status=200, response_body=response, resource_id=user_id)
+        await db.commit()
+    return MessageResponse(**response)
 
 
 class MfaCodeRequest(BaseModel):
@@ -367,28 +399,10 @@ async def _scoped_assignment_context(
     current_user: User,
 ) -> tuple[UserEventAssignment, User, object]:
     """Resolve an assignment only when its user/event tenant invariant holds."""
-    from app.modules.events.models.event import Event
-
-    assignment = await db.get(UserEventAssignment, assignment_id)
-    if assignment is None:
+    row = await UserQueryService(db).assignment_context(assignment_id=assignment_id, actor=current_user)
+    if row is None:
         raise HTTPException(status_code=404, detail="Assignment not found.")
-    target = await db.get(User, assignment.user_id)
-    event = await db.get(Event, assignment.event_id)
-    if (
-        target is None
-        or event is None
-        or target.organization_id is None
-        or target.organization_id != event.organization_id
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "ASSIGNMENT_TENANT_INVARIANT_VIOLATION"},
-        )
-    if (
-        current_user.role != "super_admin"
-        and target.organization_id != current_user.organization_id
-    ):
-        raise HTTPException(status_code=404, detail="Assignment not found.")
+    assignment, target, event = row
     return assignment, target, event
 
 

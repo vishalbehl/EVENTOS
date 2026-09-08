@@ -39,6 +39,7 @@ from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.events.models.speaker import Speaker
 from app.modules.venue.models.srr_checkin import SRRCheckin
 from app.modules.venue.models.venue_sync_job import VenueSyncJob
+from app.modules.events.models.event import Event
 from app.modules.speakers.constants.speaker_types import UPLOAD_REQUIRED_CODES
 from app.core.cache_keys import TenantCacheKey
 from app.core.cache import cache_service
@@ -50,6 +51,7 @@ from app.core.cache_policy import CacheTTL, ttl
 async def build_analytics_snapshot(
     db: AsyncSession,
     event_id: uuid.UUID,
+    organization_id: uuid.UUID | None = None,
     use_cache: bool = True,
 ) -> dict:
     """
@@ -60,9 +62,23 @@ async def build_analytics_snapshot(
     
     Gracefully falls back to a fresh build if Redis is unreachable.
     """
-    cache_key = TenantCacheKey.event(event_id, "analytics", "snapshot")
+    # Legacy callers did not pass the organization. Resolve it once so cache
+    # keys never depend on ambient context and cannot collide across tenants.
+    resolved_organization_id = organization_id or await db.scalar(
+        select(Event.organization_id).where(Event.id == event_id)
+    )
+    cache_key = (
+        TenantCacheKey.event(
+            event_id,
+            "analytics",
+            "snapshot",
+            organization_id=resolved_organization_id,
+        )
+        if isinstance(resolved_organization_id, uuid.UUID)
+        else None
+    )
     
-    if use_cache:
+    if use_cache and cache_key is not None:
         cached = await cache_service.get_json(cache_key)
         if cached is not None:
             return cached
@@ -103,441 +119,106 @@ async def build_analytics_snapshot(
         ]
     }
 
-    if use_cache:
+    if use_cache and cache_key is not None:
         await cache_service.set_json(cache_key, snapshot, ttl(CacheTTL.DASHBOARD))
     
     return snapshot
 
 
 async def _get_daily_upload_history(db: AsyncSession, event_id: uuid.UUID) -> list[dict]:
-    """Get count of uploads per day for the last 14 days."""
-    result = await db.execute(
-        select(
-            func.date_trunc('day', PresentationFile.created_at).label('day'),
-            func.count().label('count')
-        )
-        .where(
-            PresentationFile.event_id == event_id,
-            PresentationFile.is_current_version.is_(True)
-        )
-        .group_by('day')
-        .order_by('day')
-    )
-    return [
-        {"label": row.day.strftime("%d %b"), "value": float(row.count)}
-        for row in result.all() if row.day
-    ]
+    """Compatibility wrapper for the canonical daily upload projection."""
+    from app.modules.analytics.application.queries import AnalyticsDashboardQueryService
+
+    return await AnalyticsDashboardQueryService(db).daily_upload_history(event_id=event_id)
 
 
 # ── Overview counts ───────────────────────────────────────────
 
 async def _get_overview(db: AsyncSession, event_id: uuid.UUID, coverage_data: Optional[dict] = None) -> dict:
-    """Total counts: rooms, sessions, speakers, files."""
+    """Compatibility wrapper for the canonical overview query service."""
+    from app.modules.analytics.application.queries import AnalyticsDashboardQueryService
 
-    rooms_q = await db.execute(
-        select(func.count()).where(
-            Room.event_id == event_id,
-            Room.is_active.is_(True),
-        )
+    return await AnalyticsDashboardQueryService(db).overview(
+        event_id=event_id,
+        coverage_data=coverage_data,
     )
-    sessions_q = await db.execute(
-        select(func.count()).where(Session.event_id == event_id)
-    )
-    speakers_q = await db.execute(
-        select(func.count()).where(Speaker.event_id == event_id)
-    )
-    files_q = await db.execute(
-        select(func.count()).where(
-            PresentationFile.event_id == event_id,
-            PresentationFile.is_current_version.is_(True),
-        )
-    )
-    file_status_q = await db.execute(
-        select(
-            PresentationFile.upload_status,
-            func.count().label("count"),
-        )
-        .where(
-            PresentationFile.event_id == event_id,
-            PresentationFile.is_current_version.is_(True),
-        )
-        .group_by(PresentationFile.upload_status)
-    )
-    file_counts = {row.upload_status: row.count for row in file_status_q.all()}
-    
-    # Reuse provided coverage or fetch if missing (fallback)
-    coverage = coverage_data or await _get_session_coverage(db, event_id)
-
-    # ── Posters counts ─────────────────────────────────────
-    posters_q = await db.execute(
-        select(func.count()).where(Poster.event_id == event_id)
-    )
-    poster_status_q = await db.execute(
-        select(
-            Poster.status,
-            func.count().label("count"),
-        )
-        .where(Poster.event_id == event_id)
-        .group_by(Poster.status)
-    )
-    poster_counts = {row.status: row.count for row in poster_status_q.all()}
-
-    # Combine file and poster stats
-    files_approved = file_counts.get("approved", 0) + poster_counts.get("approved", 0)
-    files_rejected = file_counts.get("rejected", 0) + poster_counts.get("rejected", 0)
-    
-    # Uploaded = anything that was actually submitted
-    files_uploaded = (
-        sum(file_counts.get(s, 0) for s in ("processing", "pending_validation", "valid", "approved", "rejected", "uploaded")) +
-        sum(poster_counts.get(s, 0) for s in ("submitted", "under_review", "approved", "rejected"))
-    )
-    
-    # Pending = needs organizer action
-    files_pending = (
-        sum(file_counts.get(s, 0) for s in ("processing", "pending_validation", "valid", "invalid")) +
-        sum(poster_counts.get(s, 0) for s in ("submitted", "under_review"))
-    )
-
-    return {
-        "total_rooms": rooms_q.scalar() or 0,
-        "total_sessions": sessions_q.scalar() or 0,
-        "total_speakers": speakers_q.scalar() or 0,
-        "total_files": (files_q.scalar() or 0) + (posters_q.scalar() or 0),
-        "files_uploaded": files_uploaded,
-        "files_approved": files_approved,
-        "files_pending": files_pending,
-        "files_rejected": files_rejected,
-        "sessions_ready": coverage.get("complete", 0),
-        "talks_pending_upload": coverage.get("talks_pending_upload", 0),
-    }
 
 
 # ── Upload funnel ─────────────────────────────────────────────
 
 async def _get_upload_funnel(db: AsyncSession, event_id: uuid.UUID) -> dict:
-    """
-    Count speakers by upload_status for the funnel chart.
+    """Compatibility wrapper for the canonical upload-funnel projection."""
+    from app.modules.analytics.application.queries import AnalyticsDashboardQueryService
 
-    Funnel stages:
-        pending → uploaded → approved
-                           → rejected
-    """
-    result = await db.execute(
-        select(
-            Speaker.upload_status,
-            func.count().label("count"),
-        )
-        .where(Speaker.event_id == event_id)
-        .group_by(Speaker.upload_status)
-    )
-    rows = result.all()
-
-    counts = {row.upload_status: row.count for row in rows}
-    total = sum(counts.values())
-
-    def pct(n: int) -> float:
-        return round(n / total * 100, 1) if total > 0 else 0.0
-
-    pending = counts.get("pending", 0)
-    uploaded = counts.get("uploaded", 0)
-    replaced = counts.get("replaced", 0)
-    approved = counts.get("approved", 0)
-    rejected = counts.get("rejected", 0)
-
-    uploaded_total = uploaded + replaced + approved + rejected
-    approval_rate = round(approved / uploaded_total * 100, 1) if uploaded_total > 0 else 0.0
-
-    return {
-        "invited": total,
-        "total_speakers": total,
-        "pending": pending,
-        "uploaded": uploaded_total,
-        "approved": approved,
-        "rejected": rejected,
-        "pending_pct": pct(pending),
-        "uploaded_pct": pct(uploaded_total),
-        "upload_rate_pct": pct(uploaded_total),
-        "approved_pct": pct(approved),
-        "approval_rate_pct": approval_rate,
-        "rejected_pct": pct(rejected),
-        "completion_rate": pct(approved),
-    }
+    return await AnalyticsDashboardQueryService(db).upload_funnel(event_id=event_id)
 
 
 # ── Session file coverage ─────────────────────────────────────
 
 async def _get_session_coverage(db: AsyncSession, event_id: uuid.UUID) -> dict:
-    """
-    Per-session breakdown: how many speaker slots have a current file.
+    """Compatibility wrapper for the canonical session coverage projection."""
+    from app.modules.analytics.application.queries import AnalyticsDashboardQueryService
 
-    Returns:
-        complete    → all speakers in session have a file
-        partial     → some speakers have files, some don't
-        missing     → no speakers have files at all
-    """
-    # Count total speaker slots per session
-    total_q = await db.execute(
-        select(
-            SessionSpeaker.session_id,
-            func.count().label("total_slots"),
-        )
-        .join(Session, Session.id == SessionSpeaker.session_id)
-        .where(Session.event_id == event_id)
-        .group_by(SessionSpeaker.session_id)
-    )
-    total_rows = {row.session_id: row.total_slots for row in total_q.all()}
-
-    # Count slots WITH a current file
-    files_q = await db.execute(
-        select(
-            PresentationFile.session_speaker_id,
-            func.count().label("file_count"),
-        )
-        .join(SessionSpeaker, SessionSpeaker.id == PresentationFile.session_speaker_id)
-        .join(Session, Session.id == SessionSpeaker.session_id)
-        .where(
-            Session.event_id == event_id,
-            PresentationFile.is_current_version.is_(True),
-            PresentationFile.upload_status.in_(["valid", "approved", "pending_validation", "processing", "uploaded"]),
-        )
-        .group_by(PresentationFile.session_speaker_id)
-    )
-    has_file = {row.session_speaker_id for row in files_q.all()}
-
-    # Re-aggregate per session
-    # (simplified: count sessions with at least one file vs none)
-    all_sessions = set()
-
-    ss_q = await db.execute(
-        select(SessionSpeaker.session_id, SessionSpeaker.id, SessionSpeaker.role)
-        .join(Session, Session.id == SessionSpeaker.session_id)
-        .where(Session.event_id == event_id)
-    )
-    session_slots: dict[uuid.UUID, list] = {}
-    pending_talks_count = 0
-    for row in ss_q.all():
-        session_slots.setdefault(row.session_id, []).append(row.id)
-        all_sessions.add(row.session_id)
-        
-        # Count session_speaker rows without files where role is NULL, Speaker, or in UPLOAD_REQUIRED_CODES
-        if row.id not in has_file:
-            if row.role is None or row.role in UPLOAD_REQUIRED_CODES or row.role in ["Speaker", "KEY", "INV", "ORL", "Oral Presenter", "Keynote Speaker", "Invited Speaker"]:
-                pending_talks_count += 1
-
-    complete = partial = missing = 0
-    for sess_id, slots in session_slots.items():
-        filled = sum(1 for s in slots if s in has_file)
-        if filled == len(slots):
-            complete += 1
-        elif filled > 0:
-            partial += 1
-        else:
-            missing += 1
-
-    total = len(all_sessions)
-    
-    # Query pending eposters and add to the pending count
-    posters_count_q = await db.execute(
-        select(func.count(Poster.id))
-        .where(
-            Poster.event_id == event_id,
-            Poster.status == "pending"
-        )
-    )
-    pending_eposters = posters_count_q.scalar() or 0
-    talks_pending_upload = pending_talks_count + pending_eposters
-
-    # Fetch session details for the breakdown list
-    from app.modules.agenda.models import Room
-    session_details_q = await db.execute(
-        select(Session, Room.name.label("room_name"))
-        .outerjoin(Room, Room.id == Session.room_id)
-        .where(Session.event_id == event_id)
-    )
-    
-    session_rows = []
-    for s_row in session_details_q.all():
-        sess = s_row[0]
-        room_name = s_row[1]
-        
-        slots_for_sess = session_slots.get(sess.id, [])
-        total_speakers = len(slots_for_sess)
-        files_approved = sum(1 for slot_id in slots_for_sess if slot_id in has_file)
-        files_pending = total_speakers - files_approved
-        
-        readiness_pct = round(files_approved / total_speakers * 100, 1) if total_speakers > 0 else 0.0
-        
-        session_rows.append({
-            "session_id": str(sess.id),
-            "session_name": sess.name,
-            "session_code": sess.session_code or "",
-            "room_name": room_name,
-            "start_time": sess.start_time.isoformat() if sess.start_time else None,
-            "total_speakers": total_speakers,
-            "files_approved": files_approved,
-            "files_pending": files_pending,
-            "readiness_pct": readiness_pct,
-        })
-        
-    _sentinel = datetime(9999, 12, 31, tzinfo=timezone.utc)
-    session_rows.sort(key=lambda x: x["start_time"] or _sentinel)
-
-
-    return {
-        "total_sessions": total,
-        "complete": complete,
-        "partial": partial,
-        "missing": missing,
-        "coverage_pct": round(complete / total * 100, 1) if total > 0 else 0.0,
-        "talks_pending_upload": talks_pending_upload,
-        "sessions": session_rows,
-    }
+    return await AnalyticsDashboardQueryService(db).session_coverage(event_id=event_id)
 
 
 # ── File format distribution ──────────────────────────────────
 
 async def _get_file_format_distribution(db: AsyncSession, event_id: uuid.UUID) -> list[dict]:
-    """
-    Count current files by format (pptx, pdf, mp4, etc.).
-    Returns a list sorted by count descending.
-    """
-    result = await db.execute(
-        select(
-            PresentationFile.file_format,
-            func.count().label("count"),
-        )
-        .where(
-            PresentationFile.event_id == event_id,
-            PresentationFile.is_current_version.is_(True),
-        )
-        .group_by(PresentationFile.file_format)
-        .order_by(func.count().desc())
-    )
-    return [{"format": row.file_format, "count": row.count} for row in result.all()]
+    """Compatibility wrapper for the canonical file-format projection."""
+    from app.modules.analytics.application.queries import AnalyticsDashboardQueryService
+
+    return await AnalyticsDashboardQueryService(db).file_format_distribution(event_id=event_id)
 
 
 # ── Email stats ───────────────────────────────────────────────
 
 async def _get_email_stats(db: AsyncSession, event_id: uuid.UUID) -> dict:
-    """
-    Email delivery stats for the event's campaigns.
-    """
-    # Total emails sent (logs scoped to campaigns in this event)
-    total_q = await db.execute(
-        select(func.count())
-        .select_from(EmailLog)
-        .join(EmailCampaign, EmailCampaign.id == EmailLog.campaign_id)
-        .where(EmailCampaign.event_id == event_id)
-    )
-    total = total_q.scalar() or 0
+    """Compatibility wrapper for the canonical email analytics projection."""
+    from app.modules.analytics.application.queries import AnalyticsDashboardQueryService
 
-    # By status
-    status_q = await db.execute(
-        select(
-            EmailLog.status,
-            func.count().label("count"),
-        )
-        .join(EmailCampaign, EmailCampaign.id == EmailLog.campaign_id)
-        .where(EmailCampaign.event_id == event_id)
-        .group_by(EmailLog.status)
-    )
-    by_status = {row.status: row.count for row in status_q.all()}
-
-    # Opened count (where opened_at is set)
-    opened_q = await db.execute(
-        select(func.count())
-        .select_from(EmailLog)
-        .join(EmailCampaign, EmailCampaign.id == EmailLog.campaign_id)
-        .where(
-            EmailCampaign.event_id == event_id,
-            EmailLog.opened_at.is_not(None),
-        )
-    )
-    opened = opened_q.scalar() or 0
-
-    delivered = by_status.get("delivered", 0)
-
-    return {
-        "total_sent": total,
-        "delivered": delivered,
-        "bounced": by_status.get("bounced", 0),
-        "failed": by_status.get("failed", 0),
-        "opened": opened,
-        "open_rate_pct": round(opened / delivered * 100, 1) if delivered > 0 else 0.0,
-        "delivery_rate_pct": round(delivered / total * 100, 1) if total > 0 else 0.0,
-    }
+    return await AnalyticsDashboardQueryService(db).email_stats(event_id=event_id)
 
 
-async def get_event_email_analytics(db: AsyncSession, event_id: uuid.UUID, target_type: str = "speaker", use_cache: bool = True):
+async def get_event_email_analytics(
+    db: AsyncSession,
+    event_id: uuid.UUID,
+    target_type: str = "speaker",
+    use_cache: bool = True,
+    organization_id: uuid.UUID | None = None,
+):
     """
     Fetch aggregated email metrics for the event.
     Uses Redis caching (10s) and aggregate DB queries.
     """
-    cache_key = TenantCacheKey.event(event_id, "analytics", "emails", target_type)
+    resolved_organization_id = organization_id or await db.scalar(
+        select(Event.organization_id).where(Event.id == event_id)
+    )
+    cache_key = (
+        TenantCacheKey.event(
+            event_id,
+            "analytics",
+            "emails",
+            target_type,
+            organization_id=resolved_organization_id,
+        )
+        if isinstance(resolved_organization_id, uuid.UUID)
+        else None
+    )
     
-    if use_cache:
+    if use_cache and cache_key is not None:
         cached = await cache_service.get_json(cache_key)
         if cached is not None:
             return cached
 
-    # Fetch all campaigns for this event and target type
-    res = await db.execute(
-        select(EmailCampaign).where(
-            EmailCampaign.event_id == event_id,
-            EmailCampaign.target_type == target_type
-        )
+    from app.modules.analytics.application.queries import AnalyticsDashboardQueryService
+
+    analytics = await AnalyticsDashboardQueryService(db).email_campaign_analytics(
+        event_id=event_id,
+        target_type=target_type,
     )
-    campaigns = res.scalars().all()
 
-    total_recipients = sum(c.total_recipients for c in campaigns)
-    total_sent = sum(c.sent_count for c in campaigns)
-
-    # Fetch aggregate log counts based on target_type
-    if target_type == "participant":
-        from app.modules.registration.models.participant import Participant
-        # Failed / Bounced
-        failed_q = await db.execute(
-            select(func.count(EmailLog.id))
-            .join(Participant, EmailLog.participant_id == Participant.id)
-            .where(Participant.event_id == event_id, EmailLog.status.in_(["failed", "bounced"]))
-        )
-        failed_count = failed_q.scalar() or 0
-
-        # Opened
-        opened_q = await db.execute(
-            select(func.count(EmailLog.id))
-            .join(Participant, EmailLog.participant_id == Participant.id)
-            .where(Participant.event_id == event_id, EmailLog.opened_at.is_not(None))
-        )
-        opened_count = opened_q.scalar() or 0
-    else:
-        # Failed / Bounced
-        failed_q = await db.execute(
-            select(func.count(EmailLog.id))
-            .join(Speaker, EmailLog.speaker_id == Speaker.id)
-            .where(Speaker.event_id == event_id, EmailLog.status.in_(["failed", "bounced"]))
-        )
-        failed_count = failed_q.scalar() or 0
-
-        # Opened
-        opened_q = await db.execute(
-            select(func.count(EmailLog.id))
-            .join(Speaker, EmailLog.speaker_id == Speaker.id)
-            .where(Speaker.event_id == event_id, EmailLog.opened_at.is_not(None))
-        )
-        opened_count = opened_q.scalar() or 0
-
-    analytics = {
-        "total_campaigns": len(campaigns),
-        "total_recipients": total_recipients,
-        "total_sent": total_sent,
-        "failed_count": failed_count,
-        "opened_count": opened_count,
-        "success_rate": round(total_sent / total_recipients * 100, 1) if total_recipients > 0 else 0.0,
-        "open_rate": round(opened_count / total_sent * 100, 1) if total_sent > 0 else 0.0,
-    }
-
-    if use_cache:
+    if use_cache and cache_key is not None:
         await cache_service.set_json(cache_key, analytics, ttl(CacheTTL.DASHBOARD))
 
     return analytics
@@ -545,126 +226,29 @@ async def get_event_email_analytics(db: AsyncSession, event_id: uuid.UUID, targe
 # ── Venue sync stats ──────────────────────────────────────────
 
 async def _get_venue_sync_stats(db: AsyncSession, event_id: uuid.UUID) -> dict:
-    """Latest venue sync job status for the event."""
-    result = await db.execute(
-        select(VenueSyncJob)
-        .where(VenueSyncJob.event_id == event_id)
-        .order_by(VenueSyncJob.created_at.desc())
-        .limit(1)
-    )
-    latest = result.scalar_one_or_none()
+    """Compatibility wrapper for the canonical venue-sync projection."""
+    from app.modules.analytics.application.queries import AnalyticsDashboardQueryService
 
-    if latest is None:
-        return {"last_sync": None, "status": "never_synced"}
-
-    return {
-        "last_sync": latest.created_at.isoformat() if latest.created_at else None,
-        "status": latest.status,
-        "files_synced": latest.files_synced if hasattr(latest, "files_synced") else None,
-        "completed_at": latest.completed_at.isoformat() if hasattr(latest, "completed_at") and latest.completed_at else None,
-    }
+    return await AnalyticsDashboardQueryService(db).venue_sync_stats(event_id=event_id)
 
 
 # ── SRR check-in stats ────────────────────────────────────────
 
 async def _get_srr_stats(db: AsyncSession, event_id: uuid.UUID) -> dict:
-    """Speaker Ready Room throughput stats."""
-    total_checkins_q = await db.execute(
-        select(func.count()).where(SRRCheckin.event_id == event_id)
-    )
-    total = total_checkins_q.scalar() or 0
+    """Compatibility wrapper for the canonical SRR aggregate projection."""
+    from app.modules.analytics.application.queries import AnalyticsDashboardQueryService
 
-    method_q = await db.execute(
-        select(
-            SRRCheckin.checkin_method,
-            func.count().label("count"),
-        )
-        .where(SRRCheckin.event_id == event_id)
-        .group_by(SRRCheckin.checkin_method)
-    )
-    by_method = {row.checkin_method: row.count for row in method_q.all()}
-
-    # Currently checked in (no checkout yet)
-    active_q = await db.execute(
-        select(func.count()).where(
-            SRRCheckin.event_id == event_id,
-            SRRCheckin.checked_out_at.is_(None),
-        )
-    )
-    active = active_q.scalar() or 0
-
-    return {
-        "total_checkins": total,
-        "currently_active": active,
-        "by_method": by_method,
-        "qr_scan": by_method.get("qr_scan", 0),
-        "manual": by_method.get("manual", 0),
-        "token": by_method.get("token", 0),
-    }
+    return await AnalyticsDashboardQueryService(db).srr_stats(event_id=event_id)
 
 
 # ── Per-room file readiness ────────────────────────────────────
 
 async def get_room_readiness(db: AsyncSession, event_id: uuid.UUID) -> list[dict]:
-    """
-    Per-room summary of file readiness for organizer overview cards.
+    """Compatibility wrapper for the canonical analytics query service."""
+    # Keep the legacy service import-safe during Celery's model bootstrap.
+    from app.modules.analytics.application.queries import AnalyticsDashboardQueryService
 
-    Returns list of rooms with session count, files expected, files ready.
-    """
-    rooms_q = await db.execute(
-        select(Room.id, Room.name)
-        .where(Room.event_id == event_id, Room.is_active.is_(True))
-    )
-    rooms = rooms_q.all()
-    if not rooms:
-        return []
-
-    room_ids = [room.id for room in rooms]
-    session_counts_q = await db.execute(
-        select(Session.room_id, func.count(Session.id).label("count"))
-        .where(Session.event_id == event_id, Session.room_id.in_(room_ids))
-        .group_by(Session.room_id)
-    )
-    session_counts = {row.room_id: row.count for row in session_counts_q.all()}
-
-    slot_counts_q = await db.execute(
-        select(Session.room_id, func.count(SessionSpeaker.id).label("count"))
-        .select_from(SessionSpeaker)
-        .join(Session, Session.id == SessionSpeaker.session_id)
-        .where(Session.event_id == event_id, Session.room_id.in_(room_ids))
-        .group_by(Session.room_id)
-    )
-    slot_counts = {row.room_id: row.count for row in slot_counts_q.all()}
-
-    ready_counts_q = await db.execute(
-        select(Session.room_id, func.count(PresentationFile.id).label("count"))
-        .select_from(PresentationFile)
-        .join(SessionSpeaker, SessionSpeaker.id == PresentationFile.session_speaker_id)
-        .join(Session, Session.id == SessionSpeaker.session_id)
-        .where(
-            Session.event_id == event_id,
-            Session.room_id.in_(room_ids),
-            PresentationFile.is_current_version.is_(True),
-            PresentationFile.upload_status.in_(["valid", "approved", "pending_validation", "processing", "uploaded"]),
-        )
-        .group_by(Session.room_id)
-    )
-    ready_counts = {row.room_id: row.count for row in ready_counts_q.all()}
-
-    result = []
-    for room in rooms:
-        slots = slot_counts.get(room.id, 0)
-        files_ready = ready_counts.get(room.id, 0)
-        result.append({
-            "room_id": str(room.id),
-            "room_name": room.name,
-            "session_count": session_counts.get(room.id, 0),
-            "speaker_slots": slots,
-            "files_ready": files_ready,
-            "readiness_pct": round(files_ready / slots * 100, 1) if slots > 0 else 0.0,
-        })
-
-    return sorted(result, key=lambda r: r["room_name"])
+    return await AnalyticsDashboardQueryService(db).room_readiness(event_id=event_id)
 
 
 # ── Approval time analysis ─────────────────────────────────────

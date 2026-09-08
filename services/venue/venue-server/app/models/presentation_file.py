@@ -11,6 +11,8 @@ from app.database import Base
 if TYPE_CHECKING:
     from app.models.speaker import Speaker
     from app.models.session_speaker import SessionSpeaker
+    from app.models.session import Session
+    from app.models.room import Room
     from app.models.event import Event
 
     from app.models.venue_sync_job import VenueSyncJob
@@ -42,6 +44,20 @@ class PresentationFile(Base):
     session_speaker_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("presentations.session_speakers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # Denormalized authoritative routing links. These are persisted so a
+    # delivery target can be resolved without trusting mutable UI joins.
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("events.sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("events.rooms.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -79,6 +95,10 @@ class PresentationFile(Base):
     upload_source: Mapped[str] = mapped_column(
         String(30), nullable=False, default="web"
     )
+    # Explicit source workstation/device identity for venue-side audit and
+    # conflict diagnostics. Legacy rows may not have one.
+    source_node: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, index=True)
+    upload_idempotency_key: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, unique=True, index=True)
 
     # ── Status ────────────────────────────────────────────
     # processing | valid | invalid | approved | rejected | locked
@@ -126,6 +146,8 @@ class PresentationFile(Base):
     session_speaker: Mapped["SessionSpeaker"] = relationship(
         "SessionSpeaker", back_populates="presentation_files"
     )
+    session: Mapped["Session"] = relationship("Session")
+    room: Mapped["Room"] = relationship("Room")
     event: Mapped["Event"] = relationship("Event")
 
     # One validation result per file version

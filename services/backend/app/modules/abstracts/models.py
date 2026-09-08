@@ -19,7 +19,7 @@ class AbstractCall(Base):
     __tablename__ = "abstract_calls"
     __table_args__ = (
         UniqueConstraint("event_id", name="uq_abstract_calls_event_id"),
-        {"schema": "events"},
+        {"schema": "abstract"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -48,7 +48,7 @@ class AbstractForm(Base):
     __tablename__ = "abstract_forms"
     __table_args__ = (
         Index("ix_abstract_forms_event_active", "event_id", "is_active"),
-        {"schema": "events"},
+        {"schema": "abstract"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -68,7 +68,7 @@ class AbstractSubmission(Base):
     __table_args__ = (
         Index("ix_abstract_submissions_event_status", "event_id", "status"),
         Index("ix_abstract_submissions_event_topic", "event_id", "topic"),
-        {"schema": "events"},
+        {"schema": "abstract"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -102,12 +102,12 @@ class AbstractSubmission(Base):
 
 class AbstractAuthor(Base):
     __tablename__ = "abstract_authors"
-    __table_args__ = (Index("ix_abstract_authors_submission_order", "submission_id", "display_order"), {"schema": "events"})
+    __table_args__ = (Index("ix_abstract_authors_submission_order", "submission_id", "display_order"), {"schema": "abstract"})
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=False, index=True)
-    submission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.abstract_submissions.id", ondelete="CASCADE"), nullable=False, index=True)
+    submission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("abstract.abstract_submissions.id", ondelete="CASCADE"), nullable=False, index=True)
     full_name: Mapped[str] = mapped_column(String(180), nullable=False)
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     affiliation: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -118,12 +118,12 @@ class AbstractAuthor(Base):
 
 class AbstractAttachment(Base):
     __tablename__ = "abstract_attachments"
-    __table_args__ = {"schema": "events"}
+    __table_args__ = {"schema": "abstract"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=False, index=True)
-    submission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.abstract_submissions.id", ondelete="CASCADE"), nullable=False, index=True)
+    submission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("abstract.abstract_submissions.id", ondelete="CASCADE"), nullable=False, index=True)
     kind: Mapped[str] = mapped_column(String(40), nullable=False, default="SUPPORTING_FILE")
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     storage_path: Mapped[Optional[str]] = mapped_column(String(600), nullable=True)
@@ -136,7 +136,7 @@ class AbstractReviewer(Base):
     __tablename__ = "abstract_reviewers"
     __table_args__ = (
         UniqueConstraint("event_id", "email", name="uq_abstract_reviewers_event_email"),
-        {"schema": "events"},
+        {"schema": "abstract"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -160,14 +160,14 @@ class AbstractAssignment(Base):
     __table_args__ = (
         UniqueConstraint("submission_id", "reviewer_id", name="uq_abstract_assignment_submission_reviewer"),
         Index("ix_abstract_assignments_event_status", "event_id", "status"),
-        {"schema": "events"},
+        {"schema": "abstract"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=False, index=True)
-    submission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.abstract_submissions.id", ondelete="CASCADE"), nullable=False, index=True)
-    reviewer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.abstract_reviewers.id", ondelete="CASCADE"), nullable=False, index=True)
+    submission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("abstract.abstract_submissions.id", ondelete="CASCADE"), nullable=False, index=True)
+    reviewer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("abstract.abstract_reviewers.id", ondelete="CASCADE"), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="ASSIGNED", index=True)
     due_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     conflict_declared: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -178,14 +178,14 @@ class AbstractAssignment(Base):
 
 class AbstractReview(Base):
     __tablename__ = "abstract_reviews"
-    __table_args__ = {"schema": "events"}
+    __table_args__ = {"schema": "abstract"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=False, index=True)
-    submission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.abstract_submissions.id", ondelete="CASCADE"), nullable=False, index=True)
-    assignment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.abstract_assignments.id", ondelete="CASCADE"), nullable=False, index=True)
-    reviewer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.abstract_reviewers.id", ondelete="CASCADE"), nullable=False, index=True)
+    submission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("abstract.abstract_submissions.id", ondelete="CASCADE"), nullable=False, index=True)
+    assignment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("abstract.abstract_assignments.id", ondelete="CASCADE"), nullable=False, index=True)
+    reviewer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("abstract.abstract_reviewers.id", ondelete="CASCADE"), nullable=False, index=True)
     scores: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     total_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     recommendation: Mapped[str] = mapped_column(String(32), nullable=False, default="DISCUSS")
@@ -196,12 +196,12 @@ class AbstractReview(Base):
 
 class AbstractDecision(Base):
     __tablename__ = "abstract_decisions"
-    __table_args__ = {"schema": "events"}
+    __table_args__ = {"schema": "abstract"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=False, index=True)
-    submission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.abstract_submissions.id", ondelete="CASCADE"), nullable=False, index=True)
+    submission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("abstract.abstract_submissions.id", ondelete="CASCADE"), nullable=False, index=True)
     decision: Mapped[str] = mapped_column(String(32), nullable=False)
     presentation_type: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     reason: Mapped[str] = mapped_column(String(1000), nullable=False)
@@ -209,4 +209,5 @@ class AbstractDecision(Base):
     decided_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+
 

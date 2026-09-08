@@ -8,8 +8,8 @@ from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
-from app.infrastructure.repositories import Repository
 from app.modules.events.models.event import Event
+from app.modules.events.infrastructure.repositories import EventRepository
 from app.schemas.cursor_pagination import CursorPage, bounded_page_size
 
 
@@ -73,7 +73,7 @@ class EventQueryService:
         statement = statement.order_by(Event.start_date.desc(), Event.id.desc()).offset(
             (bounded_page - 1) * bounded_size
         )
-        return await Repository(self.db, Event).list_page(statement, limit=bounded_size)
+        return await EventRepository(self.db).list_page(statement, limit=bounded_size)
 
     async def list_page(
         self,
@@ -93,7 +93,7 @@ class EventQueryService:
             statement = statement.where(Event.status == status)
         if search:
             statement = statement.where(Event.name.ilike(f"%{search}%"))
-        return await Repository(self.db, Event).cursor_page(
+        return await EventRepository(self.db).cursor_page(
             statement,
             limit=bounded_page_size(page_size, default=20, maximum=100),
             cursor=cursor,

@@ -25,3 +25,15 @@ def test_payment_event_timeline_migration_matches_read_orderings():
     assert "DROP INDEX CONCURRENTLY IF EXISTS" in migration
     assert "autocommit_block" in migration
     assert 'down_revision = "20260901_6000"' in migration
+
+
+def test_task_failure_timeline_migration_matches_tenant_read_ordering():
+    migration = next(
+        Path(__file__).resolve().parents[1]
+        .joinpath("alembic/versions")
+        .glob("20260909_1200_task_failure_timeline_index.py")
+    ).read_text(encoding="utf-8-sig")
+    assert 'revision = "20260909_1200"' in migration
+    assert 'down_revision = "20260909_1100"' in migration
+    assert '"organization_id", "created_at", "id"' in migration
+    assert '"ix_task_failures_org_created_id"' in migration

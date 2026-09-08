@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from typing import List, Optional, Tuple
-from sqlalchemy import select, func, or_, desc, asc, and_
+from sqlalchemy import inspect as sa_inspect, select, func, or_, desc, asc, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -12,7 +12,7 @@ from app.modules.platform.roles.models import DepartmentRole, UserAssignment
 from app.modules.platform.departments.models import Department
 from app.modules.platform.teams.models import Team
 from app.modules.identity.models.user import User
-from app.schemas.cursor_pagination import CursorPage, decode_cursor, encode_cursor
+from app.schemas.cursor_pagination import CursorPage, bounded_page_size, decode_cursor, encode_cursor
 
 
 class RoleRepository:
@@ -137,9 +137,11 @@ class RoleRepository:
         return (await self.db.scalar(statement)) is not None
 
     async def update(self, entity: DepartmentRole, values: dict) -> DepartmentRole:
+        mapped_fields = {attribute.key for attribute in sa_inspect(entity).mapper.column_attrs}
         for key, value in values.items():
-            if hasattr(entity, key):
-                setattr(entity, key, value)
+            if key.startswith("_") or key not in mapped_fields:
+                raise ValueError(f"Unsupported repository update field: {key}")
+            setattr(entity, key, value)
         self.db.add(entity)
         await self.db.flush()
         return entity
@@ -157,7 +159,7 @@ class RoleRepository:
         department_id: Optional[uuid.UUID] = None,
         search: Optional[str] = None,
     ) -> CursorPage[DepartmentRole]:
-        bounded_limit = max(1, min(limit, 100))
+        bounded_limit = bounded_page_size(limit, default=20, maximum=100)
         statement = select(DepartmentRole).where(
             DepartmentRole.organization_id == org_id,
             DepartmentRole.deleted_at.is_(None),

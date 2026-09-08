@@ -122,6 +122,23 @@
   --op-shadow: var(--shadow-panel);
   --op-shadow-soft: var(--shadow-panel);
   --op-card-radius: var(--radius-panel);
+
+  /* Legacy and component alias color tokens */
+  --color-primary-start: var(--pri);
+  --color-primary-mid: var(--pri);
+  --color-primary-end: var(--sec);
+  --color-primary-glow: color-mix(in srgb, var(--pri) 25%, transparent);
+  --color-accent-lime: var(--card);
+  --color-surface-1: var(--surf);
+  --color-surface-2: var(--raised);
+  --color-surface-3: var(--inset);
+  --color-border: var(--border);
+  --color-bg: var(--base);
+  --color-text-primary: var(--text);
+  --color-text-secondary: var(--muted);
+  --color-text-muted: var(--muted);
+  --color-text-placeholder: color-mix(in srgb, var(--text) 45%, transparent);
+  --color-text-inverse: var(--primary-contrast);
 }
 
 [data-theme="dark"],
@@ -173,6 +190,22 @@
   --op-info: #a1a1aa;
   --op-shadow: 0 14px 34px rgb(0 0 0 / 0.28);
   --op-shadow-soft: 0 8px 24px rgb(0 0 0 / 0.2);
+
+  --color-primary-start: #f4f4f5;
+  --color-primary-mid: #f4f4f5;
+  --color-primary-end: #d4d4d8;
+  --color-primary-glow: rgba(244, 244, 245, 0.2);
+  --color-accent-lime: #121212;
+  --color-surface-1: #111111;
+  --color-surface-2: #121212;
+  --color-surface-3: #1b1b1d;
+  --color-border: #303034;
+  --color-bg: #050505;
+  --color-text-primary: #f7f7f8;
+  --color-text-secondary: #929298;
+  --color-text-muted: #929298;
+  --color-text-placeholder: #55585d;
+  --color-text-inverse: #09090b;
 }
 
 [data-density="compact"] {

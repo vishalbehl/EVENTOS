@@ -10,11 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.abstracts.models import (
     AbstractAssignment,
+    AbstractAttachment,
+    AbstractAuthor,
     AbstractCall,
+    AbstractDecision,
     AbstractReview,
     AbstractReviewer,
     AbstractSubmission,
 )
+from app.modules.agenda.models import Session
+from app.modules.events.models.speaker import Speaker
 
 
 @dataclass(frozen=True)
@@ -41,6 +46,20 @@ class AssignmentRead:
     assignment: AbstractAssignment
     submission: AbstractSubmission
     reviewer: AbstractReviewer
+
+
+@dataclass(frozen=True)
+class SubmissionRelatedRead:
+    """Bounded event-scoped related rows for submission response projections."""
+
+    speakers: list[Speaker]
+    sessions: list[Session]
+    assignment_rows: list[tuple[uuid.UUID, int, int]]
+    review_rows: list[tuple[uuid.UUID, int]]
+    authors: list[AbstractAuthor]
+    attachments: list[AbstractAttachment]
+    reviews: list[tuple[AbstractReview, AbstractReviewer]]
+    decisions: list[AbstractDecision]
 
 
 class AbstractQueryService:
@@ -170,6 +189,150 @@ class AbstractQueryService:
                 AbstractSubmission.id == submission_id,
                 AbstractSubmission.event_id == event_id,
             )
+        )
+
+    async def submission_related(
+        self,
+        *,
+        event_id: uuid.UUID,
+        submission_ids: list[uuid.UUID],
+    ) -> SubmissionRelatedRead:
+        """Load all response joins behind one event-scoped query boundary."""
+        if not submission_ids:
+            return SubmissionRelatedRead([], [], [], [], [], [], [], [])
+
+        speakers = list(
+            (
+                await self.db.scalars(
+                    select(Speaker)
+                    .where(
+                        Speaker.id.in_(
+                            select(AbstractSubmission.presenter_speaker_id).where(
+                                AbstractSubmission.id.in_(submission_ids),
+                                AbstractSubmission.event_id == event_id,
+                                AbstractSubmission.presenter_speaker_id.is_not(None),
+                            )
+                        )
+                        | Speaker.id.in_(
+                            select(AbstractSubmission.submitter_speaker_id).where(
+                                AbstractSubmission.id.in_(submission_ids),
+                                AbstractSubmission.event_id == event_id,
+                                AbstractSubmission.submitter_speaker_id.is_not(None),
+                            )
+                        )
+                    )
+                )
+            ).all()
+        )
+        sessions = list(
+            (
+                await self.db.scalars(
+                    select(Session).where(
+                        Session.id.in_(
+                            select(AbstractSubmission.linked_session_id).where(
+                                AbstractSubmission.id.in_(submission_ids),
+                                AbstractSubmission.event_id == event_id,
+                                AbstractSubmission.linked_session_id.is_not(None),
+                            )
+                        )
+                    )
+                )
+            ).all()
+        )
+        assignment_rows = list(
+            (
+                await self.db.execute(
+                    select(
+                        AbstractAssignment.submission_id,
+                        func.count(AbstractAssignment.id),
+                        func.count(AbstractAssignment.id).filter(
+                            AbstractAssignment.conflict_declared.is_(True)
+                        ),
+                    )
+                    .join(
+                        AbstractSubmission,
+                        AbstractSubmission.id == AbstractAssignment.submission_id,
+                    )
+                    .where(
+                        AbstractAssignment.submission_id.in_(submission_ids),
+                        AbstractSubmission.event_id == event_id,
+                    )
+                    .group_by(AbstractAssignment.submission_id)
+                )
+            ).all()
+        )
+        review_rows = list(
+            (
+                await self.db.execute(
+                    select(AbstractReview.submission_id, func.count(AbstractReview.id))
+                    .join(
+                        AbstractSubmission,
+                        AbstractSubmission.id == AbstractReview.submission_id,
+                    )
+                    .where(
+                        AbstractReview.submission_id.in_(submission_ids),
+                        AbstractSubmission.event_id == event_id,
+                    )
+                    .group_by(AbstractReview.submission_id)
+                )
+            ).all()
+        )
+        authors = list(
+            (
+                await self.db.scalars(
+                    select(AbstractAuthor)
+                    .join(AbstractSubmission, AbstractSubmission.id == AbstractAuthor.submission_id)
+                    .where(
+                        AbstractAuthor.submission_id.in_(submission_ids),
+                        AbstractSubmission.event_id == event_id,
+                    )
+                    .order_by(AbstractAuthor.submission_id, AbstractAuthor.display_order)
+                )
+            ).all()
+        )
+        attachments = list(
+            (
+                await self.db.scalars(
+                    select(AbstractAttachment)
+                    .join(AbstractSubmission, AbstractSubmission.id == AbstractAttachment.submission_id)
+                    .where(
+                        AbstractAttachment.submission_id.in_(submission_ids),
+                        AbstractSubmission.event_id == event_id,
+                    )
+                    .order_by(AbstractAttachment.submission_id, AbstractAttachment.created_at)
+                )
+            ).all()
+        )
+        reviews = list(
+            (
+                await self.db.execute(
+                    select(AbstractReview, AbstractReviewer)
+                    .join(AbstractReviewer, AbstractReviewer.id == AbstractReview.reviewer_id)
+                    .join(AbstractSubmission, AbstractSubmission.id == AbstractReview.submission_id)
+                    .where(
+                        AbstractReview.submission_id.in_(submission_ids),
+                        AbstractSubmission.event_id == event_id,
+                    )
+                    .order_by(AbstractReview.submission_id, AbstractReview.submitted_at)
+                )
+            ).all()
+        )
+        decisions = list(
+            (
+                await self.db.scalars(
+                    select(AbstractDecision)
+                    .join(AbstractSubmission, AbstractSubmission.id == AbstractDecision.submission_id)
+                    .where(
+                        AbstractDecision.submission_id.in_(submission_ids),
+                        AbstractSubmission.event_id == event_id,
+                    )
+                    .order_by(AbstractDecision.submission_id, AbstractDecision.decided_at)
+                )
+            ).all()
+        )
+        return SubmissionRelatedRead(
+            speakers, sessions, assignment_rows, review_rows,
+            authors, attachments, reviews, decisions,
         )
 
     async def list_reviewers(self, *, event_id: uuid.UUID) -> list[ReviewerRead]:

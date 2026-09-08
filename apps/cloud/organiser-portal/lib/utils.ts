@@ -377,4 +377,4 @@ export async function copyToClipboard(text: string): Promise<boolean> {
     // Silently handle fallback failure
   }
   return false;
-}
+}

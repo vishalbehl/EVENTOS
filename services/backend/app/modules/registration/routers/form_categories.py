@@ -58,6 +58,7 @@ async def update_form_category(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
 ):
     """
     Update a form category.
@@ -69,6 +70,7 @@ async def update_form_category(
         payload=payload,
         actor=current_user,
         idempotency_key=idempotency_key,
+        if_match=if_match,
     )
 
 
@@ -78,6 +80,7 @@ async def delete_form_category(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
 ):
     """
     Soft-delete a form category.
@@ -88,5 +91,6 @@ async def delete_form_category(
         category_id=category_id,
         actor=current_user,
         idempotency_key=idempotency_key,
+        if_match=if_match,
     )
     return None

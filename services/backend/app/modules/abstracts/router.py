@@ -216,7 +216,7 @@ def _form_response(row: AbstractForm) -> AbstractFormResponse:
 
 
 async def _submission_response(db: AsyncSession, row: AbstractSubmission) -> AbstractSubmissionResponse:
-    return (await _submission_responses(db, [row]))[0]
+    return (await _submission_responses(db, [row], row.event_id))[0]
 
 
 def _build_submission_response(
@@ -316,6 +316,7 @@ def _build_submission_response(
 async def _submission_responses(
     db: AsyncSession,
     rows: list[AbstractSubmission],
+    event_id: uuid.UUID,
 ) -> list[AbstractSubmissionResponse]:
     """Build submission projections with bounded batched related reads."""
     if not rows:
@@ -328,38 +329,17 @@ async def _submission_responses(
         if speaker_id
     }
     session_ids = {row.linked_session_id for row in rows if row.linked_session_id}
-    speakers = (await db.scalars(select(Speaker).where(Speaker.id.in_(speaker_ids)))).all() if speaker_ids else []
-    sessions = (await db.scalars(select(Session).where(Session.id.in_(session_ids)))).all() if session_ids else []
-    assignment_rows = (await db.execute(
-        select(
-            AbstractAssignment.submission_id,
-            func.count(AbstractAssignment.id),
-            func.count(AbstractAssignment.id).filter(AbstractAssignment.conflict_declared.is_(True)),
-        ).where(AbstractAssignment.submission_id.in_(submission_ids)).group_by(AbstractAssignment.submission_id)
-    )).all()
-    review_rows = (await db.execute(
-        select(AbstractReview.submission_id, func.count(AbstractReview.id))
-        .where(AbstractReview.submission_id.in_(submission_ids))
-        .group_by(AbstractReview.submission_id)
-    )).all()
-    authors = (await db.scalars(
-        select(AbstractAuthor).where(AbstractAuthor.submission_id.in_(submission_ids))
-        .order_by(AbstractAuthor.submission_id, AbstractAuthor.display_order)
-    )).all()
-    attachments = (await db.scalars(
-        select(AbstractAttachment).where(AbstractAttachment.submission_id.in_(submission_ids))
-        .order_by(AbstractAttachment.submission_id, AbstractAttachment.created_at)
-    )).all()
-    reviews = (await db.execute(
-        select(AbstractReview, AbstractReviewer)
-        .join(AbstractReviewer, AbstractReviewer.id == AbstractReview.reviewer_id)
-        .where(AbstractReview.submission_id.in_(submission_ids))
-        .order_by(AbstractReview.submission_id, AbstractReview.submitted_at)
-    )).all()
-    decisions = (await db.scalars(
-        select(AbstractDecision).where(AbstractDecision.submission_id.in_(submission_ids))
-        .order_by(AbstractDecision.submission_id, AbstractDecision.decided_at)
-    )).all()
+    related = await AbstractQueryService(db).submission_related(
+        event_id=event_id, submission_ids=submission_ids
+    )
+    speakers = related.speakers
+    sessions = related.sessions
+    assignment_rows = related.assignment_rows
+    review_rows = related.review_rows
+    authors = related.authors
+    attachments = related.attachments
+    reviews = related.reviews
+    decisions = related.decisions
 
     assignment_stats = {item[0]: (int(item[1] or 0), int(item[2] or 0)) for item in assignment_rows}
     review_counts = {item[0]: int(item[1] or 0) for item in review_rows}
@@ -425,7 +405,7 @@ async def abstract_dashboard(event: CurrentEvent, db: AsyncSession = Depends(get
         reviewer_load={"reviewers": total_reviewers, "assigned": assigned, "completed": completed},
         publication={"accepted": accepted, "published": published, "ready": max(accepted - published, 0)},
         needs_attention=needs_attention,
-        recent=await _submission_responses(db, dashboard.recent_submissions),
+        recent=await _submission_responses(db, dashboard.recent_submissions, event.id),
     )
 
 
@@ -496,7 +476,7 @@ async def list_submissions(event: CurrentEvent, status_filter: Optional[str] = Q
         limit=limit,
     )
     return AbstractSubmissionPage(
-        items=await _submission_responses(db, page_rows),
+        items=await _submission_responses(db, page_rows, event.id),
         next_cursor=page_rows[-1].id if has_more and page_rows else None,
     )
 
@@ -669,13 +649,13 @@ async def publish_submission(submission_id: uuid.UUID, event: CurrentEvent, payl
 async def publish_all_accepted(event: CurrentEvent, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> AbstractSubmissionPage:
     await AbstractPublicationCommandService(db).publish_all(event=event, user=current_user)
     refreshed = await AbstractQueryService(db).list_accepted_submissions(event_id=event.id)
-    return AbstractSubmissionPage(items=await _submission_responses(db, refreshed))
+    return AbstractSubmissionPage(items=await _submission_responses(db, refreshed, event.id))
 
 
 @router.get("/accepted", response_model=AbstractSubmissionPage, dependencies=[require_event_operation("abstracts.publish")])
 async def accepted_directory(event: CurrentEvent, db: AsyncSession = Depends(get_db)) -> AbstractSubmissionPage:
     rows = await AbstractQueryService(db).list_accepted_submissions(event_id=event.id)
-    return AbstractSubmissionPage(items=await _submission_responses(db, rows))
+    return AbstractSubmissionPage(items=await _submission_responses(db, rows, event.id))
 
 
 @router.get("/exports/manifest", dependencies=[require_event_operation("abstracts.export")])

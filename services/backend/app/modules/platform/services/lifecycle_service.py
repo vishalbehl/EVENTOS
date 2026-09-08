@@ -69,17 +69,26 @@ class OrganizationLifecycleService:
     @staticmethod
     async def build_manifest(db: AsyncSession, organization_id: uuid.UUID, job_type: str, target_organization_id: uuid.UUID | None) -> tuple[dict, str]:
         event_ids = select(Event.id).where(Event.organization_id == organization_id)
-        counts = {
-            "events": await db.scalar(select(func.count(Event.id)).where(Event.organization_id == organization_id)) or 0,
-            "users": await db.scalar(select(func.count(User.id)).where(User.organization_id == organization_id)) or 0,
-            "registrations": await db.scalar(select(func.count(ParticipantRegistration.id)).where(ParticipantRegistration.event_id.in_(event_ids))) or 0,
-            "participants": await db.scalar(select(func.count(Participant.id)).where(Participant.event_id.in_(event_ids))) or 0,
-            "speakers": await db.scalar(select(func.count(Speaker.id)).where(Speaker.event_id.in_(event_ids))) or 0,
-            "sessions": await db.scalar(select(func.count(Session.id)).where(Session.event_id.in_(event_ids))) or 0,
-            "files": await db.scalar(select(func.count(PresentationFile.id)).where(PresentationFile.event_id.in_(event_ids))) or 0,
-            "registration_payments": await db.scalar(select(func.count(PaymentTransaction.id)).where(PaymentTransaction.event_id.in_(event_ids))) or 0,
-            "audit_records_retained": await db.scalar(select(func.count(AuditLog.id)).where(AuditLog.organization_id == organization_id)) or 0,
-        }
+        scalar = lambda statement: statement.scalar_subquery()
+        fixed_counts = (
+            await db.execute(
+                select(
+                    scalar(select(func.count(Event.id)).where(Event.organization_id == organization_id)).label("events"),
+                    scalar(select(func.count(User.id)).where(User.organization_id == organization_id)).label("users"),
+                    scalar(select(func.count(ParticipantRegistration.id)).where(ParticipantRegistration.event_id.in_(event_ids))).label("registrations"),
+                    scalar(select(func.count(Participant.id)).where(Participant.event_id.in_(event_ids))).label("participants"),
+                    scalar(select(func.count(Speaker.id)).where(Speaker.event_id.in_(event_ids))).label("speakers"),
+                    scalar(select(func.count(Session.id)).where(Session.event_id.in_(event_ids))).label("sessions"),
+                    scalar(select(func.count(PresentationFile.id)).where(PresentationFile.event_id.in_(event_ids))).label("files"),
+                    scalar(select(func.count(PaymentTransaction.id)).where(PaymentTransaction.event_id.in_(event_ids))).label("registration_payments"),
+                    scalar(select(func.count(AuditLog.id)).where(AuditLog.organization_id == organization_id)).label("audit_records_retained"),
+                )
+            )
+        ).mappings().one()
+        counts = {key: int(fixed_counts[key] or 0) for key in (
+            "events", "users", "registrations", "participants", "speakers",
+            "sessions", "files", "registration_payments", "audit_records_retained",
+        )}
         table_counts: dict[str, int] = {}
         if job_type in {"MERGE", "PURGE", "DELETE"}:
             for schema, table in await OrganizationLifecycleService._organization_tables(db):

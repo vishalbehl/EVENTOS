@@ -47,7 +47,7 @@ async def test_event_website_read_does_not_provision_missing_records():
     assert site.event_id == event.id
     assert draft.site_id == site.id
     assert draft.revision_counter == 1
-    assert db.scalar_calls == 1
+    assert db.scalar_calls == 0
     assert db.mutations == []
 
 
@@ -61,5 +61,5 @@ async def test_master_template_read_does_not_provision_missing_records():
     assert template.is_system is True
     assert draft.template_id == template.id
     assert draft.optimistic_version == 1
-    assert db.scalar_calls == 2
+    assert db.scalar_calls == 0
     assert db.mutations == []

@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Venue Server",
+      "Group": "Servers",
+      "Host": "venue-db",
+      "Port": 5432,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "SSLMode": "prefer",
+      "Comment": "The Venue Server PostgreSQL instance; the Venue App creates its event database during onboarding"
+    }
+  }
+}

@@ -31,10 +31,15 @@ from app.models.operational_control import (
     VenueAssetTransfer,
 )
 from app.models.presentation_file import PresentationFile
+from app.models.participant import Participant
+from app.models.participant_registration import ParticipantRegistration
+from app.models.badge_models import Badge
+from app.models.kit_models import ParticipantKit
 from app.models.presentation_queue import PresentationQueue
 from app.models.registration_source_key import RegistrationSourceHeartbeat
 from app.models.room import Room
 from app.models.room_device import RoomDevice
+from app.models.room_runtime_state import RoomRuntimeState
 from app.models.session import Session
 from app.models.session_speaker import SessionSpeaker
 from app.models.speaker import Speaker
@@ -75,6 +80,21 @@ def observed_state(last_seen: datetime | None, reported: str | None = None) -> s
     if age <= STALE_SECONDS:
         return "stale"
     return "offline"
+
+
+def aggregate_device_state(states: list[str]) -> str:
+    """Aggregate persisted device evidence without inventing health."""
+    if not states:
+        return "not_configured"
+    if all(state == "healthy" for state in states):
+        return "healthy"
+    if any(state == "offline" for state in states):
+        return "offline" if all(state == "offline" for state in states) else "degraded"
+    if any(state == "stale" for state in states):
+        return "stale"
+    if any(state == "maintenance" for state in states):
+        return "maintenance"
+    return "degraded"
 
 
 async def installation(db: AsyncSession) -> VenueInstallation | None:
@@ -155,6 +175,7 @@ class CommandRequest(BaseModel):
     command: str = Field(min_length=2, max_length=80)
     reason: str = Field(min_length=5, max_length=1000)
     payload: dict = Field(default_factory=dict)
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=160)
 
 
 class AlertAction(BaseModel):
@@ -239,6 +260,7 @@ async def overview(
         select(VenueAlert.severity, func.count(VenueAlert.id)).where(VenueAlert.status == "active").group_by(VenueAlert.severity)
     )).all())
     outbox_counts = dict((await db.execute(select(SyncOutbox.status, func.count(SyncOutbox.id)).group_by(SyncOutbox.status))).all())
+    audit_event_count = (await db.scalar(select(func.count(VenueAuditEvent.id)))) or 0
     content_counts = dict((await db.execute(
         select(PresentationFile.local_sync_status, func.count(PresentationFile.id))
         .where(PresentationFile.is_current_version.is_(True)).group_by(PresentationFile.local_sync_status)
@@ -259,6 +281,7 @@ async def overview(
         "services": service_items,
         "devices": {"total": len(device_rows), "healthy": device_states.count("healthy"), "stale": device_states.count("stale"), "offline": device_states.count("offline"), "not_configured": device_states.count("not_configured")},
         "alerts": {"total": sum(alert_counts.values()), **alert_counts},
+        "audit_events": {"total": audit_event_count},
         "sync": {"outbox": outbox_counts, "pending": int(outbox_counts.get("pending", 0)) + int(outbox_counts.get("failed", 0))},
         "content": content_counts, "storage": storage,
     }
@@ -625,12 +648,27 @@ async def get_live_operations(
     rooms_list = list((await db.execute(select(Room).where(Room.is_active.is_(True)).order_by(Room.display_order.asc(), Room.name.asc()))).scalars().all())
     devices_list = list((await db.execute(select(RoomDevice))).scalars().all())
     sessions_list = list((await db.execute(select(Session).order_by(Session.start_time.asc()))).scalars().all())
+    session_speakers_list = list((await db.execute(select(SessionSpeaker))).scalars().all())
+    confirmed_by_session = {
+        session_id: any(bool(item.is_confirmed) for item in session_speakers_list if item.session_id == session_id)
+        for session_id in {item.session_id for item in session_speakers_list}
+    }
     speakers_list = list((await db.execute(select(Speaker))).scalars().all())
     speaker_map = {s.id: f"{s.title or ''} {s.first_name} {s.last_name}".strip() for s in speakers_list}
     session_speakers = list((await db.execute(select(SessionSpeaker))).scalars().all())
-    sess_speaker_map = {ss.session_id: speaker_map.get(ss.speaker_id, "Speaker") for ss in session_speakers}
-    presentations = list((await db.execute(select(PresentationFile).where(PresentationFile.is_current_version.is_(True)))).scalars().all())
-    pres_map = {p.session_id: p for p in presentations}
+    sess_speaker_map = {ss.session_id: speaker_map.get(ss.speaker_id) for ss in session_speakers}
+    presentation_rows = list((await db.execute(
+        select(PresentationFile, SessionSpeaker.session_id)
+        .join(SessionSpeaker, PresentationFile.session_speaker_id == SessionSpeaker.id)
+        .where(PresentationFile.is_current_version.is_(True))
+    )).all())
+    pres_map = {session_id: file for file, session_id in presentation_rows}
+    current_file_ids = [file.id for file, _ in presentation_rows]
+    transfer_rows = list((await db.execute(
+        select(VenueAssetTransfer).where(VenueAssetTransfer.file_id.in_(current_file_ids))
+    )).scalars().all()) if current_file_ids else []
+    runtime_states = list((await db.execute(select(RoomRuntimeState))).scalars().all())
+    runtime_by_room = {state.room_id: state for state in runtime_states}
 
     incidents = list((await db.execute(select(VenueIncident).where(VenueIncident.status != "resolved").order_by(VenueIncident.started_at.desc()))).scalars().all())
     devices_by_room: dict[uuid.UUID, list[RoomDevice]] = {}
@@ -641,13 +679,13 @@ async def get_live_operations(
     room_items = []
     for r in rooms_list:
         r_devs = devices_by_room.get(r.id, [])
-        tech_dev = next((d for d in r_devs if d.device_type in {"technician_tablet", "technician_pc"}), None)
-        stage_dev = next((d for d in r_devs if d.device_type == "presentation_pc"), None)
+        tech_dev = next((d for d in r_devs if d.device_type in {"technician_tablet", "technician_pc", "technical_app", "technical"}), None)
+        stage_dev = next((d for d in r_devs if d.device_type in {"presentation_pc", "stage_app", "stage"}), None)
         mod_dev = next((d for d in r_devs if d.device_type == "moderator_tablet"), None)
 
-        tech_st = observed_state(tech_dev.last_heartbeat_at, tech_dev.status) if tech_dev else "offline"
-        stage_st = observed_state(stage_dev.last_heartbeat_at, stage_dev.status) if stage_dev else "offline"
-        mod_st = observed_state(mod_dev.last_heartbeat_at, mod_dev.status) if mod_dev else "offline"
+        tech_st = observed_state(tech_dev.last_heartbeat_at, tech_dev.status) if tech_dev else "not_configured"
+        stage_st = observed_state(stage_dev.last_heartbeat_at, stage_dev.status) if stage_dev else "not_configured"
+        mod_st = observed_state(mod_dev.last_heartbeat_at, mod_dev.status) if mod_dev else "not_configured"
 
         # Match active or next session
         active_s = next((s for s in sessions_list if s.room_id == r.id and s.start_time <= now <= s.end_time), None)
@@ -655,71 +693,87 @@ async def get_live_operations(
         target_s = active_s or next_s or next((s for s in sessions_list if s.room_id == r.id), None)
 
         pres = pres_map.get(target_s.id) if target_s else None
-        spk_name = sess_speaker_map.get(target_s.id, "Dr. Presenter") if target_s else "Unassigned"
+        spk_name = sess_speaker_map.get(target_s.id) if target_s else None
 
-        # Calculate timer remaining
-        timer_seconds = 0
-        if active_s and active_s.end_time:
-            diff = (active_s.end_time if active_s.end_time.tzinfo else active_s.end_time.replace(tzinfo=timezone.utc)) - now
-            timer_seconds = max(0, int(diff.total_seconds()))
+        # Use the persisted room timer. A scheduled session countdown is not a
+        # substitute for the operator-controlled timer state.
+        runtime_state = runtime_by_room.get(r.id)
+        timer_seconds = None
+        timer_status = "unknown"
+        if runtime_state:
+            timer_status = runtime_state.timer_status
+            timer_seconds = runtime_state.timer_remaining_seconds
+            if timer_status == "running" and runtime_state.timer_started_at and timer_seconds is not None:
+                started_at = runtime_state.timer_started_at if runtime_state.timer_started_at.tzinfo else runtime_state.timer_started_at.replace(tzinfo=timezone.utc)
+                timer_seconds = max(0, timer_seconds - int((now - started_at).total_seconds()))
 
         # Determine room operational status
-        if stage_st == "offline" or tech_st == "offline":
+        if stage_st == "not_configured" or tech_st == "not_configured":
+            status_text = "NOT CONFIGURED"
+        elif stage_st == "offline" or tech_st == "offline":
             status_text = "OFFLINE" if stage_st == "offline" and tech_st == "offline" else "DEGRADED"
+        elif stage_st in {"stale", "degraded", "maintenance"} or tech_st in {"stale", "degraded", "maintenance"}:
+            status_text = "DEGRADED"
         elif pres and pres.local_sync_status == "transferring":
             status_text = "FILE UPDATE"
-        elif active_s:
+        elif active_s and stage_st == "healthy" and tech_st == "healthy":
             status_text = "LIVE"
-        else:
+        elif stage_st == "healthy" and tech_st == "healthy":
             status_text = "READY"
+        else:
+            status_text = "DEGRADED"
 
         room_items.append({
             "id": str(r.id),
             "name": r.name,
             "type": r.room_type,
             "status_text": status_text,
-            "status": "healthy" if status_text in {"LIVE", "READY"} else ("warning" if status_text == "FILE UPDATE" else "critical"),
+            "status": "healthy" if status_text in {"LIVE", "READY"} else ("warning" if status_text in {"FILE UPDATE", "DEGRADED"} else ("unknown" if status_text == "NOT CONFIGURED" else "critical")),
             "current_speaker": spk_name,
             "current_session": {
                 "id": str(target_s.id) if target_s else None,
-                "code": target_s.session_code if target_s else "S-100",
-                "title": target_s.name if target_s else "Break / Preparation",
+                "code": target_s.session_code if target_s else None,
+                "title": target_s.name if target_s else None,
                 "start": iso(target_s.start_time) if target_s else None,
                 "end": iso(target_s.end_time) if target_s else None,
                 "is_active": active_s is not None,
             },
             "technical": {
                 "status": tech_st,
-                "device_name": tech_dev.device_name if tech_dev else "Tech PC",
-                "cpu_pct": 31,
-                "ram_pct": 44,
+                "device_name": tech_dev.device_name if tech_dev else None,
+                "cpu_pct": None,
+                "ram_pct": None,
             },
             "stage": {
                 "status": stage_st,
-                "device_name": stage_dev.device_name if stage_dev else "Stage PC",
-                "cpu_pct": 21,
-                "ram_pct": 38,
-                "playback_status": "playing" if active_s and stage_st == "healthy" else "ready",
+                "device_name": stage_dev.device_name if stage_dev else None,
+                "cpu_pct": None,
+                "ram_pct": None,
+            # A healthy Stage App does not prove that a file is playing. The
+            # playback event stream is the authority; absent a persisted
+            # playback state, keep this value unknown.
+            "playback_status": "unknown",
             },
             "moderator": {"status": mod_st},
             "presentation": {
                 "id": str(pres.id) if pres else None,
-                "filename": pres.original_filename if pres else "A123_Pres.pptx",
-                "version": f"v{pres.version_number}" if pres else "v1",
-                "sync_status": pres.local_sync_status if pres else "synced",
+                "filename": pres.original_filename if pres else None,
+                "version": f"v{pres.version_number}" if pres else None,
+                "sync_status": pres.local_sync_status if pres else "not_available",
             },
             "timer_seconds": timer_seconds,
+            "timer_status": timer_status,
         })
 
     timeline_items = []
     for s in sessions_list[:12]:
-        room_name = next((r.name for r in rooms_list if r.id == s.room_id), "Hall")
+        room_name = next((r.name for r in rooms_list if r.id == s.room_id), None)
         timeline_items.append({
             "id": str(s.id),
             "session_code": s.session_code,
             "title": s.name,
             "room_name": room_name,
-            "speaker": sess_speaker_map.get(s.id, "Dr. Speaker"),
+            "speaker": sess_speaker_map.get(s.id),
             "start": iso(s.start_time),
             "end": iso(s.end_time),
             "status": s.status,
@@ -741,7 +795,9 @@ async def get_live_operations(
 
     return {
         "generated_at": now.isoformat(),
-        "venue_healthy": not any(i.severity == "critical" for i in incidents),
+        "venue_healthy": bool(room_items) and not any(i.severity == "critical" for i in incidents) and all(
+            item["status_text"] not in {"OFFLINE", "NOT CONFIGURED"} for item in room_items
+        ),
         "rooms": room_items,
         "timeline": timeline_items,
         "incidents": incident_items,
@@ -766,6 +822,12 @@ async def get_room_workspace(
         raise HTTPException(status_code=404, detail="Room not found.")
 
     devices = list((await db.execute(select(RoomDevice).where(RoomDevice.room_id == room_id))).scalars().all())
+    runtime_state = await db.scalar(
+        select(RoomRuntimeState).where(
+            RoomRuntimeState.event_id == room.event_id,
+            RoomRuntimeState.room_id == room.id,
+        )
+    )
     sessions = list((await db.execute(select(Session).where(Session.room_id == room_id).order_by(Session.start_time.asc()))).scalars().all())
     session_ids = [s.id for s in sessions]
 
@@ -773,12 +835,38 @@ async def get_room_workspace(
     speakers_list = list((await db.execute(select(Speaker))).scalars().all())
     speaker_map = {s.id: s for s in speakers_list}
 
-    presentations = list((await db.execute(select(PresentationFile).where(PresentationFile.session_id.in_(session_ids)))).scalars().all()) if session_ids else []
-    pres_map = {p.session_id: p for p in presentations}
+    presentations = list((await db.execute(
+        select(PresentationFile)
+        .join(SessionSpeaker, PresentationFile.session_speaker_id == SessionSpeaker.id)
+        .where(SessionSpeaker.session_id.in_(session_ids), PresentationFile.is_current_version.is_(True))
+    )).scalars().all()) if session_ids else []
+    pres_map = {p.session_speaker_id: p for p in presentations}
 
-    tech_dev = next((d for d in devices if d.device_type in {"technician_tablet", "technician_pc"}), None)
-    stage_dev = next((d for d in devices if d.device_type == "presentation_pc"), None)
+    tech_dev = next((d for d in devices if d.device_type in {"technician_tablet", "technician_pc", "technical_app", "technical"}), None)
+    stage_dev = next((d for d in devices if d.device_type in {"presentation_pc", "stage_app", "stage"}), None)
     mod_dev = next((d for d in devices if d.device_type == "moderator_tablet"), None)
+
+    room_device_states = [
+        observed_state(device.last_heartbeat_at, device.status)
+        for device in (stage_dev, tech_dev)
+        if device is not None
+    ]
+    if not room_device_states:
+        room_status = "not_configured"
+    elif all(state == "healthy" for state in room_device_states):
+        room_status = "healthy"
+    elif any(state == "offline" for state in room_device_states):
+        room_status = "offline" if all(state == "offline" for state in room_device_states) else "degraded"
+    else:
+        room_status = "degraded"
+
+    timer_remaining = runtime_state.timer_remaining_seconds if runtime_state else None
+    timer_status = runtime_state.timer_status if runtime_state else "unknown"
+    if runtime_state and timer_status == "running" and runtime_state.timer_started_at and timer_remaining is not None:
+        started_at = runtime_state.timer_started_at if runtime_state.timer_started_at.tzinfo else runtime_state.timer_started_at.replace(tzinfo=timezone.utc)
+        timer_remaining = max(0, timer_remaining - int((now - started_at).total_seconds()))
+        if timer_remaining == 0:
+            timer_status = "expired"
 
     active_s = next((s for s in sessions if s.start_time <= now <= s.end_time), None)
     next_s = next((s for s in sessions if s.start_time > now), None)
@@ -787,7 +875,7 @@ async def get_room_workspace(
     spk_rel = next((ss for ss in session_speakers if target_s and ss.session_id == target_s.id), None)
     speaker = speaker_map.get(spk_rel.speaker_id) if spk_rel else None
 
-    pres = pres_map.get(target_s.id) if target_s else None
+    pres = pres_map.get(spk_rel.id) if spk_rel else None
 
     # Overrides for this room
     overrides = list((await db.execute(select(VenueOverride).where(VenueOverride.target_id == str(room.id), VenueOverride.is_active.is_(True)))).scalars().all())
@@ -799,26 +887,26 @@ async def get_room_workspace(
             "type": room.room_type,
             "capacity": room.capacity,
             "av_technician": room.av_technician,
-            "status": "operational",
+            "status": room_status,
         },
         "current_session": {
             "id": str(target_s.id) if target_s else None,
-            "code": target_s.session_code if target_s else "S-104",
-            "title": target_s.name if target_s else "General Session",
+            "code": target_s.session_code if target_s else None,
+            "title": target_s.name if target_s else None,
             "start": iso(target_s.start_time) if target_s else None,
             "end": iso(target_s.end_time) if target_s else None,
             "is_active": active_s is not None,
             "speaker": {
-                "name": f"{speaker.title or ''} {speaker.first_name} {speaker.last_name}".strip() if speaker else "Dr. Presenter",
-                "affiliation": speaker.affiliation if speaker else "Apollo Hospitals",
+                "name": f"{speaker.title or ''} {speaker.first_name} {speaker.last_name}".strip() if speaker else None,
+                "affiliation": speaker.affiliation if speaker else None,
             } if target_s else None,
             "presentation": {
                 "id": str(pres.id) if pres else None,
-                "filename": pres.original_filename if pres else "Cardiology_Final.pptx",
-                "version": f"v{pres.version_number}" if pres else "v7",
-                "size_bytes": pres.file_size_bytes if pres else 18450000,
-                "status": pres.local_sync_status if pres else "synced",
-                "checksum": pres.file_hash_sha256 if pres else "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                "filename": pres.original_filename if pres else None,
+                "version": f"v{pres.version_number}" if pres else None,
+                "size_bytes": pres.file_size_bytes if pres else None,
+                "status": pres.local_sync_status if pres else "not_available",
+                "checksum": pres.content_sha256 if pres else None,
             } if target_s else None,
         },
         "upcoming_sessions": [{
@@ -831,27 +919,33 @@ async def get_room_workspace(
         "devices": {
             "technical": {
                 "id": str(tech_dev.id) if tech_dev else None,
-                "name": tech_dev.device_name if tech_dev else f"TECH-PC-{room.name[:4]}",
-                "status": observed_state(tech_dev.last_heartbeat_at, tech_dev.status) if tech_dev else "healthy",
-                "cpu_pct": 31, "ram_pct": 44, "ip": str(tech_dev.ip_address) if tech_dev and tech_dev.ip_address else "192.168.10.24",
-                "app_version": tech_dev.app_version if tech_dev else "4.1.0",
-                "current_presentation": pres.original_filename if pres else "Cardiology_Final.pptx",
+                "name": tech_dev.device_name if tech_dev else None,
+                "status": observed_state(tech_dev.last_heartbeat_at, tech_dev.status) if tech_dev else "not_configured",
+                "cpu_pct": None, "ram_pct": None, "ip": str(tech_dev.ip_address) if tech_dev and tech_dev.ip_address else None,
+                "app_version": tech_dev.app_version if tech_dev else None,
+                "current_presentation": pres.original_filename if pres else None,
             },
             "stage": {
                 "id": str(stage_dev.id) if stage_dev else None,
-                "name": stage_dev.device_name if stage_dev else f"STAGE-PC-{room.name[:4]}",
-                "status": observed_state(stage_dev.last_heartbeat_at, stage_dev.status) if stage_dev else "healthy",
-                "cpu_pct": 21, "ram_pct": 38, "ip": str(stage_dev.ip_address) if stage_dev and stage_dev.ip_address else "192.168.10.44",
-                "app_version": stage_dev.app_version if stage_dev else "4.1.0",
-                "playing_presentation": pres.original_filename if pres else "Cardiology_Final.pptx",
-                "version_cached": f"v{pres.version_number}" if pres else "v7",
+                "name": stage_dev.device_name if stage_dev else None,
+                "status": observed_state(stage_dev.last_heartbeat_at, stage_dev.status) if stage_dev else "not_configured",
+                "cpu_pct": None, "ram_pct": None, "ip": str(stage_dev.ip_address) if stage_dev and stage_dev.ip_address else None,
+                "app_version": stage_dev.app_version if stage_dev else None,
+                "playing_presentation": pres.original_filename if pres else None,
+                "version_cached": f"v{pres.version_number}" if pres else None,
             },
             "moderator": {
                 "id": str(mod_dev.id) if mod_dev else None,
-                "name": mod_dev.device_name if mod_dev else "MOD-04",
-                "status": observed_state(mod_dev.last_heartbeat_at, mod_dev.status) if mod_dev else "healthy",
+                "name": mod_dev.device_name if mod_dev else None,
+                "status": observed_state(mod_dev.last_heartbeat_at, mod_dev.status) if mod_dev else "not_configured",
             },
-            "timer": {"status": "healthy", "display_active": True, "remaining_seconds": 522},
+            "timer": {
+                "status": timer_status,
+                "display_active": (timer_status != "hidden") if runtime_state else None,
+                "remaining_seconds": timer_remaining,
+                "duration_seconds": runtime_state.timer_duration_seconds if runtime_state else None,
+                "updated_at": iso(runtime_state.updated_at) if runtime_state else None,
+            },
         },
         "overrides": [{
             "id": str(ov.id), "type": ov.override_type, "reason": ov.reason, "authorized_by": ov.authorized_by,
@@ -873,27 +967,40 @@ async def send_room_command(
 
     allowed = {
         "launch_presentation", "pause", "stop", "reload", "switch_session",
-        "show_timer", "hide_timer", "emergency_message", "prepare_now"
+        "show_timer", "hide_timer", "start_timer", "pause_timer", "reset_timer",
+        "emergency_message", "prepare_now"
     }
     if payload.command not in allowed:
         raise HTTPException(status_code=422, detail=f"Unsupported room command '{payload.command}'.")
 
+    if payload.idempotency_key:
+        existing = (await db.execute(select(VenueCommand).where(VenueCommand.idempotency_key == payload.idempotency_key))).scalar_one_or_none()
+        if existing:
+            if existing.room_id != room.id or existing.event_id != room.event_id or existing.command != payload.command:
+                raise HTTPException(status_code=409, detail="Idempotency key belongs to another room command.")
+            return {"command_id": str(existing.id), "status": existing.status, "room_id": str(room.id), "action": existing.command, "idempotent": True}
+
     command = VenueCommand(
         target_type="room",
         target_id=str(room.id),
+        event_id=room.event_id,
+        room_id=room.id,
         command=payload.command,
         payload=payload.payload,
         requested_by=user.id,
-        reason=payload.reason
+        reason=payload.reason,
+        status="queued",
+        idempotency_key=payload.idempotency_key,
+        expires_at=utcnow() + timedelta(minutes=5),
     )
     db.add(command)
     await write_audit(
         db, user=user, request=request, category="room_control", action=payload.command,
-        result="executed", object_type="room", object_id=str(room.id), reason=payload.reason,
+        result="queued", object_type="room", object_id=str(room.id), reason=payload.reason,
         details=payload.payload
     )
     await db.commit()
-    return {"command_id": str(command.id), "status": "executed", "room_id": str(room.id), "action": payload.command}
+    return {"command_id": str(command.id), "status": command.status, "room_id": str(room.id), "action": payload.command}
 
 
 @router.get("/rooms/readiness")
@@ -905,8 +1012,12 @@ async def get_rooms_readiness(
     rooms_list = list((await db.execute(select(Room).where(Room.is_active.is_(True)).order_by(Room.display_order.asc()))).scalars().all())
     devices_list = list((await db.execute(select(RoomDevice))).scalars().all())
     sessions_list = list((await db.execute(select(Session).order_by(Session.start_time.asc()))).scalars().all())
-    presentations = list((await db.execute(select(PresentationFile).where(PresentationFile.is_current_version.is_(True)))).scalars().all())
-    pres_map = {p.session_id: p for p in presentations}
+    presentation_rows = list((await db.execute(
+        select(PresentationFile, SessionSpeaker.session_id)
+        .join(SessionSpeaker, PresentationFile.session_speaker_id == SessionSpeaker.id)
+        .where(PresentationFile.is_current_version.is_(True))
+    )).all())
+    pres_map = {session_id: file for file, session_id in presentation_rows}
 
     devices_by_room: dict[uuid.UUID, list[RoomDevice]] = {}
     for d in devices_list:
@@ -929,11 +1040,12 @@ async def get_rooms_readiness(
             target_s = next((s for s in sessions_list if s.room_id == r.id and s.start_time > now), None)
 
         pres = pres_map.get(target_s.id) if target_s else None
-        pres_downloaded = pres is not None and pres.local_sync_status == "synced"
-        pres_checksum = pres_downloaded
-        viewer_ready = stage_ok and pres_downloaded
-        speaker_confirmed = True
-        timer_available = True
+        pres_downloaded = bool(pres and pres.local_sync_status == "synced" and pres.local_cache_path)
+        stage_delivery = next((transfer for transfer in transfer_rows if pres and stage_dev and transfer.file_id == pres.id and transfer.version_number == pres.version_number and transfer.target_id == stage_dev.id), None)
+        pres_checksum = bool(stage_delivery and stage_delivery.status == "verified" and stage_delivery.checksum_verified and stage_delivery.acknowledged_sha256 and stage_delivery.acknowledged_sha256.lower() == (pres.content_sha256 or "").lower())
+        viewer_ready = stage_ok and pres_checksum
+        speaker_confirmed = confirmed_by_session.get(target_s.id, False) if target_s else False
+        timer_available = any(device.device_type in {"timer", "timer_display"} and device.status == "online" for device in r_devs)
 
         all_checks = [tech_ok, stage_ok, pres_downloaded, pres_checksum, viewer_ready, speaker_confirmed, timer_available, mod_ok]
         is_ready = all(all_checks)
@@ -942,9 +1054,9 @@ async def get_rooms_readiness(
         readiness_items.append({
             "room_id": str(r.id),
             "room_name": r.name,
-            "session_title": target_s.name if target_s else "Upcoming Session",
-            "session_code": target_s.session_code if target_s else "S-100",
-            "starts_in_minutes": 8,
+            "session_title": target_s.name if target_s else None,
+            "session_code": target_s.session_code if target_s else None,
+            "starts_in_minutes": max(0, int((target_s.start_time - now).total_seconds() // 60)) if target_s and target_s.start_time > now else 0 if target_s else None,
             "overall_status": "READY" if is_ready else ("WARNING" if warning_count >= 2 else "PREPARING"),
             "checklist": {
                 "technical_connected": tech_ok,
@@ -957,8 +1069,8 @@ async def get_rooms_readiness(
                 "moderator_connected": mod_ok,
             },
             "presentation_info": {
-                "filename": pres.original_filename if pres else "Presentation.pptx",
-                "version": f"v{pres.version_number}" if pres else "v1",
+                "filename": pres.original_filename if pres else None,
+                "version": f"v{pres.version_number}" if pres else None,
                 "viewer_status": "Loaded" if viewer_ready else "Not loaded",
             }
         })
@@ -983,13 +1095,27 @@ async def get_srr_fleet(
     _: VenueUser = Depends(require_viewer),
 ) -> dict:
     now = utcnow()
-    stations = list((await db.execute(select(SRRStation).order_by(SRRStation.station_number.asc()))).scalars().all())
-    latest_checkin = (await db.execute(select(SRRCheckin).order_by(SRRCheckin.created_at.desc()).limit(1))).scalar_one_or_none()
-    
-    files = list((await db.execute(select(PresentationFile).order_by(PresentationFile.uploaded_at.desc()).limit(20))).scalars().all())
+    event = await single_event(db)
+    event_id = event.id if event else None
+    station_query = select(SRRStation).order_by(SRRStation.station_number.asc())
+    checkin_query = select(SRRCheckin).order_by(SRRCheckin.created_at.desc()).limit(1)
+    file_query = select(PresentationFile).where(PresentationFile.is_current_version.is_(True)).order_by(PresentationFile.uploaded_at.desc()).limit(20)
+    if event_id:
+        station_query = station_query.where(SRRStation.event_id == event_id)
+        checkin_query = checkin_query.where(SRRCheckin.event_id == event_id)
+        file_query = file_query.where(PresentationFile.event_id == event_id)
+    stations = list((await db.execute(station_query)).scalars().all())
+    latest_checkin = (await db.execute(checkin_query)).scalar_one_or_none()
+    files = list((await db.execute(file_query)).scalars().all())
     
     # Pre-fetch Sessions, Rooms, Speakers
-    session_ids = [f.session_id for f in files if f.session_id]
+    file_session_rows = list((await db.execute(
+        select(PresentationFile.id, SessionSpeaker.session_id)
+        .join(SessionSpeaker, PresentationFile.session_speaker_id == SessionSpeaker.id)
+        .where(PresentationFile.id.in_([f.id for f in files]))
+    )).all()) if files else []
+    file_session_map = {file_id: session_id for file_id, session_id in file_session_rows}
+    session_ids = [session_id for _, session_id in file_session_rows]
     sessions = list((await db.execute(select(Session).where(Session.id.in_(session_ids)))).scalars().all()) if session_ids else []
     session_map = {s.id: s for s in sessions}
 
@@ -1003,71 +1129,116 @@ async def get_srr_fleet(
     speaker_map = {s.id: f"{s.title or ''} {s.first_name} {s.last_name}".strip() for s in speakers}
     sess_speaker_map = {ss.session_id: speaker_map.get(ss.speaker_id, "Speaker") for ss in session_speakers}
 
+    assigned_speaker_ids = {s.assigned_speaker_id for s in stations if s.assigned_speaker_id}
+    assigned_speakers = list((await db.execute(select(Speaker).where(Speaker.id.in_(assigned_speaker_ids)))).scalars().all()) if assigned_speaker_ids else []
+    assigned_speaker_map = {s.id: f"{s.title or ''} {s.first_name} {s.last_name}".strip() for s in assigned_speakers}
+    file_ids = [f.id for f in files]
+    transfer_rows = list((await db.execute(select(VenueAssetTransfer).where(VenueAssetTransfer.file_id.in_(file_ids)))).scalars().all()) if file_ids else []
+    transfers_by_file: dict[uuid.UUID, list[VenueAssetTransfer]] = {}
+    for transfer in transfer_rows:
+        transfers_by_file.setdefault(transfer.file_id, []).append(transfer)
+    room_device_query = select(RoomDevice)
+    if event_id:
+        room_device_query = room_device_query.where(RoomDevice.event_id == event_id)
+    room_devices = list((await db.execute(room_device_query)).scalars().all())
+
+    def delivery_state(rows: list[VenueAssetTransfer]) -> str:
+        if not rows:
+            return "NOT_CONFIGURED"
+        if any(row.status == "failed" for row in rows):
+            return "FAILED"
+        if any(row.status == "cancelled" for row in rows):
+            return "STALE"
+        if all(row.status == "verified" and row.checksum_verified for row in rows):
+            return "SYNCED"
+        return "PENDING"
+
     station_items = []
     for s in stations:
-        meta = s.metadata_json or {}
-        st_state = "occupied" if s.status == "occupied" else ("uploading" if s.status == "uploading" else "idle")
+        observed = station_payload(s, now)
+        st_state = observed["status"]
+        status_text = {
+            "occupied": "Working", "uploading": "Uploading", "idle": "Available",
+            "completed": "Completed", "locked": "Locked", "error": "Error", "offline": "Offline",
+        }.get(st_state, "Unknown")
         station_items.append({
             "station_number": s.station_number,
             "station_code": f"SRR-{s.station_number:02d}",
             "device_name": s.device_name or f"SRR-Station-{s.station_number:02d}",
-            "ip_address": s.ip_address or f"192.168.30.{10+s.station_number}",
+            "ip_address": str(s.ip_address) if s.ip_address else None,
             "status": st_state,
-            "status_text": meta.get("status_text", "Working" if st_state == "occupied" else ("Uploading" if st_state == "uploading" else "Available")),
-            "speaker": meta.get("current_speaker", "—"),
-            "current_file": meta.get("current_file", "—"),
-            "cpu_pct": meta.get("cpu_pct", 24),
-            "ram_pct": meta.get("ram_pct", 36),
-            "disk_pct": meta.get("disk_pct", 45),
-            "agent_version": meta.get("agent_version", "3.8.0"),
-            "last_heartbeat": iso(s.last_heartbeat),
+            "status_text": status_text,
+            "speaker": assigned_speaker_map.get(s.assigned_speaker_id),
+            "current_file": None,
+            "cpu_pct": None,
+            "ram_pct": None,
+            "disk_pct": None,
+            "agent_version": None,
+            "last_heartbeat": iso(s.last_heartbeat_at),
         })
 
     # Available count
     available_stations = [s["station_code"] for s in station_items if s["status"] == "idle"]
 
-    checkin_speaker = "Ready"
-    checkin_station = "SRR-01"
-    checkin_scan = now.strftime("%H:%M:%S")
+    checkin_speaker = None
+    checkin_station = None
+    checkin_scan = None
     if latest_checkin:
-        checkin_scan = latest_checkin.created_at.strftime("%H:%M:%S") if latest_checkin.created_at else now.strftime("%H:%M:%S")
-        checkin_station = f"SRR-{latest_checkin.assigned_station_number:02d}" if latest_checkin.assigned_station_number else "SRR-01"
+        checkin_scan = latest_checkin.created_at.strftime("%H:%M:%S") if latest_checkin.created_at else None
+        station = await db.get(SRRStation, latest_checkin.station_id) if latest_checkin.station_id else None
+        checkin_station = f"SRR-{station.station_number:02d}" if station else None
         if latest_checkin.speaker_id:
             spk = await db.get(Speaker, latest_checkin.speaker_id)
             if spk:
                 checkin_speaker = f"{spk.title or ''} {spk.first_name} {spk.last_name}".strip()
 
+    stage_types = {"presentation_pc", "stage_app", "stage"}
+    technical_types = {"technician_tablet", "technical_app", "technician", "technical"}
+    active_stations = [s for s in stations if s.is_active]
     recent_files = []
     for f in files[:10]:
-        sess = session_map.get(f.session_id)
-        r_name = room_map.get(sess.room_id, "Hall") if sess else "Main Hall"
-        spk_name = sess_speaker_map.get(f.session_id, "Faculty Speaker")
+        session_id = file_session_map.get(f.id)
+        sess = session_map.get(session_id)
+        r_name = room_map.get(sess.room_id) if sess else None
+        spk_name = sess_speaker_map.get(session_id)
+        file_transfers = transfers_by_file.get(f.id, [])
+        srr_transfers = [t for t in file_transfers if t.target_type == "srr_station" and any(t.target_id == station.id for station in active_stations)]
+        room_file_devices = [d for d in room_devices if d.room_id == f.room_id and d.event_id == f.event_id]
+        stage_ids = {d.id for d in room_file_devices if (d.device_type or "").strip().lower() in stage_types and d.enrollment_token_revoked_at is None}
+        technical_ids = {d.id for d in room_file_devices if (d.device_type or "").strip().lower() in technical_types and d.enrollment_token_revoked_at is None}
+        stage_transfers = [t for t in file_transfers if t.target_id in stage_ids]
+        technical_transfers = [t for t in file_transfers if t.target_id in technical_ids]
+        srr_state = delivery_state(srr_transfers)
+        tech_state = delivery_state(technical_transfers)
+        stage_state = delivery_state(stage_transfers)
+        all_states = [srr_state, tech_state, stage_state]
+        overall_state = "FAILED" if "FAILED" in all_states else "STALE" if "STALE" in all_states else "SYNCED" if all(state == "SYNCED" for state in all_states) else "NOT_CONFIGURED" if all(state == "NOT_CONFIGURED" for state in all_states) else "TRANSFERRING"
         recent_files.append({
             "id": str(f.id),
             "speaker": spk_name,
-            "session": sess.name if sess else "Scientific Session",
+            "session": sess.name if sess else None,
             "room": r_name,
             "filename": f.original_filename,
             "version": f"v{f.version_number}",
             "modified": (f.uploaded_at if f.uploaded_at else now).strftime("%H:%M"),
-            "srr_status": "5/5 ✓",
-            "tech_status": "✓",
-            "stage_status": "✓" if f.local_sync_status == "synced" else "◐",
-            "distribution_status": "DISTRIBUTED" if f.local_sync_status == "synced" else "TRANSFERRING",
+            "srr_status": srr_state,
+            "tech_status": tech_state,
+            "stage_status": stage_state,
+            "distribution_status": overall_state,
         })
 
     return {
         "generated_at": now.isoformat(),
-        "srr_status": "READY",
+        "srr_status": "NOT_CONFIGURED" if not stations else "READY" if any(s["status"] not in {"offline", "locked"} for s in station_items) else "OFFLINE",
         "total_stations": len(station_items),
         "active_stations": sum(1 for s in station_items if s["status"] != "idle"),
         "available_stations": available_stations,
         "checkin_node": {
-            "status": "CONNECTED",
+            "status": "UNKNOWN",
             "last_scan_time": checkin_scan,
             "last_speaker": checkin_speaker,
             "assigned_station": checkin_station,
-            "status_text": "READY FOR SPEAKER",
+            "status_text": "LAST SCAN RECORDED" if checkin_speaker else "NO HEARTBEAT EVIDENCE",
         },
         "stations": station_items,
         "recent_files": recent_files,
@@ -1082,7 +1253,11 @@ async def send_srr_station_command(
     db: AsyncSession = Depends(get_database),
     user: VenueUser = Depends(require_operator),
 ) -> dict:
-    station = await db.scalar(select(SRRStation).where(SRRStation.station_number == station_number))
+    event = await single_event(db)
+    station_query = select(SRRStation).where(SRRStation.station_number == station_number)
+    if event:
+        station_query = station_query.where(SRRStation.event_id == event.id)
+    station = await db.scalar(station_query)
     if not station:
         raise HTTPException(status_code=404, detail="SRR Station not found.")
 
@@ -1092,10 +1267,8 @@ async def send_srr_station_command(
 
     if payload.command == "force_release":
         station.status = "idle"
-        if station.metadata_json:
-            station.metadata_json["current_speaker"] = None
-            station.metadata_json["current_file"] = None
-            station.metadata_json["status_text"] = "Available"
+        station.assigned_speaker_id = None
+        station.session_assigned_at = None
     elif payload.command == "disable":
         station.status = "locked"
 
@@ -1132,11 +1305,7 @@ async def get_distribution_center(
         "progress_pct": t.progress_pct,
         "status": t.status,
         "checksum_verified": t.checksum_verified,
-        "targets": [
-            {"node": "SRR-01..05", "status": "synced"},
-            {"node": "Hall 4 Technical", "status": "synced"},
-            {"node": "Hall 4 Stage", "status": "transferring" if t.progress_pct < 100 else "synced"},
-        ]
+        "targets": [{"node": t.target_node, "type": t.target_type, "status": t.status, "progress_pct": t.progress_pct}],
     } for t in transfers]
 
     return {
@@ -1210,13 +1379,13 @@ async def get_device_wall(
             "room_name": r_name,
             "type": d.device_type,
             "status": st,
-            "ip_address": str(d.ip_address) if d.ip_address else "192.168.10.x",
-            "mac_address": str(d.mac_address) if d.mac_address else "52:54:00:xx:xx:xx",
-            "os_version": d.os_version or "Windows 11 Pro",
-            "app_version": d.app_version or "4.1.0",
-            "cpu_pct": 32 if st == "healthy" else 0,
-            "ram_pct": 44 if st == "healthy" else 0,
-            "disk_pct": 41,
+            "ip_address": str(d.ip_address) if d.ip_address else None,
+            "mac_address": str(d.mac_address) if d.mac_address else None,
+            "os_version": d.os_version,
+            "app_version": d.app_version,
+            "cpu_pct": None,
+            "ram_pct": None,
+            "disk_pct": None,
             "last_heartbeat": iso(d.last_heartbeat_at),
         })
 
@@ -1239,19 +1408,37 @@ async def get_services_summary(
     db: AsyncSession = Depends(get_database),
     _: VenueUser = Depends(require_viewer),
 ) -> dict:
-    stations_count = (await db.execute(select(func.count(SRRStation.id)))).scalar() or 0
-    rooms_count = (await db.execute(select(func.count(Room.id)))).scalar() or 0
-    desks_count = (await db.execute(select(func.count(RoomDevice.id)).where(RoomDevice.device_type == "registration_desk"))).scalar() or 0
-    kiosks_count = (await db.execute(select(func.count(RoomDevice.id)).where(RoomDevice.device_type == "registration_kiosk"))).scalar() or 0
-    signage_count = (await db.execute(select(func.count(RoomDevice.id)).where(RoomDevice.device_type == "signage_display"))).scalar() or 0
-    eposter_count = (await db.execute(select(func.count(RoomDevice.id)).where(RoomDevice.device_type == "eposter_display"))).scalar() or 0
+    stations = list((await db.execute(select(SRRStation))).scalars().all())
+    rooms = list((await db.execute(select(Room))).scalars().all())
+    devices = list((await db.execute(select(RoomDevice))).scalars().all())
+    station_states = [observed_state(row.last_heartbeat_at, row.status) for row in stations]
+    room_states = [observed_state(row.last_heartbeat_at, row.status) for row in devices if row.device_type in {"stage", "technical", "stage_app", "technical_app"}]
+
+    def aggregate(states: list[str], configured: bool = True) -> str:
+        if not configured:
+            return "not_configured"
+        if not states:
+            return "not_configured"
+        if any(state == "offline" for state in states):
+            return "offline"
+        if any(state in {"stale", "degraded", "maintenance"} for state in states):
+            return "degraded"
+        return "healthy"
+
+    by_type = {}
+    for row in devices:
+        by_type.setdefault(row.device_type, []).append(row)
+
+    def device_group(device_type: str) -> dict[str, object]:
+        rows = by_type.get(device_type, [])
+        return {"status": aggregate([observed_state(row.last_heartbeat_at, row.status) for row in rows]), "devices": len(rows)}
 
     return {
-        "srr": {"status": "HEALTHY", "stations": f"{stations_count} Stations Enrolled", "subsystem": "SRR Master & Intake Node"},
-        "rooms": {"status": "HEALTHY", "rooms": f"{rooms_count} Halls Active", "subsystem": "Technical & Stage Nodes"},
-        "registration": {"status": "HEALTHY", "desks": f"{desks_count or 10} Desks", "kiosks": f"{kiosks_count or 4} Kiosks", "printers": f"{desks_count or 10} Printers"},
-        "signage": {"status": "HEALTHY", "displays": f"{signage_count or 14} Displays", "subsystem": "Digital Signage Hub"},
-        "eposter": {"status": "HEALTHY", "displays": f"{eposter_count or 6} Displays", "subsystem": "ePoster Cluster"},
+        "srr": {"status": aggregate(station_states), "stations": len(stations), "subsystem": "SRR Master & Intake Node"},
+        "rooms": {"status": aggregate(room_states), "rooms": len(rooms), "subsystem": "Technical & Stage Nodes"},
+        "registration": {**device_group("registration_desk"), "desks": len(by_type.get("registration_desk", [])), "kiosks": len(by_type.get("registration_kiosk", [])), "printers": None},
+        "signage": {**device_group("signage_display"), "displays": len(by_type.get("signage_display", [])), "subsystem": "Digital Signage Hub"},
+        "eposter": {**device_group("eposter_display"), "displays": len(by_type.get("eposter_display", [])), "subsystem": "ePoster Cluster"},
     }
 
 
@@ -1263,19 +1450,25 @@ async def get_connectivity_status(
     outbox_counts = dict((await db.execute(select(SyncOutbox.status, func.count(SyncOutbox.id)).group_by(SyncOutbox.status))).all())
     install = await installation(db)
     event = await single_event(db)
+    latest_job = await db.scalar(select(VenueSyncJob).order_by(VenueSyncJob.created_at.desc()).limit(1))
+    services = list((await db.execute(select(VenueServiceInstance))).scalars().all())
+    latest_source = await db.scalar(select(RegistrationSourceHeartbeat).order_by(RegistrationSourceHeartbeat.received_at.desc()).limit(1))
+    service_states = [observed_state(item.last_heartbeat_at, item.status) for item in services]
+    venue_state = "healthy"
     
     return {
-        "cloud": {"status": "CONNECTED", "latency_ms": 62, "endpoint": settings.CLOUD_API_URL or "https://api.eventos.io"},
-        "venue_server": {"status": "HEALTHY", "node_id": install.installation_name if install else "VENUE-CORE-01", "ip": "127.0.0.1"},
-        "local_services": {"status": "HEALTHY", "healthy_count": 5, "total_count": 5},
+        "cloud": {"status": "unknown", "latency_ms": None, "endpoint": settings.CLOUD_API_URL or None, "evidence": "No live cloud probe is recorded by Venue Server."},
+        "venue_server": {"status": venue_state, "node_id": install.installation_name if install else None, "ip": "127.0.0.1", "evidence": "This response was served by Venue Server."},
+        "local_services": {"status": "not_configured" if not services else ("degraded" if any(state != "healthy" for state in service_states) else "healthy"), "healthy_count": sum(1 for state in service_states if state == "healthy"), "total_count": len(services)},
         "sync": {
-            "cloud_to_venue": "Synced",
+            "cloud_to_venue": "unknown",
             "venue_to_cloud_pending": int(outbox_counts.get("pending", 0)),
             "failed": int(outbox_counts.get("failed", 0)),
-            "conflicts": 0,
-            "last_sync": utcnow().strftime("%H:%M:%S"),
-            "event_version": 1842,
-            "venue_snapshot": 1842,
+            "conflicts": int(outbox_counts.get("conflict", 0)),
+            "last_sync": iso(latest_job.completed_at if latest_job else None),
+            "event_version": None,
+            "venue_snapshot": None,
+            "registration_source_last_heartbeat": iso(latest_source.received_at if latest_source else None),
         },
         "topology_modes": {
             "srr": "VENUE",
@@ -1292,38 +1485,40 @@ async def get_network_topology(
     db: AsyncSession = Depends(get_database),
     _: VenueUser = Depends(require_viewer),
 ) -> dict:
+    devices = list((await db.execute(select(RoomDevice).order_by(RoomDevice.device_name))).scalars().all())
+    stations = list((await db.execute(select(SRRStation).order_by(SRRStation.station_number))).scalars().all())
+    rooms = list((await db.execute(select(Room).order_by(Room.name))).scalars().all())
+    room_map = {room.id: room for room in rooms}
+    room_children = []
+    for room in rooms:
+        room_devices = [device for device in devices if device.room_id == room.id]
+        room_states = [observed_state(device.last_heartbeat_at, device.status) for device in room_devices]
+        room_children.append({
+            "name": room.name,
+            "type": "room",
+            "status": aggregate_device_state(room_states),
+            "room_id": str(room.id),
+            "children": [{"name": device.device_name, "id": str(device.id), "type": device.device_type, "status": observed_state(device.last_heartbeat_at, device.status), "ip": str(device.ip_address) if device.ip_address else None} for device in room_devices],
+        })
+    station_children = [{"name": station.device_name or f"Station {station.station_number}", "id": str(station.id), "type": station.device_role, "status": observed_state(station.last_heartbeat_at, station.status), "ip": str(station.ip_address) if station.ip_address else None} for station in stations]
+    registration_children = [{"name": device.device_name, "id": str(device.id), "type": device.device_type, "status": observed_state(device.last_heartbeat_at, device.status), "ip": str(device.ip_address) if device.ip_address else None} for device in devices if device.device_type in {"registration_desk", "registration_kiosk"}]
     return {
         "root": {
-            "name": "Cloud Gateway", "type": "cloud", "status": "healthy", "latency_ms": 62,
+            "name": "Cloud Gateway", "type": "cloud", "status": "unknown", "latency_ms": None,
             "children": [{
-                "name": "Venue Server Core", "type": "venue_server", "status": "healthy", "ip": "192.168.10.1",
+                "name": "Venue Server Core", "type": "venue_server", "status": "healthy", "ip": "127.0.0.1",
                 "children": [
                     {
-                        "name": "SRR Cluster", "type": "srr_master", "status": "healthy",
-                        "children": [{"name": f"SRR-{i:02d}", "status": "healthy" if i != 4 else "warning"} for i in range(1, 6)]
+                        "name": "SRR Cluster", "type": "srr_master", "status": aggregate_device_state([item["status"] for item in station_children]),
+                        "children": station_children
                     },
-                    {
-                        "name": "Room Clusters (18 Halls)", "type": "room_master", "status": "healthy",
-                        "children": [{"name": f"Hall {i}", "status": "healthy" if i != 7 else "critical"} for i in range(1, 19)]
-                    },
-                    {
-                        "name": "Registration & Kiosks", "type": "registration_master", "status": "healthy",
-                        "children": [{"name": f"Desk {i}", "status": "healthy"} for i in range(1, 11)] + [{"name": f"Kiosk {i}", "status": "healthy" if i != 3 else "warning"} for i in range(1, 5)]
-                    }
+                    {"name": "Room Clusters", "type": "room_master", "status": aggregate_device_state([item["status"] for item in room_children]), "children": room_children},
+                    {"name": "Registration & Kiosks", "type": "registration_master", "status": aggregate_device_state([item["status"] for item in registration_children]), "children": registration_children}
                 ]
             }]
         },
-        "vlans": [
-            {"name": "Management VLAN", "subnet": "192.168.10.0/24", "status": "healthy", "utilization_pct": 24},
-            {"name": "Presentation VLAN", "subnet": "192.168.20.0/24", "status": "healthy", "utilization_pct": 38},
-            {"name": "Registration VLAN", "subnet": "192.168.40.0/24", "status": "warning", "utilization_pct": 82},
-            {"name": "Signage VLAN", "subnet": "192.168.50.0/24", "status": "healthy", "utilization_pct": 19},
-        ],
-        "bandwidth": {
-            "rx_mbps": 420, "tx_mbps": 620,
-            "file_distribution_mbps": 380,
-            "control_traffic_mbps": 1.4
-        }
+        "vlans": [],
+        "bandwidth": {"rx_mbps": None, "tx_mbps": None, "file_distribution_mbps": None, "control_traffic_mbps": None}
     }
 
 
@@ -1514,13 +1709,29 @@ async def get_performance_metrics(
     db: AsyncSession = Depends(get_database),
     _: VenueUser = Depends(require_viewer),
 ) -> dict:
+    install = await installation(db)
+    configured_path = Path(install.storage_path) if install and install.storage_path else Path.cwd()
+    try:
+        disk = shutil.disk_usage(configured_path)
+        disk_pct = round((disk.used / max(disk.total, 1)) * 100, 2)
+    except OSError:
+        disk_pct = None
+    transfer_counts = dict((await db.execute(
+        select(VenueAssetTransfer.status, func.count(VenueAssetTransfer.id)).group_by(VenueAssetTransfer.status)
+    )).all())
+    command_counts = dict((await db.execute(
+        select(VenueCommand.status, func.count(VenueCommand.id)).group_by(VenueCommand.status)
+    )).all())
     return {
-        "api_latency": {"p50": 12, "p95": 28, "p99": 45},
-        "websocket_latency": {"p50": 4, "p95": 8, "p99": 14},
-        "file_transfer_throughput_mbps": 380,
-        "queue_depth": 0,
-        "database_connections": {"active": 4, "pool_size": 20},
-        "resources": {"cpu_pct": 32, "ram_pct": 48, "disk_pct": 41, "network_pct": 38}
+        "api_latency": {"p50": None, "p95": None, "p99": None},
+        "websocket_latency": {"p50": None, "p95": None, "p99": None},
+        "file_transfer_throughput_mbps": None,
+        "queue_depth": int(transfer_counts.get("pending", 0)) + int(transfer_counts.get("transferring", 0)),
+        "database_connections": {"active": None, "pool_size": None},
+        "commands": {"queued": int(command_counts.get("queued", 0)), "failed": int(command_counts.get("failed", 0))},
+        "transfers": {status: int(count) for status, count in transfer_counts.items()},
+        "resources": {"cpu_pct": None, "ram_pct": None, "disk_pct": disk_pct, "network_pct": None},
+        "source": "Venue Server persisted transfer/command state and local disk inspection; latency and host telemetry are not configured.",
     }
 
 
@@ -1537,23 +1748,19 @@ async def get_registration_desks(
     desks = []
     kiosks = []
     
-    if not devices:
-        # Fallback query all devices
-        devices = list((await db.execute(select(RoomDevice).limit(14))).scalars().all())
-
     for idx, d in enumerate(devices):
         is_kiosk = "kiosk" in d.device_name.lower() or d.device_type == "registration_kiosk"
-        st = observed_state(d.last_seen_at, d.state)
+        st = observed_state(d.last_heartbeat_at, d.status)
         item = {
             "id": str(d.id),
             "name": d.device_name,
-            "hostname": d.hostname or f"REG-NODE-{idx+1:02d}",
-            "ip": d.ip_address or f"192.168.40.{20+idx}",
+            "hostname": d.hostname,
+            "ip": str(d.ip_address) if d.ip_address else None,
             "status": "online" if st == "healthy" else st,
-            "printer_status": "error" if idx == 12 else "online",
-            "operator": ["Priya Sharma", "Amit Patel", "Rahul Verma", "Kavita Reddy", "Suresh Nair"][idx % 5],
-            "scans": 180 + (idx * 24),
-            "self_checkins": 95 + (idx * 18),
+            "printer_status": None,
+            "operator": None,
+            "scans": None,
+            "self_checkins": None,
         }
         if is_kiosk or idx >= 10:
             kiosks.append(item)
@@ -1562,10 +1769,10 @@ async def get_registration_desks(
 
     return {
         "stats": {
-            "total_registered": 2840,
-            "checked_in": 2490,
-            "badges_printed": 2488,
-            "kits_distributed": 2140,
+            "total_registered": await db.scalar(select(func.count(Participant.id))),
+            "checked_in": await db.scalar(select(func.count(Participant.id)).where(Participant.checked_in_at.is_not(None))),
+            "badges_printed": await db.scalar(select(func.count(Badge.id)).where(Badge.status == "issued")),
+            "kits_distributed": await db.scalar(select(func.count(ParticipantKit.id)).where(ParticipantKit.status == "Issued")),
         },
         "desks": desks,
         "kiosks": kiosks,
@@ -1585,33 +1792,17 @@ async def get_signage_screens(
     screens = []
     zones = ["Lobby Main", "Hallway A", "Hallway B", "Room Entrance", "Main Stage", "Sponsor"]
     
-    if not devices:
-        devices = list((await db.execute(select(RoomDevice).limit(14))).scalars().all())
-
     for idx, d in enumerate(devices):
-        st = observed_state(d.last_seen_at, d.state)
+        st = observed_state(d.last_heartbeat_at, d.status)
         screens.append({
             "id": str(d.id),
             "screen_code": f"SCREEN-{idx+1:02d}",
             "name": d.device_name,
             "zone": zones[idx % len(zones)],
-            "status": "reconnecting" if idx == 11 else ("online" if st == "healthy" else st),
-            "schedule": [
-                "Congress Keynote & Live Stream",
-                "Registration Wayfinding & Desk Map",
-                "Halls 1–6 Scientific Program Grid",
-                "Halls 7–12 Scientific Program Grid",
-                "Halls 13–18 Scientific Program Grid",
-                "Hall 1 Entrance Door OSD",
-                "Hall 4 Cardiology Update Schedule",
-                "Speaker Ready Room Intake Callout",
-                "Platinum Sponsors Reel",
-                "Gold Sponsors Showcase",
-                "Dining Hall Lunch & Refreshment Schedule",
-                "Upcoming Workshop Schedule"
-            ][idx % 12],
-            "ip_address": d.ip_address or f"192.168.60.{10+idx}",
-            "app_version": d.app_version or "2.4.0",
+            "status": "online" if st == "healthy" else st,
+            "schedule": None,
+            "ip_address": str(d.ip_address) if d.ip_address else None,
+            "app_version": d.app_version,
         })
 
     return {
@@ -1631,23 +1822,29 @@ async def get_venue_readiness_checklist(
     devices_count = (await db.execute(select(func.count(RoomDevice.id)))).scalar() or 0
     files_count = (await db.execute(select(func.count(PresentationFile.id)))).scalar() or 0
     srr_count = (await db.execute(select(func.count(SRRStation.id)))).scalar() or 0
+    event = await single_event(db)
 
+    services = list((await db.execute(select(VenueServiceInstance))).scalars().all())
+    files_verified = (await db.scalar(select(func.count(VenueAssetTransfer.id)).where(VenueAssetTransfer.checksum_verified.is_(True)))) or 0
+    mapped_rooms = len({device.room_id for device in (await db.execute(select(RoomDevice))).scalars().all() if device.room_id})
+    station_states = [observed_state(row.last_heartbeat_at, row.status) for row in (await db.execute(select(SRRStation))).scalars().all()]
     steps = [
-        {"num": 1, "name": "Event Selection & Provisioning", "status": "passed", "detail": "India Oncology Congress active"},
-        {"num": 2, "name": "Cloud Authentication & Certs", "status": "passed", "detail": "mTLS & Token Active (62ms RTT)"},
-        {"num": 3, "name": "Event Snapshot Verification", "status": "passed", "detail": "Snapshot #1842 verified"},
-        {"num": 4, "name": "Venue Network & VLAN Routing", "status": "passed", "detail": "All 4 VLAN subnets operational"},
-        {"num": 5, "name": "Local Core Services Registry", "status": "passed", "detail": "FastAPI, PostgreSQL, MinIO healthy"},
-        {"num": 6, "name": "Fleet Workstation Registration", "status": "passed", "detail": f"{devices_count} devices registered"},
-        {"num": 7, "name": "Device-to-Hall Assignments", "status": "passed", "detail": f"{rooms_count} halls mapped"},
-        {"num": 8, "name": "Scientific Asset Distribution", "status": "passed", "detail": f"{files_count} presentations verified"},
-        {"num": 9, "name": "SRR Cluster Readiness", "status": "passed", "detail": f"{srr_count} stations online"},
-        {"num": 10, "name": "End-to-End Operational Pre-flight", "status": "passed", "detail": "Venue ready for live execution."},
+        {"num": 1, "name": "Event Selection & Provisioning", "status": "passed" if event else "not_configured", "detail": f"{event.name} is active" if event else "No event is provisioned."},
+        {"num": 2, "name": "Cloud Authentication & Certs", "status": "unknown", "detail": "No live cloud certificate or connectivity probe is recorded."},
+        {"num": 3, "name": "Event Snapshot Verification", "status": "unknown", "detail": "Snapshot verification evidence is not recorded."},
+        {"num": 4, "name": "Venue Network & VLAN Routing", "status": "unknown", "detail": "Network telemetry is not recorded by Venue Server."},
+        {"num": 5, "name": "Local Core Services Registry", "status": "passed" if services else "not_configured", "detail": f"{len(services)} persisted services registered" if services else "No local service heartbeat records exist."},
+        {"num": 6, "name": "Fleet Workstation Registration", "status": "passed" if devices_count else "not_configured", "detail": f"{devices_count} devices registered" if devices_count else "No room devices are enrolled."},
+        {"num": 7, "name": "Device-to-Hall Assignments", "status": "passed" if mapped_rooms == rooms_count and rooms_count else ("degraded" if mapped_rooms else "not_configured"), "detail": f"{mapped_rooms} of {rooms_count} rooms have assigned devices"},
+        {"num": 8, "name": "Scientific Asset Distribution", "status": "passed" if files_count and files_verified >= files_count else ("degraded" if files_verified else "not_configured"), "detail": f"{files_verified} verified deliveries for {files_count} current files"},
+        {"num": 9, "name": "SRR Cluster Readiness", "status": "passed" if station_states and all(state == "healthy" for state in station_states) else ("degraded" if station_states else "not_configured"), "detail": f"{station_states.count('healthy')} of {srr_count} stations healthy"},
+        {"num": 10, "name": "End-to-End Operational Pre-flight", "status": "unknown", "detail": "Real-device acceptance evidence has not been recorded."},
     ]
+    passed_probes = sum(1 for step in steps if step["status"] == "passed")
 
     return {
-        "status": "VENUE READY",
-        "passed_probes": 10,
+        "status": "VENUE READY" if passed_probes == len(steps) else "NOT READY",
+        "passed_probes": passed_probes,
         "total_probes": 10,
         "steps": steps,
     }
@@ -1660,17 +1857,41 @@ async def finalize_event_closure(
     user: VenueUser = Depends(require_step_up),
 ) -> dict:
     now = utcnow()
+    event = await single_event(db)
+    if not event:
+        raise HTTPException(status_code=409, detail="No event is provisioned for closure.")
+    current_files = list((await db.execute(select(PresentationFile).where(
+        PresentationFile.event_id == event.id,
+        PresentationFile.is_current_version.is_(True),
+    ))).scalars().all())
+    current_file_ids = {file.id for file in current_files}
+    transfers = list((await db.execute(select(VenueAssetTransfer).where(
+        VenueAssetTransfer.file_id.in_(current_file_ids)
+    ))).scalars().all()) if current_file_ids else []
+    transfers_by_file: dict[uuid.UUID, list[VenueAssetTransfer]] = {}
+    for transfer in transfers:
+        transfers_by_file.setdefault(transfer.file_id, []).append(transfer)
+    synced_files = sum(
+        1 for file_id in current_file_ids
+        if transfers_by_file.get(file_id)
+        and all(row.status == "verified" and row.checksum_verified for row in transfers_by_file[file_id])
+    )
+    registration_count = (await db.scalar(select(func.count(ParticipantRegistration.id)).where(ParticipantRegistration.event_id == event.id))) or 0
+    closure_verified = synced_files == len(current_file_ids) and all(
+        row.status == "verified" and row.checksum_verified for row in transfers
+    )
     await write_audit(
         db, user=user, request=request, category="event_closure", action="final_sync_executed",
-        result="success", object_type="event", object_id="IOC-2026", reason="End-of-event final sync and closure."
+        result="success" if closure_verified else "incomplete", object_type="event", object_id=str(event.id), reason="End-of-event final sync and closure.",
+        details={"event_id": str(event.id), "current_files": len(current_file_ids), "synced_files": synced_files, "registration_count": registration_count, "closure_verified": closure_verified}
     )
     await db.commit()
     return {
-        "status": "EVENT CLOSED",
+        "status": "EVENT CLOSED" if closure_verified else "EVENT CLOSURE INCOMPLETE",
         "final_sync_timestamp": now.isoformat(),
-        "synced_files": 842,
-        "synced_registrations": 2490,
-        "closure_verified": True
+        "event_id": str(event.id),
+        "synced_files": synced_files,
+        "total_current_files": len(current_file_ids),
+        "synced_registrations": registration_count,
+        "closure_verified": closure_verified,
     }
-
-

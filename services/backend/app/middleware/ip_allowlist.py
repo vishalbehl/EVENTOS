@@ -56,10 +56,14 @@ class IPAllowlistMiddleware:
         user_allowed_ips_str = None
         
         # 3. Retrieve user allowed_ips from DB
-        async with AsyncSessionLocal() as db:
-            user = await db.get(User, user_id)
-            if user and user.allowed_ips:
-                user_allowed_ips_str = user.allowed_ips.strip()
+        try:
+            async with AsyncSessionLocal() as db:
+                user = await db.get(User, user_id)
+                if user and user.allowed_ips:
+                    user_allowed_ips_str = user.allowed_ips.strip()
+        except Exception as e:
+            logger.error(f"[IPAllowlistMiddleware] Failed to fetch allowed_ips for user={user_id}: {e}")
+            user_allowed_ips_str = None
 
         if not user_allowed_ips_str:
             await self.app(scope, receive, send)

@@ -92,6 +92,7 @@ class FormCategoryResponse(BaseModel):
     is_system: bool
     sort_order: int
     is_active: bool
+    version: int = 1
     created_at: datetime
     updated_at: datetime
 

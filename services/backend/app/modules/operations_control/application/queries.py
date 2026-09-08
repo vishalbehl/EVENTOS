@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import and_, func, or_, select, text
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.operations_control.models import TaskFailure
@@ -80,6 +82,49 @@ class TaskFailureQueryService:
             for row in rows
         ]
 
+    async def list_cursor(
+        self,
+        *,
+        organization_id: uuid.UUID | None = None,
+        cursor_time: datetime | None = None,
+        cursor_id: uuid.UUID | None = None,
+        limit: int = 50,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Return a stable, bounded dead-letter page for operator recovery."""
+        bounded_limit = max(1, min(limit, 100))
+        statement = select(*self._columns).order_by(
+            TaskFailure.created_at.desc(), TaskFailure.id.desc()
+        ).limit(bounded_limit + 1)
+        filters = []
+        if organization_id is not None:
+            filters.append(TaskFailure.organization_id == organization_id)
+        if cursor_time is not None and cursor_id is not None:
+            filters.append(or_(
+                TaskFailure.created_at < cursor_time,
+                and_(TaskFailure.created_at == cursor_time, TaskFailure.id < cursor_id),
+            ))
+        if filters:
+            statement = statement.where(*filters)
+        rows = (await self.db.execute(statement)).mappings().all()
+        has_next = len(rows) > bounded_limit
+        rows = rows[:bounded_limit]
+        return [self._serialize(row) for row in rows], has_next
+
+    @staticmethod
+    def _serialize(row: Any) -> dict[str, Any]:
+        return {
+            "id": str(row[TaskFailure.id]), "task_id": row[TaskFailure.task_id],
+            "task_name": row[TaskFailure.task_name],
+            "organization_id": str(row[TaskFailure.organization_id]) if row[TaskFailure.organization_id] else None,
+            "status": row[TaskFailure.status], "retry_count": row[TaskFailure.retry_count],
+            "exception_type": row[TaskFailure.exception_type], "error_message": row[TaskFailure.error_message],
+            "args_hash": row[TaskFailure.args_hash],
+            "replay_available": bool(row[TaskFailure.replay_queue] and row[TaskFailure.replay_args]),
+            "replay_queue": row[TaskFailure.replay_queue], "replay_count": row[TaskFailure.replay_count],
+            "created_at": row[TaskFailure.created_at], "resolved_at": row[TaskFailure.resolved_at],
+            "last_replayed_at": row[TaskFailure.last_replayed_at],
+        }
+
 
 class OperationsControlQueryService:
     """Own bounded operational projections without router-owned SQL."""
@@ -115,6 +160,27 @@ class OperationsControlQueryService:
             statement = statement.where(ServiceRequest.event_id == event_id)
         return list((await self.db.scalars(statement)).all())
 
+    async def list_requests_cursor(
+        self, *, organization_id: uuid.UUID | None, event_id: uuid.UUID | None,
+        cursor_time: datetime | None, cursor_id: uuid.UUID | None, limit: int,
+    ) -> tuple[list[ServiceRequest], bool]:
+        bounded = min(max(limit, 1), 200)
+        filters = []
+        if organization_id:
+            filters.append(ServiceRequest.organization_id == organization_id)
+        if event_id:
+            filters.append(ServiceRequest.event_id == event_id)
+        if cursor_time is not None and cursor_id is not None:
+            filters.append(or_(
+                ServiceRequest.created_at < cursor_time,
+                and_(ServiceRequest.created_at == cursor_time, ServiceRequest.id < cursor_id),
+            ))
+        statement = select(ServiceRequest).where(*filters).order_by(
+            ServiceRequest.created_at.desc(), ServiceRequest.id.desc()
+        ).limit(bounded + 1)
+        rows = list((await self.db.scalars(statement)).all())
+        return rows[:bounded], len(rows) > bounded
+
     async def list_risks(
         self,
         *,
@@ -129,6 +195,28 @@ class OperationsControlQueryService:
         if event_id:
             statement = statement.where(ServiceRequest.event_id == event_id)
         return list((await self.db.scalars(statement)).all())
+
+    async def list_risks_cursor(
+        self, *, organization_id: uuid.UUID | None, event_id: uuid.UUID | None,
+        cursor_time: datetime | None, cursor_id: uuid.UUID | None, limit: int,
+    ) -> tuple[list[ServiceRequest], bool]:
+        bounded = min(max(limit, 1), 200)
+        filters = [ServiceRequest.status.in_(["FAILED", "BLOCKED", "ESCALATED"])]
+        if organization_id:
+            filters.append(ServiceRequest.organization_id == organization_id)
+        if event_id:
+            filters.append(ServiceRequest.event_id == event_id)
+        if cursor_time is not None and cursor_id is not None:
+            filters.append(or_(
+                ServiceRequest.created_at < cursor_time,
+                and_(ServiceRequest.created_at == cursor_time, ServiceRequest.id < cursor_id),
+            ))
+        rows = list((await self.db.scalars(
+            select(ServiceRequest).where(*filters)
+            .order_by(ServiceRequest.created_at.desc(), ServiceRequest.id.desc())
+            .limit(bounded + 1)
+        )).all())
+        return rows[:bounded], len(rows) > bounded
 
     async def storage_totals(
         self, *, organization_id: uuid.UUID | None

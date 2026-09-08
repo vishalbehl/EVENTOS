@@ -41,12 +41,16 @@ services:
   & docker @compose up -d --no-build backend workers
   if ($LASTEXITCODE -ne 0) { throw 'Could not start the rollback image' }
   Wait-BackendHealthy
-  $health = Invoke-WebRequest http://127.0.0.1:8001/health -UseBasicParsing
+  $health = Invoke-WebRequest http://127.0.0.1:8000/health -UseBasicParsing
   if ($health.StatusCode -ne 200) { throw 'Rollback image health endpoint failed' }
   Write-Output "rollback_image_health=passed image=$RollbackImage"
 }
 finally {
   Remove-Item -LiteralPath $override -Force -ErrorAction SilentlyContinue
+  # The rollback compose project can leave a just-created service container
+  # behind if Docker races recreation. Remove only the two services this
+  # check owns before restoring the current image.
+  & docker compose --env-file .env.staging -f $composeFile rm -sf backend workers | Out-Null
   & docker compose --env-file .env.staging -f $composeFile up -d --force-recreate backend workers | Out-Null
   Wait-BackendHealthy
   Write-Output 'rollback_restore=current-staging-image'

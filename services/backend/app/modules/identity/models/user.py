@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional
 from sqlalchemy.ext.hybrid import hybrid_property
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, Integer
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -81,7 +81,7 @@ class User(Base):
         default=lambda: datetime.now(timezone.utc),
         index=True,
     )
-
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     # ── Relationships ─────────────────────────────────────
     organization: Mapped["Organization"] = relationship(
@@ -96,8 +96,16 @@ class User(Base):
 
     @property
     def onboarding_completed(self) -> bool:
+        if getattr(self, "is_platform_admin", False) or self.role in ("super_admin", "developer"):
+            return True
         if "organization" in self.__dict__ and self.organization:
-            return self.organization.onboarding_completed
+            if (
+                getattr(self.organization, "is_platform_org", False)
+                or getattr(self.organization, "is_internal_unrestricted", False)
+                or (self.organization.slug and self.organization.slug.lower() in ("eventos", "default-org"))
+            ):
+                return True
+            return bool(self.organization.onboarding_completed)
         return False
 
     # Events this user created

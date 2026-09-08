@@ -15,17 +15,23 @@ export default function OnboardingPage() {
     setHydrated(true);
   }, []);
 
+  const isBypassed =
+    Boolean(user?.onboarding_completed) ||
+    Boolean(user?.is_platform_admin) ||
+    (user as any)?.organization_slug?.toLowerCase() === "eventos" ||
+    (user as any)?.organization_slug?.toLowerCase() === "default-org";
+
   useEffect(() => {
     if (hydrated) {
       if (!isAuthenticated || !accessToken) {
         router.replace("/login");
-      } else if (user?.onboarding_completed) {
+      } else if (isBypassed) {
         router.replace("/dashboard");
       }
     }
-  }, [hydrated, isAuthenticated, accessToken, user, router]);
+  }, [hydrated, isAuthenticated, accessToken, isBypassed, router]);
 
-  if (!hydrated || !isAuthenticated || !accessToken || user?.onboarding_completed) {
+  if (!hydrated || !isAuthenticated || !accessToken || isBypassed) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--op-page-bg)]">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--op-border)] border-t-[var(--op-primary)]" />

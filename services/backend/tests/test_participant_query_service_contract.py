@@ -34,7 +34,9 @@ def test_speaker_query_service_is_projection_only_and_bounded():
     source = inspect.getsource(SpeakerQueryService)
     assert "db.commit" not in source
     assert "load_only" in source
-    assert "Speaker.upload_token" not in source
+    # The portal lookup must filter by the credential, but the bounded read
+    # projections must not select it for response serialization.
+    assert "load_only(Speaker.upload_token" not in source
     assert "maximum=100" in source
     assert "cursor_page" in source
 

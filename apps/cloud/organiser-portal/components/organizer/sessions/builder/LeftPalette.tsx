@@ -1,455 +1,308 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { Calendar, Users, MapPin, Copy, ChevronLeft, ChevronRight, Plus, Edit, Trash } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { useSessionBuilderStore } from "@/store/useSessionBuilderStore";
-import { useAssignSpeakerToSession } from "@/hooks/useSessionBuilder";
-
-import { useDeleteRoom } from "@/hooks/useRooms";
-import { useUpdateSpeaker, useDeleteSpeaker } from "@/hooks/useSpeakers";
+import {
+  Armchair,
+  ChevronLeft,
+  ChevronRight,
+  Coffee,
+  Edit3,
+  GripVertical,
+  Layers3,
+  MapPin,
+  Plus,
+  Search,
+  Sparkles,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+import { useDeleteRoom } from "@/hooks/useRooms";
+import { useSessionBuilderStore } from "@/store/useSessionBuilderStore";
 import { BuilderCreateRoomDialog } from "./BuilderCreateRoomDialog";
 import { RegisterSpeakerDialog } from "../../speakers/RegisterSpeakerDialog";
-import { CreateSessionDialog } from "../CreateSessionDialog";
-import { SessionDetailDialog } from "../SessionDetailDialog";
-import { useDeleteSession } from "@/hooks/useSessions";
 
-export function LeftPalette() {
+type PaletteTab = "queue" | "rooms" | "speakers" | "services";
+
+interface LeftPaletteProps {
+  onNewSession?: () => void;
+}
+
+const serviceTemplates = [
+  { id: "coffee", name: "Coffee break", category: "BREAK", minutes: 30, icon: Coffee },
+  { id: "registration", name: "Registration", category: "REGISTRATION", minutes: 60, icon: Users },
+  { id: "lunch", name: "Lunch break", category: "MEAL", minutes: 60, icon: Armchair },
+  { id: "networking", name: "Networking", category: "NETWORKING", minutes: 45, icon: Sparkles },
+];
+
+export function LeftPalette({ onNewSession }: LeftPaletteProps) {
+  const { eventId } = useParams();
+  const eventIdStr = eventId as string;
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [activeTab, setActiveTab] = useState<"rooms" | "unscheduled" | "speakers" | "templates">("rooms");
+  const [activeTab, setActiveTab] = useState<PaletteTab>("queue");
+  const [search, setSearch] = useState("");
+  const [trackId, setTrackId] = useState<string>("all");
   const [isCreateRoomOpen, setIsCreateRoomOpen] = useState(false);
   const [roomToEdit, setRoomToEdit] = useState<any | null>(null);
   const [isCreateSpeakerOpen, setIsCreateSpeakerOpen] = useState(false);
-  const [isCreateSessionOpen, setIsCreateSessionOpen] = useState(false);
-  const [sessionToEditId, setSessionToEditId] = useState<string | null>(null);
+  const [isDropTarget, setIsDropTarget] = useState(false);
 
-  const { eventId } = useParams() || {};
-  const eventIdStr = eventId as string;
+  const sessions = useSessionBuilderStore((state) => state.sessions);
+  const rooms = useSessionBuilderStore((state) => state.rooms);
+  const tracks = useSessionBuilderStore((state) => state.tracks);
+  const unscheduledSpeakers = useSessionBuilderStore((state) => state.unscheduledSpeakers);
+  const setSelectedSessionId = useSessionBuilderStore((state) => state.setSelectedSessionId);
+  const moveSession = useSessionBuilderStore((state) => state.moveSession);
+  const deleteRoomInStore = useSessionBuilderStore((state) => state.deleteRoom);
   const deleteRoom = useDeleteRoom();
-  const updateSpeaker = useUpdateSpeaker(eventIdStr);
-  const deleteSpeaker = useDeleteSpeaker(eventIdStr);
-  const deleteSession = useDeleteSession(eventIdStr);
-  const updateSpeakerInStore = useSessionBuilderStore((s) => s.updateSpeaker);
-  const deleteSpeakerInStore = useSessionBuilderStore((s) => s.deleteSpeaker);
-  const deleteRoomInStore = useSessionBuilderStore((s) => s.deleteRoom);
-  const deleteSessionInStore = useSessionBuilderStore((s) => s.deleteSession);
 
-  const unscheduledSpeakers = useSessionBuilderStore((s) => s.unscheduledSpeakers);
-  const sessions = useSessionBuilderStore((s) => s.sessions);
-  const rooms = useSessionBuilderStore((s) => s.rooms);
-  const { mutate: assignSpeaker } = useAssignSpeakerToSession(eventIdStr);
-  const selectedSessionId = useSessionBuilderStore((s) => s.selectedSessionId);
+  const unscheduledSessions = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return sessions.filter((session) => {
+      if (session.room_id) return false;
+      if (trackId !== "all" && session.track_id !== trackId) return false;
+      if (!query) return true;
+      return [session.name, session.session_code, session.track_name, session.speakers?.map((speaker) => speaker.full_name).join(" ")]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(query));
+    });
+  }, [search, sessions, trackId]);
 
-  const unscheduledSessions = sessions.filter((s) => !s.room_id);
+  const tabs: Array<{ id: PaletteTab; label: string; icon: typeof Layers3; count?: number }> = [
+    { id: "queue", label: "Queue", icon: Layers3, count: sessions.filter((session) => !session.room_id).length },
+    { id: "rooms", label: "Rooms", icon: MapPin, count: rooms.length },
+    { id: "speakers", label: "People", icon: Users, count: unscheduledSpeakers.length },
+    { id: "services", label: "Blocks", icon: Coffee },
+  ];
 
-  const handleDragStart = (e: React.DragEvent, sessionId: string) => {
-    e.dataTransfer.setData("text/plain", sessionId);
-    e.dataTransfer.effectAllowed = "move";
+  const handleUnscheduledDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDropTarget(false);
+    let sessionId = event.dataTransfer.getData("text/plain");
+    try {
+      const payload = JSON.parse(event.dataTransfer.getData("application/json"));
+      sessionId = payload.sessionId || sessionId;
+    } catch {
+      // The text payload is the backwards-compatible builder drag format.
+    }
+    const session = sessions.find((item) => item.id === sessionId);
+    if (session) moveSession(session.id, null, session.start_time, session.end_time);
   };
 
   if (isCollapsed) {
     return (
-      <div className="flex flex-col items-center py-3 px-1.5 border-r border-[var(--border-default)] bg-[var(--card)] w-12 transition-all z-40 relative">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setIsCollapsed(false)}
-          className="h-7 w-7 rounded-md mb-3 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-subtle)]"
-          title="Expand Palette"
-        >
-          <ChevronRight className="h-4 w-4" />
-        </Button>
-
-        <div className="flex flex-col gap-2 text-[var(--text-secondary)]">
-          <button
-            onClick={() => { setIsCollapsed(false); setActiveTab("unscheduled"); }}
-            className="p-2 hover:bg-[var(--surface-subtle)] hover:text-[var(--text-primary)] rounded-md relative transition-colors"
-            title="Unscheduled Sessions"
-          >
-            <Calendar className="h-4 w-4" />
-            {unscheduledSessions.length > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 h-3.5 min-w-[14px] px-0.5 rounded-full bg-[var(--pri)] text-[9px] font-bold text-black flex items-center justify-center">
-                {unscheduledSessions.length}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => { setIsCollapsed(false); setActiveTab("speakers"); }}
-            className="p-2 hover:bg-[var(--surface-subtle)] hover:text-[var(--text-primary)] rounded-md relative transition-colors"
-            title="Unassigned Speakers"
-          >
-            <Users className="h-4 w-4" />
-            {unscheduledSpeakers.length > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 h-3.5 min-w-[14px] px-0.5 rounded-full bg-cyan-400 text-[9px] font-bold text-black flex items-center justify-center">
-                {unscheduledSpeakers.length}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => { setIsCollapsed(false); setActiveTab("rooms"); }}
-            className="p-2 hover:bg-[var(--surface-subtle)] hover:text-[var(--text-primary)] rounded-md transition-colors"
-            title="Rooms"
-          >
-            <MapPin className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => { setIsCollapsed(false); setActiveTab("templates"); }}
-            className="p-2 hover:bg-[var(--surface-subtle)] hover:text-[var(--text-primary)] rounded-md transition-colors"
-            title="Templates"
-          >
-            <Copy className="h-4 w-4" />
-          </button>
+      <aside className="relative z-30 flex w-[52px] shrink-0 flex-col items-center border-r border-[var(--border-default)] bg-[var(--card)] py-3">
+        <button type="button" onClick={() => setIsCollapsed(false)} className="mb-4 flex size-8 items-center justify-center rounded-lg border border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--surface-subtle)] hover:text-[var(--text-primary)]" aria-label="Expand workspace panel">
+          <ChevronRight className="size-4" />
+        </button>
+        <div className="flex flex-col gap-2">
+          {tabs.map(({ id, label, icon: Icon, count }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => { setActiveTab(id); setIsCollapsed(false); }}
+              className="relative flex size-9 items-center justify-center rounded-lg text-[var(--text-secondary)] hover:bg-[var(--surface-subtle)] hover:text-[var(--text-primary)]"
+              aria-label={`Open ${label}`}
+            >
+              <Icon className="size-4" />
+              {count ? <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-[var(--pri)] px-1 text-center text-[9px] font-bold leading-4 text-[var(--primary-contrast)]">{count}</span> : null}
+            </button>
+          ))}
         </div>
-      </div>
+      </aside>
     );
   }
 
   return (
-    <aside className="w-72 sm:w-80 flex flex-col border-r border-[var(--border-default)] bg-[var(--card)] h-[calc(100vh-130px)] transition-all z-40 relative">
-      {/* Header */}
-      <div className="px-3.5 py-2.5 border-b border-[var(--border-default)] flex items-center justify-between">
-        <h3 className="font-semibold text-xs text-[var(--text-primary)] tracking-wide uppercase">
-          Builder <span className="text-[var(--pri)]">Palette</span>
-        </h3>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setIsCollapsed(true)}
-          className="h-6 w-6 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-        >
-          <ChevronLeft className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-
-      {/* Tabs */}
-      <div className="grid grid-cols-4 p-1 bg-[var(--surface-subtle)] gap-1 border-b border-[var(--border-default)] text-[11px] font-medium">
-        <button
-          onClick={() => setActiveTab("rooms")}
-          className={cn(
-            "py-1.5 rounded-md text-center flex flex-col items-center gap-0.5 transition-all",
-            activeTab === "rooms"
-              ? "bg-[var(--card)] text-[var(--pri)] shadow-xs font-semibold"
-              : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-          )}
-        >
-          <MapPin className="h-3.5 w-3.5" />
-          <span>Rooms</span>
-        </button>
-        <button
-          onClick={() => setActiveTab("unscheduled")}
-          className={cn(
-            "py-1.5 rounded-md text-center flex flex-col items-center gap-0.5 transition-all relative",
-            activeTab === "unscheduled"
-              ? "bg-[var(--card)] text-[var(--pri)] shadow-xs font-semibold"
-              : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-          )}
-        >
-          <Calendar className="h-3.5 w-3.5" />
-          <span>Sessions</span>
-        </button>
-        <button
-          onClick={() => setActiveTab("speakers")}
-          className={cn(
-            "py-1.5 rounded-md text-center flex flex-col items-center gap-0.5 transition-all",
-            activeTab === "speakers"
-              ? "bg-[var(--card)] text-[var(--pri)] shadow-xs font-semibold"
-              : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-          )}
-        >
-          <Users className="h-3.5 w-3.5" />
-          <span>Speakers</span>
-        </button>
-        <button
-          onClick={() => setActiveTab("templates")}
-          className={cn(
-            "py-1.5 rounded-md text-center flex flex-col items-center gap-0.5 transition-all",
-            activeTab === "templates"
-              ? "bg-[var(--card)] text-[var(--pri)] shadow-xs font-semibold"
-              : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-          )}
-        >
-          <Copy className="h-3.5 w-3.5" />
-          <span>Snippets</span>
+    <aside className="relative z-30 flex w-[304px] shrink-0 flex-col border-r border-[var(--border-default)] bg-[var(--card)] shadow-[8px_0_24px_rgba(15,23,42,0.035)]">
+      <div className="flex h-[52px] items-center justify-between border-b border-[var(--border-subtle)] px-4">
+        <div>
+          <h2 className="text-xs font-bold text-[var(--text-primary)]">Workspace</h2>
+          <p className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">Drag items onto the programme</p>
+        </div>
+        <button type="button" onClick={() => setIsCollapsed(true)} className="flex size-8 items-center justify-center rounded-lg text-[var(--text-secondary)] hover:bg-[var(--surface-subtle)] hover:text-[var(--text-primary)]" aria-label="Collapse workspace panel">
+          <ChevronLeft className="size-4" />
         </button>
       </div>
 
-      {/* Tab Content */}
-      <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2.5">
-        {activeTab === "unscheduled" && (
-          <>
-            <div className="flex items-center justify-between mb-0.5">
-              <div className="text-[11px] text-[var(--text-secondary)] font-medium">
-                Drag to schedule:
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-6 text-[10px] px-2 rounded-md font-semibold border-[var(--border-default)]"
-                onClick={() => setIsCreateSessionOpen(true)}
-              >
-                <Plus className="h-3 w-3 mr-1" /> Add
-              </Button>
-            </div>
-            {unscheduledSessions.length > 0 ? (
-              unscheduledSessions.map((session) => (
-                <div
-                  key={session.id}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, session.id)}
-                  className="p-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-subtle)] hover:border-[var(--pri)]/60 hover:bg-[var(--card)] transition-all flex flex-col gap-1.5 cursor-grab active:cursor-grabbing group shadow-xs"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex gap-1.5 items-center">
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--pri)] bg-[var(--pri)]/10 px-1.5 py-0.5 rounded">
-                        {session.session_code?.toUpperCase()}
-                      </span>
-                      <Badge variant="outline" className="text-[9px] font-semibold uppercase border-[var(--border-subtle)] px-1.5 py-0">
-                        {session.session_type}
-                      </Badge>
-                    </div>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => setSessionToEditId(session.id)}
-                        className="text-[var(--text-secondary)] hover:text-[var(--pri)] p-1"
-                        title="Edit Session"
-                      >
-                        <Edit className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (confirm("Are you sure you want to delete this session?")) {
-                            deleteSession.mutate(session.id);
-                            deleteSessionInStore(session.id);
-                          }
-                        }}
-                        className="text-[var(--text-secondary)] hover:text-rose-400 p-1"
-                        title="Delete Session"
-                      >
-                        <Trash className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                  <h5 className="font-semibold text-xs text-[var(--text-primary)] line-clamp-1 group-hover:text-[var(--pri)] transition-colors">
-                    {session.name}
-                  </h5>
-                </div>
-              ))
-            ) : (
-              <div className="text-center py-8 text-[var(--text-tertiary)] text-xs italic">
-                All sessions have room allocations.
-              </div>
+      <nav className="grid grid-cols-4 border-b border-[var(--border-subtle)] px-2" aria-label="Schedule resources">
+        {tabs.map(({ id, label, icon: Icon, count }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setActiveTab(id)}
+            className={cn(
+              "relative flex h-[54px] flex-col items-center justify-center gap-1 text-[9px] font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--pri)]",
+              activeTab === id ? "text-[var(--text-primary)]" : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)]",
             )}
-          </>
-        )}
+          >
+            <span className="relative"><Icon className="size-4" />{count ? <span className="absolute -right-2.5 -top-2 min-w-3.5 rounded-full bg-[var(--surface-subtle)] px-1 text-[8px] leading-3.5">{count}</span> : null}</span>
+            {label}
+            {activeTab === id ? <span className="absolute inset-x-2 bottom-0 h-0.5 bg-[var(--pri)]" /> : null}
+          </button>
+        ))}
+      </nav>
 
-        {activeTab === "speakers" && (
-          <>
-            <div className="flex items-center justify-between mb-0.5">
-              <div className="text-[11px] text-[var(--text-secondary)] font-medium">
-                Unassigned speakers:
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-6 text-[10px] px-2 rounded-md font-semibold border-[var(--border-default)]"
-                onClick={() => setIsCreateSpeakerOpen(true)}
-              >
-                <Plus className="h-3 w-3 mr-1" /> Add
-              </Button>
+      {activeTab === "queue" ? (
+        <>
+          <div className="space-y-2.5 border-b border-[var(--border-subtle)] p-3">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--text-tertiary)]" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search waiting sessions"
+                className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--surface-subtle)] pl-8 pr-3 text-[11px] font-medium text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)] focus:border-[var(--pri)] focus:ring-2 focus:ring-[var(--pri)]/15"
+              />
             </div>
-            {unscheduledSpeakers.length > 0 ? (
-              unscheduledSpeakers.map((spk) => (
-                <div
-                  key={spk.id}
-                  draggable
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData("application/json", JSON.stringify({ type: "speaker", data: spk }));
-                    e.dataTransfer.effectAllowed = "copy";
-                  }}
-                  onClick={() => {
-                    if (selectedSessionId) assignSpeaker({ sessionId: selectedSessionId, speaker: spk });
-                  }}
-                  className={cn(
-                    "p-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-subtle)] hover:border-[var(--pri)]/60 hover:bg-[var(--card)] transition-all flex flex-col gap-2 cursor-pointer group shadow-xs",
-                    !selectedSessionId && "opacity-85"
-                  )}
-                >
-                  <div className="flex items-center justify-between w-full">
-                    <div className="flex items-center gap-2.5">
-                      <div className="h-7 w-7 rounded-full bg-[var(--brand-primary-muted)] text-[var(--brand-primary)] font-bold flex items-center justify-center text-xs">
-                        {spk.full_name.charAt(0)}
-                      </div>
-                      <div>
-                        <div className="font-semibold text-xs text-[var(--text-primary)] group-hover:text-[var(--pri)] transition-colors">
-                          {spk.full_name}
-                        </div>
-                        <div className="text-[10px] text-[var(--text-secondary)] truncate max-w-[130px]">
-                          {spk.email}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const newName = window.prompt("Enter new name for speaker", spk.full_name);
-                          if (newName && newName.trim()) {
-                            const parts = newName.trim().split(" ");
-                            const fn = parts[0];
-                            const ln = parts.slice(1).join(" ");
-                            updateSpeaker.mutate({ speakerId: spk.id, data: { first_name: fn, last_name: ln } });
-                            updateSpeakerInStore(spk.id, { full_name: newName.trim() });
-                          }
-                        }}
-                        className="text-[var(--text-secondary)] hover:text-[var(--pri)] p-1"
-                        title="Edit Speaker"
-                      >
-                        <Edit className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (confirm("Are you sure you want to delete this speaker?")) {
-                            deleteSpeaker.mutate(spk.id);
-                            deleteSpeakerInStore(spk.id);
-                          }
-                        }}
-                        className="text-[var(--text-secondary)] hover:text-rose-400 p-1"
-                        title="Delete Speaker"
-                      >
-                        <Trash className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={!selectedSessionId}
-                    className="h-6 text-[10px] font-semibold rounded-md px-2 w-full border-[var(--border-default)]"
-                  >
-                    Assign to Selected Session
-                  </Button>
-                </div>
-              ))
-            ) : (
-              <div className="text-center py-8 text-[var(--text-tertiary)] text-xs italic">
-                No unassigned speakers remaining.
-              </div>
-            )}
-          </>
-        )}
+            {tracks.length > 0 ? (
+              <select value={trackId} onChange={(event) => setTrackId(event.target.value)} className="h-8 w-full rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-2.5 text-[10px] font-semibold text-[var(--text-secondary)] outline-none focus:border-[var(--pri)]">
+                <option value="all">All tracks</option>
+                {tracks.map((track) => <option key={track.id} value={track.id}>{track.name}</option>)}
+              </select>
+            ) : null}
+          </div>
 
-        {activeTab === "rooms" && (
-          <>
-            <div className="flex items-center justify-between mb-1">
-              <div className="text-[11px] text-[var(--text-secondary)] font-medium">
-                Available Rooms:
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-6 text-[10px] px-2 rounded-md font-semibold border-[var(--border-default)]"
-                onClick={() => setIsCreateRoomOpen(true)}
-              >
-                <Plus className="h-3 w-3 mr-1" /> Add Room
-              </Button>
-            </div>
-            {rooms.map((room) => (
-              <div
-                key={room.id}
-                className="p-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-subtle)] hover:border-[var(--border-default)] hover:bg-[var(--card)] transition-all flex flex-col gap-1 shadow-xs group"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="font-semibold text-xs text-[var(--text-primary)]">{room.name}</div>
-                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={() => {
-                        setRoomToEdit(room);
-                        setIsCreateRoomOpen(true);
-                      }}
-                      className="text-[var(--text-secondary)] hover:text-[var(--pri)] p-1"
-                      title="Edit Room"
-                    >
-                      <Edit className="w-3 h-3" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (confirm("Are you sure you want to delete this room?")) {
-                          deleteRoom.mutate({ eventId: eventIdStr, roomId: room.id });
-                          deleteRoomInStore(room.id);
-                        }
-                      }}
-                      className="text-[var(--text-secondary)] hover:text-rose-400 p-1"
-                      title="Delete Room"
-                    >
-                      <Trash className="w-3 h-3" />
-                    </button>
-                  </div>
-                </div>
-                <div className="text-[10px] text-[var(--text-secondary)] flex justify-between">
-                  <span>{room.room_type}</span>
-                  {room.code && <span className="font-mono font-medium">{room.code}</span>}
-                </div>
-              </div>
-            ))}
-          </>
-        )}
+          <div
+            className={cn("mx-3 mt-3 rounded-lg border border-dashed px-3 py-2 text-center text-[10px] font-semibold transition-colors", isDropTarget ? "border-[var(--pri)] bg-[var(--pri)]/8 text-[var(--pri)]" : "border-[var(--border-default)] text-[var(--text-tertiary)]")}
+            onDragEnter={() => setIsDropTarget(true)}
+            onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setIsDropTarget(false); }}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={handleUnscheduledDrop}
+          >
+            Drop here to remove a session from the schedule
+          </div>
 
-        {activeTab === "templates" && (
-          <>
-            <div className="text-[11px] text-[var(--text-secondary)] font-medium mb-1">
-              Drag snippets into schedule:
-            </div>
-            {[
-              { id: "TEMPLATE_BREAK", name: "Coffee Break", type: "BREAK", mins: 30 },
-              { id: "TEMPLATE_REGISTRATION", name: "Registration", type: "REGISTRATION", mins: 60 },
-              { id: "TEMPLATE_LUNCH", name: "Lunch Break", type: "MEAL", mins: 60 },
-              { id: "TEMPLATE_NETWORKING", name: "Networking Session", type: "NETWORKING", mins: 45 },
-            ].map((t) => (
-              <div
-                key={t.id}
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+            {unscheduledSessions.length ? unscheduledSessions.map((session) => (
+              <article
+                key={session.id}
                 draggable
-                onDragStart={(e) => handleDragStart(e, t.id)}
-                className="w-full text-left p-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-subtle)] hover:border-[var(--pri)]/60 hover:text-[var(--pri)] transition-all flex items-center justify-between group shadow-xs cursor-grab active:cursor-grabbing"
+                onDragStart={(event) => {
+                  event.dataTransfer.setData("application/json", JSON.stringify({ type: "session", sessionId: session.id }));
+                  event.dataTransfer.setData("text/plain", session.id);
+                  event.dataTransfer.effectAllowed = "move";
+                }}
+                onClick={() => setSelectedSessionId(session.id)}
+                className="group cursor-grab rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-3 shadow-[0_1px_3px_rgba(15,23,42,0.05)] transition-all hover:-translate-y-px hover:border-[var(--pri)]/45 hover:shadow-md active:cursor-grabbing"
+                style={{ borderLeftWidth: 3, borderLeftColor: session.display_color || "#4F67D8" }}
               >
-                <span className="font-semibold text-xs text-[var(--text-primary)] group-hover:text-[var(--pri)]">{t.name}</span>
-                <span className="text-[10px] text-[var(--text-secondary)] font-medium">{t.mins}m</span>
+                <div className="flex items-start gap-2">
+                  <GripVertical className="mt-0.5 size-3.5 shrink-0 text-[var(--text-tertiary)]/55" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--text-tertiary)]">{session.session_code} · {session.track_name || session.session_type}</p>
+                    <h3 className="mt-1 line-clamp-2 text-[11px] font-bold leading-[1.35] text-[var(--text-primary)]">{session.name}</h3>
+                    <p className="mt-1.5 truncate text-[9px] font-medium text-[var(--text-secondary)]">{session.speakers?.map((speaker) => speaker.full_name).join(", ") || "No speaker assigned"}</p>
+                  </div>
+                </div>
+              </article>
+            )) : (
+              <div className="flex h-48 flex-col items-center justify-center px-5 text-center">
+                <div className="flex size-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600"><Layers3 className="size-4" /></div>
+                <p className="mt-3 text-xs font-bold text-[var(--text-primary)]">{search ? "No matching sessions" : "The queue is clear"}</p>
+                <p className="mt-1 text-[10px] leading-relaxed text-[var(--text-secondary)]">{search ? "Try another title, code, track or speaker." : "Every available session is placed in a room."}</p>
+              </div>
+            )}
+          </div>
+
+          <div className="border-t border-[var(--border-subtle)] p-3">
+            <Button onClick={onNewSession} className="h-9 w-full gap-2 bg-[var(--text-primary)] text-xs font-bold text-[var(--card)] hover:opacity-90"><Plus className="size-3.5" /> Create session</Button>
+          </div>
+        </>
+      ) : null}
+
+      {activeTab === "rooms" ? (
+        <>
+          <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-3 py-3">
+            <div><p className="text-[11px] font-bold text-[var(--text-primary)]">Programme rooms</p><p className="mt-0.5 text-[9px] text-[var(--text-tertiary)]">Each room becomes one schedule column</p></div>
+            <Button variant="outline" size="sm" onClick={() => { setRoomToEdit(null); setIsCreateRoomOpen(true); }} className="h-8 gap-1.5 px-2.5 text-[10px] font-bold"><Plus className="size-3" /> Add</Button>
+          </div>
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+            {rooms.map((room, index) => (
+              <div key={room.id} className="group rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[9px] font-bold text-[var(--text-tertiary)]">ROOM {String(index + 1).padStart(2, "0")}</p>
+                    <h3 className="mt-0.5 truncate text-xs font-bold text-[var(--text-primary)]">{room.name}</h3>
+                    <p className="mt-1 text-[9px] font-medium text-[var(--text-secondary)]">{room.room_type} · {room.sessions_count || 0} sessions</p>
+                  </div>
+                  <div className="flex opacity-60 transition-opacity group-hover:opacity-100">
+                    <button type="button" onClick={() => { setRoomToEdit(room); setIsCreateRoomOpen(true); }} className="flex size-7 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--surface-subtle)] hover:text-[var(--pri)]" aria-label={`Edit ${room.name}`}><Edit3 className="size-3.5" /></button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!window.confirm(`Delete ${room.name}? Its sessions will return to the waiting queue.`)) return;
+                        deleteRoom.mutate({ eventId: eventIdStr, roomId: room.id });
+                        deleteRoomInStore(room.id);
+                      }}
+                      className="flex size-7 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-rose-500/10 hover:text-rose-500"
+                      aria-label={`Delete ${room.name}`}
+                    ><Trash2 className="size-3.5" /></button>
+                  </div>
+                </div>
               </div>
             ))}
-          </>
-        )}
-      </div>
+            {!rooms.length ? <p className="py-12 text-center text-[11px] text-[var(--text-secondary)]">No rooms have been configured.</p> : null}
+          </div>
+        </>
+      ) : null}
 
-      <BuilderCreateRoomDialog
-        isOpen={isCreateRoomOpen}
-        onClose={() => { setIsCreateRoomOpen(false); setRoomToEdit(null); }}
-        roomToEdit={roomToEdit}
-      />
+      {activeTab === "speakers" ? (
+        <>
+          <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-3 py-3">
+            <div><p className="text-[11px] font-bold text-[var(--text-primary)]">Unassigned speakers</p><p className="mt-0.5 text-[9px] text-[var(--text-tertiary)]">Drop a speaker onto a session card</p></div>
+            <Button variant="outline" size="sm" onClick={() => setIsCreateSpeakerOpen(true)} className="h-8 gap-1.5 px-2.5 text-[10px] font-bold"><Plus className="size-3" /> Add</Button>
+          </div>
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+            {unscheduledSpeakers.map((speaker) => (
+              <div
+                key={speaker.id}
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.setData("application/json", JSON.stringify({ type: "speaker", data: speaker }));
+                  event.dataTransfer.effectAllowed = "copy";
+                }}
+                className="flex cursor-grab items-center gap-2.5 rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-2.5 hover:border-[var(--pri)]/45 active:cursor-grabbing"
+              >
+                <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--surface-subtle)] text-[10px] font-bold text-[var(--text-primary)]">{speaker.full_name.split(" ").map((part) => part[0]).slice(0, 2).join("")}</div>
+                <div className="min-w-0"><p className="truncate text-[11px] font-bold text-[var(--text-primary)]">{speaker.full_name}</p><p className="truncate text-[9px] text-[var(--text-secondary)]">{speaker.email}</p></div>
+              </div>
+            ))}
+            {!unscheduledSpeakers.length ? <p className="py-12 text-center text-[11px] text-[var(--text-secondary)]">No unassigned speakers remain.</p> : null}
+          </div>
+        </>
+      ) : null}
 
-      <RegisterSpeakerDialog
-        isOpen={isCreateSpeakerOpen}
-        onClose={() => setIsCreateSpeakerOpen(false)}
-        eventId={eventIdStr}
-      />
+      {activeTab === "services" ? (
+        <>
+          <div className="border-b border-[var(--border-subtle)] px-3 py-3"><p className="text-[11px] font-bold text-[var(--text-primary)]">Service blocks</p><p className="mt-0.5 text-[9px] text-[var(--text-tertiary)]">Drag onto a room, then confirm its details</p></div>
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+            {serviceTemplates.map((template) => {
+              const Icon = template.icon;
+              return (
+                <div
+                  key={template.id}
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData("application/json", JSON.stringify({ type: "template", template }));
+                    event.dataTransfer.effectAllowed = "copy";
+                  }}
+                  className="group flex cursor-grab items-center gap-3 rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-3 transition-all hover:-translate-y-px hover:border-amber-500/45 hover:shadow-sm active:cursor-grabbing"
+                >
+                  <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400"><Icon className="size-4" /></div>
+                  <div className="min-w-0 flex-1"><p className="text-[11px] font-bold text-[var(--text-primary)]">{template.name}</p><p className="mt-0.5 text-[9px] font-medium text-[var(--text-secondary)]">Default {template.minutes} minutes</p></div>
+                  <GripVertical className="size-3.5 text-[var(--text-tertiary)]/55" />
+                </div>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
 
-      <CreateSessionDialog
-        isOpen={isCreateSessionOpen}
-        onClose={() => setIsCreateSessionOpen(false)}
-        eventId={eventIdStr}
-        preloadedRooms={rooms}
-      />
-
-      {sessionToEditId && (
-        <SessionDetailDialog
-          isOpen={!!sessionToEditId}
-          onClose={() => setSessionToEditId(null)}
-          sessionId={sessionToEditId}
-          eventId={eventIdStr}
-        />
-      )}
+      <BuilderCreateRoomDialog isOpen={isCreateRoomOpen} onClose={() => { setIsCreateRoomOpen(false); setRoomToEdit(null); }} roomToEdit={roomToEdit} />
+      <RegisterSpeakerDialog isOpen={isCreateSpeakerOpen} onClose={() => setIsCreateSpeakerOpen(false)} eventId={eventIdStr} />
     </aside>
   );
 }

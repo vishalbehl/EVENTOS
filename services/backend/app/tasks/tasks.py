@@ -2,6 +2,7 @@
 import asyncio
 import sys
 import uuid
+from datetime import datetime, timezone
 from loguru import logger
 from sqlalchemy import select
 
@@ -60,17 +61,25 @@ def run_excel_import(self, job_id_str: str, organization_id_str: str) -> None:
             job_id,
             type(exc).__name__,
         )
-        if is_retryable(exc):
-            attempt = int(getattr(self.request, "retries", 0) or 0)
-            policy = policy_for("imports")
-            if attempt < policy.max_retries:
-                raise self.retry(
-                    exc=exc,
-                    countdown=min(300, policy.retry_delay(attempt, apply_jitter=True)),
-                    max_retries=policy.max_retries,
+        attempt = int(getattr(self.request, "retries", 0) or 0)
+        policy = policy_for("imports")
+        if is_retryable(exc) and attempt < policy.max_retries:
+            raise self.retry(
+                exc=exc,
+                countdown=min(300, policy.retry_delay(attempt, apply_jitter=True)),
+                max_retries=policy.max_retries,
+            )
+        if is_retryable(exc) and attempt >= policy.max_retries:
+            try:
+                _run_async(_mark_excel_import_failed(job_id, organization_id, exc))
+            except Exception as terminal_error:
+                logger.warning(
+                    "[Celery] Could not persist terminal import state job_id={} error_type={}",
+                    job_id,
+                    type(terminal_error).__name__,
                 )
         # Re-raise so Celery records the terminal failure and its failure
-        # signal can persist bounded diagnostics.
+        # signal can persist bounded dead-letter diagnostics.
         raise
 
 
@@ -113,6 +122,13 @@ async def _run_excel_import_async(
                 logger.error(f"ImportJob {job_id} not found in database.")
                 return
 
+            if job.status == "completed":
+                return
+            if job.status == "uploaded":
+                job.status = "validating"
+                job.version = int(getattr(job, "version", 1) or 1) + 1
+                await db.commit()
+
             # 2. Fetch the associated event
             result = await db.execute(select(Event).where(Event.id == job.event_id))
             event = result.scalar_one_or_none()
@@ -120,6 +136,7 @@ async def _run_excel_import_async(
             if not event:
                 logger.error(f"Event {job.event_id} not found for job {job_id}")
                 job.status = "failed"
+                job.version = int(getattr(job, "version", 1) or 1) + 1
                 job.error_summary = [{"row": 0, "error": "Internal error: Associated event not found"}]
                 await db.commit()
                 return
@@ -132,11 +149,15 @@ async def _run_excel_import_async(
                     storage_path=job.storage_path,
                 )
             except Exception as exc:
-                logger.error(f"Failed to download import file for job {job_id}: {exc}")
-                job.status = "failed"
-                job.error_summary = [{"row": 0, "error": f"Failed to retrieve file from storage: {exc}"}]
-                await db.commit()
-                return
+                # Leave the durable job in its pre-processing state. The
+                # outer Celery task classifies this storage failure and
+                # retries it; the job is only terminal after retry exhaustion.
+                logger.warning(
+                    "Failed to download import file job_id={} error_type={}",
+                    job_id,
+                    type(exc).__name__,
+                )
+                raise
 
             # 4. Run the full import pipeline (handles status updates internally)
             await run_import(
@@ -151,3 +172,36 @@ async def _run_excel_import_async(
         tenant_org_id.reset(context_token)
         # Dispose of the local engine to clean up connections for this task loop
         await task_engine.dispose()
+
+
+async def _mark_excel_import_failed(
+    job_id: uuid.UUID,
+    organization_id: uuid.UUID,
+    error: BaseException,
+) -> None:
+    """Persist a bounded terminal state only after retry exhaustion."""
+    context_token = tenant_org_id.set(organization_id)
+    try:
+        async with AsyncSessionLocal() as db:
+            await TenantContextGuard.apply(db, organization_id)
+            job = await db.scalar(
+                select(ImportJob)
+                .join(Event, Event.id == ImportJob.event_id)
+                .where(
+                    ImportJob.id == job_id,
+                    Event.organization_id == organization_id,
+                )
+                .with_for_update()
+            )
+            if job is None or job.status in {"completed", "failed"}:
+                return
+            job.status = "failed"
+            job.version = int(getattr(job, "version", 1) or 1) + 1
+            job.error_summary = [{
+                "row": 0,
+                "error": f"Import processing failed after retries: {type(error).__name__}",
+            }]
+            job.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+    finally:
+        tenant_org_id.reset(context_token)

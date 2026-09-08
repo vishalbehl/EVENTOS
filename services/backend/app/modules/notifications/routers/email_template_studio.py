@@ -54,6 +54,7 @@ from app.modules.notifications.services.email_template_studio_service import (
     rollback_to_version,
     save_draft,
 )
+from app.modules.notifications.application.queries import EmailTemplateVersionQueryService
 from app.core.dependencies.feature_gate import enforce_event_operation, require_event_operation
 from app.modules.notifications.services.email_service import send_email
 
@@ -267,8 +268,188 @@ async def _require_org_admin(db: AsyncSession, actor: User, organization_id: uui
         raise HTTPException(status_code=403, detail={"code": "ORGANIZATION_ADMIN_REQUIRED"})
 
 
-async def _render_preview(db: AsyncSession, family: EmailTemplate, payload: TemplatePreviewRequest) -> TemplatePreviewResponse:
+async def build_event_preview_context(db: AsyncSession, event: Any) -> dict[str, Any]:
+    from datetime import date
+    from app.modules.events.models.speaker import Speaker
+    from app.modules.agenda.models.session import AgendaSession
+    from app.modules.sponsors.models.sponsor import Sponsor
+    from app.modules.registration.models.participant import Participant
+    from sqlalchemy.orm import selectinload
+
+    start_str = event.start_date.strftime("%d %b %Y") if getattr(event, "start_date", None) else ""
+    end_str = event.end_date.strftime("%d %b %Y") if getattr(event, "end_date", None) else ""
+    date_str = f"{start_str} – {end_str}" if (start_str and end_str and start_str != end_str) else (start_str or end_str or "TBD")
+    days_until = max(0, (event.start_date - date.today()).days) if getattr(event, "start_date", None) else 0
+    event_days = max(1, (event.end_date - event.start_date).days + 1) if (getattr(event, "start_date", None) and getattr(event, "end_date", None)) else 1
+
+    org_details = getattr(event, "organizer_details", {}) or {}
+    if not isinstance(org_details, dict):
+        org_details = {}
+    support_email = org_details.get("email") or "support@eventos.com"
+    short_code = getattr(event, "short_code", "") or str(event.id)[:8]
+    event_website = org_details.get("website") or f"https://eventos.com/events/{short_code}"
+    
+    venue_name = getattr(event, "venue_name", "") or getattr(event, "location", "") or "Event Venue"
+    venue_address = getattr(event, "location", "") or getattr(event, "venue_name", "") or "Venue Address"
+
+    # Fetch speakers
+    speakers = []
+    speaker_count = 0
+    try:
+        speakers_res = await db.execute(
+            select(Speaker).where(
+                Speaker.event_id == event.id,
+                Speaker.deleted_at.is_(None)
+            ).limit(10)
+        )
+        speakers = list(speakers_res.scalars().all())
+        speaker_count = len(speakers)
+    except Exception:
+        pass
+
+    # Fetch sessions
+    sessions = []
+    session_count = 0
+    try:
+        sessions_res = await db.execute(
+            select(AgendaSession).where(
+                AgendaSession.event_id == event.id
+            ).options(selectinload(AgendaSession.room)).limit(20)
+        )
+        sessions = list(sessions_res.scalars().all())
+        session_count = len(sessions)
+    except Exception:
+        pass
+
+    # Fetch sponsors
+    sponsors = []
+    try:
+        sponsors_res = await db.execute(
+            select(Sponsor).where(
+                Sponsor.event_id == event.id
+            ).limit(12)
+        )
+        sponsors = list(sponsors_res.scalars().all())
+    except Exception:
+        pass
+
+    # Fetch first participant if available
+    participant = None
+    try:
+        part_res = await db.execute(
+            select(Participant).where(
+                Participant.event_id == event.id
+            ).limit(1)
+        )
+        participant = part_res.scalars().first()
+    except Exception:
+        pass
+
+    first_speaker = speakers[0] if speakers else None
+    first_session = sessions[0] if sessions else None
+
+    first_speaker_fname = getattr(first_speaker, "first_name", "") if first_speaker else ""
+    first_speaker_lname = getattr(first_speaker, "last_name", "") if first_speaker else ""
+    speaker_name = f"{first_speaker_fname} {first_speaker_lname}".strip() if first_speaker else "Sarah Chen"
+    speaker_first_name = first_speaker_fname if first_speaker else "Sarah"
+    speaker_email = getattr(first_speaker, "email", "speaker@example.com") if first_speaker else "speaker@example.com"
+    upload_token = getattr(first_speaker, "upload_token", "token") if first_speaker else "token"
+    upload_link = f"{settings.SPEAKER_PORTAL_BASE_URL}/{event.id}/{upload_token}" if first_speaker else f"https://eventos.com/events/{short_code}/upload"
+
+    session_title = getattr(first_session, "name", "Keynote Presentation") if first_session else "Keynote Presentation"
+    session_time = first_session.start_time.strftime("%I:%M %p") if (first_session and getattr(first_session, "start_time", None)) else "09:00 AM"
+    session_date = first_session.start_time.strftime("%d %b %Y") if (first_session and getattr(first_session, "start_time", None)) else date_str
+    session_room = getattr(getattr(first_session, "room", None), "name", "Main Hall") if first_session else "Main Hall"
+
+    speakers_list = [
+        {
+            "Name": f"{getattr(s, 'first_name', '')} {getattr(s, 'last_name', '')}".strip() or "Speaker",
+            "Title": getattr(s, "affiliation", "") or getattr(s, "bio", "") or "Speaker",
+            "ImageUrl": getattr(s, "photo_url", "") or getattr(s, "avatar_url", "") or f"https://placehold.co/92x92/png?text={getattr(s, 'first_name', 'S')[:1]}",
+        }
+        for s in speakers
+    ] if speakers else [
+        {"Name": "Sarah Chen", "Title": "Quantum systems researcher", "ImageUrl": "https://placehold.co/92x92/png?text=SC"},
+        {"Name": "Omar Rahman", "Title": "Product and AI leader", "ImageUrl": "https://placehold.co/92x92/png?text=OR"},
+    ]
+
+    agenda_list = [
+        {
+            "Time": s.start_time.strftime("%I:%M %p") if getattr(s, "start_time", None) else "09:00 AM",
+            "Title": getattr(s, "name", "Session"),
+            "Room": getattr(getattr(s, "room", None), "name", "Main Hall") or "Main Hall",
+        }
+        for s in sessions
+    ] if sessions else [
+        {"Time": "09:00 AM", "Title": "Opening Keynote", "Room": "Grand Ballroom"},
+        {"Time": "11:30 AM", "Title": "Technical Deep Dive", "Room": "Hall A"},
+    ]
+
+    sponsors_list = [
+        {
+            "Name": getattr(sp, "name", "Sponsor"),
+            "LogoUrl": getattr(sp, "logo_url", "") or f"https://placehold.co/220x80/png?text={getattr(sp, 'name', 'Sponsor')}",
+        }
+        for sp in sponsors
+    ] if sponsors else [
+        {"Name": "Northstar", "LogoUrl": "https://placehold.co/220x80/png?text=Northstar"},
+        {"Name": "Orbit", "LogoUrl": "https://placehold.co/220x80/png?text=Orbit"},
+    ]
+
+    return {
+        "EventName": getattr(event, "name", "Event"),
+        "ConferenceName": getattr(event, "name", "Event"),
+        "EventCode": short_code,
+        "ConferenceCode": short_code,
+        "EventDate": date_str,
+        "EventVenue": venue_name,
+        "Venue": venue_name,
+        "VenueAddress": venue_address,
+        "Location": venue_address,
+        "DaysUntilEvent": str(days_until),
+        "EventDays": str(event_days),
+        "SupportEmail": support_email,
+        "EventWebsiteUrl": event_website,
+        "AgendaUrl": f"https://eventos.com/events/{short_code}/agenda",
+        "RegistrationUrl": f"https://eventos.com/events/{short_code}/register",
+        "UploadLink": upload_link,
+        "VenueMapUrl": f"https://maps.google.com/?q={venue_address}",
+        "OrganizationAddress": f"{venue_address}, {getattr(event, 'country', '') or ''}".strip(", "),
+        "UnsubscribeUrl": f"https://eventos.com/events/{short_code}/unsubscribe",
+        "SpeakerName": speaker_name,
+        "SpeakerFirstName": speaker_first_name,
+        "SpeakerEmail": speaker_email,
+        "SpeakerCount": str(max(speaker_count, 1)),
+        "SessionTitle": session_title,
+        "SessionName": session_title,
+        "SessionDate": session_date,
+        "SessionTime": session_time,
+        "SessionRoom": session_room,
+        "RoomName": session_room,
+        "SessionCount": str(max(session_count, 1)),
+        "ParticipantName": getattr(participant, "name", "Alex Morgan") if participant else "Alex Morgan",
+        "ParticipantEmail": getattr(participant, "email", "attendee@example.com") if participant else "attendee@example.com",
+        "RegistrationId": getattr(participant, "regno", "REG-2026-78421") if participant else "REG-2026-78421",
+        "TicketName": "Standard Pass",
+        "AmountPaid": "$299.00 USD",
+        "QrBadgeUrl": "https://placehold.co/180x180/png?text=QR",
+        "CertificateUrl": f"https://eventos.com/events/{short_code}/certificate",
+        "Speakers": speakers_list,
+        "AgendaItems": agenda_list,
+        "Sponsors": sponsors_list,
+    }
+
+
+async def _render_preview(
+    db: AsyncSession,
+    family: EmailTemplate,
+    payload: TemplatePreviewRequest,
+    event: Any = None,
+) -> TemplatePreviewResponse:
     branding = await _branding_policy(db)
+    context_data = None
+    if event is not None:
+        context_data = await build_event_preview_context(db, event)
     subject, html, plain_text = render_draft_snapshot(
         designer_json=payload.designer_json, body_html=payload.body_html,
         subject=payload.subject, preheader=payload.preheader,
@@ -277,6 +458,7 @@ async def _render_preview(db: AsyncSession, family: EmailTemplate, payload: Temp
             "enabled": branding.enabled, "text": branding.text,
             "icon_url": branding.icon_url, "destination_url": branding.destination_url,
         },
+        context_data=context_data,
     )
     return TemplatePreviewResponse(subject=subject, html=html, plain_text=plain_text, diagnostics=[])
 
@@ -527,9 +709,7 @@ async def list_platform_versions(
     ).execution_options(skip_tenant_filter=True))
     if family is None or family.scope_type != "PLATFORM":
         raise HTTPException(status_code=404, detail={"code": "PLATFORM_TEMPLATE_NOT_FOUND"})
-    return (await db.scalars(select(EmailTemplateVersion).where(
-        EmailTemplateVersion.template_id == template_id
-    ).order_by(EmailTemplateVersion.version_number.desc()))).all()
+    return await EmailTemplateVersionQueryService(db).list_for_template(template_id=template_id, scope_type="PLATFORM")
 
 
 @platform_router.post("/{template_id}/rollback", response_model=TemplateStudioResponse)
@@ -826,9 +1006,7 @@ async def list_organization_template_versions(
     ).execution_options(skip_tenant_filter=True))
     if family is None or family.organization_id != organization_id:
         raise HTTPException(status_code=404, detail={"code": "EMAIL_TEMPLATE_NOT_FOUND"})
-    return (await db.scalars(select(EmailTemplateVersion).where(
-        EmailTemplateVersion.template_id == template_id
-    ).order_by(EmailTemplateVersion.version_number.desc()))).all()
+    return await EmailTemplateVersionQueryService(db).list_for_template(template_id=template_id, scope_type="ORGANIZATION", organization_id=organization_id)
 
 
 @organization_router.post("/{template_id}/rollback", response_model=TemplateStudioResponse)
@@ -1065,6 +1243,56 @@ async def publish_event_studio_template(
     return await _response(db, family, editable=True)
 
 
+@event_router.get("/preview-context", dependencies=[require_event_operation("communications.email.read")])
+async def get_event_preview_context(
+    event_id: uuid.UUID,
+    event: CurrentEvent,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return real-time dynamic variables and preview data for this event."""
+    context = await build_event_preview_context(db, event)
+    variables = [
+        {"key": "{{EventName}}", "label": "Event name", "required": True, "sampleValue": context.get("EventName", "")},
+        {"key": "{{ConferenceName}}", "label": "Conference name", "sampleValue": context.get("ConferenceName", "")},
+        {"key": "{{EventCode}}", "label": "Event code", "sampleValue": context.get("EventCode", "")},
+        {"key": "{{EventDate}}", "label": "Event date", "sampleValue": context.get("EventDate", "")},
+        {"key": "{{EventVenue}}", "label": "Venue", "sampleValue": context.get("EventVenue", "")},
+        {"key": "{{VenueAddress}}", "label": "Venue address", "sampleValue": context.get("VenueAddress", "")},
+        {"key": "{{DaysUntilEvent}}", "label": "Days until event", "sampleValue": context.get("DaysUntilEvent", "")},
+        {"key": "{{SpeakerName}}", "label": "Speaker name", "sampleValue": context.get("SpeakerName", "")},
+        {"key": "{{SpeakerFirstName}}", "label": "Speaker first name", "sampleValue": context.get("SpeakerFirstName", "")},
+        {"key": "{{SpeakerEmail}}", "label": "Speaker email", "sampleValue": context.get("SpeakerEmail", "")},
+        {"key": "{{UploadLink}}", "label": "Upload link", "sampleValue": context.get("UploadLink", "")},
+        {"key": "{{SessionTitle}}", "label": "Session title", "sampleValue": context.get("SessionTitle", "")},
+        {"key": "{{SessionDate}}", "label": "Session date", "sampleValue": context.get("SessionDate", "")},
+        {"key": "{{SessionTime}}", "label": "Session time", "sampleValue": context.get("SessionTime", "")},
+        {"key": "{{SessionRoom}}", "label": "Session room", "sampleValue": context.get("SessionRoom", "")},
+        {"key": "{{ParticipantName}}", "label": "Participant name", "sampleValue": context.get("ParticipantName", "")},
+        {"key": "{{ParticipantEmail}}", "label": "Participant email", "sampleValue": context.get("ParticipantEmail", "")},
+        {"key": "{{RegistrationId}}", "label": "Registration ID", "sampleValue": context.get("RegistrationId", "")},
+        {"key": "{{TicketName}}", "label": "Ticket name", "sampleValue": context.get("TicketName", "")},
+        {"key": "{{AmountPaid}}", "label": "Amount paid", "sampleValue": context.get("AmountPaid", "")},
+        {"key": "{{SupportEmail}}", "label": "Support email", "sampleValue": context.get("SupportEmail", "")},
+        {"key": "{{EventWebsiteUrl}}", "label": "Event website", "sampleValue": context.get("EventWebsiteUrl", "")},
+        {"key": "{{AgendaUrl}}", "label": "Agenda link", "sampleValue": context.get("AgendaUrl", "")},
+        {"key": "{{RegistrationUrl}}", "label": "Registration link", "sampleValue": context.get("RegistrationUrl", "")},
+        {"key": "{{VenueMapUrl}}", "label": "Venue map link", "sampleValue": context.get("VenueMapUrl", "")},
+        {"key": "{{QrBadgeUrl}}", "label": "QR badge URL", "sampleValue": context.get("QrBadgeUrl", "")},
+        {"key": "{{CertificateUrl}}", "label": "Certificate URL", "sampleValue": context.get("CertificateUrl", "")},
+        {"key": "{{SpeakerCount}}", "label": "Speaker count", "sampleValue": context.get("SpeakerCount", "")},
+        {"key": "{{SessionCount}}", "label": "Session count", "sampleValue": context.get("SessionCount", "")},
+    ]
+    return {
+        "variables": variables,
+        "sample_values": context,
+        "sample_collections": {
+            "Speakers": context.get("Speakers", []),
+            "AgendaItems": context.get("AgendaItems", []),
+            "Sponsors": context.get("Sponsors", []),
+        },
+    }
+
+
 @event_router.post("/{template_id}/preview", response_model=TemplatePreviewResponse, dependencies=[require_event_operation("communications.email.read")])
 async def preview_event_template(
     event_id: uuid.UUID, template_id: uuid.UUID, payload: TemplatePreviewRequest,
@@ -1080,7 +1308,7 @@ async def preview_event_template(
     ).execution_options(skip_tenant_filter=True))
     if family is None:
         raise HTTPException(status_code=404, detail={"code": "EMAIL_TEMPLATE_NOT_FOUND"})
-    return await _render_preview(db, family, payload)
+    return await _render_preview(db, family, payload, event=event)
 
 
 @event_router.post("/{template_id}/test-send", status_code=status.HTTP_202_ACCEPTED)
@@ -1102,10 +1330,25 @@ async def test_event_template(
     ).execution_options(skip_tenant_filter=True))
     if family is None:
         raise HTTPException(status_code=404, detail={"code": "EMAIL_TEMPLATE_NOT_FOUND"})
-    preview = await _render_preview(db, family, payload)
-    await send_email(to_email=str(payload.recipient_email), subject=f"[TEST] {preview.subject}", html_body=preview.html, text_body=preview.plain_text, event_id=event_id, db=db)
+    preview = await _render_preview(db, family, payload, event=event)
+    try:
+        msg_id = await send_email(
+            to_email=str(payload.recipient_email),
+            subject=f"[TEST] {preview.subject}",
+            html_body=preview.html,
+            text_body=preview.plain_text,
+            event_id=event_id,
+            db=db,
+            raise_on_failure=True,
+        )
+    except Exception as exc:
+        logger.error("Failed to send test email: {}", exc)
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "EMAIL_DELIVERY_FAILED", "message": str(exc)},
+        )
     await db.commit()
-    return {"status": "accepted"}
+    return {"status": "sent", "message_id": msg_id}
 
 
 @event_router.get("/{template_id}/versions", response_model=list[TemplateVersionResponse], dependencies=[require_event_operation("communications.email.read")])
@@ -1121,9 +1364,7 @@ async def list_event_template_versions(
     ).execution_options(skip_tenant_filter=True))
     if family is None or family.event_id != event_id:
         raise HTTPException(status_code=404, detail={"code": "EMAIL_TEMPLATE_NOT_FOUND"})
-    return (await db.scalars(select(EmailTemplateVersion).where(
-        EmailTemplateVersion.template_id == template_id
-    ).order_by(EmailTemplateVersion.version_number.desc()))).all()
+    return await EmailTemplateVersionQueryService(db).list_for_template(template_id=template_id, scope_type="EVENT", event_id=event_id)
 
 
 @event_router.post("/{template_id}/rollback", response_model=TemplateStudioResponse)

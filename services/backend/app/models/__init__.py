@@ -151,7 +151,7 @@ from app.modules.registration.models.payment_transaction import PaymentTransacti
 from app.modules.registration.models.form_category import FormCategory
 from app.modules.registration.models.form_template import FormTemplate
 from app.modules.registration.models.registration_form_config import RegistrationFormConfig
-from app.modules.registration.models.badge_models import Badge, BadgeHistory, BadgePrintJob, BadgeScan
+from app.modules.registration.models.badge_models import Badge, BadgeHistory
 from app.modules.registration.models.confirmation_qr import RegistrationConfirmationQR
 from app.modules.registration.models.print_template import PrintTemplate
 from app.modules.registration.models.portal_theme_setting import PortalThemeSetting, RegistrationThemeSetting
@@ -257,6 +257,9 @@ from app.modules.technology_services.models import (
     RequirementFormField, RequirementFormTemplate, RequirementResponse,
     RequirementTemplate, RequestAssignment, ServiceLevel, ServiceRequest,
     ServiceRequestItem, ServiceSlaBreach, ServiceSlaPolicy, ServiceSlaTarget,
+    ServiceRequestComment, ServiceRequestEventSnapshot, ServiceRequestAttachment,
+    VenueOpsOutboxEvent, VenueOpsFulfilmentHandoff, VenueOpsRecommendationRule,
+    VenueOpsServiceDefinition,
 )
 from app.modules.commercial.models import (
     ServiceCategory, Service, ServiceFeature, ServicePackage,

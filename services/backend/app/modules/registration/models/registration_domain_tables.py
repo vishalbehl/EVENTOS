@@ -9,6 +9,7 @@ from app.database import Base
 
 class FormField(Base):
     __tablename__ = "form_fields"
+    __table_args__ = {"schema": "design"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     form_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("registration.registration_forms.id", ondelete="CASCADE"), index=True)

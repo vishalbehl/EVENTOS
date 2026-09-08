@@ -1111,7 +1111,7 @@ async def ensure_admin_user():
                         VALUES (
                             :id, 'Eventos', 'Eventos', 'trial', true,
                             true, 0, '#6366f1', '#8b5cf6', 1, 2, 10,
-                            'IN', 'Asia/Kolkata', true, false,
+                            'IN', 'Asia/Kolkata', true, true,
                             'English', 'DD/MM/YYYY', '24 Hour', 'INR (₹)',
                             0, '{}'::jsonb, now(), now()
                         )
@@ -1143,8 +1143,9 @@ async def ensure_admin_user():
                     """
                     UPDATE platform.organizations
                     SET is_platform_org = true,
-                        is_internal_unrestricted = true
-                    WHERE lower(slug) = 'eventos'
+                        is_internal_unrestricted = true,
+                        onboarding_completed = true
+                    WHERE lower(slug) = 'eventos' OR is_platform_org = true
                     """
                 )
             )
@@ -1223,15 +1224,20 @@ async def ensure_agenda_types_defaults():
             await db.execute(
                 text("""
                 INSERT INTO agenda.room_types (id, name, code, description, is_system, is_active, created_at, updated_at)
-                VALUES
-                    (gen_random_uuid(), 'Main Hall / Auditorium', 'MAIN_HALL', 'Primary conference hall for keynotes and plenary sessions', true, true, now(), now()),
-                    (gen_random_uuid(), 'Breakout Room', 'BREAKOUT', 'Medium-sized room for parallel tracks and interactive sessions', true, true, now(), now()),
-                    (gen_random_uuid(), 'Workshop / Hands-on Lab', 'WORKSHOP', 'Equipped room for training, workshops, and practical demos', true, true, now(), now()),
-                    (gen_random_uuid(), 'Boardroom / Meeting Room', 'BOARDROOM', 'Executive meeting and committee room', true, true, now(), now()),
-                    (gen_random_uuid(), 'Poster Exhibition Area', 'POSTER', 'Exhibition area for scientific posters and ePosters', true, true, now(), now()),
-                    (gen_random_uuid(), 'Virtual / Streaming Stage', 'VIRTUAL', 'Digital stage for virtual or hybrid live streaming', true, true, now(), now()),
-                    (gen_random_uuid(), 'Other / Miscellaneous', 'OTHER', 'General purpose space or custom setup', true, true, now(), now())
-                ON CONFLICT DO NOTHING;
+                SELECT gen_random_uuid(), defaults.name, defaults.code, defaults.description, true, true, now(), now()
+                FROM (VALUES
+                    ('Main Hall / Auditorium', 'MAIN_HALL', 'Primary conference hall for keynotes and plenary sessions'),
+                    ('Breakout Room', 'BREAKOUT', 'Medium-sized room for parallel tracks and interactive sessions'),
+                    ('Workshop / Hands-on Lab', 'WORKSHOP', 'Equipped room for training, workshops, and practical demos'),
+                    ('Boardroom / Meeting Room', 'BOARDROOM', 'Executive meeting and committee room'),
+                    ('Poster Exhibition Area', 'POSTER', 'Exhibition area for scientific posters and ePosters'),
+                    ('Virtual / Streaming Stage', 'VIRTUAL', 'Digital stage for virtual or hybrid live streaming'),
+                    ('Other / Miscellaneous', 'OTHER', 'General purpose space or custom setup')
+                ) AS defaults(name, code, description)
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM agenda.room_types existing
+                    WHERE existing.organization_id IS NULL AND existing.code = defaults.code
+                );
                 """)
             )
 
@@ -1239,17 +1245,23 @@ async def ensure_agenda_types_defaults():
             await db.execute(
                 text("""
                 INSERT INTO agenda.session_types (id, name, code, category, default_duration_minutes, configuration, is_system, is_active, created_at, updated_at)
-                VALUES
-                    (gen_random_uuid(), 'Keynote Address', 'KEYNOTE', 'Scientific', 45, '{}'::jsonb, true, true, now(), now()),
-                    (gen_random_uuid(), 'Plenary Session', 'PLENARY', 'Scientific', 60, '{}'::jsonb, true, true, now(), now()),
-                    (gen_random_uuid(), 'Oral Presentation', 'ORAL', 'Scientific', 15, '{}'::jsonb, true, true, now(), now()),
-                    (gen_random_uuid(), 'Panel Discussion', 'PANEL', 'Discussion', 45, '{}'::jsonb, true, true, now(), now()),
-                    (gen_random_uuid(), 'Workshop / Masterclass', 'WORKSHOP', 'Practical', 90, '{}'::jsonb, true, true, now(), now()),
-                    (gen_random_uuid(), 'Symposium', 'SYMPOSIUM', 'Scientific', 60, '{}'::jsonb, true, true, now(), now()),
-                    (gen_random_uuid(), 'Poster Presentation Session', 'POSTER_SESSION', 'Exhibition', 60, '{}'::jsonb, true, true, now(), now()),
-                    (gen_random_uuid(), 'Break / Networking', 'BREAK', 'Social', 30, '{}'::jsonb, true, true, now(), now()),
-                    (gen_random_uuid(), 'Inauguration / Ceremony', 'INAUGURATION', 'Ceremony', 45, '{}'::jsonb, true, true, now(), now())
-                ON CONFLICT DO NOTHING;
+                SELECT gen_random_uuid(), defaults.name, defaults.code, defaults.category,
+                       defaults.duration_minutes, '{}'::jsonb, true, true, now(), now()
+                FROM (VALUES
+                    ('Keynote Address', 'KEYNOTE', 'Scientific', 45),
+                    ('Plenary Session', 'PLENARY', 'Scientific', 60),
+                    ('Oral Presentation', 'ORAL', 'Scientific', 15),
+                    ('Panel Discussion', 'PANEL', 'Discussion', 45),
+                    ('Workshop / Masterclass', 'WORKSHOP', 'Practical', 90),
+                    ('Symposium', 'SYMPOSIUM', 'Scientific', 60),
+                    ('Poster Presentation Session', 'POSTER_SESSION', 'Exhibition', 60),
+                    ('Break / Networking', 'BREAK', 'Social', 30),
+                    ('Inauguration / Ceremony', 'INAUGURATION', 'Ceremony', 45)
+                ) AS defaults(name, code, category, duration_minutes)
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM agenda.session_types existing
+                    WHERE existing.organization_id IS NULL AND existing.code = defaults.code
+                );
                 """)
             )
 
@@ -1274,13 +1286,18 @@ async def ensure_agenda_types_defaults():
             await db.execute(
                 text("""
                 INSERT INTO agenda.track_types (id, name, code, description, is_system, is_active, created_at, updated_at)
-                VALUES
-                    (gen_random_uuid(), 'Scientific & Clinical', 'SCIENTIFIC', 'Core scientific, clinical, and medical tracks', true, true, now(), now()),
-                    (gen_random_uuid(), 'Hands-on Workshop', 'WORKSHOP', 'Interactive skills and hands-on laboratory tracks', true, true, now(), now()),
-                    (gen_random_uuid(), 'Industry & Innovation', 'INDUSTRY', 'Industry symposia, tech talks, and sponsor presentations', true, true, now(), now()),
-                    (gen_random_uuid(), 'Poster & Abstracts', 'POSTER', 'Poster presentations and abstract displays', true, true, now(), now()),
-                    (gen_random_uuid(), 'Plenary & Ceremonies', 'PLENARY', 'General assemblies, inaugurations, and keynote tracks', true, true, now(), now())
-                ON CONFLICT DO NOTHING;
+                SELECT gen_random_uuid(), defaults.name, defaults.code, defaults.description, true, true, now(), now()
+                FROM (VALUES
+                    ('Scientific & Clinical', 'SCIENTIFIC', 'Core scientific, clinical, and medical tracks'),
+                    ('Hands-on Workshop', 'WORKSHOP', 'Interactive skills and hands-on laboratory tracks'),
+                    ('Industry & Innovation', 'INDUSTRY', 'Industry symposia, tech talks, and sponsor presentations'),
+                    ('Poster & Abstracts', 'POSTER', 'Poster presentations and abstract displays'),
+                    ('Plenary & Ceremonies', 'PLENARY', 'General assemblies, inaugurations, and keynote tracks')
+                ) AS defaults(name, code, description)
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM agenda.track_types existing
+                    WHERE existing.organization_id IS NULL AND existing.code = defaults.code
+                );
                 """)
             )
 

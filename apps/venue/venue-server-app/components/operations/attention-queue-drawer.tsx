@@ -117,7 +117,7 @@ export function AttentionQueueDrawer({
                 <CheckCircle2 className="size-6" />
               </div>
               <p className="mt-3 text-sm font-bold text-[var(--text)]">Attention Queue Clear</p>
-              <p className="mt-1 text-xs text-[var(--muted)]">All venue nodes, services, and presentation pipelines are healthy.</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">No active alerts are recorded. This does not by itself confirm every node or pipeline is healthy.</p>
             </div>
           )}
 

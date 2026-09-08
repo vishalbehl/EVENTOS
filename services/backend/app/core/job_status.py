@@ -15,6 +15,9 @@ class JobStatus(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     completed_at: datetime | None = None
+    # Additive field: existing clients may ignore it while mutation callers
+    # can discover the version required for If-Match.
+    version: int | None = None
 
 
 def progress_from_counts(done: int, total: int) -> int:

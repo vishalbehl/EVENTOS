@@ -103,18 +103,20 @@ REPRESENTATIVE_PREVIEW_DATA: dict[str, Any] = {
 def render_draft_snapshot(
     *, designer_json: dict, body_html: str, subject: str, preheader: str,
     template_type: str, target_type: str, branding_policy: dict | None = None,
+    context_data: dict[str, Any] | None = None,
 ) -> tuple[str, str, str]:
     """Validate and render exactly the snapshot supplied by the visual editor."""
     validate_designer_payload(
         designer_json=designer_json, body_html=body_html, subject=subject,
         template_type=template_type, target_type=target_type,
     )
-    rendered_subject = html_lib.unescape(bleach.clean(substitute_registered_context(subject, REPRESENTATIVE_PREVIEW_DATA), tags=[], strip=True))
+    context = {**REPRESENTATIVE_PREVIEW_DATA, **(context_data or {})}
+    rendered_subject = html_lib.unescape(bleach.clean(substitute_registered_context(subject, context), tags=[], strip=True))
     rendered_html, plain_text = render_template(
-        body_html, REPRESENTATIVE_PREVIEW_DATA, branding_policy=branding_policy
+        body_html, context, branding_policy=branding_policy
     )
     if preheader:
-        safe_preheader = bleach.clean(substitute_registered_context(preheader, REPRESENTATIVE_PREVIEW_DATA), tags=[], strip=True)
+        safe_preheader = bleach.clean(substitute_registered_context(preheader, context), tags=[], strip=True)
         hidden = f'<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">{safe_preheader}</div>'
         rendered_html = hidden + rendered_html
     return rendered_subject, rendered_html, plain_text

@@ -30,8 +30,12 @@ from app.modules.files.services.file_service import FileService
 from app.modules.presentations.services.upload_service import create_presigned_download, get_object_bytes, upload_bytes
 from app.modules.website_builder.models import WebsiteEditorSession, WebsiteFormSubmission, WebsiteMutationRequest, WebsiteSite, WebsiteSiteAssetRef, WebsiteSiteDeployment, WebsiteSiteDomain, WebsiteSiteDraft, WebsiteSiteLinkIndex, WebsiteSiteRevision
 from app.modules.website_builder.published_runtime import PUBLISHED_RUNTIME_CHECKSUM, PUBLISHED_RUNTIME_CSS, PUBLISHED_RUNTIME_SCRIPT
+from app.modules.website_builder.application.queries import WebsiteEventSnapshotQueryService
 from app.config import settings
 from app.modules.platform.application.governed_mutation_commands import commit_transaction
+from app.core.cache import cache_service
+from app.core.cache_keys import TenantCacheKey
+from app.core.cache_policy import CacheTTL, ttl
 
 
 platform_website_template_router = APIRouter(
@@ -1144,12 +1148,11 @@ def _sanitize_uploaded_svg(content: bytes) -> bytes:
 
 async def _asset_publish_diagnostics(db: DB, site_id: uuid.UUID, document: dict[str, Any]) -> list[dict[str, Any]]:
     diagnostics: list[dict[str, Any]] = []
-    rows = (await db.scalars(select(WebsiteSiteAssetRef).where(WebsiteSiteAssetRef.site_id == site_id))).all()
+    rows = await WebsiteEventSnapshotQueryService.list_asset_diagnostics(db, site_id)
     for row in rows:
         if not _document_uses_asset(document, row) or not row.asset_id:
             continue
-        asset = await db.scalar(select(Asset).where(Asset.id == row.asset_id))
-        processing_status = asset.processing_status if asset else "MISSING"
+        processing_status = row.processing_status
         if processing_status != "READY":
             diagnostics.append({
                 "severity": "error",
@@ -1200,33 +1203,9 @@ async def _get_or_create_site(db: DB, event: CurrentEvent) -> WebsiteSite:
 
 
 async def _get_public_active_deployment(db: DB, event_id: uuid.UUID) -> WebsiteSiteDeployment:
-    event = await db.scalar(
-        select(Event)
-        .where(Event.id == event_id, Event.deleted_at.is_(None))
-        .execution_options(skip_tenant_filter=True)
-    )
-    if not event:
+    event_exists, deployment = await WebsiteEventSnapshotQueryService.get_public_active_deployment(db, event_id)
+    if not event_exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "EVENT_NOT_FOUND"})
-    site = await db.scalar(
-        select(WebsiteSite)
-        .where(
-            WebsiteSite.event_id == event.id,
-            WebsiteSite.organization_id == event.organization_id,
-            WebsiteSite.status == "PUBLISHED",
-        )
-        .execution_options(skip_tenant_filter=True)
-    )
-    if not site or not site.current_deployment_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "WEBSITE_NOT_PUBLISHED"})
-    deployment = await db.scalar(
-        select(WebsiteSiteDeployment)
-        .where(
-            WebsiteSiteDeployment.id == site.current_deployment_id,
-            WebsiteSiteDeployment.site_id == site.id,
-            WebsiteSiteDeployment.status == "ACTIVE",
-        )
-        .execution_options(skip_tenant_filter=True)
-    )
     if not deployment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "WEBSITE_NOT_PUBLISHED"})
     return deployment
@@ -1258,12 +1237,8 @@ async def _get_or_create_draft(db: DB, site: WebsiteSite, event: CurrentEvent) -
 
 async def _get_readonly_site_and_draft(db: DB, event: CurrentEvent) -> tuple[WebsiteSite, WebsiteSiteDraft]:
     """Read website state without provisioning records during a GET."""
-    site = await db.scalar(
-        select(WebsiteSite).where(
-            WebsiteSite.event_id == event.id,
-            WebsiteSite.organization_id == event.organization_id,
-        )
-    )
+    existing = await WebsiteEventSnapshotQueryService.get_event_draft(db, event.id, event.organization_id)
+    site, draft = existing if existing else (None, None)
     now = datetime.now(timezone.utc)
     if site is None:
         event_code = (event.short_code or event.name or str(event.id)).lower()
@@ -1293,7 +1268,6 @@ async def _get_readonly_site_and_draft(db: DB, event: CurrentEvent) -> tuple[Web
         )
         return site, draft
 
-    draft = await db.scalar(select(WebsiteSiteDraft).where(WebsiteSiteDraft.site_id == site.id))
     if draft is None:
         document = _default_document(event)
         draft = WebsiteSiteDraft(
@@ -1381,13 +1355,8 @@ async def _get_readonly_master_template_and_draft(
     actor: SuperAdminOnly,
 ) -> tuple[WebsiteTemplate, WebsiteTemplateDraft]:
     """Read the master template without creating defaults during a GET."""
-    template = await db.scalar(
-        select(WebsiteTemplate).where(
-            WebsiteTemplate.template_type == "WEBSITE",
-            WebsiteTemplate.slug == "master-event-website",
-            WebsiteTemplate.is_system.is_(True),
-        )
-    )
+    existing = await WebsiteEventSnapshotQueryService.get_master_template_draft(db)
+    template, draft = existing if existing else (None, None)
     now = datetime.now(timezone.utc)
     if template is None:
         template = WebsiteTemplate(
@@ -1405,7 +1374,6 @@ async def _get_readonly_master_template_and_draft(
             created_at=now,
             updated_at=now,
         )
-    draft = await db.scalar(select(WebsiteTemplateDraft).where(WebsiteTemplateDraft.template_id == template.id))
     if draft is None:
         document = _default_platform_template_document()
         draft = WebsiteTemplateDraft(
@@ -1436,34 +1404,9 @@ def _template_response(template: WebsiteTemplate, draft: WebsiteTemplateDraft) -
 
 
 async def _event_snapshot(db: DB, event: CurrentEvent) -> WebsiteEventSnapshotResponse:
-    speakers = (
-        await db.scalars(
-            select(Speaker)
-            .where(Speaker.event_id == event.id)
-            .order_by(Speaker.created_at.asc())
-            .limit(24)
-        )
-    ).all()
-    sessions = (
-        await db.scalars(
-            select(Session)
-            .where(
-                Session.event_id == event.id,
-                Session.is_published.is_(True),
-                Session.deleted_at.is_(None),
-            )
-            .order_by(Session.start_time.asc())
-            .limit(50)
-        )
-    ).all()
-    sponsors = (
-        await db.scalars(
-            select(Sponsor)
-            .where(Sponsor.organization_id == event.organization_id)
-            .order_by(Sponsor.created_at.asc())
-            .limit(24)
-        )
-    ).all()
+    speakers = await WebsiteEventSnapshotQueryService.list_speakers(db, event.id)
+    sessions = await WebsiteEventSnapshotQueryService.list_sessions(db, event.id)
+    sponsors = await WebsiteEventSnapshotQueryService.list_sponsors(db, event.organization_id)
 
     mock_fallback = {
         "speakers": not bool(speakers),
@@ -1769,7 +1712,6 @@ async def acquire_event_website_editor_session(event: CurrentEvent, db: DB, acto
         own_session.heartbeat_at = now
         own_session.expires_at = expires_at
         await commit_transaction(db)
-        await db.refresh(own_session)
         return WebsiteEditorSessionResponse(
             session_id=own_session.id,
             site_id=site.id,
@@ -1796,7 +1738,6 @@ async def acquire_event_website_editor_session(event: CurrentEvent, db: DB, acto
     )
     db.add(session)
     await commit_transaction(db)
-    await db.refresh(session)
     return WebsiteEditorSessionResponse(
         session_id=session.id,
         site_id=site.id,
@@ -1808,7 +1749,18 @@ async def acquire_event_website_editor_session(event: CurrentEvent, db: DB, acto
 
 @event_website_router.delete("/editor-session", status_code=status.HTTP_204_NO_CONTENT)
 async def release_event_website_editor_session(event: CurrentEvent, db: DB, actor: ActiveUser):
-    site = await _get_or_create_site(db, event)
+    # Cleanup can race with the initial acquire during a React remount. Use
+    # the same per-site transaction lock as acquisition, and do not create a
+    # site just because an unmount cleanup ran before acquisition completed.
+    site = await db.scalar(
+        select(WebsiteSite).where(
+            WebsiteSite.event_id == event.id,
+            WebsiteSite.organization_id == event.organization_id,
+        )
+    )
+    if not site:
+        return None
+    await _transaction_lock(db, f"website-editor:{site.id}")
     await db.execute(
         delete(WebsiteEditorSession).where(
             WebsiteEditorSession.site_id == site.id,
@@ -2136,6 +2088,7 @@ async def publish_event_website(
         state={"deploymentId": str(deployment.id), "revisionId": str(revision.id), "slug": site.slug, "customDomain": requested_domain},
     ))
     await commit_transaction(db)
+    await cache_service.invalidate_domain("published_website", site.organization_id, event.id)
     return response
 
 
@@ -2144,11 +2097,8 @@ async def get_current_event_website_deployment(event: CurrentEvent, db: DB):
     site = await _get_or_create_site(db, event)
     if not site.current_deployment_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "NO_ACTIVE_WEBSITE_DEPLOYMENT"})
-    deployment = await db.scalar(
-        select(WebsiteSiteDeployment).where(
-            WebsiteSiteDeployment.id == site.current_deployment_id,
-            WebsiteSiteDeployment.site_id == site.id,
-        )
+    deployment = await WebsiteEventSnapshotQueryService.get_current_deployment(
+        db, site.id, site.current_deployment_id
     )
     if not deployment or not deployment.revision_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "NO_ACTIVE_WEBSITE_DEPLOYMENT"})
@@ -2249,20 +2199,14 @@ async def rollback_event_website(
         state={"deploymentId": str(deployment.id), "sourceRevisionId": str(source_revision.id), "revisionId": str(rollback_revision.id)},
     ))
     await commit_transaction(db)
+    await cache_service.invalidate_domain("published_website", site.organization_id, event.id)
     return response
 
 
 @event_website_router.get("/revisions", response_model=list[WebsiteRevisionSummary])
 async def list_event_website_revisions(event: CurrentEvent, db: DB):
     site = await _get_or_create_site(db, event)
-    rows = (
-        await db.scalars(
-            select(WebsiteSiteRevision)
-            .where(WebsiteSiteRevision.site_id == site.id)
-            .order_by(WebsiteSiteRevision.created_at.desc())
-            .limit(50)
-        )
-    ).all()
+    rows = await WebsiteEventSnapshotQueryService.list_revisions(db, site.id)
     return [
         WebsiteRevisionSummary(
             revision_id=row.id,
@@ -2284,14 +2228,7 @@ async def fetch_event_website_snapshot(event: CurrentEvent, db: DB):
 @event_website_router.get("/assets", response_model=list[WebsiteAssetReferenceResponse])
 async def list_event_website_assets(event: CurrentEvent, db: DB):
     site = await _get_or_create_site(db, event)
-    rows = (
-        await db.scalars(
-            select(WebsiteSiteAssetRef)
-            .where(WebsiteSiteAssetRef.site_id == site.id)
-            .order_by(WebsiteSiteAssetRef.created_at.desc())
-            .limit(200)
-        )
-    ).all()
+    rows = await WebsiteEventSnapshotQueryService.list_asset_references(db, site.id)
     return [_asset_response(row) for row in rows]
 
 
@@ -2539,13 +2476,7 @@ async def search_event_website_openverse_assets(event: CurrentEvent, q: str, pag
 @event_website_router.get("/domains", response_model=list[WebsiteDomainResponse])
 async def list_event_website_domains(event: CurrentEvent, db: DB):
     site = await _get_or_create_site(db, event)
-    rows = (
-        await db.scalars(
-            select(WebsiteSiteDomain)
-            .where(WebsiteSiteDomain.site_id == site.id)
-            .order_by(WebsiteSiteDomain.created_at.desc())
-        )
-    ).all()
+    rows = await WebsiteEventSnapshotQueryService.list_domains(db, site.id)
     return [_domain_response(row) for row in rows]
 
 
@@ -2789,23 +2720,10 @@ async def submit_public_website_form(
 @public_website_runtime_router.get("/assets/{asset_ref_id}")
 async def serve_public_website_asset(event_id: uuid.UUID, asset_ref_id: uuid.UUID, db: DB):
     deployment = await _get_public_active_deployment(db, event_id)
-    asset_ref = await db.scalar(
-        select(WebsiteSiteAssetRef)
-        .where(
-            WebsiteSiteAssetRef.id == asset_ref_id,
-            WebsiteSiteAssetRef.site_id == deployment.site_id,
-        )
-        .execution_options(skip_tenant_filter=True)
-    )
+    asset_ref = await WebsiteEventSnapshotQueryService.get_public_asset(db, deployment.site_id, asset_ref_id)
     if not asset_ref or not asset_ref.storage_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "WEBSITE_ASSET_NOT_FOUND"})
-    if asset_ref.asset_id:
-        asset = await db.scalar(
-            select(Asset)
-            .where(Asset.id == asset_ref.asset_id)
-            .execution_options(skip_tenant_filter=True)
-        )
-        if not asset or asset.processing_status != "READY":
+    if asset_ref.processing_status is not None and asset_ref.processing_status != "READY":
             raise HTTPException(status_code=status.HTTP_423_LOCKED, detail={"code": "WEBSITE_ASSET_NOT_READY"})
     url = await run_in_threadpool(create_presigned_download,
         bucket=settings.S3_BUCKET_ASSETS,
@@ -2816,23 +2734,9 @@ async def serve_public_website_asset(event_id: uuid.UUID, asset_ref_id: uuid.UUI
 
 
 async def _get_public_preview(db: DB, event_id: uuid.UUID, preview_id: uuid.UUID) -> WebsiteSiteDeployment:
-    site = await db.scalar(
-        select(WebsiteSite)
-        .where(WebsiteSite.event_id == event_id)
-        .execution_options(skip_tenant_filter=True)
-    )
-    if not site:
+    site_exists, preview = await WebsiteEventSnapshotQueryService.get_public_preview(db, event_id, preview_id)
+    if not site_exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "WEBSITE_PREVIEW_NOT_FOUND"})
-    preview = await db.scalar(
-        select(WebsiteSiteDeployment)
-        .where(
-            WebsiteSiteDeployment.id == preview_id,
-            WebsiteSiteDeployment.site_id == site.id,
-            WebsiteSiteDeployment.status == "PREVIEW",
-            WebsiteSiteDeployment.expires_at > datetime.now(timezone.utc),
-        )
-        .execution_options(skip_tenant_filter=True)
-    )
     if not preview:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "WEBSITE_PREVIEW_EXPIRED"})
     return preview
@@ -2970,6 +2874,26 @@ async def serve_public_website_template_preview_page(preview_id: uuid.UUID, db: 
 
 async def _serve_deployment_page(deployment: WebsiteSiteDeployment, route_path: str, url_prefix: str) -> HTMLResponse:
     route = f"/{route_path.strip('/')}" if route_path else "/"
+    organization_id = deployment.rendered_manifest.get("organizationId")
+    try:
+        organization_uuid = uuid.UUID(str(organization_id))
+    except (TypeError, ValueError, AttributeError):
+        organization_uuid = None
+    cache_key = None
+    if organization_uuid:
+        cache_key = TenantCacheKey.event(
+            deployment.site_id,
+            "published-website",
+            deployment.id,
+            hashlib.sha256(route.encode("utf-8")).hexdigest(),
+            organization_id=organization_uuid,
+        )
+        cached_html = await cache_service.get_json(cache_key)
+        if isinstance(cached_html, str):
+            return HTMLResponse(content=cached_html, headers={
+                "Cache-Control": "public, max-age=60, stale-while-revalidate=300",
+                "X-Website-Deployment": str(deployment.id),
+            })
     pages = deployment.rendered_manifest.get("pages", [])
     if not isinstance(pages, list):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "WEBSITE_PAGE_NOT_FOUND"})
@@ -2994,6 +2918,8 @@ async def _serve_deployment_page(deployment: WebsiteSiteDeployment, route_path: 
                     page_html = page.get("html")
             if isinstance(page_html, str):
                 page_html = re.sub(r'href="/(?!/)', f'href="{url_prefix.rstrip("/")}/', page_html)
+                if cache_key:
+                    await cache_service.set_json(cache_key, page_html, ttl(CacheTTL.PUBLISHED_WEBSITE))
                 return HTMLResponse(
                     content=page_html,
                     headers={
@@ -3024,22 +2950,7 @@ async def serve_public_website_page(event_id: uuid.UUID, db: DB, route_path: str
 @public_website_slug_router.get("/{site_slug}", response_class=HTMLResponse)
 @public_website_slug_router.get("/{site_slug}/{route_path:path}", response_class=HTMLResponse)
 async def serve_public_website_by_slug(site_slug: str, db: DB, route_path: str = ""):
-    site = await db.scalar(
-        select(WebsiteSite)
-        .where(WebsiteSite.slug == site_slug, WebsiteSite.status == "PUBLISHED")
-        .execution_options(skip_tenant_filter=True)
-    )
-    if not site or not site.current_deployment_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "WEBSITE_NOT_PUBLISHED"})
-    deployment = await db.scalar(
-        select(WebsiteSiteDeployment)
-        .where(
-            WebsiteSiteDeployment.id == site.current_deployment_id,
-            WebsiteSiteDeployment.site_id == site.id,
-            WebsiteSiteDeployment.status == "ACTIVE",
-        )
-        .execution_options(skip_tenant_filter=True)
-    )
+    deployment = await WebsiteEventSnapshotQueryService.get_published_site_by_slug(db, site_slug)
     if not deployment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "WEBSITE_NOT_PUBLISHED"})
     return await _serve_deployment_page(

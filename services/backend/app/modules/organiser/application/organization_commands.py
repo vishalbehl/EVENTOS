@@ -9,14 +9,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.audit.models.audit_log import AuditLog
 from app.core.cache import invalidate_organization
 from app.modules.platform.models.organization import Organization
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 
 
 class OrganizerOrganizationCommandService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def update_profile(self, *, organization_id, actor, values: dict, if_match: int) -> Organization:
+    async def update_profile(self, *, organization_id, actor, values: dict, if_match: int, idempotency_key: str | None = None) -> Organization:
         try:
+            idem = None
+            if idempotency_key:
+                idem = await begin_idempotent(
+                    self.db, organization_id=organization_id, actor_id=actor.id,
+                    operation="organiser.organization.profile.update", key=idempotency_key,
+                    payload={"values": values, "if_match": if_match},
+                )
+                if replay_response(idem) is not None:
+                    organization = await self.db.scalar(
+                        select(Organization).where(Organization.id == organization_id).with_for_update()
+                    )
+                    if organization is None:
+                        raise RuntimeError("Completed organization idempotency resource is missing.")
+                    await self.db.commit()
+                    return organization
             organization = await self.db.scalar(select(Organization).where(
                 Organization.id == organization_id,
             ).with_for_update())
@@ -43,6 +59,11 @@ class OrganizerOrganizationCommandService:
                 new_state={**values, "version": organization.profile_version},
                 is_sensitive=True,
             ))
+            if idem is not None:
+                await complete_idempotent(
+                    self.db, idem, response_status=200,
+                    response_body=self._snapshot(organization), resource_id=organization.id,
+                )
             await self.db.commit()
             await invalidate_organization(organization_id)
             await self.db.refresh(organization)

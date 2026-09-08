@@ -1,4 +1,6 @@
 import uuid
+import hashlib
+import secrets
 from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,6 +12,7 @@ from app.database import get_database
 from app.models.room_device import RoomDevice
 from app.models.event import Event
 from app.models.room import Room
+from app.models.presentation_file import PresentationFile
 from app.models.venue_node import VenueNodeAssignment
 from app.models.venue_capacity_rule import VenueCapacityRule
 from app.routers.node_sync import _node_token
@@ -62,6 +65,35 @@ class UpdateWorkstationRequest(BaseModel):
 class RevokeWorkstationRequest(BaseModel):
     reason: str
 
+
+def _device_token() -> str:
+    return f"venue_device_{secrets.token_urlsafe(36)}"
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+async def _backfill_room_delivery_intents(db: AsyncSession, device: RoomDevice) -> int:
+    """Make a newly enrolled room target eligible for existing current files."""
+    if (device.device_type or "").strip().lower() not in {
+        "presentation_pc", "stage_app", "stage", "technician_tablet",
+        "technical_app", "technician", "technical",
+    }:
+        return 0
+    from app.routers.srr import create_asset_transfer_intents
+
+    files = list((await db.execute(select(PresentationFile).where(
+        PresentationFile.event_id == device.event_id,
+        PresentationFile.room_id == device.room_id,
+        PresentationFile.is_current_version.is_(True),
+    ))).scalars().all())
+    for presentation_file in files:
+        await create_asset_transfer_intents(db, presentation_file, presentation_file.session_id)
+    if files:
+        await db.commit()
+    return len(files)
+
 @router.get("", response_model=List[WorkstationDTO])
 @router.get("/", response_model=List[WorkstationDTO])
 async def list_workstations(db: AsyncSession = Depends(get_database), _: VenueUser = Depends(require_admin)):
@@ -74,7 +106,7 @@ async def list_workstations(db: AsyncSession = Depends(get_database), _: VenueUs
     
     out: List[WorkstationDTO] = []
     for d in devices:
-        room_name = "Main Entrance Intake"
+        room_name = None
         if d.room_id:
             r = await db.get(Room, d.room_id)
             if r:
@@ -120,7 +152,7 @@ async def bind_workstation(
     event = (await db.execute(select(Event).limit(1))).scalar_one_or_none()
     if not event:
         raise HTTPException(status_code=400, detail="No active event found on venue server.")
-    if payload.mode not in {"registration", "scanning", "self_checkin"}:
+    if payload.mode not in {"registration", "scanning", "self_checkin", "srr_master", "srr_checkin", "srr_workstation"}:
         raise HTTPException(status_code=422, detail="mode must be registration, scanning, or self_checkin")
     permissions = dict(payload.permissions or {})
     requested_allowed_modes = permissions.get("allowed_modes")
@@ -128,7 +160,7 @@ async def bind_workstation(
         requested_allowed_modes = [payload.mode]
     allowed_modes = []
     for value in [payload.mode, *requested_allowed_modes]:
-        if value not in {"registration", "scanning", "self_checkin"}:
+        if value not in {"registration", "scanning", "self_checkin", "srr_master", "srr_checkin", "srr_workstation"}:
             raise HTTPException(status_code=422, detail="allowed_modes contains an unsupported mode")
         if value not in allowed_modes:
             allowed_modes.append(value)
@@ -150,16 +182,23 @@ async def bind_workstation(
 
     # Check if a device with this MAC already exists
     clean_mac = payload.mac_address.strip().upper().replace("-", ":")
-    existing_res = await db.execute(select(RoomDevice).where(cast(RoomDevice.mac_address, String).ilike(f"%{clean_mac}%")))
+    existing_res = await db.execute(select(RoomDevice).where(
+        RoomDevice.event_id == event.id,
+        cast(RoomDevice.mac_address, String).ilike(f"%{clean_mac}%"),
+    ))
     existing = existing_res.scalar_one_or_none()
 
     if existing:
+        device_token = _device_token()
         existing.device_name = payload.name.strip()
         existing.device_type = payload.type
         existing.ip_address = payload.ip_address
         existing.hostname = payload.hostname or payload.device_id
         existing.room_id = room.id
         existing.status = "online"
+        existing.enrollment_token_hash = _token_hash(device_token)
+        existing.enrollment_token_prefix = device_token[:20]
+        existing.enrollment_token_revoked_at = None
         existing.updated_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(existing)
@@ -171,14 +210,16 @@ async def bind_workstation(
         assignment.permissions, assignment.status = permissions, "active"
         assignment.snapshot_version += 1
         await db.commit()
+        await _backfill_room_delivery_intents(db, existing)
         return {
             "status": "success",
             "message": f"Updated binding for device '{existing.device_name}' (MAC: {clean_mac})",
             "device_id": str(existing.id)
-            ,"assignment_id": str(assignment.id), "enrollment_token": _node_token(assignment.id, event.id)
+            ,"assignment_id": str(assignment.id), "enrollment_token": _node_token(assignment.id, event.id), "device_token": device_token
         }
 
     # Create new RoomDevice
+    device_token = _device_token()
     new_device = RoomDevice(
         id=uuid.uuid4(),
         event_id=event.id,
@@ -190,7 +231,9 @@ async def bind_workstation(
         mac_address=clean_mac,
         status="online",
         registered_at=datetime.now(timezone.utc),
-        last_heartbeat_at=datetime.now(timezone.utc)
+        last_heartbeat_at=datetime.now(timezone.utc),
+        enrollment_token_hash=_token_hash(device_token),
+        enrollment_token_prefix=device_token[:20],
     )
     db.add(new_device)
     await db.commit()
@@ -199,12 +242,13 @@ async def bind_workstation(
     db.add(assignment)
     await db.commit()
     await db.refresh(assignment)
+    await _backfill_room_delivery_intents(db, new_device)
 
     return {
         "status": "success",
         "message": f"Successfully bound workstation '{new_device.device_name}' with MAC {clean_mac}",
         "device_id": str(new_device.id)
-        ,"assignment_id": str(assignment.id), "enrollment_token": _node_token(assignment.id, event.id)
+        ,"assignment_id": str(assignment.id), "enrollment_token": _node_token(assignment.id, event.id), "device_token": device_token
     }
 
 @router.put("/{device_id}")
@@ -227,7 +271,7 @@ async def update_workstation(
         device.status = payload.status
 
     if payload.assigned_station:
-        event = (await db.execute(select(Event).limit(1))).scalar_one_or_none()
+        event = await db.get(Event, device.event_id)
         if event:
             room_res = await db.execute(select(Room).where(Room.event_id == event.id, Room.name == payload.assigned_station).limit(1))
             room = room_res.scalar_one_or_none()
@@ -263,15 +307,13 @@ async def ping_workstation(
     if not device:
         raise HTTPException(status_code=404, detail="Workstation not found")
 
-    device.last_heartbeat_at = datetime.now(timezone.utc)
-    device.status = "online"
-    await db.commit()
     return {
-        "status": "success",
+        "status": "not_probed",
         "device_id": str(device.id),
         "device_name": device.device_name,
-        "is_reachable": True,
-        "latency_ms": 2
+        "is_reachable": None,
+        "reason": "Venue Server does not perform an active device probe; the workstation must report its own heartbeat.",
+        "last_heartbeat_at": device.last_heartbeat_at.isoformat() if device.last_heartbeat_at else None,
     }
 
 @router.post("/{device_id}/resync")
@@ -293,5 +335,9 @@ async def revoke_workstation(device_id: uuid.UUID, payload: RevokeWorkstationReq
     assignment.status = "revoked"
     assignment.revoked_at = datetime.now(timezone.utc)
     assignment.revoked_reason = payload.reason
+    device = await db.get(RoomDevice, device_id)
+    if device:
+        device.enrollment_token_revoked_at = datetime.now(timezone.utc)
+        device.status = "offline"
     await db.commit()
     return {"status": "success", "assignment_id": str(assignment.id), "assignment_status": assignment.status}

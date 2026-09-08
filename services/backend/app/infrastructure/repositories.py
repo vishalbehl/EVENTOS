@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Generic, TypeVar
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import Select, and_, desc, func, inspect as sa_inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.events.models.event import Event
 from app.schemas.cursor_pagination import CursorPage, bounded_page_size, decode_cursor, encode_cursor
@@ -69,8 +69,9 @@ class Repository(Generic[ModelT]):
         return self.add(entity)
 
     def update(self, entity: ModelT, values: dict) -> ModelT:
+        mapped_fields = {attribute.key for attribute in sa_inspect(entity).mapper.column_attrs}
         for name, value in values.items():
-            if name.startswith("_") or not hasattr(entity, name):
+            if name.startswith("_") or name not in mapped_fields:
                 raise ValueError(f"Unsupported repository update field: {name}")
             setattr(entity, name, value)
         return entity
@@ -79,6 +80,11 @@ class Repository(Generic[ModelT]):
         await self.db.delete(entity)
 
     async def list_page(self, stmt, *, limit: int = 100) -> list[ModelT]:
+        if not stmt._order_by_clauses:
+            created_at = getattr(self.model, "created_at", None)
+            record_id = getattr(self.model, "id", None)
+            if created_at is not None and record_id is not None:
+                stmt = stmt.order_by(desc(created_at), desc(record_id))
         result = await self.db.scalars(stmt.limit(bounded_page_size(limit, default=100, maximum=100)))
         return list(result.all())
 
@@ -185,8 +191,55 @@ class OrganizationRepository(Generic[ModelT]):
             if column is None:
                 raise ValueError(f"Unsupported repository filter: {field}")
             stmt = stmt.where(column == value)
+        created_at = getattr(self.model, "created_at", None)
+        record_id = getattr(self.model, "id", None)
+        if created_at is not None and record_id is not None:
+            stmt = stmt.order_by(desc(created_at), desc(record_id))
         result = await self.db.scalars(stmt.offset(offset).limit(bounded_limit))
         return list(result.all())
+
+    async def cursor_page(
+        self,
+        organization_id,
+        *,
+        cursor: str | None = None,
+        limit: int = 20,
+        **filters,
+    ) -> CursorPage[ModelT]:
+        """Fetch a stable organization-scoped page without offset drift."""
+        bounded_limit = bounded_page_size(limit, default=20, maximum=self.MAX_PAGE_SIZE)
+        occurred_attr = getattr(self.model, "created_at", None)
+        id_attr = getattr(self.model, "id", None)
+        if occurred_attr is None or id_attr is None:
+            raise ValueError("cursor pagination requires created_at and id fields")
+
+        stmt = self._scope(select(self.model), organization_id)
+        for field, value in filters.items():
+            column = getattr(self.model, field, None)
+            if column is None:
+                raise ValueError(f"Unsupported repository filter: {field}")
+            stmt = stmt.where(column == value)
+        if cursor:
+            position = decode_cursor(cursor)
+            stmt = stmt.where(
+                or_(
+                    occurred_attr < position.occurred_at,
+                    and_(
+                        occurred_attr == position.occurred_at,
+                        id_attr < position.record_id,
+                    ),
+                )
+            )
+        stmt = stmt.order_by(occurred_attr.desc(), id_attr.desc())
+        rows = list((await self.db.scalars(stmt.limit(bounded_limit + 1))).all())
+        items = rows[:bounded_limit]
+        has_next = len(rows) > bounded_limit
+        next_cursor = (
+            encode_cursor(getattr(items[-1], "created_at"), getattr(items[-1], "id"))
+            if has_next and items
+            else None
+        )
+        return CursorPage(items=items, next_cursor=next_cursor, has_next=has_next)
 
     async def count_for_organization(self, organization_id) -> int:
         stmt = self._scope(
@@ -205,8 +258,9 @@ class OrganizationRepository(Generic[ModelT]):
         return entity
 
     def update(self, entity: ModelT, values: dict) -> ModelT:
+        mapped_fields = {attribute.key for attribute in sa_inspect(entity).mapper.column_attrs}
         for name, value in values.items():
-            if name.startswith("_") or not hasattr(entity, name):
+            if name.startswith("_") or name not in mapped_fields:
                 raise ValueError(f"Unsupported repository update field: {name}")
             setattr(entity, name, value)
         return entity

@@ -233,7 +233,7 @@ async def setup_test_database():
         "templates", "website_builder", "blueprints", "design_system", "theme_engine",
         "technology_services", "operations_planning", "operations", "resource_management", "deployment_management",
         "commerce", "business", "content", "design", "command_center_access", "command_center_audit",
-        "organizer_access", "operation_templates", "websites", "access", "automation"
+        "organizer_access", "operation_templates", "websites", "access", "automation", "abstract"
     ]) | {t.schema for t in Base.metadata.tables.values() if t.schema}))
     lock_key = 1163284047  # Stable key reserved for the EventOS test database.
     lock_conn = await _test_engine.connect()
@@ -318,6 +318,12 @@ async def setup_test_database():
             await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
             await conn.execute(text("CREATE SCHEMA public"))
     finally:
+        # A few synchronous contract tests invoke ``asyncio.run`` directly,
+        # so the function-scoped async cleanup fixture cannot see clients
+        # created on those temporary loops. Close the shared role clients on
+        # the session loop before disposing the test database.
+        from app.redis import close_redis
+        await close_redis()
         await lock_conn.execute(
             text("SELECT pg_advisory_unlock(:lock_key)"),
             {"lock_key": lock_key},
@@ -347,6 +353,10 @@ async def db() -> AsyncGenerator[AsyncSession, None]:
             expire_on_commit=False,
             join_transaction_mode="create_savepoint",
         )
+        # Keep fixture identities usable after route-owned commits.  Setting
+        # this on the underlying sync session also protects SQLAlchemy's
+        # savepoint transaction mode from expiring objects unexpectedly.
+        session.sync_session.expire_on_commit = False
         try:
             yield session
         finally:
@@ -373,7 +383,8 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     """
     from app.main import app as asgi_app
     from fastapi import Depends
-    from app.dependencies import get_current_user, get_db, get_token_data
+    from app.dependencies import get_current_user, get_db, get_token_data, require_active_user
+    from app.modules.superadmin.dependencies import require_super_admin
     from app.routers import api_router
 
     from app.database import async_engine
@@ -396,8 +407,34 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         # the same transaction as the route under test.
         return await get_current_user(token_data, fastapi_app.state.test_db_session)
 
+    async def _override_active_user(user=Depends(_override_current_user)):
+        if not user.is_active:
+            from fastapi import HTTPException, status
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your account has been deactivated. Contact your administrator.",
+            )
+        return user
+
+    async def _override_super_admin(user=Depends(_override_active_user)):
+        from fastapi import HTTPException, status
+        if not (
+            user.role == "super_admin"
+            or user.platform_role == "SUPER_ADMIN"
+            or getattr(user, "is_platform_admin", False)
+        ):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Super Admin access required.")
+        return user
+
     fastapi_app.dependency_overrides[get_db] = _override_get_db
     fastapi_app.dependency_overrides[get_current_user] = _override_current_user
+    fastapi_app.dependency_overrides[require_active_user] = _override_active_user
+    fastapi_app.dependency_overrides[require_super_admin] = _override_super_admin
+    if fastapi_app is not asgi_app and hasattr(asgi_app, "dependency_overrides"):
+        asgi_app.dependency_overrides[get_db] = _override_get_db
+        asgi_app.dependency_overrides[get_current_user] = _override_current_user
+        asgi_app.dependency_overrides[require_active_user] = _override_active_user
+        asgi_app.dependency_overrides[require_super_admin] = _override_super_admin
 
     # Register the prefix-free compatibility routes once. Re-registering them
     # for every test leaves stale dependency graphs at the front of the router.
@@ -427,6 +464,8 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     finally:
         app.database.AsyncSessionLocal = original_sessionmaker
         fastapi_app.dependency_overrides.clear()
+        if fastapi_app is not asgi_app and hasattr(asgi_app, "dependency_overrides"):
+            asgi_app.dependency_overrides.clear()
         fastapi_app.state.test_db_session = None
 
 

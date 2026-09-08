@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const electronDir = path.dirname(fileURLToPath(import.meta.url));
 const appDir = path.resolve(electronDir, "..");
-const repoRoot = path.resolve(appDir, "..", "..");
+const repoRoot = path.resolve(appDir, "..", "..", "..");
 const desktopUrl = process.env.VENUE_DESKTOP_URL || "http://127.0.0.1:3006";
 const nextPort = new URL(desktopUrl).port || "3006";
 const waitTargetNext = `tcp:127.0.0.1:${nextPort}`;
@@ -42,11 +42,27 @@ function spawnNode(label, script, args = [], options = {}) {
   return child;
 }
 
+async function backendAlreadyRunning() {
+  try {
+    const response = await fetch("http://127.0.0.1:8001/health", { signal: AbortSignal.timeout(1200) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 function spawnBackend() {
   const venueServerDir = path.join(repoRoot, "services", "venue", "venue-server");
   const isWin = process.platform === "win32";
-  const pythonVenv = path.join(venueServerDir, ".venv", isWin ? "Scripts" : "bin", isWin ? "python.exe" : "python");
-  const pythonExe = fs.existsSync(pythonVenv) ? pythonVenv : (isWin ? "python" : "python3");
+  const configuredPython = process.env.VENUE_SERVER_PYTHON;
+  const candidates = [
+    configuredPython,
+    path.join(venueServerDir, ".venv", isWin ? "Scripts" : "bin", isWin ? "python.exe" : "python"),
+    path.join(repoRoot, "services", "backend", ".venv", isWin ? "Scripts" : "bin", isWin ? "python.exe" : "python"),
+    path.join(repoRoot, ".venv", isWin ? "Scripts" : "bin", isWin ? "python.exe" : "python"),
+  ].filter(Boolean);
+
+  const pythonExe = candidates.find((candidate) => fs.existsSync(candidate)) || (isWin ? "python.exe" : "python3");
   const runnerScript = path.join(venueServerDir, "dev_runner.py");
 
   console.log(`[Venue Desktop] Supervised Venue Server backend starting via ${pythonExe}...`);
@@ -65,6 +81,16 @@ function spawnBackend() {
     console.error(`[Venue Server Backend] ${error.message}`);
   });
   return child;
+}
+
+function clearNextDevelopmentCache() {
+  const devCache = path.join(appDir, ".next", "dev");
+  try {
+    fs.rmSync(devCache, { recursive: true, force: true });
+    console.log("[Venue Desktop] Cleared generated Next.js development cache.");
+  } catch (error) {
+    throw new Error(`Unable to clear Next.js development cache: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function runNode(label, script, args = []) {
@@ -108,12 +134,18 @@ const waitOnBin = resolveFromApp("wait-on/bin/wait-on");
 const tscBin = resolveFromApp("typescript/bin/tsc");
 const electronBin = resolveFromApp("electron/cli.js");
 
-// 1. Start Python Venue Server Backend on port 8001
-spawnBackend();
+// 1. Reuse an already-running Docker/host Venue API. Starting a second
+// supervisor would reclaim its port and make the desktop window unstable.
+if (await backendAlreadyRunning()) {
+  console.log("[Venue Desktop] Reusing Venue Server backend already running on port 8001.");
+} else {
+  spawnBackend();
+}
 
 // 2. Start Next.js Frontend on port 3006
+clearNextDevelopmentCache();
 console.log(`[Venue Desktop] Starting Next.js development server on port ${nextPort}...`);
-spawnNode("next", nextBin, ["dev", "--port", nextPort]);
+spawnNode("next", nextBin, ["dev", "--webpack", "--port", nextPort]);
 
 try {
   console.log(`[Venue Desktop] Waiting for Backend at ${waitTargetBackend} and Next.js at ${waitTargetNext}...`);

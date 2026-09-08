@@ -50,6 +50,7 @@ class EmailCampaign(Base, SoftDeleteMixin):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("events.events.id", ondelete="CASCADE"),
@@ -119,6 +120,7 @@ class EmailCampaign(Base, SoftDeleteMixin):
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
+        server_default="now()",
         onupdate=lambda: datetime.now(timezone.utc),
     )
 

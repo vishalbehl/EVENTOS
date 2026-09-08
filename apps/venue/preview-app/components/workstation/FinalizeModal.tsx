@@ -44,6 +44,24 @@ export function FinalizeModal({
   const [syncPhase, setSyncPhase] = useState<"idle" | "uploading" | "distributing" | "done">("idle");
   const [progress, setProgress] = useState(0);
 
+  const waitForDeliveryVerification = async (fileId: string) => {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const result = await apiClient.get<{ transfers?: Array<{ file_id: string; status: string; progress_pct?: number; last_error?: string | null }>}>(
+        `/api/v1/venue/distribution/status?file_id=${encodeURIComponent(fileId)}`,
+      );
+      const transfers = (result.transfers || []).filter((transfer) => transfer.file_id === fileId);
+      if (transfers.length > 0) {
+        const verified = transfers.filter((transfer) => transfer.status === "verified").length;
+        const failed = transfers.find((transfer) => ["failed", "cancelled"].includes(transfer.status));
+        setProgress(75 + Math.round((verified / transfers.length) * 25));
+        if (failed) throw new Error(failed.last_error || "At least one delivery target failed verification.");
+        if (verified === transfers.length) return;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    }
+    throw new Error("Delivery verification is still pending. Check the distribution queue before closing this workstation.");
+  };
+
   const startFinalize = async () => {
     if (!activeFile) {
       toast.error("No presentation file is available to finalize.");
@@ -65,23 +83,25 @@ export function FinalizeModal({
       return;
     }
 
-    setTimeout(() => {
-      setSyncPhase("distributing");
-      setProgress(75);
-
-      setTimeout(() => {
-        setSyncPhase("done");
-        setProgress(100);
-        toast.success("Presentation finalized and queued on Venue Server.");
-      }, 1500);
-    }, 1200);
+    setSyncPhase("distributing");
+    setProgress(75);
+    try {
+      await waitForDeliveryVerification(activeFile.id);
+      setSyncPhase("done");
+      setProgress(100);
+      toast.success("Presentation finalized and verified on every delivery target.");
+    } catch (err: any) {
+      setSyncPhase("idle");
+      setProgress(0);
+      toast.error(err.message || "Presentation delivery verification failed.");
+    }
   };
 
   const handleCompleteSession = () => {
     onClose();
     resetSession();
     setCurrentStep(1); // Return workstation to idle / ready state
-    toast.success(`Workstation #${stationNumber} reset to idle for next speaker.`);
+    toast.success(`Workstation #${stationNumber ?? "Not configured"} reset to idle for next speaker.`);
   };
 
   return (
@@ -139,7 +159,7 @@ export function FinalizeModal({
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs font-bold">
                 <span className="text-cyan-400">
-                  {syncPhase === "uploading" ? "1/2 Confirming file with Venue Server..." : "2/2 Recording finalized presentation status..."}
+                  {syncPhase === "uploading" ? "1/2 Confirming file with Venue Server..." : "2/2 Waiting for exact checksum acknowledgements..."}
                 </span>
                 <span className="font-mono text-zinc-400">{progress}%</span>
               </div>
@@ -150,7 +170,9 @@ export function FinalizeModal({
               <div className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 text-xs">
                 <Server className="size-4 text-cyan-400" />
                 <span className="font-semibold text-white">Venue Server Edge Repository</span>
-                <span className="ml-auto text-[10px] font-bold text-emerald-400">Synced</span>
+                <span className="ml-auto text-[10px] font-bold text-emerald-400">
+                  {syncPhase === "uploading" ? "Uploading..." : "Stored"}
+                </span>
               </div>
               <div className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 text-xs">
                 <Monitor className="size-4 text-blue-400" />
@@ -187,7 +209,7 @@ export function FinalizeModal({
               onClick={handleCompleteSession}
               className="w-full h-12 bg-emerald-600 hover:bg-emerald-500 text-black font-black uppercase tracking-wider text-xs"
             >
-              Finish & Release Station #{stationNumber}
+              Finish & Release Station #{stationNumber ?? "Not configured"}
             </Button>
           </div>
         )}

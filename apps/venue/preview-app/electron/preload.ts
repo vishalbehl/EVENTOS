@@ -1,9 +1,9 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 export type SystemHardwareInfo = {
-  ipv4: string;
-  mac: string;
-  interfaceName: string;
+  ipv4: string | null;
+  mac: string | null;
+  interfaceName: string | null;
   hostname: string;
   platform: string;
   osRelease: string;
@@ -37,6 +37,27 @@ export type SRRDesktopAppInfo = {
   localDatabase: LocalDatabaseStatus;
 };
 
+export type SRRCacheStatus = {
+  freeBytes: number;
+  minimumFreeBytes: number;
+  sufficient: boolean;
+  cachedFiles: number;
+  policy: string;
+  runtimeEvents: number;
+  serverSequence: number;
+  lastRuntimeSyncAt: string | null;
+  pendingMutations: number;
+  conflicts: number;
+};
+
+export type OfflineUploadStatus = {
+  total: number;
+  pending: number;
+  uploaded: number;
+  conflicts: number;
+  items: Array<{ operationId: string; filename: string; status: string; retryCount: number; lastError?: string; queuedAt: string }>;
+};
+
 const srrDesktop = {
   isDesktop: true as const,
   platform: process.platform,
@@ -45,6 +66,8 @@ const srrDesktop = {
   
   // Database Operations
   getLocalDatabaseStatus: (): Promise<LocalDatabaseStatus> => ipcRenderer.invoke("srr-desktop:get-local-database-status"),
+  getCacheStatus: (): Promise<SRRCacheStatus> => ipcRenderer.invoke("srr-desktop:get-cache-status"),
+  getOfflineUploadStatus: (): Promise<OfflineUploadStatus> => ipcRenderer.invoke("srr-desktop:get-offline-upload-status"),
   initializeLocalDatabase: (): Promise<LocalDatabaseStatus> => ipcRenderer.invoke("srr-desktop:initialize-local-database"),
   syncLocalDatabaseFromServer: (): Promise<LocalDatabaseStatus> => ipcRenderer.invoke("srr-desktop:sync-local-database"),
   importLocalDatabase: (): Promise<LocalDatabaseStatus> => ipcRenderer.invoke("srr-desktop:import-local-database"),
@@ -59,7 +82,7 @@ const srrDesktop = {
     filePath: string;
     speakerId: string;
     sessionSpeakerId: string;
-    deviceKey?: string;
+    expectedVersion?: number;
   }): Promise<{ file?: any; error?: string }> => ipcRenderer.invoke("srr-desktop:upload-modified-presentation", payload),
   
   // Window Controls

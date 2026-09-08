@@ -15,9 +15,9 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import load_only
+from sqlalchemy.orm import joinedload, load_only
 
 from app.core.cache import invalidate_event
 from app.modules.events.models.event import Event
@@ -144,6 +144,39 @@ def _check_edits_locked(event: Event, is_live: bool = True) -> bool:
     return days_until <= cutoff_days
 
 
+async def _load_participant_and_registration(
+    db: AsyncSession, *, event_id: uuid.UUID, email: str
+) -> tuple[Participant | None, ParticipantRegistration | None]:
+    """Resolve the common confirmed-attendee path in one tenant/event query."""
+    if not email:
+        return None, None
+    normalized_email = email.strip().lower()
+    result = await db.execute(
+        select(Participant, ParticipantRegistration)
+        .outerjoin(
+            ParticipantRegistration,
+            and_(
+                ParticipantRegistration.participant_id == Participant.id,
+                ParticipantRegistration.event_id == event_id,
+                ParticipantRegistration.deleted_at.is_(None),
+            ),
+        )
+        .options(joinedload(Participant.role_rel))
+        .where(
+            Participant.event_id == event_id,
+            Participant.deleted_at.is_(None),
+            or_(
+                func.lower(Participant.email) == normalized_email,
+                Participant.custom_fields["additional_emails"].contains([normalized_email]),
+            ),
+        )
+        .order_by(ParticipantRegistration.submitted_at.desc().nullslast())
+        .limit(1)
+    )
+    row = result.first()
+    return row if row else (None, None)
+
+
 async def get_dashboard_data(
     email: str,
     event_id: uuid.UUID,
@@ -224,22 +257,12 @@ async def get_dashboard_data(
         organizer_name=getattr(event, "organizer_name", "") or "",
     )
 
-    # 2 — Load confirmed participant by email
-    p = await Participant.find_by_email(db, event_id, email)
+    # 2 — Load confirmed participant and its linked registration together.
+    p, reg_row = await _load_participant_and_registration(
+        db, event_id=event_id, email=email
+    )
 
-    reg_row = None
     if p:
-        # Check if there is a linked registration row
-        reg_stmt = (
-            select(ParticipantRegistration)
-            .where(
-                ParticipantRegistration.event_id == event_id,
-                ParticipantRegistration.participant_id == p.id,
-            )
-            .limit(1)
-        )
-        reg_result = await db.execute(reg_stmt)
-        reg_row = reg_result.scalar_one_or_none()
         if not reg_row:
             reg_email_stmt = (
                 select(ParticipantRegistration)

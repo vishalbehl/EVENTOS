@@ -1,0 +1,13 @@
+
+> @conf-platform/event-portal@1.0.0 dev
+> next dev --port 3003
+
+▲ Next.js 16.2.12 (Turbopack)
+- Local:         http://localhost:3003
+- Network:       http://192.168.56.1:3003
+- Environments: .env.local
+✓ Ready in 4.3s
+- Experiments (use with caution):
+  · optimizePackageImports
+
+ GET /f78b2eeb-748b-483f-8708-e863bfb0d01d 200 in 4.5s (next.js: 3.4s, application-code: 1147ms)

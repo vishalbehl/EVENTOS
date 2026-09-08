@@ -156,6 +156,8 @@ def test_celery_beat_only_schedules_tenant_safe_jobs():
         "reconcile-organizer-usage-nightly",
         "expire-capability-controls-every-5-minutes",
         "compare-organizer-entitlements-nightly",
+        "recover-email-campaign-dispatches",
+        "recover-import-dispatches",
     }
     assert schedule["flush-api-usage-every-5-minutes"]["task"] == "app.tasks.platform_tasks.flush_api_usage"
     assert schedule["reconcile-organizer-usage-nightly"]["task"] == (
@@ -166,6 +168,12 @@ def test_celery_beat_only_schedules_tenant_safe_jobs():
     )
     assert schedule["compare-organizer-entitlements-nightly"]["task"] == (
         "app.tasks.organization_console_rollout_tasks.fanout_shadow_comparisons"
+    )
+    assert schedule["recover-email-campaign-dispatches"]["task"] == (
+        "app.tasks.recover_email_campaign_dispatches"
+    )
+    assert schedule["recover-import-dispatches"]["task"] == (
+        "app.tasks.recover_import_dispatches"
     )
 
 

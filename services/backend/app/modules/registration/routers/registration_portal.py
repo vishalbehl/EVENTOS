@@ -19,6 +19,11 @@ from app.modules.registration.models.registration_form_config import Registratio
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.models.ticket_type import TicketType
 from app.modules.registration.application.commands import RegistrationFormCommandService
+from app.modules.registration.application.queries import (
+    PromoCodeQueryService,
+    RegistrationFormQueryService,
+    RegistrationPortalQueryService,
+)
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_registration import ParticipantRegistration
 from app.modules.events.models.capacity_rule import CapacityRule
@@ -244,94 +249,12 @@ async def get_registration_form_config(
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
 
-    stmt = select(RegistrationFormConfig).where(RegistrationFormConfig.event_id == event.id)
-
-    stmt = select(RegistrationFormConfig).where(RegistrationFormConfig.event_id == event.id)
-    result = await db.execute(stmt)
-    config = result.scalar_one_or_none()
-
-    if config is None:
-        # Keep the existing response shape without creating a database row.
-        # The deterministic ID is only a projection identifier; the setup POST
-        # creates the authoritative configuration record.
-        return {
-            "id": uuid.uuid5(uuid.NAMESPACE_URL, f"eventos:registration-form:{event.id}"),
-            "event_id": event.id,
-            "template_id": None,
-            "category_id": None,
-            "is_live": True,
-            "fields": [dict(field) for field in DEFAULT_FIELDS],
-            "settings": {},
-            "version": 1,
-            "terms_and_conditions": event.registration_settings.get("terms_and_conditions", "") if event.registration_settings else "",
-            "faqs": event.registration_settings.get("faqs", DEFAULT_FAQS) if event.registration_settings else DEFAULT_FAQS,
-            "include_default_faqs": event.registration_settings.get("include_default_faqs", True) if event.registration_settings else True,
-        }
-
-    # Check registration.form_fields table
-    ff_stmt = select(FormField).where(FormField.form_id == config.id).order_by(FormField.sort_order)
-    ff_res = await db.execute(ff_stmt)
-    db_form_fields = ff_res.scalars().all()
-
-    REMOVED_DEFAULT_IDS = {"council_number", "postal_code", "dietary_preference", "emergency_contact", "state", "city"}
-
-    if not db_form_fields:
-        base_fields = config.fields if config.fields else DEFAULT_FIELDS
-        cleaned_fields = [
-            f for f in base_fields
-            if not (f.get("is_default") and (f.get("id") in REMOVED_DEFAULT_IDS or f.get("name") in REMOVED_DEFAULT_IDS))
-        ]
-        
-        # Ensure all 11 default fields exist
-        existing_ids = {f.get("id") or f.get("name") for f in cleaned_fields}
-        for df in DEFAULT_FIELDS:
-            if df["id"] not in existing_ids and df["name"] not in existing_ids:
-                cleaned_fields.append(df)
-
-        response_fields = cleaned_fields
-    else:
-        loaded_fields = []
-        for ff in db_form_fields:
-            if ff.is_default and (ff.field_name in REMOVED_DEFAULT_IDS):
-                continue
-            loaded_fields.append({
-                "id": ff.field_name,
-                "name": ff.field_name,
-                "label": ff.label or ff.field_name,
-                "type": ff.field_type,
-                "is_default": ff.is_default,
-                "is_required": ff.is_required,
-                "is_active": ff.is_active,
-                "placeholder": ff.placeholder or "",
-                "options": ff.options or []
-            })
-        
-        # Ensure all default fields are present
-        existing_ids = {f.get("id") or f.get("name") for f in loaded_fields}
-        for df in DEFAULT_FIELDS:
-            if df["id"] not in existing_ids and df["name"] not in existing_ids:
-                loaded_fields.append(df)
-                # Missing normalized fields are repaired by the setup command,
-                # never as a side effect of this GET projection.
-        
-        response_fields = loaded_fields
-
-    terms = event.registration_settings.get("terms_and_conditions", "") if event.registration_settings else ""
-    faqs = event.registration_settings.get("faqs", DEFAULT_FAQS) if event.registration_settings else DEFAULT_FAQS
-    include_default = event.registration_settings.get("include_default_faqs", True) if event.registration_settings else True
-    return {
-        "id": config.id,
-        "event_id": event.id,
-        "template_id": config.template_id,
-        "category_id": config.category_id,
-        "is_live": config.is_live,
-        "fields": config.fields if (config.fields and len(config.fields) > 0) else response_fields,
-        "settings": config.settings or {},
-        "version": config.version,
-        "terms_and_conditions": terms,
-        "faqs": faqs,
-        "include_default_faqs": include_default
-    }
+    return await RegistrationFormQueryService(db).get_config(
+        event=event,
+        default_fields=DEFAULT_FIELDS,
+        default_faqs=DEFAULT_FAQS,
+        removed_default_ids={"council_number", "postal_code", "dietary_preference", "emergency_contact", "state", "city"},
+    )
 
 
 @router.post(
@@ -383,7 +306,7 @@ async def public_registration_capabilities(
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     db: AsyncSession = Depends(get_db),
 ):
-    event = await db.scalar(select(Event).where(Event.id == event_id))
+    event = await RegistrationPortalQueryService(db).get_event(event_id=event_id)
     if event is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
     result = await _public_capability_result(db, event)
@@ -856,25 +779,23 @@ async def public_register_participant(
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
     # 1. Fetch form config and check if registration is live
-    config_stmt = select(RegistrationFormConfig).where(RegistrationFormConfig.event_id == event_id)
-    config_result = await db.execute(config_stmt)
-    config = config_result.scalar_one_or_none()
-
+    # 1. Validate event and load configuration through the tenant boundary.
+    event = await RegistrationPortalQueryService(db).get_event(event_id=event_id)
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found."
+        )
+    config = await RegistrationFormQueryService(db).get_config_record(
+        organization_id=event.organization_id, event_id=event_id
+    )
     if not config or not config.is_live:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Registration is currently closed for this event."
         )
 
-    # 2. Validate event exists
-    event_stmt = select(Event).where(Event.id == event_id)
-    event_result = await db.execute(event_stmt)
-    event = event_result.scalar_one_or_none()
-    if not event:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Event not found."
-        )
+    # 2. Enforce registration access.
     await enforce_event_operation(db, event.organization_id, event.id, "registration.submit")
 
     idem = None
@@ -943,12 +864,7 @@ async def public_register_participant(
             }, merged_participant.id)
 
     # 3.5 Validate the role/category belongs to active roles and is not in disabled categories
-    from app.modules.registration.models.participant_role import ParticipantRole
-    roles_stmt = select(ParticipantRole).where(
-        ParticipantRole.event_id == event_id
-    )
-    roles_res = await db.execute(roles_stmt)
-    roles = roles_res.scalars().all()
+    roles = await RegistrationPortalQueryService(db).list_roles(event_id=event_id)
 
     reg_settings = event.registration_settings or {}
     disabled_categories = reg_settings.get("disabled_categories", [])
@@ -1078,16 +994,10 @@ async def public_register_participant(
             participant_data["custom_fields"][field_id] = val
 
     # Check event capacity
-    q_rule = select(CapacityRule).where(
-        CapacityRule.event_id == event_id,
-        CapacityRule.session_id.is_(None),
-        CapacityRule.room_id.is_(None)
+    # Get capacity state through the tenant-scoped portal query boundary.
+    rule, current_approved, max_waitlist = await RegistrationPortalQueryService(db).capacity_state(
+        organization_id=event.organization_id, event_id=event_id
     )
-    rule = (await db.execute(q_rule)).scalar_one_or_none()
-
-    # Get current approved count (participants registered)
-    q_count = select(func.count(Participant.id)).where(Participant.event_id == event_id)
-    current_approved = (await db.execute(q_count)).scalar() or 0
 
     status_str = "submitted"
     waitlist_pos = None
@@ -1096,12 +1006,7 @@ async def public_register_participant(
         if rule.waitlist_enabled:
             status_str = "waitlisted"
             # Determine next waitlist position
-            q_wl = select(func.max(ParticipantRegistration.waitlist_position)).where(
-                ParticipantRegistration.event_id == event_id,
-                ParticipantRegistration.registration_status == "waitlisted"
-            )
-            max_pos = (await db.execute(q_wl)).scalar()
-            waitlist_pos = (max_pos or 0) + 1
+            waitlist_pos = (max_waitlist or 0) + 1
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1192,7 +1097,7 @@ async def public_registration_upload(
             detail="Could not read upload file."
         ) from e
 
-    event = await db.scalar(select(Event).where(Event.id == event_id))
+    event = await RegistrationPortalQueryService(db).get_event(event_id=event_id)
     if event is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
     await enforce_event_operation(
@@ -1216,11 +1121,8 @@ async def public_registration_upload(
         )
     ).hexdigest()
     reservation_key = f"registration-upload:{idempotency_key}"
-    existing_reservation = await db.scalar(
-        select(UsageReservation).where(
-            UsageReservation.organization_id == event.organization_id,
-            UsageReservation.idempotency_key == reservation_key,
-        )
+    existing_reservation = await RegistrationPortalQueryService(db).get_upload_reservation(
+        organization_id=event.organization_id, idempotency_key=reservation_key
     )
     if existing_reservation and existing_reservation.status == "CONSUMED":
         metadata = existing_reservation.metadata_json or {}
@@ -1398,17 +1300,14 @@ async def validate_public_promo(
     payload: PromoValidateRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    event_stmt = select(Event).where(Event.id == event_id)
-    event = (await db.execute(event_stmt)).scalar_one_or_none()
+    event = await RegistrationPortalQueryService(db).get_event(event_id=event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
     await enforce_event_operation(db, event.organization_id, event.id, "registration.coupons.manage")
     code_upper = payload.code.strip().upper()
-    promo_stmt = select(PromoCode).where(
-        PromoCode.event_id == event_id,
-        PromoCode.code == code_upper
+    promo = await PromoCodeQueryService(db).get_for_event_code(
+        organization_id=event.organization_id, event_id=event_id, code=code_upper
     )
-    promo = (await db.execute(promo_stmt)).scalar_one_or_none()
     
     if not promo:
         raise HTTPException(status_code=400, detail="Invalid promo code.")
@@ -1455,19 +1354,46 @@ async def validate_public_promo(
 async def public_checkout_payment(
     event_id: uuid.UUID,
     payload: CheckoutRequest,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", min_length=8, max_length=255),
     db: AsyncSession = Depends(get_db)
 ):
-    # 1. Fetch form config and check if live
-    config_stmt = select(RegistrationFormConfig).where(RegistrationFormConfig.event_id == event_id)
-    config = (await db.execute(config_stmt)).scalar_one_or_none()
-    if not config or not config.is_live:
-        raise HTTPException(status_code=400, detail="Registration is closed.")
-        
-    # 2. Fetch event
-    event_stmt = select(Event).where(Event.id == event_id)
-    event = (await db.execute(event_stmt)).scalar_one_or_none()
+    # 1. Fetch event and form config through tenant-scoped query services.
+    event = await RegistrationPortalQueryService(db).get_event(event_id=event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
+    config = await RegistrationFormQueryService(db).get_config_record(
+        organization_id=event.organization_id, event_id=event_id
+    )
+    if not config or not config.is_live:
+        raise HTTPException(status_code=400, detail="Registration is closed.")
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found.")
+    idem = None
+    effective_idempotency_key = idempotency_key or f"legacy-payment-checkout-{uuid.uuid4()}"
+    if effective_idempotency_key:
+        idem = await begin_idempotent(
+            db,
+            organization_id=event.organization_id,
+            actor_id=None,
+            operation="registration.payment.checkout",
+            key=effective_idempotency_key,
+            payload={"event_id": str(event.id), "payload": payload.model_dump(mode="json")},
+        )
+        replay = replay_response(idem)
+        if replay:
+            return replay[1]
+
+    async def finish(response_body: dict[str, Any]) -> dict[str, Any]:
+        if idem:
+            await complete_idempotent(
+                db,
+                idem,
+                response_status=200,
+                response_body=response_body,
+            )
+        await db.commit()
+        return response_body
+
     await enforce_event_operation(db, event.organization_id, event.id, "registration.submit")
     capabilities = await _public_capability_result(db, event)
         
@@ -1514,14 +1440,14 @@ async def public_checkout_payment(
                 organization_id=event.organization_id,
                 event_id=event.id,
             )
-            return {
+            return await finish({
                 "checkout_required": False,
                 "status": "approved",
                 "message": "Profiles successfully merged! Your registration is verified.",
                 "regno": merged_participant.regno or "",
                 "name": merged_participant.name,
                 "role": merged_participant.role
-            }
+            })
             
     # Resolve Price
     role = payload.formData.get("role", "").strip()
@@ -1543,11 +1469,11 @@ async def public_checkout_payment(
             # Apply promo code if present
             if payload.promo_code:
                 code_upper = payload.promo_code.strip().upper()
-                promo_stmt = select(PromoCode).where(
-                    PromoCode.event_id == event_id,
-                    PromoCode.code == code_upper
+                promo_code_obj = await PromoCodeQueryService(db).get_for_event_code(
+                    organization_id=event.organization_id,
+                    event_id=event_id,
+                    code=code_upper,
                 )
-                promo_code_obj = (await db.execute(promo_stmt)).scalar_one_or_none()
                 if promo_code_obj and promo_code_obj.is_active:
                     valid = True
                     if promo_code_obj.expiry_date and promo_code_obj.expiry_date < datetime.now(timezone.utc):
@@ -1565,15 +1491,9 @@ async def public_checkout_payment(
                         total_price = base_price - discount_applied
 
     # Check capacity rules
-    q_count = select(func.count(Participant.id)).where(Participant.event_id == event_id)
-    current_approved = (await db.execute(q_count)).scalar() or 0
-    
-    q_rule = select(CapacityRule).where(
-        CapacityRule.event_id == event_id,
-        CapacityRule.session_id.is_(None),
-        CapacityRule.room_id.is_(None)
+    rule, current_approved, max_waitlist = await RegistrationPortalQueryService(db).capacity_state(
+        organization_id=event.organization_id, event_id=event_id
     )
-    rule = (await db.execute(q_rule)).scalar_one_or_none()
     
     status_str = "pending_payment" if payment_enabled and total_price > 0 else "submitted"
     waitlist_pos = None
@@ -1581,12 +1501,7 @@ async def public_checkout_payment(
     if rule and current_approved >= rule.capacity:
         if rule.waitlist_enabled:
             status_str = "waitlisted"
-            q_wl = select(func.max(ParticipantRegistration.waitlist_position)).where(
-                ParticipantRegistration.event_id == event_id,
-                ParticipantRegistration.registration_status == "waitlisted"
-            )
-            max_pos = (await db.execute(q_wl)).scalar()
-            waitlist_pos = (max_pos or 0) + 1
+            waitlist_pos = (max_waitlist or 0) + 1
         else:
             raise HTTPException(status_code=400, detail="Event is at capacity.")
             
@@ -1642,7 +1557,7 @@ async def public_checkout_payment(
             organization_id=event.organization_id,
             event_id=event.id,
         )
-        return {
+        return await finish({
             "checkout_required": False,
             "status": "waitlisted",
             "message": "The event is at capacity. You have been added to the waitlist.",
@@ -1650,7 +1565,7 @@ async def public_checkout_payment(
             "name": reg.registration_data["name"],
             "role": reg.registration_data["role"],
             "waitlist_position": reg.waitlist_position
-        }
+        })
         
     if not payment_enabled or total_price <= 0:
         auto_approve = reg_settings.get("auto_approve_paid", True)
@@ -1668,11 +1583,9 @@ async def public_checkout_payment(
             )
             db.add(tx)
             
-            reviewer_id = event.created_by
-            if not reviewer_id:
-                from app.modules.identity.models.user import User
-                stmt_user = select(User.id).limit(1)
-                reviewer_id = (await db.execute(stmt_user)).scalar()
+            reviewer_id = await RegistrationPortalQueryService(db).get_fallback_reviewer_id(
+                organization_id=event.organization_id, preferred_id=event.created_by
+            )
                 
             await helper_approve_registration(db, reg, reviewer_id, "Auto-approved (Free)")
             await db.commit()
@@ -1691,28 +1604,28 @@ async def public_checkout_payment(
             part = (await db.execute(part_stmt)).scalar_one_or_none()
             regno = part.regno if part else ""
             
-            return {
+            return await finish({
                 "checkout_required": False,
                 "status": "approved",
                 "message": "Registration successful!",
                 "regno": regno,
                 "name": reg.registration_data["name"],
                 "role": reg.registration_data["role"]
-            }
+            })
         else:
             await db.commit()
             enqueue_event_registration_projection_refresh(
                 organization_id=event.organization_id,
                 event_id=event.id,
             )
-            return {
+            return await finish({
                 "checkout_required": False,
                 "status": "submitted",
                 "message": "Registration submitted successfully! Pending review.",
                 "regno": "",
                 "name": reg.registration_data["name"],
                 "role": reg.registration_data["role"]
-            }
+            })
             
     # Create Payment transaction
     tx = PaymentTransaction(
@@ -1753,22 +1666,22 @@ async def public_checkout_payment(
         event_id=event.id,
     )
     
-    return {
+    return await finish({
         "checkout_required": True,
         "payment_details": checkout_details,
         "transaction_id": str(tx.id),
         "registration_id": str(reg.id)
-    }
+    })
 
 
 @router.post("/portal/registration/{event_id}/payment/verify")
 async def verify_public_payment(
     event_id: uuid.UUID,
     payload: PaymentVerifyRequest,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", min_length=8, max_length=255),
     db: AsyncSession = Depends(get_db)
 ):
-    event_stmt = select(Event).where(Event.id == event_id)
-    event = (await db.execute(event_stmt)).scalar_one_or_none()
+    event = await RegistrationPortalQueryService(db).get_event(event_id=event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
     await enforce_event_operation(db, event.organization_id, event.id, "registration.payments.manage")
@@ -1787,31 +1700,59 @@ async def verify_public_payment(
     if not gateway_order_id:
         raise HTTPException(status_code=400, detail="Missing checkout session / order details.")
         
-    tx_stmt = select(PaymentTransaction).where(
-        PaymentTransaction.event_id == event_id,
-        PaymentTransaction.gateway_order_id == gateway_order_id
+    tx = await RegistrationPortalQueryService(db).get_transaction_for_event(
+        organization_id=event.organization_id,
+        event_id=event_id,
+        gateway_order_id=gateway_order_id,
     )
-    tx = (await db.execute(tx_stmt)).scalar_one_or_none()
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found.")
+
+    tx = await db.scalar(
+        select(PaymentTransaction)
+        .where(PaymentTransaction.id == tx.id, PaymentTransaction.event_id == event.id)
+        .with_for_update()
+    )
+    verify_idempotency_key = idempotency_key or f"legacy-payment-verify-{tx.id}-{payload.gateway}"
+    idem = await begin_idempotent(
+        db,
+        organization_id=event.organization_id,
+        actor_id=None,
+        operation="registration.payment.verify",
+        key=verify_idempotency_key,
+        payload={"event_id": str(event.id), "transaction_id": str(tx.id), "payload": payload.model_dump(mode="json")},
+    )
+    replay = replay_response(idem)
+    if replay is not None:
+        await db.commit()
+        return replay[1]
         
     if tx.status == "completed":
-        reg_stmt = select(ParticipantRegistration).where(ParticipantRegistration.id == tx.registration_id)
-        reg = (await db.execute(reg_stmt)).scalar_one_or_none()
+        reg = await RegistrationPortalQueryService(db).get_registration_for_event(
+            organization_id=event.organization_id,
+            event_id=event.id,
+            registration_id=tx.registration_id,
+        )
         
         regno = ""
         if reg and reg.participant_id:
-            part_stmt = select(Participant).where(Participant.id == reg.participant_id)
-            part = (await db.execute(part_stmt)).scalar_one_or_none()
+            part = await RegistrationPortalQueryService(db).get_participant_for_event(
+                organization_id=event.organization_id,
+                event_id=event.id,
+                participant_id=reg.participant_id,
+            )
             regno = part.regno if part else ""
             
-        return {
+        response_body = {
             "status": "success",
             "message": "Payment verified successfully!",
             "regno": regno,
             "name": reg.registration_data["name"] if reg else "",
             "role": reg.registration_data["role"] if reg else ""
         }
+        await complete_idempotent(db, idem, response_status=200, response_body=response_body, resource_id=tx.id)
+        await db.commit()
+        return response_body
         
     try:
         verification = await PaymentService.verify_payment(
@@ -1821,15 +1762,26 @@ async def verify_public_payment(
         )
     except Exception as e:
         tx.status = "failed"
-        reg_stmt = select(ParticipantRegistration).where(ParticipantRegistration.id == tx.registration_id)
-        reg = (await db.execute(reg_stmt)).scalar_one_or_none()
+        tx.version = int(tx.version or 1) + 1
+        reg = await RegistrationPortalQueryService(db).get_registration_for_event(
+            organization_id=event.organization_id, event_id=event.id,
+            registration_id=tx.registration_id,
+        )
         if reg:
+            reg.version = int(reg.version or 1) + 1
             reg.registration_status = "failed"
             reg.registration_data = {
                 **reg.registration_data,
                 "paid_status": "Failed",
                 "payment_error": str(e)
             }
+        await complete_idempotent(
+            db,
+            idem,
+            response_status=400,
+            response_body={"status": "failed", "message": f"Payment verification failed: {str(e)}"},
+            resource_id=tx.id,
+        )
         await db.commit()
         enqueue_event_registration_projection_refresh(
             organization_id=event.organization_id,
@@ -1843,9 +1795,13 @@ async def verify_public_payment(
         
     if not verification.get("success"):
         tx.status = "failed"
-        reg_stmt = select(ParticipantRegistration).where(ParticipantRegistration.id == tx.registration_id)
-        reg = (await db.execute(reg_stmt)).scalar_one_or_none()
+        tx.version = int(tx.version or 1) + 1
+        reg = await RegistrationPortalQueryService(db).get_registration_for_event(
+            organization_id=event.organization_id, event_id=event.id,
+            registration_id=tx.registration_id,
+        )
         if reg:
+            reg.version = int(reg.version or 1) + 1
             reg.registration_status = "failed"
             reg.registration_data = {
                 **reg.registration_data,
@@ -1853,6 +1809,13 @@ async def verify_public_payment(
                 "payment_error": verification.get("error", "Payment verification not successful"),
                 "payment_details": verification.get("details", {})
             }
+        await complete_idempotent(
+            db,
+            idem,
+            response_status=400,
+            response_body={"status": "failed", "message": "Payment has not been completed."},
+            resource_id=tx.id,
+        )
         await db.commit()
         enqueue_event_registration_projection_refresh(
             organization_id=event.organization_id,
@@ -1866,15 +1829,22 @@ async def verify_public_payment(
         
     tx.status = "completed"
     tx.gateway_payment_id = verification.get("gateway_payment_id")
+    tx.version = int(tx.version or 1) + 1
     
     if tx.promo_code_id:
-        promo_stmt = select(PromoCode).where(PromoCode.id == tx.promo_code_id)
-        promo = (await db.execute(promo_stmt)).scalar_one_or_none()
+        promo = await PromoCodeQueryService(db).get_for_event(
+            organization_id=event.organization_id,
+            event_id=event.id,
+            promo_id=tx.promo_code_id,
+        )
         if promo:
             promo.used_count += 1
+            promo.version = int(promo.version or 1) + 1
             
-    reg_stmt = select(ParticipantRegistration).where(ParticipantRegistration.id == tx.registration_id)
-    reg = (await db.execute(reg_stmt)).scalar_one_or_none()
+    reg = await RegistrationPortalQueryService(db).get_registration_for_event(
+        organization_id=event.organization_id, event_id=event.id,
+        registration_id=tx.registration_id,
+    )
     if not reg:
         raise HTTPException(status_code=404, detail="Registration record not found.")
         
@@ -1883,6 +1853,7 @@ async def verify_public_payment(
         "paid_status": "Paid",
         "payment_details": verification.get("details", {})
     }
+    reg.version = int(reg.version or 1) + 1
     
     auto_approve = reg_settings.get("auto_approve_paid", True)
     regno = ""
@@ -1890,10 +1861,13 @@ async def verify_public_payment(
     if reg.registration_status == "approved" or auto_approve:
         if reg.participant_id:
             # Already approved, update participant status to Paid and generate regno
-            part_stmt = select(Participant).where(Participant.id == reg.participant_id)
-            part = (await db.execute(part_stmt)).scalar_one_or_none()
+            part = await RegistrationPortalQueryService(db).get_participant_for_event(
+                organization_id=event.organization_id, event_id=event.id,
+                participant_id=reg.participant_id,
+            )
             if part:
                 part.paid_status = "Paid"
+                part.version = int(part.version or 1) + 1
                 part.custom_fields = {
                     **(part.custom_fields or {}),
                     "payment_details": verification.get("details", {})
@@ -1903,17 +1877,17 @@ async def verify_public_payment(
                     part.regno = await generate_next_regno(db, event_id, part.role)
                 regno = part.regno
         else:
-            reviewer_id = event.created_by
-            if not reviewer_id:
-                from app.modules.identity.models.user import User
-                stmt_user = select(User.id).limit(1)
-                reviewer_id = (await db.execute(stmt_user)).scalar()
+            reviewer_id = await RegistrationPortalQueryService(db).get_fallback_reviewer_id(
+                organization_id=event.organization_id, preferred_id=event.created_by
+            )
                 
             await helper_approve_registration(db, reg, reviewer_id, f"Auto-approved (Paid via {gateway})")
             
             await db.flush()
-            part_stmt = select(Participant).where(Participant.id == reg.participant_id)
-            part = (await db.execute(part_stmt)).scalar_one_or_none()
+            part = await RegistrationPortalQueryService(db).get_participant_for_event(
+                organization_id=event.organization_id, event_id=event.id,
+                participant_id=reg.participant_id,
+            )
             if part:
                 part.custom_fields = {
                     **(part.custom_fields or {}),
@@ -1928,6 +1902,14 @@ async def verify_public_payment(
         status_result = "submitted"
         message_result = "Payment verified successfully! Registration is pending review."
         
+    response_body = {
+        "status": status_result,
+        "message": message_result,
+        "regno": regno,
+        "name": reg.registration_data["name"],
+        "role": reg.registration_data["role"]
+    }
+    await complete_idempotent(db, idem, response_status=200, response_body=response_body, resource_id=tx.id)
     await db.commit()
     enqueue_event_registration_projection_refresh(
         organization_id=event.organization_id,
@@ -1938,11 +1920,5 @@ async def verify_public_payment(
         event_id=event.id,
     )
     
-    return {
-        "status": status_result,
-        "message": message_result,
-        "regno": regno,
-        "name": reg.registration_data["name"],
-        "role": reg.registration_data["role"]
-    }
+    return response_body
 

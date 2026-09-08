@@ -61,7 +61,7 @@ export default function EmergencyBroadcastPage() {
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
               { id: "all_venue", label: "All Venue Endpoints" },
-              { id: "all_rooms", label: "All 18 Hall Stage PCs" },
+              { id: "all_rooms", label: "All Room Stage Apps" },
               { id: "srr", label: "SRR Stations & Master" },
               { id: "signage", label: "Digital Signage Displays" },
             ].map((sc) => (

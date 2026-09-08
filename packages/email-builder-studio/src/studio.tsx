@@ -41,6 +41,7 @@ import {
   BadgeCheck,
   Blocks,
   Bold,
+  Check,
   ChevronDown,
   ChevronRight,
   CircleUserRound,
@@ -359,6 +360,198 @@ const CATALOGUE_ICONS: Record<string, LucideIcon> = {
   "section-legal": PanelBottom,
 };
 
+export type EmailThemePreset = {
+  id: string;
+  name: string;
+  desc: string;
+  category: "dark" | "light" | "corporate" | "vibrant";
+  primary: string;
+  secondary: string;
+  canvas: string;
+  backdrop: string;
+  text: string;
+  accent: string;
+  muted: string;
+};
+
+export const EMAIL_THEME_PRESETS: EmailThemePreset[] = [
+  {
+    id: "dark-luxury",
+    name: "Midnight Luxury",
+    category: "dark",
+    primary: "#6366F1",
+    secondary: "#8B5CF6",
+    canvas: "#11121d",
+    backdrop: "#080912",
+    text: "#F8FAFC",
+    accent: "#4F46E5",
+    muted: "#94A3B8",
+    desc: "Indigo & violet with deep obsidian backdrop",
+  },
+  {
+    id: "cyber-ocean",
+    name: "Cyber Ocean",
+    category: "dark",
+    primary: "#0EA5E9",
+    secondary: "#06B6D4",
+    canvas: "#071a2e",
+    backdrop: "#030f1d",
+    text: "#F0F9FF",
+    accent: "#38BDF8",
+    muted: "#7DD3FC",
+    desc: "Electric sky blue & bright teal cool tones",
+  },
+  {
+    id: "bio-emerald",
+    name: "Bio Emerald",
+    category: "dark",
+    primary: "#10B981",
+    secondary: "#059669",
+    canvas: "#062b20",
+    backdrop: "#021b14",
+    text: "#ECFDF5",
+    accent: "#34D399",
+    muted: "#6EE7B7",
+    desc: "Vibrant emerald green for health & bio summits",
+  },
+  {
+    id: "sunset-amber",
+    name: "Sunset Amber",
+    category: "dark",
+    primary: "#F59E0B",
+    secondary: "#EA580C",
+    canvas: "#2a190b",
+    backdrop: "#1a0f05",
+    text: "#FFFBEB",
+    accent: "#F97316",
+    muted: "#FDE68A",
+    desc: "Radiant amber & deep orange for executive conferences",
+  },
+  {
+    id: "crimson-spark",
+    name: "Crimson Spark",
+    category: "dark",
+    primary: "#F43F5E",
+    secondary: "#E11D48",
+    canvas: "#290d16",
+    backdrop: "#19060c",
+    text: "#FFF1F2",
+    accent: "#FB7185",
+    muted: "#FDA4AF",
+    desc: "Bold high-energy rose & ruby red",
+  },
+  {
+    id: "galactic-violet",
+    name: "Galactic Violet",
+    category: "dark",
+    primary: "#A855F7",
+    secondary: "#D946EF",
+    canvas: "#220e33",
+    backdrop: "#14081f",
+    text: "#FAF5FF",
+    accent: "#C084FC",
+    muted: "#E9D5FF",
+    desc: "Deep atmospheric violet & neon fuchsia",
+  },
+  {
+    id: "executive-blue",
+    name: "Executive Blue",
+    category: "dark",
+    primary: "#2563EB",
+    secondary: "#3B82F6",
+    canvas: "#121e42",
+    backdrop: "#0b1329",
+    text: "#EFF6FF",
+    accent: "#60A5FA",
+    muted: "#93C5FD",
+    desc: "Authoritative enterprise blue for global conventions",
+  },
+  {
+    id: "titanium-slate",
+    name: "Titanium Slate",
+    category: "dark",
+    primary: "#475569",
+    secondary: "#64748B",
+    canvas: "#1e293b",
+    backdrop: "#0f172a",
+    text: "#F8FAFC",
+    accent: "#94A3B8",
+    muted: "#CBD5E1",
+    desc: "Minimalist slate palette for executive corporate events",
+  },
+  {
+    id: "clean-corporate-light",
+    name: "Clean Corporate",
+    category: "light",
+    primary: "#2563EB",
+    secondary: "#475569",
+    canvas: "#FFFFFF",
+    backdrop: "#F1F5F9",
+    text: "#0F172A",
+    accent: "#3B82F6",
+    muted: "#64748B",
+    desc: "Crisp white canvas with classic royal blue CTA accents",
+  },
+  {
+    id: "modern-minimal-light",
+    name: "Modern Minimal",
+    category: "light",
+    primary: "#18181B",
+    secondary: "#71717A",
+    canvas: "#FFFFFF",
+    backdrop: "#F4F4F5",
+    text: "#18181B",
+    accent: "#27272A",
+    muted: "#71717A",
+    desc: "Monochrome high contrast aesthetic with charcoal accents",
+  },
+  {
+    id: "warm-editorial",
+    name: "Warm Editorial",
+    category: "light",
+    primary: "#C2410C",
+    secondary: "#D97706",
+    canvas: "#FFFFFF",
+    backdrop: "#FDF8F0",
+    text: "#292524",
+    accent: "#EA580C",
+    muted: "#78716C",
+    desc: "Warm terracotta & amber tones for prestige bulletins",
+  },
+  {
+    id: "fresh-mint-light",
+    name: "Fresh Mint",
+    category: "light",
+    primary: "#0D9488",
+    secondary: "#059669",
+    canvas: "#FFFFFF",
+    backdrop: "#F0FDFA",
+    text: "#134E4A",
+    accent: "#14B8A6",
+    muted: "#0D9488",
+    desc: "Clean eucalyptus & teal accents for community announcements",
+  },
+];
+
+export const QUICK_PALETTE_SWATCHES = [
+  { name: "Indigo", hex: "#6366F1" },
+  { name: "Royal Blue", hex: "#2563EB" },
+  { name: "Cyber Cyan", hex: "#0EA5E9" },
+  { name: "Teal", hex: "#0D9488" },
+  { name: "Emerald", hex: "#10B981" },
+  { name: "Amber", hex: "#F59E0B" },
+  { name: "Orange", hex: "#EA580C" },
+  { name: "Rose", hex: "#F43F5E" },
+  { name: "Ruby", hex: "#E11D48" },
+  { name: "Violet", hex: "#A855F7" },
+  { name: "Fuchsia", hex: "#D946EF" },
+  { name: "Slate", hex: "#475569" },
+  { name: "Charcoal", hex: "#18181B" },
+  { name: "Pure White", hex: "#FFFFFF" },
+  { name: "Off White", hex: "#F8FAFC" },
+  { name: "Deep Obsidian", hex: "#09090B" },
+];
+
 export function createBlankEmailDocument(): EmailDocument {
   return {
     root: {
@@ -367,6 +560,8 @@ export function createBlankEmailDocument(): EmailDocument {
         backdropColor: "#f0f1f3",
         canvasColor: "#ffffff",
         textColor: "#202124",
+        primaryColor: "#6366F1",
+        secondaryColor: "#8B5CF6",
         fontFamily: "MODERN_SANS",
         childrenIds: [],
       },
@@ -374,13 +569,19 @@ export function createBlankEmailDocument(): EmailDocument {
   } as EmailDocument;
 }
 
-function expandSampleData(value: string) {
+function expandSampleData(
+  value: string,
+  customValues?: Record<string, string>,
+  customCollections?: Record<string, Array<Record<string, string>>>,
+) {
+  const collections = { ...SAMPLE_COLLECTIONS, ...(customCollections || {}) };
+  const values = { ...SAMPLE_VALUES, ...(customValues || {}) };
   const repeated = value.replace(
     /\{\{#each\s+(Speakers|AgendaItems|Sponsors)\s+limit=(\d+)\}\}([\s\S]*?)\{\{\/each\}\}/g,
     (_, collection: string, limit: string, body: string) => {
       const alias =
         collection === "AgendaItems" ? "AgendaItem" : collection.slice(0, -1);
-      return (SAMPLE_COLLECTIONS[collection] ?? [])
+      return (collections[collection] ?? [])
         .slice(0, Number(limit))
         .map((item) =>
           body.replace(
@@ -393,7 +594,7 @@ function expandSampleData(value: string) {
   );
   return repeated.replace(
     /\{\{([A-Za-z][A-Za-z0-9_]*)\}\}/g,
-    (match, key) => SAMPLE_VALUES[key] ?? match,
+    (match, key) => values[key] ?? match,
   );
 }
 
@@ -501,7 +702,12 @@ function materializeManagedNodes(document: EmailDocument): EmailDocument {
   return next;
 }
 
-function renderDocument(document: EmailDocument, sample = false): string {
+function renderDocument(
+  document: EmailDocument,
+  sample = false,
+  customValues?: Record<string, string>,
+  customCollections?: Record<string, Array<Record<string, string>>>,
+): string {
   try {
     const html = renderToStaticMarkup(
       materializeManagedNodes(document) as TReaderDocument,
@@ -509,7 +715,7 @@ function renderDocument(document: EmailDocument, sample = false): string {
         rootBlockId: ROOT_ID,
       },
     );
-    return sample ? expandSampleData(html) : html;
+    return sample ? expandSampleData(html, customValues, customCollections) : html;
   } catch {
     return '<div style="font-family:Arial,sans-serif;padding:32px">This draft contains an unsupported block. Open Structure and remove it.</div>';
   }
@@ -1354,6 +1560,57 @@ function Field({
       <span>{label}</span>
       {children}
     </label>
+  );
+}
+
+function ColorPickerInput({
+  label,
+  value,
+  onChange,
+  swatches = QUICK_PALETTE_SWATCHES.slice(0, 10),
+}: {
+  label: string;
+  value: string;
+  onChange: (color: string) => void;
+  swatches?: Array<{ name: string; hex: string }>;
+}) {
+  const safeValue = value && value.startsWith("#") ? value : value || "#000000";
+  return (
+    <div className="ebs-color-picker-block">
+      <div className="ebs-color-picker-header">
+        <span>{label}</span>
+        <span className="ebs-color-hex-badge">{safeValue}</span>
+      </div>
+      <div className="ebs-color-input-row">
+        <input
+          type="color"
+          className="ebs-color-swatch-picker"
+          value={safeValue.length === 7 ? safeValue : "#6366F1"}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <input
+          type="text"
+          className="ebs-color-text-input"
+          value={value || ""}
+          placeholder="#000000"
+          onChange={(e) => onChange(e.target.value)}
+        />
+      </div>
+      {swatches.length > 0 ? (
+        <div className="ebs-swatches-strip">
+          {swatches.map((swatch) => (
+            <button
+              key={swatch.hex}
+              type="button"
+              className={`ebs-swatch-dot ${String(value).toLowerCase() === swatch.hex.toLowerCase() ? "is-active" : ""}`}
+              style={{ backgroundColor: swatch.hex }}
+              title={`${swatch.name} (${swatch.hex})`}
+              onClick={() => onChange(swatch.hex)}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 const asStyle = (node: StudioNode | null) => node?.data.style ?? {};
@@ -2266,6 +2523,8 @@ export function EmailBuilderStudio({
   templates,
   activeTemplateId,
   variables,
+  sampleValues,
+  sampleCollections,
   fragments = [],
   assets = [],
   brandingPolicy = {
@@ -2371,11 +2630,27 @@ export function EmailBuilderStudio({
         (!query || asset.name.toLowerCase().includes(query)),
     );
   }, [assetScope, iconSearch, managedIconAssets]);
+  const resolvedSampleValues = useMemo(() => {
+    const fromVariables: Record<string, string> = {};
+    for (const v of variables) {
+      if (v.sampleValue !== undefined && v.sampleValue !== "") {
+        const cleanKey = v.key.replace(/^\{\{\s*|\s*\}\}$/g, "");
+        fromVariables[cleanKey] = v.sampleValue;
+      }
+    }
+    return { ...SAMPLE_VALUES, ...fromVariables, ...(sampleValues || {}) };
+  }, [variables, sampleValues]);
+  const resolvedSampleCollections = useMemo(() => {
+    return { ...SAMPLE_COLLECTIONS, ...(sampleCollections || {}) };
+  }, [sampleCollections]);
   const rawHtml = useMemo(() => renderDocument(document), [document]);
-  const previewHtml = useMemo(() => renderDocument(document, true), [document]);
+  const previewHtml = useMemo(
+    () => renderDocument(document, true, resolvedSampleValues, resolvedSampleCollections),
+    [document, resolvedSampleValues, resolvedSampleCollections],
+  );
   const framedPreview = useMemo(
-    () => frameDocument(previewHtml, expandSampleData(preheader)),
-    [preheader, previewHtml],
+    () => frameDocument(previewHtml, expandSampleData(preheader, resolvedSampleValues, resolvedSampleCollections)),
+    [preheader, previewHtml, resolvedSampleValues, resolvedSampleCollections],
   );
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 3 } }),
@@ -2603,6 +2878,82 @@ export function EmailBuilderStudio({
       ...document,
       root: { ...root, data: { ...root.data, ...patch } },
     } as EmailDocument);
+  };
+  const applyThemePreset = (preset: EmailThemePreset) => {
+    updateRoot({
+      preset: preset.id,
+      canvasColor: preset.canvas,
+      backdropColor: preset.backdrop,
+      textColor: preset.text,
+      primaryColor: preset.primary,
+      secondaryColor: preset.secondary,
+    });
+    toast.success(`Applied ${preset.name} palette`);
+  };
+  const applyThemeToAllElements = (primaryColorToApply?: string) => {
+    const primary = primaryColorToApply || String(root.data.primaryColor ?? "#6366F1");
+    let nextDoc: Record<string, any> = { ...document };
+    let count = 0;
+
+    Object.keys(nextDoc).forEach((nodeId) => {
+      if (nodeId === ROOT_ID) return;
+      const node = nextDoc[nodeId];
+      if (!node) return;
+
+      if (node.type === "Button") {
+        nextDoc = {
+          ...nextDoc,
+          [nodeId]: {
+            ...node,
+            data: {
+              ...node.data,
+              props: {
+                ...node.data.props,
+                buttonBackgroundColor: primary,
+              },
+            },
+          },
+        };
+        count++;
+      } else if (node.type === "Divider") {
+        nextDoc = {
+          ...nextDoc,
+          [nodeId]: {
+            ...node,
+            data: {
+              ...node.data,
+              props: {
+                ...node.data.props,
+                lineColor: primary,
+              },
+            },
+          },
+        };
+        count++;
+      } else if (
+        node.type === "Image" &&
+        (editorRoleOf(node as StudioNode).includes("ICON") || Boolean((node.data as Record<string, unknown>)?.editorMetadata))
+      ) {
+        const nodeData = node.data as Record<string, unknown>;
+        nextDoc = {
+          ...nextDoc,
+          [nodeId]: {
+            ...node,
+            data: {
+              ...nodeData,
+              editorMetadata: {
+                ...((nodeData.editorMetadata as object | undefined) ?? {}),
+                iconColor: primary,
+              },
+            },
+          },
+        };
+        count++;
+      }
+    });
+
+    commit(nextDoc as EmailDocument);
+    toast.success(`Theme accents applied to ${count} element${count === 1 ? "" : "s"}!`);
   };
   const selectNode = (id: string | null) => {
     setSelectedId(id);
@@ -3689,55 +4040,161 @@ export function EmailBuilderStudio({
               ) : null}
               {tool === "brand" ? (
                 <div className="ebs-panel-content">
-                  <h2>Email brand</h2>
-                  <p>Document-wide visual defaults.</p>
-                  <Field label="Canvas color">
-                    <input
-                      type="color"
-                      value={String(root.data.canvasColor ?? "#ffffff")}
-                      onChange={(event) =>
-                        updateRoot({ canvasColor: event.target.value })
-                      }
-                    />
-                  </Field>
-                  <Field label="Backdrop color">
-                    <input
-                      type="color"
-                      value={String(root.data.backdropColor ?? "#f0f1f3")}
-                      onChange={(event) =>
-                        updateRoot({ backdropColor: event.target.value })
-                      }
-                    />
-                  </Field>
-                  <Field label="Text color">
-                    <input
-                      type="color"
-                      value={String(root.data.textColor ?? "#202124")}
-                      onChange={(event) =>
-                        updateRoot({ textColor: event.target.value })
-                      }
-                    />
-                  </Field>
-                  <Field label="Font family">
-                    <select
-                      value={String(root.data.fontFamily ?? "MODERN_SANS")}
-                      onChange={(event) =>
-                        updateRoot({ fontFamily: event.target.value })
-                      }
+                  <h2>Email brand & themes</h2>
+                  <p>Document-wide color themes, design palettes, and visual defaults.</p>
+
+                  <div className="ebs-brand-section">
+                    <div className="ebs-brand-section-title">
+                      <span>Curated Theme Palettes</span>
+                      <span style={{ fontSize: 10, opacity: 0.7 }}>12 presets</span>
+                    </div>
+
+                    <div className="ebs-preset-grid">
+                      {EMAIL_THEME_PRESETS.map((preset) => {
+                        const isSelected =
+                          root.data.preset === preset.id ||
+                          (root.data.primaryColor === preset.primary &&
+                            root.data.canvasColor === preset.canvas);
+                        return (
+                          <div
+                            key={preset.id}
+                            className={`ebs-preset-card ${isSelected ? "is-active" : ""}`}
+                            onClick={() => applyThemePreset(preset)}
+                            title={preset.desc}
+                          >
+                            <div className="ebs-preset-card-header">
+                              <span className="ebs-preset-name">{preset.name}</span>
+                              <div className="ebs-preset-chips">
+                                <span
+                                  className="ebs-preset-chip"
+                                  style={{ backgroundColor: preset.primary }}
+                                  title={`Primary: ${preset.primary}`}
+                                />
+                                <span
+                                  className="ebs-preset-chip"
+                                  style={{ backgroundColor: preset.secondary }}
+                                  title={`Secondary: ${preset.secondary}`}
+                                />
+                                <span
+                                  className="ebs-preset-chip"
+                                  style={{ backgroundColor: preset.canvas }}
+                                  title={`Canvas: ${preset.canvas}`}
+                                />
+                                {isSelected ? (
+                                  <span className="ebs-preset-check">
+                                    <Check size={10} strokeWidth={3} />
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
+                            <p className="ebs-preset-desc">{preset.desc}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <button
+                      type="button"
+                      className="ebs-theme-apply-btn"
+                      onClick={() => applyThemeToAllElements()}
                     >
-                      {[
-                        "MODERN_SANS",
-                        "BOOK_SANS",
-                        "GEOMETRIC_SANS",
-                        "ROUNDED_SANS",
-                        "MODERN_SERIF",
-                        "BOOK_SERIF",
-                        "MONOSPACE",
-                      ].map((font) => (
-                        <option key={font}>{font}</option>
-                      ))}
-                    </select>
-                  </Field>
+                      <Sparkles size={14} />
+                      Apply Theme to All Buttons & Accents
+                    </button>
+                  </div>
+
+                  <div className="ebs-brand-section">
+                    <div className="ebs-brand-section-title">
+                      <span>Custom Color Palette</span>
+                    </div>
+
+                    <ColorPickerInput
+                      label="Primary Accent / Button Color"
+                      value={String(root.data.primaryColor ?? "#6366F1")}
+                      onChange={(color) => {
+                        updateRoot({ primaryColor: color, preset: "custom" });
+                      }}
+                      swatches={QUICK_PALETTE_SWATCHES.slice(0, 8)}
+                    />
+
+                    <ColorPickerInput
+                      label="Secondary Accent Color"
+                      value={String(root.data.secondaryColor ?? "#8B5CF6")}
+                      onChange={(color) => {
+                        updateRoot({ secondaryColor: color, preset: "custom" });
+                      }}
+                      swatches={QUICK_PALETTE_SWATCHES.slice(8, 16)}
+                    />
+
+                    <ColorPickerInput
+                      label="Email Canvas Background"
+                      value={String(root.data.canvasColor ?? "#ffffff")}
+                      onChange={(color) => {
+                        updateRoot({ canvasColor: color, preset: "custom" });
+                      }}
+                      swatches={[
+                        { name: "Pure White", hex: "#ffffff" },
+                        { name: "Off White", hex: "#f8fafc" },
+                        { name: "Light Gray", hex: "#f1f5f9" },
+                        { name: "Dark Slate", hex: "#1e293b" },
+                        { name: "Dark Navy", hex: "#11121d" },
+                        { name: "Deep Charcoal", hex: "#18181b" },
+                      ]}
+                    />
+
+                    <ColorPickerInput
+                      label="Workspace / Email Backdrop"
+                      value={String(root.data.backdropColor ?? "#f0f1f3")}
+                      onChange={(color) => {
+                        updateRoot({ backdropColor: color, preset: "custom" });
+                      }}
+                      swatches={[
+                        { name: "Light Backdrop", hex: "#f0f1f3" },
+                        { name: "Slate Backdrop", hex: "#e2e8f0" },
+                        { name: "Warm Backdrop", hex: "#fdf8f0" },
+                        { name: "Obsidian", hex: "#080912" },
+                        { name: "Dark Surface", hex: "#09090b" },
+                        { name: "Midnight", hex: "#030f1d" },
+                      ]}
+                    />
+
+                    <ColorPickerInput
+                      label="Typography / Text Color"
+                      value={String(root.data.textColor ?? "#202124")}
+                      onChange={(color) => {
+                        updateRoot({ textColor: color, preset: "custom" });
+                      }}
+                      swatches={[
+                        { name: "Dark Charcoal", hex: "#202124" },
+                        { name: "Pure Black", hex: "#000000" },
+                        { name: "Slate 900", hex: "#0f172a" },
+                        { name: "Pure White", hex: "#ffffff" },
+                        { name: "Light Slate", hex: "#f8fafc" },
+                        { name: "Muted Text", hex: "#94a3b8" },
+                      ]}
+                    />
+
+                    <Field label="Global Font Family">
+                      <select
+                        value={String(root.data.fontFamily ?? "MODERN_SANS")}
+                        onChange={(event) =>
+                          updateRoot({ fontFamily: event.target.value })
+                        }
+                      >
+                        {[
+                          "MODERN_SANS",
+                          "BOOK_SANS",
+                          "GEOMETRIC_SANS",
+                          "ROUNDED_SANS",
+                          "MODERN_SERIF",
+                          "BOOK_SERIF",
+                          "MONOSPACE",
+                        ].map((font) => (
+                          <option key={font}>{font}</option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
                 </div>
               ) : null}
               {tool === "document" ? (
@@ -4018,41 +4475,72 @@ export function EmailBuilderStudio({
                         ) : null}
                         {inspectorTab === "style" || selectedId !== ROOT_ID ? (
                           <>
-                            <Field label="Email background">
-                              <input
-                                type="color"
-                                value={String(
-                                  root.data.canvasColor ?? "#ffffff",
-                                )}
-                                onChange={(event) =>
-                                  updateRoot({
-                                    canvasColor: event.target.value,
-                                  })
-                                }
-                              />
-                            </Field>
-                            <Field label="Workspace backdrop">
-                              <input
-                                type="color"
-                                value={String(
-                                  root.data.backdropColor ?? "#f0f1f3",
-                                )}
-                                onChange={(event) =>
-                                  updateRoot({
-                                    backdropColor: event.target.value,
-                                  })
-                                }
-                              />
-                            </Field>
-                            <Field label="Default text color">
-                              <input
-                                type="color"
-                                value={String(root.data.textColor ?? "#202124")}
-                                onChange={(event) =>
-                                  updateRoot({ textColor: event.target.value })
-                                }
-                              />
-                            </Field>
+                            <div className="ebs-section-title" data-category="theme">
+                              Theme Palettes
+                            </div>
+                            <div className="ebs-preset-grid" style={{ marginBottom: 16 }}>
+                              {EMAIL_THEME_PRESETS.slice(0, 6).map((preset) => {
+                                const isSelected =
+                                  root.data.preset === preset.id ||
+                                  (root.data.primaryColor === preset.primary &&
+                                    root.data.canvasColor === preset.canvas);
+                                return (
+                                  <div
+                                    key={preset.id}
+                                    className={`ebs-preset-card ${isSelected ? "is-active" : ""}`}
+                                    onClick={() => applyThemePreset(preset)}
+                                    title={preset.desc}
+                                  >
+                                    <div className="ebs-preset-card-header">
+                                      <span className="ebs-preset-name">{preset.name}</span>
+                                      <div className="ebs-preset-chips">
+                                        <span
+                                          className="ebs-preset-chip"
+                                          style={{ backgroundColor: preset.primary }}
+                                        />
+                                        <span
+                                          className="ebs-preset-chip"
+                                          style={{ backgroundColor: preset.canvas }}
+                                        />
+                                        {isSelected ? (
+                                          <span className="ebs-preset-check">
+                                            <Check size={10} strokeWidth={3} />
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <ColorPickerInput
+                              label="Primary accent / buttons"
+                              value={String(root.data.primaryColor ?? "#6366F1")}
+                              onChange={(color) =>
+                                updateRoot({ primaryColor: color, preset: "custom" })
+                              }
+                            />
+                            <ColorPickerInput
+                              label="Email background"
+                              value={String(root.data.canvasColor ?? "#ffffff")}
+                              onChange={(color) =>
+                                updateRoot({ canvasColor: color, preset: "custom" })
+                              }
+                            />
+                            <ColorPickerInput
+                              label="Workspace backdrop"
+                              value={String(root.data.backdropColor ?? "#f0f1f3")}
+                              onChange={(color) =>
+                                updateRoot({ backdropColor: color, preset: "custom" })
+                              }
+                            />
+                            <ColorPickerInput
+                              label="Default text color"
+                              value={String(root.data.textColor ?? "#202124")}
+                              onChange={(color) =>
+                                updateRoot({ textColor: color, preset: "custom" })
+                              }
+                            />
                             <Field label="Global font">
                               <select
                                 value={String(
@@ -4110,41 +4598,27 @@ export function EmailBuilderStudio({
                                 }}
                               />
                             </Field>
-                            <Field label="Email background">
-                              <input
-                                type="color"
-                                value={String(
-                                  root.data.canvasColor ?? "#ffffff",
-                                )}
-                                onChange={(event) =>
-                                  updateRoot({
-                                    canvasColor: event.target.value,
-                                  })
-                                }
-                              />
-                            </Field>
-                            <Field label="Workspace backdrop">
-                              <input
-                                type="color"
-                                value={String(
-                                  root.data.backdropColor ?? "#f0f1f3",
-                                )}
-                                onChange={(event) =>
-                                  updateRoot({
-                                    backdropColor: event.target.value,
-                                  })
-                                }
-                              />
-                            </Field>
-                            <Field label="Default text color">
-                              <input
-                                type="color"
-                                value={String(root.data.textColor ?? "#202124")}
-                                onChange={(event) =>
-                                  updateRoot({ textColor: event.target.value })
-                                }
-                              />
-                            </Field>
+                            <ColorPickerInput
+                              label="Email background"
+                              value={String(root.data.canvasColor ?? "#ffffff")}
+                              onChange={(color) =>
+                                updateRoot({ canvasColor: color, preset: "custom" })
+                              }
+                            />
+                            <ColorPickerInput
+                              label="Workspace backdrop"
+                              value={String(root.data.backdropColor ?? "#f0f1f3")}
+                              onChange={(color) =>
+                                updateRoot({ backdropColor: color, preset: "custom" })
+                              }
+                            />
+                            <ColorPickerInput
+                              label="Default text color"
+                              value={String(root.data.textColor ?? "#202124")}
+                              onChange={(color) =>
+                                updateRoot({ textColor: color, preset: "custom" })
+                              }
+                            />
                             <Field label="Content width">
                               <select defaultValue="600">
                                 <option value="600">600px standard</option>
@@ -4755,17 +5229,14 @@ export function EmailBuilderStudio({
                                     }
                                   />
                                 </Field>
-                                <Field label="Line color">
-                                  <input
-                                    type="color"
-                                    value={String(props.lineColor ?? "#e7e9f2")}
-                                    onChange={(event) =>
-                                      updateNode("props", {
-                                        lineColor: event.target.value,
-                                      })
-                                    }
-                                  />
-                                </Field>
+                                <ColorPickerInput
+                                  label="Line color"
+                                  value={String(props.lineColor ?? "#e7e9f2")}
+                                  onChange={(color) =>
+                                    updateNode("props", { lineColor: color })
+                                  }
+                                  swatches={QUICK_PALETTE_SWATCHES.slice(0, 8)}
+                                />
                               </>
                             ) : null}
                             {selected.type === "Image" && editorRole === "VIDEO" ? (
@@ -5036,19 +5507,14 @@ export function EmailBuilderStudio({
                             >
                               Appearance
                             </div>
-                            <Field label="Background">
-                              <input
-                                type="color"
-                                value={String(
-                                  style.backgroundColor ?? "#ffffff",
-                                )}
-                                onChange={(event) =>
-                                  updateNode("style", {
-                                    backgroundColor: event.target.value,
-                                  })
-                                }
-                              />
-                            </Field>
+                            <ColorPickerInput
+                              label="Background"
+                              value={String(style.backgroundColor ?? "#ffffff")}
+                              onChange={(color) =>
+                                updateNode("style", { backgroundColor: color })
+                              }
+                              swatches={QUICK_PALETTE_SWATCHES.slice(0, 8)}
+                            />
                             {capability.supportsTypography ? (
                               <>
                                 <div
@@ -5057,21 +5523,18 @@ export function EmailBuilderStudio({
                                 >
                                   Typography
                                 </div>
-                                <Field label="Text color">
-                                  <input
-                                    type="color"
-                                    value={String(
-                                      style.color ??
-                                      root.data.textColor ??
-                                      "#202124",
-                                    )}
-                                    onChange={(event) =>
-                                      updateNode("style", {
-                                        color: event.target.value,
-                                      })
-                                    }
-                                  />
-                                </Field>
+                                <ColorPickerInput
+                                  label="Text color"
+                                  value={String(
+                                    style.color ??
+                                    root.data.textColor ??
+                                    "#202124",
+                                  )}
+                                  onChange={(color) =>
+                                    updateNode("style", { color })
+                                  }
+                                  swatches={QUICK_PALETTE_SWATCHES.slice(0, 8)}
+                                />
                                 <Field label="Font size">
                                   <input
                                     type="range"
@@ -5280,19 +5743,16 @@ export function EmailBuilderStudio({
                                     }
                                   />
                                 </Field>
-                                <Field label="Border color">
-                                  <input
-                                    type="color"
-                                    value={String(
-                                      style.borderColor ?? "#d8dce5",
-                                    )}
-                                    onChange={(event) =>
-                                      updateNode("style", {
-                                        borderColor: event.target.value,
-                                      })
-                                    }
-                                  />
-                                </Field>
+                                <ColorPickerInput
+                                  label="Border color"
+                                  value={String(
+                                    style.borderColor ?? "#d8dce5",
+                                  )}
+                                  onChange={(color) =>
+                                    updateNode("style", { borderColor: color })
+                                  }
+                                  swatches={QUICK_PALETTE_SWATCHES.slice(0, 8)}
+                                />
                                 <Field label="Corner radius">
                                   <input
                                     type="range"
@@ -5404,20 +5864,18 @@ export function EmailBuilderStudio({
                             </Field>
                             {selected.type === "Button" ? (
                               <>
-                                <Field label="Button color">
-                                  <input
-                                    type="color"
-                                    value={String(
-                                      props.buttonBackgroundColor ?? "#2f58bf",
-                                    )}
-                                    onChange={(event) =>
-                                      updateNode("props", {
-                                        buttonBackgroundColor:
-                                          event.target.value,
-                                      })
-                                    }
-                                  />
-                                </Field>
+                                <ColorPickerInput
+                                  label="Button color"
+                                  value={String(
+                                    props.buttonBackgroundColor ?? "#2f58bf",
+                                  )}
+                                  onChange={(color) =>
+                                    updateNode("props", {
+                                      buttonBackgroundColor: color,
+                                    })
+                                  }
+                                  swatches={QUICK_PALETTE_SWATCHES.slice(0, 8)}
+                                />
                                 <Field label="Button style">
                                   <select
                                     value={String(

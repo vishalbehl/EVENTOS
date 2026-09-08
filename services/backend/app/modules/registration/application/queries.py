@@ -8,9 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
 from app.modules.events.models.event import Event
+from app.modules.events.models.capacity_rule import CapacityRule
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_registration import ParticipantRegistration
 from app.modules.registration.models.payment_transaction import PaymentTransaction
+from app.modules.registration.models.promo_code import PromoCode
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.models.check_in import CheckIn
 from app.modules.registration.models.badge_models import Badge, BadgeHistory, BadgePrintJob
@@ -20,12 +22,269 @@ from app.modules.registration.schemas.import_job import ImportJobResponse
 from app.modules.registration.models.ticket_type import TicketType
 from app.modules.registration.models.form_category import FormCategory
 from app.modules.registration.models.form_template import FormTemplate
+from app.modules.registration.models.registration_form_config import RegistrationFormConfig
+from app.modules.registration.models.registration_domain_tables import FormField
 from app.modules.registration.schemas.form_builder import FormTemplateResponse
 from app.modules.registration.models.print_template import PrintTemplate
 from app.modules.registration.schemas.print_template import PrintTemplateResponse
 from app.infrastructure.repositories import Repository
+from app.modules.registration.infrastructure.repositories import (
+    BadgeHistoryRepository,
+    BadgePrintJobRepository,
+    BadgeRepository,
+    ImportJobRepository,
+    ParticipantRegistrationRepository,
+    ParticipantRepository,
+)
 from app.schemas.cursor_pagination import CursorPage, bounded_page_size, decode_cursor, encode_cursor
 from app.modules.registration.services.portal_service import DashboardData, get_dashboard_data
+from app.modules.platform.models.organization_console import UsageReservation
+from app.modules.identity.models.user import User
+
+
+class RegistrationFormQueryService:
+    """Tenant/event-scoped projection for the compatibility form-config read."""
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def get_config_record(
+        self, *, organization_id: uuid.UUID, event_id: uuid.UUID
+    ) -> RegistrationFormConfig | None:
+        return await self.db.scalar(
+            select(RegistrationFormConfig)
+            .join(Event, Event.id == RegistrationFormConfig.event_id)
+            .where(
+                Event.organization_id == organization_id,
+                RegistrationFormConfig.event_id == event_id,
+            )
+        )
+
+    async def get_config(
+        self,
+        *,
+        event: Event,
+        default_fields: list[dict],
+        default_faqs: list[dict],
+        removed_default_ids: set[str],
+    ) -> dict:
+        config = await self.db.scalar(
+            select(RegistrationFormConfig)
+            .options(load_only(
+                RegistrationFormConfig.id,
+                RegistrationFormConfig.event_id,
+                RegistrationFormConfig.template_id,
+                RegistrationFormConfig.category_id,
+                RegistrationFormConfig.is_live,
+                RegistrationFormConfig.fields,
+                RegistrationFormConfig.settings,
+                RegistrationFormConfig.version,
+            ))
+            .where(RegistrationFormConfig.event_id == event.id)
+        )
+        settings = event.registration_settings or {}
+        terms = settings.get("terms_and_conditions", "")
+        faqs = settings.get("faqs", default_faqs)
+        include_default = settings.get("include_default_faqs", True)
+        if config is None:
+            return {
+                "id": uuid.uuid5(uuid.NAMESPACE_URL, f"eventos:registration-form:{event.id}"),
+                "event_id": event.id,
+                "template_id": None,
+                "category_id": None,
+                "is_live": True,
+                "fields": [dict(field) for field in default_fields],
+                "settings": {},
+                "version": 1,
+                "terms_and_conditions": terms,
+                "faqs": faqs,
+                "include_default_faqs": include_default,
+            }
+
+        rows = await self.db.scalars(
+            select(FormField)
+            .options(load_only(
+                FormField.id,
+                FormField.form_id,
+                FormField.field_name,
+                FormField.label,
+                FormField.field_type,
+                FormField.is_default,
+                FormField.is_required,
+                FormField.is_active,
+                FormField.placeholder,
+                FormField.options,
+                FormField.sort_order,
+            ))
+            .where(FormField.form_id == config.id)
+            .order_by(FormField.sort_order, FormField.id)
+        )
+        db_fields = rows.all()
+        if not db_fields:
+            base_fields = config.fields if config.fields else default_fields
+            response_fields = [
+                field for field in base_fields
+                if not (field.get("is_default") and (field.get("id") in removed_default_ids or field.get("name") in removed_default_ids))
+            ]
+        else:
+            response_fields = [
+                {
+                    "id": field.field_name,
+                    "name": field.field_name,
+                    "label": field.label or field.field_name,
+                    "type": field.field_type,
+                    "is_default": field.is_default,
+                    "is_required": field.is_required,
+                    "is_active": field.is_active,
+                    "placeholder": field.placeholder or "",
+                    "options": field.options or [],
+                }
+                for field in db_fields
+                if not (field.is_default and field.field_name in removed_default_ids)
+            ]
+        existing_ids = {field.get("id") or field.get("name") for field in response_fields}
+        for field in default_fields:
+            if field["id"] not in existing_ids and field["name"] not in existing_ids:
+                response_fields.append(field)
+        return {
+            "id": config.id,
+            "event_id": event.id,
+            "template_id": config.template_id,
+            "category_id": config.category_id,
+            "is_live": config.is_live,
+            "fields": config.fields if config.fields else response_fields,
+            "settings": config.settings or {},
+            "version": config.version,
+            "terms_and_conditions": terms,
+            "faqs": faqs,
+            "include_default_faqs": include_default,
+        }
+
+
+class RegistrationPortalQueryService:
+    """Tenant-scoped reads shared by public registration workflows."""
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def get_event(
+        self, *, event_id: uuid.UUID, organization_id: uuid.UUID | None = None
+    ) -> Event | None:
+        statement = select(Event).where(Event.id == event_id, Event.deleted_at.is_(None))
+        if organization_id is not None:
+            statement = statement.where(Event.organization_id == organization_id)
+        return await self.db.scalar(statement)
+
+    async def list_roles(self, *, event_id: uuid.UUID) -> list[ParticipantRole]:
+        rows = await self.db.scalars(
+            select(ParticipantRole)
+            .where(ParticipantRole.event_id == event_id)
+            .order_by(ParticipantRole.sort_order, ParticipantRole.name, ParticipantRole.id)
+            .limit(100)
+        )
+        return list(rows.all())
+
+    async def capacity_state(
+        self, *, organization_id: uuid.UUID, event_id: uuid.UUID
+    ) -> tuple[CapacityRule | None, int, int | None]:
+        rule = await self.db.scalar(
+            select(CapacityRule)
+            .join(Event, Event.id == CapacityRule.event_id)
+            .where(
+                Event.organization_id == organization_id,
+                CapacityRule.event_id == event_id,
+                CapacityRule.session_id.is_(None),
+                CapacityRule.room_id.is_(None),
+            )
+        )
+        approved_count = int(
+            await self.db.scalar(
+                select(func.count(Participant.id))
+                .join(Event, Participant.event_id == Event.id)
+                .where(
+                    Event.organization_id == organization_id,
+                    Participant.event_id == event_id,
+                )
+            )
+            or 0
+        )
+        max_waitlist = await self.db.scalar(
+            select(func.max(ParticipantRegistration.waitlist_position))
+            .join(Event, ParticipantRegistration.event_id == Event.id)
+            .where(
+                Event.organization_id == organization_id,
+                ParticipantRegistration.event_id == event_id,
+                ParticipantRegistration.registration_status == "waitlisted",
+            )
+        )
+        return rule, approved_count, max_waitlist
+
+    async def get_transaction_for_event(
+        self, *, organization_id: uuid.UUID, event_id: uuid.UUID, gateway_order_id: str
+    ) -> PaymentTransaction | None:
+        return await self.db.scalar(
+            select(PaymentTransaction)
+            .join(Event, Event.id == PaymentTransaction.event_id)
+            .where(
+                Event.organization_id == organization_id,
+                PaymentTransaction.event_id == event_id,
+                PaymentTransaction.gateway_order_id == gateway_order_id,
+            )
+        )
+
+    async def get_registration_for_event(
+        self, *, organization_id: uuid.UUID, event_id: uuid.UUID, registration_id: uuid.UUID
+    ) -> ParticipantRegistration | None:
+        return await self.db.scalar(
+            select(ParticipantRegistration)
+            .join(Event, Event.id == ParticipantRegistration.event_id)
+            .where(
+                Event.organization_id == organization_id,
+                ParticipantRegistration.event_id == event_id,
+                ParticipantRegistration.id == registration_id,
+            )
+        )
+
+    async def get_participant_for_event(
+        self, *, organization_id: uuid.UUID, event_id: uuid.UUID, participant_id: uuid.UUID
+    ) -> Participant | None:
+        return await self.db.scalar(
+            select(Participant)
+            .join(Event, Event.id == Participant.event_id)
+            .where(
+                Event.organization_id == organization_id,
+                Participant.event_id == event_id,
+                Participant.id == participant_id,
+            )
+        )
+
+    async def get_upload_reservation(
+        self, *, organization_id: uuid.UUID, idempotency_key: str
+    ) -> UsageReservation | None:
+        return await self.db.scalar(
+            select(UsageReservation).where(
+                UsageReservation.organization_id == organization_id,
+                UsageReservation.idempotency_key == idempotency_key,
+            )
+        )
+
+    async def get_fallback_reviewer_id(
+        self, *, organization_id: uuid.UUID, preferred_id: uuid.UUID | None
+    ) -> uuid.UUID | None:
+        if preferred_id:
+            preferred = await self.db.scalar(
+                select(User.id).where(
+                    User.id == preferred_id, User.organization_id == organization_id
+                )
+            )
+            if preferred:
+                return preferred
+        return await self.db.scalar(
+            select(User.id)
+            .where(User.organization_id == organization_id, User.is_active.is_(True))
+            .order_by(User.id)
+            .limit(1)
+        )
 
 
 class PricingQueryService:
@@ -92,6 +351,55 @@ class PricingQueryService:
             elif not schedules[tier].get("available_until") and cutoff:
                 schedules[tier]["available_until"] = cutoff
         return schedules
+
+
+class PromoCodeQueryService:
+    """Bounded event-scoped promo-code compatibility reads."""
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def get_for_event_code(
+        self, *, organization_id: uuid.UUID, event_id: uuid.UUID, code: str
+    ) -> PromoCode | None:
+        return await self.db.scalar(
+            select(PromoCode)
+            .join(Event, Event.id == PromoCode.event_id)
+            .where(
+                Event.organization_id == organization_id,
+                PromoCode.event_id == event_id,
+                PromoCode.code == code,
+            )
+        )
+
+    async def get_for_event(
+        self, *, organization_id: uuid.UUID, event_id: uuid.UUID, promo_id: uuid.UUID
+    ) -> PromoCode | None:
+        return await self.db.scalar(
+            select(PromoCode)
+            .join(Event, Event.id == PromoCode.event_id)
+            .where(
+                Event.organization_id == organization_id,
+                PromoCode.event_id == event_id,
+                PromoCode.id == promo_id,
+            )
+        )
+
+    async def list_for_event(
+        self, *, organization_id: uuid.UUID, event_id: uuid.UUID, limit: int = 100
+    ) -> list[PromoCode]:
+        bounded = bounded_page_size(limit, maximum=100)
+        rows = await self.db.scalars(
+            select(PromoCode)
+            .join(Event, Event.id == PromoCode.event_id)
+            .where(
+                Event.organization_id == organization_id,
+                PromoCode.event_id == event_id,
+            )
+            .order_by(PromoCode.created_at.desc(), PromoCode.id.desc())
+            .limit(bounded)
+        )
+        return list(rows.all())
 
 
 class FormBuilderQueryService:
@@ -539,7 +847,7 @@ class ParticipantQueryService:
             else:
                 query = query.where(Participant.paid_status == paid_status)
 
-        return await Repository(self.db, Participant).cursor_page(
+        return await ParticipantRepository(self.db).cursor_page(
             query,
             limit=bounded_page_size(page_size, maximum=100),
             cursor=cursor,
@@ -550,6 +858,7 @@ class ParticipantQueryService:
     async def list_legacy(
         self,
         *,
+        organization_id: uuid.UUID,
         event_id: uuid.UUID,
         search: str | None,
         role: str | None,
@@ -560,9 +869,44 @@ class ParticipantQueryService:
         active_prices: dict,
     ) -> list[Participant]:
         """Compatibility read for the offset endpoint, kept bounded and eager."""
-        query = select(Participant).options(selectinload(Participant.role_rel)).where(
-            Participant.event_id == event_id,
-            Participant.deleted_at.is_(None),
+        # Keep the compatibility route bounded without loading columns that
+        # ParticipantResponse never reads. The role is the only relationship
+        # needed during serialization, so preload just its display name.
+        query = (
+            select(Participant)
+            .options(
+                load_only(
+                    Participant.id,
+                    Participant.event_id,
+                    Participant.regno,
+                    Participant.first_name,
+                    Participant.last_name,
+                    Participant.email,
+                    Participant.phone,
+                    Participant.role_id,
+                    Participant.roles,
+                    Participant.track_id,
+                    Participant.company,
+                    Participant.designation,
+                    Participant.country,
+                    Participant.approval_status,
+                    Participant.paid_status,
+                    Participant.badge_status,
+                    Participant.checkin_status,
+                    Participant.source,
+                    Participant.qr_code_url,
+                    Participant.custom_fields,
+                    Participant.registered_at,
+                    Participant.updated_at,
+                    Participant.version,
+                ),
+                selectinload(Participant.role_rel).load_only(ParticipantRole.name),
+            )
+            .where(
+                Event.organization_id == organization_id,
+                Participant.event_id == event_id,
+                Participant.deleted_at.is_(None),
+            )
         )
         if search:
             term = f"%{search}%"
@@ -587,7 +931,10 @@ class ParticipantQueryService:
                     query = query.where(False)
             else:
                 query = query.where(Participant.paid_status == paid_status)
-        query = query.order_by(Participant.registered_at.desc()).offset((page - 1) * page_size).limit(page_size)
+        query = query.order_by(
+            Participant.registered_at.desc(),
+            Participant.id.desc(),
+        ).offset((page - 1) * page_size).limit(page_size)
         return list((await self.db.scalars(query)).all())
 
 
@@ -636,7 +983,7 @@ class RegistrationQueryService:
             query = query.where(
                 ParticipantRegistration.registration_status == registration_status
             )
-        return await Repository(self.db, ParticipantRegistration).cursor_page(
+        return await ParticipantRegistrationRepository(self.db).cursor_page(
             query,
             limit=bounded_page_size(page_size, maximum=100),
             cursor=cursor,
@@ -671,25 +1018,25 @@ class RegistrationQueryService:
         ).offset((page - 1) * page_size).limit(page_size)
         return list((await self.db.scalars(query)).all())
 
-    async def stats(self, *, event_id: uuid.UUID) -> dict:
+    async def stats(self, *, organization_id: uuid.UUID, event_id: uuid.UUID) -> dict:
         """Return bounded registration aggregates without loading participants."""
         counts = (await self.db.execute(select(
             func.count(Participant.id),
             func.coalesce(func.sum(case((Participant.paid_status == "Paid", 1), else_=0)), 0),
             func.coalesce(func.sum(case((Participant.paid_status == "Unpaid", 1), else_=0)), 0),
             select(func.count(CheckIn.id)).where(CheckIn.event_id == event_id).scalar_subquery(),
-        ).where(Participant.event_id == event_id, Participant.deleted_at.is_(None)))).one()
+        ).join(Event, Participant.event_id == Event.id).where(Event.organization_id == organization_id, Participant.event_id == event_id, Participant.deleted_at.is_(None)))).one()
         payment_rows = (await self.db.execute(select(
             func.coalesce(func.nullif(Participant.paid_status, ""), "Unspecified"),
             func.count(Participant.id),
-        ).where(Participant.event_id == event_id, Participant.deleted_at.is_(None)).group_by(
+        ).join(Event, Participant.event_id == Event.id).where(Event.organization_id == organization_id, Participant.event_id == event_id, Participant.deleted_at.is_(None)).group_by(
             func.coalesce(func.nullif(Participant.paid_status, ""), "Unspecified")
         ).order_by(func.count(Participant.id).desc()))).all()
         role_rows = (await self.db.execute(select(
             ParticipantRole.name, func.count(Participant.id)
         ).select_from(Participant).outerjoin(
             ParticipantRole, ParticipantRole.id == Participant.role_id
-        ).where(Participant.event_id == event_id, Participant.deleted_at.is_(None)).group_by(ParticipantRole.name))).all()
+        ).join(Event, Participant.event_id == Event.id).where(Event.organization_id == organization_id, Participant.event_id == event_id, Participant.deleted_at.is_(None)).group_by(ParticipantRole.name))).all()
         return {
             "total": counts[0], "paid": counts[1], "unpaid": counts[2],
             "payment_breakdown": {row[0]: row[1] for row in payment_rows},
@@ -703,6 +1050,30 @@ class PaymentTransactionQueryService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def list_legacy(
+        self, *, organization_id: uuid.UUID, event_id: uuid.UUID,
+        page: int = 1, page_size: int = 100,
+    ) -> list[tuple]:
+        """Bounded offset compatibility read; cursor pagination is canonical."""
+        bounded_page = max(1, page)
+        bounded_size = bounded_page_size(page_size, maximum=100)
+        query = (
+            select(PaymentTransaction, ParticipantRegistration.registration_data)
+            .join(Event, PaymentTransaction.event_id == Event.id)
+            .outerjoin(
+                ParticipantRegistration,
+                PaymentTransaction.registration_id == ParticipantRegistration.id,
+            )
+            .where(
+                Event.organization_id == organization_id,
+                PaymentTransaction.event_id == event_id,
+            )
+            .order_by(PaymentTransaction.created_at.desc(), PaymentTransaction.id.desc())
+            .offset((bounded_page - 1) * bounded_size)
+            .limit(bounded_size)
+        )
+        return list((await self.db.execute(query)).all())
 
     async def list_page(
         self,
@@ -759,20 +1130,71 @@ class BadgeQueryService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    async def get_for_event(
+        self, *, organization_id: uuid.UUID, event_id: uuid.UUID, badge_id: uuid.UUID
+    ) -> Badge | None:
+        return await BadgeRepository(self.db).get_for_event(
+            badge_id, event_id, organization_id=organization_id
+        )
+
+    async def get_print_job_for_event(
+        self, *, organization_id: uuid.UUID, event_id: uuid.UUID, job_id: uuid.UUID
+    ) -> BadgePrintJob | None:
+        return await BadgePrintJobRepository(self.db).get_for_event(
+            job_id, event_id, organization_id=organization_id
+        )
+
+    async def list_legacy(
+        self, *, organization_id: uuid.UUID, event_id: uuid.UUID, limit: int = 100
+    ) -> list[BadgeResponse]:
+        """Bounded compatibility listing; the cursor endpoint is canonical."""
+        bounded = bounded_page_size(limit, maximum=100)
+        rows = await self.db.scalars(
+            BadgeRepository(self.db).scoped_statement(
+                event_id, organization_id=organization_id
+            )
+            .order_by(Badge.created_at.desc(), Badge.id.desc())
+            .limit(bounded)
+        )
+        return [BadgeResponse.model_validate(row) for row in rows.all()]
+
+    async def history_legacy(
+        self, *, organization_id: uuid.UUID, event_id: uuid.UUID,
+        badge_id: uuid.UUID | None = None, limit: int = 100,
+    ) -> list[BadgeHistoryResponse]:
+        bounded = bounded_page_size(limit, maximum=100)
+        query = BadgeHistoryRepository(self.db).scoped_statement(
+            event_id, organization_id=organization_id
+        )
+        if badge_id:
+            query = query.where(BadgeHistory.badge_id == badge_id)
+        rows = await self.db.scalars(
+            query.order_by(BadgeHistory.created_at.desc(), BadgeHistory.id.desc())
+            .limit(bounded)
+        )
+        return [BadgeHistoryResponse.model_validate(row) for row in rows.all()]
+
+    async def print_jobs_legacy(
+        self, *, organization_id: uuid.UUID, event_id: uuid.UUID, limit: int = 100
+    ) -> list[BadgePrintJobResponse]:
+        bounded = bounded_page_size(limit, maximum=100)
+        rows = await self.db.scalars(
+            BadgePrintJobRepository(self.db).scoped_statement(
+                event_id, organization_id=organization_id
+            )
+            .order_by(BadgePrintJob.queued_at.desc(), BadgePrintJob.id.desc())
+            .limit(bounded)
+        )
+        return [BadgePrintJobResponse.model_validate(row) for row in rows.all()]
+
     async def list_page(
         self, *, organization_id: uuid.UUID, event_id: uuid.UUID,
         page_size: int = 100, cursor: str | None = None,
     ) -> CursorPage[BadgeResponse]:
-        query = (
-            select(Badge)
-            .join(Participant, Participant.id == Badge.participant_id)
-            .join(Event, Event.id == Participant.event_id)
-            .where(
-                Event.organization_id == organization_id,
-                Participant.event_id == event_id,
-            )
+        query = BadgeRepository(self.db).scoped_statement(
+            event_id, organization_id=organization_id
         )
-        page = await Repository(self.db, Badge).cursor_page(
+        page = await BadgeRepository(self.db).cursor_page(
             query,
             limit=bounded_page_size(page_size, maximum=100),
             cursor=cursor,
@@ -790,19 +1212,12 @@ class BadgeQueryService:
         page_size: int = 100, cursor: str | None = None,
         badge_id: uuid.UUID | None = None,
     ) -> CursorPage[BadgeHistoryResponse]:
-        query = (
-            select(BadgeHistory)
-            .join(Badge, Badge.id == BadgeHistory.badge_id)
-            .join(Participant, Participant.id == Badge.participant_id)
-            .join(Event, Event.id == Participant.event_id)
-            .where(
-                Event.organization_id == organization_id,
-                Participant.event_id == event_id,
-            )
+        query = BadgeHistoryRepository(self.db).scoped_statement(
+            event_id, organization_id=organization_id
         )
         if badge_id:
             query = query.where(BadgeHistory.badge_id == badge_id)
-        page = await Repository(self.db, BadgeHistory).cursor_page(
+        page = await BadgeHistoryRepository(self.db).cursor_page(
             query,
             limit=bounded_page_size(page_size, maximum=100),
             cursor=cursor,
@@ -819,17 +1234,10 @@ class BadgeQueryService:
         self, *, organization_id: uuid.UUID, event_id: uuid.UUID,
         page_size: int = 100, cursor: str | None = None,
     ) -> CursorPage[BadgePrintJobResponse]:
-        query = (
-            select(BadgePrintJob)
-            .join(Badge, Badge.id == BadgePrintJob.badge_id)
-            .join(Participant, Participant.id == Badge.participant_id)
-            .join(Event, Event.id == Participant.event_id)
-            .where(
-                Event.organization_id == organization_id,
-                Participant.event_id == event_id,
-            )
+        query = BadgePrintJobRepository(self.db).scoped_statement(
+            event_id, organization_id=organization_id
         )
-        page = await Repository(self.db, BadgePrintJob).cursor_page(
+        page = await BadgePrintJobRepository(self.db).cursor_page(
             query,
             limit=bounded_page_size(page_size, maximum=100),
             cursor=cursor,
@@ -852,27 +1260,21 @@ class ImportJobQueryService:
     async def list_recent(
         self, *, organization_id: uuid.UUID, event_id: uuid.UUID, limit: int = 50
     ) -> list[ImportJobResponse]:
-        result = await self.db.scalars(
-            select(ImportJob)
-            .join(Event, Event.id == ImportJob.event_id)
-            .where(Event.organization_id == organization_id, ImportJob.event_id == event_id)
-            .order_by(ImportJob.created_at.desc(), ImportJob.id.desc())
-            .limit(min(max(limit, 1), 100))
+        query = ImportJobRepository(self.db).scoped_statement(
+            event_id, organization_id=organization_id
+        ).order_by(ImportJob.created_at.desc(), ImportJob.id.desc()).limit(
+            min(max(limit, 1), 100)
         )
+        result = await self.db.scalars(query)
         return [ImportJobResponse.model_validate(item) for item in result.all()]
 
     async def get_for_event(
         self, *, organization_id: uuid.UUID, event_id: uuid.UUID, job_id: uuid.UUID
     ) -> Optional[ImportJobResponse]:
-        result = await self.db.scalars(
-            select(ImportJob)
-            .join(Event, Event.id == ImportJob.event_id)
-            .where(
-                Event.organization_id == organization_id,
-                ImportJob.event_id == event_id,
-                ImportJob.id == job_id,
-            )
-        )
+        query = ImportJobRepository(self.db).scoped_statement(
+            event_id, organization_id=organization_id
+        ).where(ImportJob.id == job_id)
+        result = await self.db.scalars(query)
         item = result.one_or_none()
         return ImportJobResponse.model_validate(item) if item else None
 
@@ -880,15 +1282,10 @@ class ImportJobQueryService:
         self, *, organization_id: uuid.UUID, event_id: uuid.UUID,
         page_size: int = 100, cursor: str | None = None,
     ) -> CursorPage[ImportJobResponse]:
-        query = (
-            select(ImportJob)
-            .join(Event, Event.id == ImportJob.event_id)
-            .where(
-                Event.organization_id == organization_id,
-                ImportJob.event_id == event_id,
-            )
+        query = ImportJobRepository(self.db).scoped_statement(
+            event_id, organization_id=organization_id
         )
-        page = await Repository(self.db, ImportJob).cursor_page(
+        page = await ImportJobRepository(self.db).cursor_page(
             query,
             limit=bounded_page_size(page_size, maximum=100),
             cursor=cursor,

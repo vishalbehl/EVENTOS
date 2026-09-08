@@ -1,4 +1,7 @@
-FROM python:3.13-slim
+# Python 3.13 is the newest compatible runtime for the currently pinned
+# pydantic-core and greenlet dependencies. Python 3.14 requires a separate
+# dependency upgrade because those pins do not ship compatible wheels yet.
+FROM python:3.13.15-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -9,6 +12,7 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    g++ \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 

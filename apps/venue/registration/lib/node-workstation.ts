@@ -100,7 +100,7 @@ export async function fetchVenueNodeBootstrap(): Promise<{ assignment: VenueNode
     return response.json();
   } catch (error) {
     try {
-      const localResponse = await fetch("http://127.0.0.1:8011/health", { cache: "no-store" });
+      const localResponse = await fetch("http://127.0.0.1:8000/health", { cache: "no-store" });
       if (!localResponse.ok) throw error;
     const local = await localResponse.json();
     const assignment = local?.assignment;

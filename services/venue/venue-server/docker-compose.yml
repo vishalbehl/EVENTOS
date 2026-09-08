@@ -1,12 +1,12 @@
-version: '3.8'
-
 services:
   venue-db:
-    image: postgres:15-alpine
+    # Latest supported patch in the existing PostgreSQL major line. Moving to
+    # PostgreSQL 18 requires a dump/restore and is intentionally not implicit.
+    image: postgres:15.19-alpine3.24
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: venue_password
-      POSTGRES_DB: venue_db
+      POSTGRES_USER: ${VENUE_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${VENUE_DB_PASSWORD:-venue_password}
+      POSTGRES_DB: ${VENUE_DB_NAME:-venue_db}
     ports:
       - "5433:5432" # Expose to host on 5433 to avoid conflict if cloud DB is running locally
     volumes:
@@ -19,7 +19,7 @@ services:
     restart: always
 
   venue-redis:
-    image: redis:7-alpine
+    image: redis:8.10.1-alpine3.23
     ports:
       - "6380:6379"
     healthcheck:
@@ -30,14 +30,16 @@ services:
     restart: always
 
   venue-minio:
-    image: minio/minio:latest
+    # The official MinIO Docker repository is archived; this is its newest
+    # official release tag rather than an unpinned rolling `latest` tag.
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9002:9000" # Use alternate host ports when the shared platform MinIO is running
+      - "9003:9001"
     volumes:
       - venue-minio-data:/data
     healthcheck:
@@ -52,7 +54,7 @@ services:
     ports:
       - "8001:8001"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:venue_password@venue-db:5432/venue_db
+      - DATABASE_URL=postgresql+asyncpg://${VENUE_DB_USER:-postgres}:${VENUE_DB_PASSWORD:-venue_password}@venue-db:5432/${VENUE_DB_NAME:-venue_db}
       - REDIS_URL=redis://venue-redis:6379/0
       - MINIO_ENDPOINT=venue-minio:9000
       - MINIO_ACCESS_KEY=minioadmin
@@ -71,6 +73,33 @@ services:
         condition: service_healthy
     restart: always
 
+  venue-pgadmin:
+    image: dpage/pgadmin4:9.17
+    environment:
+      # Development-only PgAdmin credentials. Override these in .env before
+      # exposing the dashboard outside a trusted local environment.
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@eventos.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin123}
+      PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers-config.json
+      PGADMIN_REPLACE_SERVERS_ON_STARTUP: "True"
+      # Server mode provides the normal PgAdmin login screen and keeps the
+      # dashboard protected by the configured PgAdmin account.
+      PGADMIN_CONFIG_SERVER_MODE: "True"
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      # Versioned separately so a stale development auth database cannot
+      # prevent the configured first-boot credentials from being applied.
+      - venue-pgadmin-data-v2:/var/lib/pgadmin
+      - ./pgadmin/servers-config.json:/pgadmin4/servers-config.json:ro
+    depends_on:
+      venue-db:
+        condition: service_healthy
+    restart: always
+
 volumes:
   venue-db-data:
   venue-minio-data:
+  # The previous venue-pgadmin-data volume is intentionally preserved as a
+  # recoverable backup of the old PgAdmin configuration.
+  venue-pgadmin-data-v2:

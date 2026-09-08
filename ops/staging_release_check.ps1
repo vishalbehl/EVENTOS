@@ -70,7 +70,67 @@ try {
   Check 'compose config' { docker compose --env-file .env.staging -f docker-compose.staging.yml config --quiet }
   Check 'migration graph' { docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend python ops/validate_migration_chain.py }
   Check 'backend compilation' { docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend python -m compileall -q app }
+  Check 'monitoring services started' {
+    docker compose --env-file .env.staging -f docker-compose.staging.yml up -d prometheus alertmanager | Out-Null
+  }
+  Check 'worker services started' {
+    docker compose --env-file .env.staging -f docker-compose.staging.yml up -d workers workers-processing workers-legacy | Out-Null
+  }
   Check 'service health' { $items = docker compose --env-file .env.staging -f docker-compose.staging.yml ps --format '{{.Service}} {{.Status}}'; if (($items | Select-String 'unhealthy|Exited|Restarting').Count) { throw 'unhealthy service detected' } }
+  Check 'worker readiness' {
+    $deadline = (Get-Date).AddSeconds(90)
+    $ready = @{ workers = $false; 'workers-processing' = $false; 'workers-legacy' = $false }
+    $hostnames = @{}
+    $expectedQueues = @{
+      workers = @('critical', 'default', 'notifications')
+      'workers-processing' = @('files', 'videos', 'imports', 'search', 'reports', 'reconciliation')
+      'workers-legacy' = @('legacy-default', 'legacy-files', 'legacy-videos', 'legacy-imports', 'legacy-search', 'legacy-reports', 'legacy-reconciliation', 'legacy-notifications')
+    }
+    foreach ($service in @('workers', 'workers-processing', 'workers-legacy')) {
+      $hostnames[$service] = ((docker compose --env-file .env.staging -f docker-compose.staging.yml exec -T $service hostname) -join '').Trim()
+    }
+    do {
+      foreach ($service in @('workers', 'workers-processing', 'workers-legacy')) {
+        if (-not $hostnames[$service]) { continue }
+        $celeryApp = if ($service -eq 'workers-legacy') { 'workers.celery_app:app' } else { 'app.worker:celery_app' }
+        $ping = docker compose --env-file .env.staging -f docker-compose.staging.yml exec -T $service `
+          celery -A $celeryApp inspect ping --destination="celery@$($hostnames[$service])" --timeout=5 2>$null
+        if (($ping -join "`n") -match '(?im)\bOK\b') {
+          $queues = docker compose --env-file .env.staging -f docker-compose.staging.yml exec -T $service `
+            celery -A $celeryApp inspect active_queues --destination="celery@$($hostnames[$service])" --timeout=5 2>$null
+          # Inspect output contains nested exchange objects; only parse the
+          # top-level queue records, never the exchange's name.
+          $queueNames = @([regex]::Matches(($queues -join "`n"), "(?m)^\s*\*\s+\{'name': '([^']+)'") | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+          $expected = @($expectedQueues[$service] | Sort-Object -Unique)
+          if ((@($queueNames) -join ',') -eq (@($expected) -join ',')) { $ready[$service] = $true }
+        }
+      }
+      if ($ready['workers'] -and $ready['workers-processing'] -and $ready['workers-legacy']) { return }
+      Start-Sleep -Seconds 3
+    } while ((Get-Date) -lt $deadline)
+    $missing = @($ready.GetEnumerator() | Where-Object { -not $_.Value } | ForEach-Object { $_.Key }) -join ', '
+    throw "Celery worker readiness timed out: $missing"
+  }
+  Check 'task family matrix' {
+    docker compose --env-file .env.staging -f docker-compose.staging.yml exec -T backend python /runtime-ops/staging_task_family_matrix.py --output /tmp/task-family-matrix.json | Out-Null
+    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'One or more task families are missing registration or queue coverage' }
+  }
+  Check 'retry exhaustion and replay' {
+    docker compose --env-file .env.staging -f docker-compose.staging.yml exec -T backend python /runtime-ops/staging_retry_replay_probe.py --output /tmp/retry-replay.json | Out-Null
+    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'Retry-exhaustion, replay, or duplicate-delivery probe failed' }
+  }
+  Check 'legacy task registry' {
+    $registered = docker compose --env-file .env.staging -f docker-compose.staging.yml exec -T workers-legacy `
+      celery -A workers.celery_app:app inspect registered --timeout=10 2>$null
+    $registeredText = ($registered -join "`n")
+    foreach ($taskName in @(
+      'workers.tasks.file_tasks.validate_presentation_file',
+      'workers.tasks.report_tasks.generate_event_summary_report',
+      'workers.tasks.search_tasks.index_entity'
+    )) {
+      if ($registeredText -notlike "*$taskName*") { throw "Legacy task is not registered: $taskName" }
+    }
+  }
   # Caddy resolves Docker service names at startup. Recreate it after backend
   # rollouts so the HTTPS smoke test never uses a stale container address.
   Check 'proxy route refresh' { docker compose --env-file .env.staging -f docker-compose.staging.yml up -d --force-recreate caddy | Out-Null }
@@ -93,40 +153,47 @@ try {
     docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_phase3_7_contracts.py tests/test_production_primitives.py tests/test_read_path_write_contract.py tests/test_resource_command_service.py tests/test_operations_command_service.py tests/test_operations_query_service.py tests/test_participant_query_service_contract.py tests/test_capacity_query_service.py tests/test_deployment_command_service.py tests/test_inventory_command_service.py tests/test_pricing_command_boundary.py tests/test_pricing_simulation_query_contract.py tests/test_operations_concurrency.py tests/test_celery_task_policy_contract.py tests/test_repository_contract.py tests/test_platform_flag_command_boundary.py tests/test_billing_activation_command_boundary.py tests/test_billing_activation_query_service.py tests/test_billing_activation_route_boundary.py tests/test_billing_subscription_route_boundary.py tests/test_analytics_export_command_boundary.py tests/test_webhook_command_boundary.py tests/test_presentation_file_command_boundary.py tests/test_presentation_upload_command_boundary.py tests/test_announcement_command_boundary.py tests/test_venue_attendance_command_boundary.py tests/test_access_review_command_boundary.py tests/test_audit_export_command_boundary.py tests/test_technology_service_command_boundary.py tests/test_abstract_configuration_command_boundary.py tests/test_technology_service_query_boundary.py tests/test_platform_communications_command_boundary.py tests/test_abstract_submission_command_boundary.py tests/test_abstract_reviewer_command_boundary.py tests/test_abstract_assignment_command_boundary.py tests/test_abstract_decision_command_boundary.py tests/test_abstract_publication_command_boundary.py tests/test_abstract_bulk_publication_command_boundary.py tests/test_abstract_review_command_boundary.py
   }
   Check 'tenant and security gates' {
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_abstract_attachment_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_search_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_support_ticket_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_support_ticket_update_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_support_comment_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_support_attachment_completion_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_support_attachment_upload_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_identity_admin_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_identity_mfa_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_identity_status_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_identity_role_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organization_domain_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organization_status_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organization_feature_override_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organization_team_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organiser_member_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organiser_organization_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organiser_billing_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organiser_approval_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organiser_notification_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organiser_custom_field_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organiser_location_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organization_location_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organiser_team_create_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organiser_document_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organiser_event_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organiser_report_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organiser_import_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organization_security_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organization_governance_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organiser_security_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organiser_branding_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q tests/test_organiser_attention_command_boundary.py
-    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm backend pytest -q tests/test_phase0_security_invariants.py tests/test_phase1_rls_foundation.py tests/test_tenant_runtime_boundaries.py
+    # Run the full logical gate in one pytest session. Each suite initializes
+    # the shared test database and acquires its advisory lock; separate compose
+    # runs can overlap during interruption/cleanup and create false lock
+    # failures between otherwise independent boundary suites.
+    docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm --no-deps backend pytest -q `
+      tests/test_abstract_attachment_command_boundary.py `
+      tests/test_search_command_boundary.py `
+      tests/test_support_ticket_command_boundary.py `
+      tests/test_support_ticket_update_command_boundary.py `
+      tests/test_support_comment_command_boundary.py `
+      tests/test_support_attachment_completion_command_boundary.py `
+      tests/test_support_attachment_upload_command_boundary.py `
+      tests/test_identity_admin_command_boundary.py `
+      tests/test_identity_mfa_command_boundary.py `
+      tests/test_identity_status_command_boundary.py `
+      tests/test_identity_role_command_boundary.py `
+      tests/test_organization_domain_command_boundary.py `
+      tests/test_organization_status_command_boundary.py `
+      tests/test_organization_feature_override_command_boundary.py `
+      tests/test_organization_team_command_boundary.py `
+      tests/test_organiser_member_command_boundary.py `
+      tests/test_organiser_organization_command_boundary.py `
+      tests/test_organiser_billing_command_boundary.py `
+      tests/test_organiser_approval_command_boundary.py `
+      tests/test_organiser_notification_command_boundary.py `
+      tests/test_organiser_custom_field_command_boundary.py `
+      tests/test_organiser_location_command_boundary.py `
+      tests/test_organization_location_command_boundary.py `
+      tests/test_organiser_team_create_command_boundary.py `
+      tests/test_organiser_document_command_boundary.py `
+      tests/test_organiser_event_command_boundary.py `
+      tests/test_organiser_report_command_boundary.py `
+      tests/test_organiser_import_command_boundary.py `
+      tests/test_organization_security_command_boundary.py `
+      tests/test_organization_governance_command_boundary.py `
+      tests/test_organiser_security_command_boundary.py `
+      tests/test_organiser_branding_command_boundary.py `
+      tests/test_organiser_attention_command_boundary.py `
+      tests/test_phase0_security_invariants.py `
+      tests/test_phase1_rls_foundation.py `
+      tests/test_tenant_runtime_boundaries.py
   }
   Check 'authentication gates' {
     docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm backend pytest -q tests/test_auth.py
@@ -145,7 +212,7 @@ try {
       $python = Join-Path $root 'services\backend\.venv\Scripts\python.exe'
       if (-not (Test-Path -LiteralPath $python)) { $python = 'python' }
       $previousApiUrl = $env:STAGING_API_URL
-      $env:STAGING_API_URL = 'http://127.0.0.1:8001'
+      $env:STAGING_API_URL = 'http://127.0.0.1:8000'
       try {
         & $python (Join-Path $root 'ops\staging_authenticated_upload_test.py')
       } finally {
@@ -162,7 +229,7 @@ try {
     # the first request slow. Warm the real backend endpoint before measuring.
     Start-Sleep -Seconds 3
     1..5 | ForEach-Object {
-      $response = Invoke-WebRequest http://127.0.0.1:8001/health -UseBasicParsing
+      $response = Invoke-WebRequest http://127.0.0.1:8000/health -UseBasicParsing
       if ($response.StatusCode -ne 200) { throw 'backend warm-up failed' }
     }
     docker compose --env-file .env.staging -f docker-compose.staging.yml run --rm backend python ops/load_test.py http://backend:8000/health --requests 100 --concurrency 10 --max-error-rate 0 --max-p95-ms 1000 | Out-Null
@@ -184,7 +251,7 @@ try {
     if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'worker crash recovery probe failed' }
   }
   Check 'post-recovery health' {
-    $health = Invoke-WebRequest http://127.0.0.1:8001/health -UseBasicParsing
+    $health = Invoke-WebRequest http://127.0.0.1:8000/health -UseBasicParsing
     if ($health.StatusCode -ne 200) { throw 'backend health failed after dependency recovery' }
   }
 } finally {

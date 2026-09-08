@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ class OfflineScanRequest(BaseModel):
     query: str = Field(min_length=1, max_length=320)
     method: str = "qr"
     station_id: str | None = None
+    operation_id: str | None = None
 
 
 class OfflineOperationRequest(BaseModel):
@@ -45,6 +47,8 @@ def build_agent(configuration: AgentConfiguration) -> FastAPI:
         allow_origins=[
             "http://127.0.0.1:3005",
             "http://localhost:3005",
+            "http://127.0.0.1:3007",
+            "http://localhost:3007",
             "http://127.0.0.1:3000",
             "http://localhost:3000",
         ],
@@ -53,6 +57,7 @@ def build_agent(configuration: AgentConfiguration) -> FastAPI:
         allow_headers=["*"],
     )
     app.state.replica, app.state.client = replica, client
+    app.state.sync_status = {"state": "starting", "last_success_at": None, "last_error": None, "runtime_events": 0, "server_sequence": replica.server_sequence()}
 
     @app.on_event("startup")
     async def start_background_sync() -> None:
@@ -60,7 +65,7 @@ def build_agent(configuration: AgentConfiguration) -> FastAPI:
             await client.bootstrap()
         except Exception:
             pass  # Offline startup is valid when a replica was already provisioned.
-        app.state.sync_task = asyncio.create_task(sync_forever(client))
+        app.state.sync_task = asyncio.create_task(sync_forever(client, app.state.sync_status))
 
     @app.on_event("shutdown")
     async def stop_background_sync() -> None:
@@ -71,7 +76,8 @@ def build_agent(configuration: AgentConfiguration) -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        return {"status": "ok", "assignment": replica.assignment(), "pending_operations": len(replica.pending_operations())}
+        sync = dict(app.state.sync_status)
+        return {"status": "ok", "assignment": replica.assignment(), "pending_operations": len(replica.pending_operations()), "sync": sync, "local_schema_version": replica.connection.execute("PRAGMA user_version").fetchone()[0]}
 
     @app.post("/bootstrap")
     async def bootstrap() -> dict[str, Any]:
@@ -149,6 +155,16 @@ def build_agent(configuration: AgentConfiguration) -> FastAPI:
             "local_record": local_record,
         }
 
+    @app.post("/srr/checkin")
+    async def srr_checkin(payload: OfflineScanRequest) -> dict[str, Any]:
+        assignment = replica.assignment()
+        if assignment.get("mode") not in {"srr_checkin", "srr_master"}:
+            raise HTTPException(403, "This node is not provisioned as an SRR check-in workstation")
+        try:
+            return replica.local_srr_assignment(payload.query, payload.operation_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
     @app.get("/api/v1/venue/scanning/stations")
     async def scanning_stations() -> list[dict[str, Any]]:
         assignment = replica.assignment()
@@ -214,7 +230,21 @@ def build_agent(configuration: AgentConfiguration) -> FastAPI:
     @app.get("/api/v1/venue/registration/summary")
     async def registration_summary() -> dict[str, int]:
         count = replica.connection.execute("SELECT COUNT(*) FROM participants").fetchone()[0]
-        return {"total_participants": count, "checked_in": 0, "badges_printed": 0, "kits_distributed": 0}
+        checked_in = replica.connection.execute(
+            "SELECT COUNT(*) FROM venue_scan_events WHERE status IN ('success','admin_overridden')"
+        ).fetchone()[0]
+        badges_printed = replica.connection.execute(
+            "SELECT COUNT(*) FROM badges WHERE json_extract(data, '$.status') IN ('issued','printed') OR json_extract(data, '$.issued_at') IS NOT NULL"
+        ).fetchone()[0]
+        kits_distributed = replica.connection.execute(
+            "SELECT COUNT(*) FROM participant_kits WHERE json_extract(data, '$.status') IN ('Issued','issued','distributed')"
+        ).fetchone()[0]
+        return {
+            "total_participants": int(count),
+            "checked_in": int(checked_in),
+            "badges_printed": int(badges_printed),
+            "kits_distributed": int(kits_distributed),
+        }
 
     @app.post("/api/v1/venue/registration/participants")
     async def create_registration(payload: dict[str, Any]) -> dict[str, Any]:
@@ -246,10 +276,13 @@ def load_agent(config_path: str) -> FastAPI:
     return build_agent(AgentConfiguration.model_validate(json.loads(Path(config_path).read_text(encoding="utf-8"))))
 
 
-async def sync_forever(client: VenueNodeClient, interval_seconds: int = 15) -> None:
+async def sync_forever(client: VenueNodeClient, status: dict[str, Any] | None = None, interval_seconds: int = 15) -> None:
     while True:
         try:
-            await client.synchronize()
-        except Exception:
-            pass
+            result = await client.synchronize()
+            if status is not None:
+                status.update({"state": "online", "last_success_at": datetime.now(timezone.utc).isoformat(), "last_error": None, "runtime_events": result.get("runtime_events", 0), "server_sequence": result.get("server_sequence", client.replica.server_sequence())})
+        except Exception as exc:
+            if status is not None:
+                status.update({"state": "offline", "last_error": str(exc)})
         await asyncio.sleep(interval_seconds)

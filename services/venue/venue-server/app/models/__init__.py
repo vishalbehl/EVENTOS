@@ -40,6 +40,8 @@ from app.models.venue_user import VenueUser
 from app.models.event_report import EventReportSnapshot, EventReportAudit
 from app.models.registration_source_key import RegistrationSourceApiKey, RegistrationSourceHeartbeat, RegistrationSourceKeyUsage
 from app.models.venue_operational_policy import VenueOperationalPolicy
+from app.models.venue_runtime_event import VenueRuntimeEvent
+from app.models.room_runtime_state import RoomRuntimeState
 from app.models.network_config import NetworkConfig
 from app.models.operational_control import (
     VenueAlert, VenueAuditEvent, VenueBackupJob, VenueCommand, VenueInstallation,
@@ -58,7 +60,7 @@ __all__ = [
     "BadgeScan", "SyncOutbox", "VenueNodeAssignment", "VenueNodeOperation",
     "Companion", "Kit", "ParticipantKit", "ParticipantExtension", "VenueCapacityRule",
     "VenueUser", "EventReportSnapshot", "EventReportAudit", "RegistrationSourceApiKey",
-    "VenueOperationalPolicy", "NetworkConfig", "RegistrationSourceHeartbeat", "RegistrationSourceKeyUsage",
+    "VenueOperationalPolicy", "VenueRuntimeEvent", "RoomRuntimeState", "NetworkConfig", "RegistrationSourceHeartbeat", "RegistrationSourceKeyUsage",
     "VenueAlert", "VenueAuditEvent", "VenueBackupJob", "VenueCommand",
     "VenueInstallation", "VenueServiceInstance", "VenueSettingRevision", "VenueLoginLockout", "RegistrationOperation",
     "VenueIncident", "VenueBroadcast", "VenueOverride", "VenueChatMessage", "VenueAssetTransfer"

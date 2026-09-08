@@ -96,6 +96,9 @@ class DurableUpload(Base):
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     checksum: Mapped[Optional[str]] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="created", index=True)
+    # Keep the database default as well as the Python default so writers from
+    # an older application image can omit this newly-added concurrency token.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     processing_error: Mapped[Optional[str]] = mapped_column(Text)
     task_id: Mapped[Optional[str]] = mapped_column(String(255), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

@@ -8,6 +8,18 @@
 4. If a workstation can reach the shared Venue Server/PostgreSQL database, it uses the shared data path. If it cannot, it can use the imported local SQLite fallback DB through the local node agent.
 5. Offline scan/registration writes local `venue_scan_events`, `venue_checkins`, and `node_outbox` rows immediately. When connectivity returns, `POST /sync` uploads pending operations to the authoritative Venue Server/PostgreSQL database.
 
+The local node agent also consumes the Venue Server runtime event stream. It persists
+incoming events in `incoming_server_events` and advances `server_sequence` only after
+the event batch is committed. Start it with:
+
+```powershell
+.venv\Scripts\python.exe scripts\node\run_node_agent.py C:\ProgramData\Eventos\SRR\node-config.json
+```
+
+Set `SRR_NODE_AGENT_PORT` or pass `--port` when more than one local node agent is
+running on a workstation. The `/health` response reports synchronization state,
+last successful sync, last error, local schema version, and server cursor.
+
 `/node-setup` is legacy and redirects to the first screen. Workstation binding should be managed from Admin Devices, and local DB movement should happen through the first-screen import and Admin Event/Data export actions.
 
 Admin can use **Re-sync** to issue a new snapshot version or **Revoke** to immediately deny bootstrap, heartbeat, and upload calls from a node.

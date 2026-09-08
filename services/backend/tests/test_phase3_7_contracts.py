@@ -34,6 +34,32 @@ def test_cursor_contract_is_stable_and_bounded():
     assert error.value.detail["code"] == "INVALID_PAGE_SIZE"
 
 
+def test_task_replay_allow_list_remains_identifier_only():
+    from app.core.task_replay import replay_payload_for
+
+    org_id = uuid.uuid4()
+    assert replay_payload_for(
+        "app.tasks.platform_commercial.calculate_forecasts",
+        [str(org_id)], None,
+    )["queue"] == "reports"
+    assert replay_payload_for(
+        "app.tasks.organization_console_tasks.reconcile_organization_usage",
+        [str(org_id)], None,
+    )["queue"] == "reconciliation"
+    assert replay_payload_for(
+        "app.tasks.platform_commercial.calculate_forecasts",
+        ["not-an-id"], None,
+    ) is None
+    assert replay_payload_for(
+        "app.tasks.organization_console_tasks.execute_lifecycle_job",
+        [str(org_id), str(uuid.uuid4())], None,
+    )["queue"] == "reconciliation"
+    assert replay_payload_for(
+        "app.tasks.organization_console_tasks.expire_tenant_capability_controls",
+        [str(org_id)], None,
+    )["queue"] == "reconciliation"
+
+
 def test_concurrency_and_idempotency_contracts_are_machine_readable():
     assert require_if_match('"4"') == 4
     with pytest.raises(HTTPException) as error:
@@ -50,6 +76,7 @@ def test_concurrency_and_idempotency_contracts_are_machine_readable():
 
 def test_upload_state_machine_does_not_skip_verification():
     assert transition_upload("uploaded", "verifying") == "verifying"
+    assert transition_upload("uploaded", "quarantined") == "quarantined"
     with pytest.raises(HTTPException) as error:
         transition_upload("uploaded", "ready")
     assert error.value.detail["code"] == "INVALID_UPLOAD_TRANSITION"
@@ -233,8 +260,9 @@ def test_badge_reads_have_bounded_cursor_services():
     source = inspect.getsource(BadgeQueryService)
     assert "cursor_column=(\"created_at\", \"id\")" in source
     assert "cursor_column=(\"queued_at\", \"id\")" in source
-    assert "Event.organization_id == organization_id" in source
-    assert "Participant.event_id == event_id" in source
+    assert "BadgeRepository(self.db).scoped_statement" in source
+    assert "BadgeHistoryRepository(self.db).scoped_statement" in source
+    assert "BadgePrintJobRepository(self.db).scoped_statement" in source
     assert ".commit(" not in source
     assert "CursorPage[BadgeResponse]" in inspect.getsource(list_badges_page)
     assert "CursorPage[BadgeHistoryResponse]" in inspect.getsource(list_badge_history_page)
@@ -249,8 +277,7 @@ def test_import_history_has_a_bounded_cursor_service():
     route_source = inspect.getsource(list_import_jobs_page)
     assert "CursorPage[ImportJobResponse]" in route_source
     assert 'cursor_column=("created_at", "id")' in source
-    assert "Event.organization_id == organization_id" in source
-    assert "ImportJob.event_id == event_id" in source
+    assert "ImportJobRepository(self.db).scoped_statement" in source
     assert ".commit(" not in source
 
 
@@ -313,9 +340,12 @@ def test_legacy_badge_collection_routes_are_bounded():
         "app/modules/registration/routers/badges.py"
     ).read_text(encoding="utf-8")
     assert "limit: int = Query(100, ge=1, le=1000)" in source
-    assert "BadgeHistory.id.desc()" in source
-    assert "BadgePrintJob.id.desc()" in source
-    assert "Badge.id.desc()" in source
+    query_source = Path(__file__).resolve().parents[1].joinpath(
+        "app/modules/registration/application/queries.py"
+    ).read_text(encoding="utf-8")
+    assert "BadgeHistory.id.desc()" in query_source
+    assert "BadgePrintJob.id.desc()" in query_source
+    assert "Badge.id.desc()" in query_source
 
 
 @pytest.mark.asyncio
@@ -591,16 +621,15 @@ async def test_role_invalidation_uses_canonical_event_cache_namespace(monkeypatc
 
     seen = []
 
-    async def capture(pattern):
-        seen.append(pattern)
+    async def capture(*args):
+        seen.extend(args)
         return 1
 
-    monkeypatch.setattr(participant_roles, "delete", lambda key: capture(key))
-    monkeypatch.setattr(participant_roles, "delete_pattern", capture)
+    monkeypatch.setattr(participant_roles, "invalidate_event", capture)
     event = type(
         "EventContext",
         (),
         {"id": uuid.UUID(int=2), "organization_id": uuid.UUID(int=1)},
     )()
     await participant_roles._invalidate_role_cache(event)
-    assert seen[1] == "cache:v1:tenant:00000000-0000-0000-0000-000000000001:event:00000000-0000-0000-0000-000000000002:*"
+    assert seen == [event.organization_id, event.id]

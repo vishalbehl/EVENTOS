@@ -6,6 +6,7 @@ import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from loguru import logger
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.pool import NullPool
 
@@ -216,27 +217,42 @@ def write_api_request_log(self, api_data: dict) -> None:
         logger.error(f"[Celery] Permanent failure writing API request log: {exc}")
 
 
-async def _write_api_request_log_async(api_data: dict) -> None:
+async def _write_api_request_log_async(api_data: dict) -> bool:
+    """Persist one API log row, treating task redelivery as a successful no-op.
+
+    The task uses ``acks_late``. A worker can therefore receive the same
+    payload after the original transaction committed, including when the
+    commit acknowledgement itself was uncertain. The payload ID is the stable
+    operation identity, so PostgreSQL owns the deduplication boundary.
+    """
     async with _task_database_session() as db:
         occurred_at_val = api_data.get("occurred_at")
         occurred_at = datetime.fromisoformat(occurred_at_val) if occurred_at_val else datetime.now(timezone.utc)
-        
-        log_entry = APIRequestLog(
-            id=uuid.UUID(api_data["id"]) if api_data.get("id") else uuid.uuid4(),
-            request_id=uuid.UUID(api_data["request_id"]) if api_data.get("request_id") else uuid.uuid4(),
-            correlation_id=uuid.UUID(api_data["correlation_id"]) if api_data.get("correlation_id") else None,
-            method=api_data.get("method"),
-            path=api_data.get("path"),
-            status_code=api_data.get("status_code"),
-            duration_ms=api_data.get("duration_ms", 0.0),
-            db_query_count=api_data.get("db_query_count", 0),
-            db_query_duration_ms=api_data.get("db_query_duration_ms", 0.0),
-            ip_address=api_data.get("ip_address"),
-            user_id=uuid.UUID(api_data["user_id"]) if api_data.get("user_id") else None,
-            user_agent=api_data.get("user_agent"),
-            request_size_bytes=api_data.get("request_size_bytes", 0),
-            response_size_bytes=api_data.get("response_size_bytes", 0),
-            occurred_at=occurred_at,
+
+        statement = (
+            pg_insert(APIRequestLog)
+            .values(
+                id=uuid.UUID(api_data["id"]) if api_data.get("id") else uuid.uuid4(),
+                request_id=uuid.UUID(api_data["request_id"]) if api_data.get("request_id") else uuid.uuid4(),
+                correlation_id=uuid.UUID(api_data["correlation_id"]) if api_data.get("correlation_id") else None,
+                organization_id=uuid.UUID(api_data["organization_id"]) if api_data.get("organization_id") else None,
+                method=api_data.get("method"),
+                path=api_data.get("path"),
+                status_code=api_data.get("status_code"),
+                duration_ms=api_data.get("duration_ms", 0.0),
+                db_query_count=api_data.get("db_query_count", 0),
+                db_query_duration_ms=api_data.get("db_query_duration_ms", 0.0),
+                cache_hit=api_data.get("cache_hit"),
+                ip_address=api_data.get("ip_address"),
+                user_id=uuid.UUID(api_data["user_id"]) if api_data.get("user_id") else None,
+                user_agent=api_data.get("user_agent"),
+                request_size_bytes=api_data.get("request_size_bytes", 0),
+                response_size_bytes=api_data.get("response_size_bytes", 0),
+                rate_limit_remaining=api_data.get("rate_limit_remaining"),
+                occurred_at=occurred_at,
+            )
+            .on_conflict_do_nothing(index_elements=[APIRequestLog.id])
         )
-        db.add(log_entry)
+        result = await db.execute(statement)
         await db.commit()
+        return result.rowcount == 1

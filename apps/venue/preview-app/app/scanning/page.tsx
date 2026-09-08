@@ -63,7 +63,7 @@ export default function ScanningModePage() {
   const [view, setView] = useState<View>("home");
   const [query, setQuery] = useState("");
   const [speaker, setSpeaker] = useState<SpeakerData | null>(null);
-  const [assignedStation, setAssignedStation] = useState<number>(2);
+  const [assignedStation, setAssignedStation] = useState<number | null>(null);
   const [lookupBusy, setLookupBusy] = useState(false);
   const [printing, setPrinting] = useState(false);
   const [kioskMenuOpen, setKioskMenuOpen] = useState(false);
@@ -191,11 +191,13 @@ export default function ScanningModePage() {
     const term = (rawQuery || query).trim().toLowerCase();
     if (!term) return;
     setLookupBusy(true);
+    const operationId = crypto.randomUUID();
 
     try {
       const result = await apiClient.post<any>("/api/v1/srr/checkin", {
         qr_code: term,
         checkin_method: view === "qr" ? "qr_scan" : "manual",
+        operation_id: operationId,
       });
       const sessions = result.sessions || [];
       const found: SpeakerData = {
@@ -222,6 +224,43 @@ export default function ScanningModePage() {
       toast.success(`Speaker identified: ${found.name}`);
     } catch (err: any) {
       const status = err.status;
+      const nodeAgentUrl = process.env.NEXT_PUBLIC_SRR_NODE_AGENT_URL?.replace(/\/$/, "");
+      if (!status && nodeAgentUrl) {
+        try {
+          const response = await fetch(`${nodeAgentUrl}/srr/checkin`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query: term, method: view === "qr" ? "qr" : "manual", operation_id: operationId }),
+          });
+          const offline = await response.json();
+          if (!response.ok) throw new Error(offline.detail || "Local SRR node rejected the check-in");
+          const found: SpeakerData = {
+            id: offline.speaker.id,
+            name: offline.speaker.full_name,
+            email: offline.speaker.email,
+            role: offline.speaker.designation || "Speaker",
+            organization: offline.speaker.organization || "",
+            session_title: "Offline snapshot",
+            room_name: "Not resolved offline",
+            start_time: "",
+            end_time: "",
+            files_count: 0,
+          };
+          setAssignedStation(offline.station_number);
+          setStationNumber(offline.station_number);
+          setCurrentSpeaker(offline.speaker);
+          setSessions([]);
+          setCurrentStep(1);
+          setSpeaker(found);
+          setView("result");
+          stopCamera();
+          toast.success(`Offline assignment queued: Workstation #${offline.station_number}`);
+          return;
+        } catch (offlineError: any) {
+          toast.error(offlineError.message || "Venue Server and local SRR node are unavailable.");
+          return;
+        }
+      }
       if (status === 404) toast.error("Speaker not found for this venue event.");
       else if (status === 409) toast.error("All SRR workstations are busy, offline, or locked.");
       else if (status === 400) toast.error("Venue Server is not configured for SRR check-in.");
@@ -237,7 +276,10 @@ export default function ScanningModePage() {
   };
 
   const handleOpenWorkstation = () => {
-    if (!speaker) return;
+    if (!speaker || assignedStation == null) {
+      toast.error("No authoritative workstation assignment is available.");
+      return;
+    }
     setStationNumber(assignedStation);
     setMode("workstation");
     toast.success(`Redirecting to Workstation #${assignedStation} for ${speaker.name}...`);
@@ -608,7 +650,7 @@ function WorkstationResultView({
   onReset,
 }: {
   speaker: SpeakerData;
-  assignedStation: number;
+  assignedStation: number | null;
   onReset: () => void;
 }) {
   const TOTAL_SECONDS = 7;
@@ -665,10 +707,10 @@ function WorkstationResultView({
               FREE WORKSTATION ALLOCATED
             </span>
             <h3 className="text-3xl sm:text-4xl font-black text-emerald-950 dark:text-emerald-200">
-              PROCEED TO WORKSTATION #{assignedStation}
+              {assignedStation == null ? "WORKSTATION ASSIGNMENT UNAVAILABLE" : `PROCEED TO WORKSTATION #${assignedStation}`}
             </h3>
             <p className="text-xs text-emerald-800 dark:text-emerald-400 font-medium">
-              Workstation #{assignedStation} is ready. Please proceed to the assigned physical desk.
+              {assignedStation == null ? "The Venue Server has not provided a workstation assignment." : `Workstation #${assignedStation} is ready. Please proceed to the assigned physical desk.`}
             </p>
           </div>
         </div>

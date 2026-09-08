@@ -60,6 +60,7 @@ class UserResponse(UserBase):
     organization_id: uuid.UUID
     organization_slug: Optional[str] = None
     created_at: datetime
+    version: int = 1
     last_login_at: Optional[datetime] = None
     is_2fa_enabled: bool
     notification_preferences: Dict[str, Any]

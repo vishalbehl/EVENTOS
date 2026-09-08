@@ -39,6 +39,7 @@ import {
   type PlanActionVariant,
 } from "@/components/organizer/platform/CommercialCards";
 import { useOrganizationLimitAccess } from "@/lib/capabilities";
+import { useAuthStore } from "@/store/use-auth-store";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -51,6 +52,7 @@ type BillingPlan = {
   description: string;
   tagline: string;
   price: number | null;
+  price_display?: string;
   currency: string;
   maxEvents: number;
   maxUsers: number;
@@ -133,7 +135,15 @@ function normalizePlan(plan: Record<string, any>): BillingPlan {
     name: String(plan.name ?? plan.plan_name ?? "Plan"),
     description: String(plan.description ?? ""),
     tagline: String(plan.tagline ?? plan.subtitle ?? plan.description ?? ""),
-    price: toNumber(plan.price ?? plan.amount ?? plan.base_price),
+    price: toNumber(
+      plan.price_per_event ??
+      plan.price ??
+      plan.price_inr ??
+      plan.base_price ??
+      plan.final_price ??
+      plan.amount
+    ),
+    price_display: plan.price_display ? String(plan.price_display) : undefined,
     currency: String(plan.currency ?? "INR"),
     maxEvents: Number(plan.limits?.max_events ?? 0),
     maxUsers: Number(plan.limits?.max_users ?? 0),
@@ -154,8 +164,13 @@ function normalizeAddon(addon: Record<string, any>): BillingAddon {
     key: addon.key ?? addon.addon_key ?? addon.slug ?? undefined,
     rawKey: String(addon.key ?? addon.addon_key ?? addon.id ?? addon.name),
     name: String(addon.name ?? "Add-on"),
-    description: String(addon.description ?? addon.tagline ?? ""),
-    price: toNumber(addon.price ?? addon.amount),
+    description: String(addon.description ?? addon.tagline ?? addon.short_description ?? ""),
+    price: toNumber(
+      addon.price_inr ??
+      addon.final_price ??
+      addon.price ??
+      addon.amount
+    ),
     currency: String(addon.currency ?? "INR"),
     features: [
       ...asArray<string>(addon.feature_highlights),
@@ -166,7 +181,8 @@ function normalizeAddon(addon: Record<string, any>): BillingAddon {
 }
 
 function formatCurrency(value: number | null | undefined, currency = "INR") {
-  if (value === null || value === undefined) return "Custom";
+  if (value === null || value === undefined) return "Free";
+  if (value === 0) return "Free";
   try {
     return new Intl.NumberFormat("en-IN", {
       style: "currency",
@@ -375,6 +391,24 @@ function NewEventPageInner() {
       .finally(() => setCalculating(false));
   }, [selectedPlan, selectedAddons]);
 
+  const authUser = useAuthStore((s) => s.user);
+
+  const isDefaultOrg = useMemo(() => {
+    const org = orgContext?.organization;
+    return Boolean(
+      (org as any)?.is_platform_org ||
+      (org as any)?.is_internal_unrestricted ||
+      org?.slug?.toLowerCase() === "eventos" ||
+      org?.slug?.toLowerCase() === "default-org" ||
+      (orgContext as any)?.user?.is_platform_admin ||
+      authUser?.is_platform_admin ||
+      (authUser as any)?.role === "super_admin" ||
+      (authUser as any)?.role === "developer" ||
+      (authUser as any)?.organization_slug?.toLowerCase() === "eventos" ||
+      (authUser as any)?.organization_slug?.toLowerCase() === "default-org"
+    );
+  }, [orgContext, authUser]);
+
   const activePlanName = String(
     currentBillingPlan?.plan?.name ?? orgContext?.commercial?.plan_name ?? ""
   );
@@ -385,6 +419,7 @@ function NewEventPageInner() {
     orgContext?.organization?.is_active &&
     (["ACTIVE", "TRIAL"].includes(billingStatus) || Boolean(subscriptionId))
   );
+  const skipCommercial = isDefaultOrg || hasActiveSubscription;
   const hasActiveSlot = Boolean(hasActiveSubscription && currentEventLimit > currentEventCount);
   const normalizedActivePlan = normalizeComparisonValue(activePlanName);
   const remainingEvents = Math.max(currentEventLimit - currentEventCount, 0);
@@ -393,7 +428,7 @@ function NewEventPageInner() {
     ? normalizeComparisonValue(selectedPlan.name) === normalizedActivePlan
     : false;
   const selectedPlanUnlocksEvent = selectedPlanEventLimit > currentEventCount;
-  const requiresPurchase = hasActiveSubscription
+  const requiresPurchase = skipCommercial
     ? false
     : (!hasActiveSlot || selectedAddons.length > 0 || Boolean(selectedPlan && !selectedPlanMatchesCurrent && (selectedPlan.price ?? 0) > 0));
 
@@ -409,8 +444,8 @@ function NewEventPageInner() {
     return base + addOnTotal;
   }, [priceDetails, selectedPlan, selectedAddonRecords]);
 
-  // ── Step meta (3 steps if active subscription exists, else 5 steps) ────────
-  const stepMeta = hasActiveSubscription
+  // ── Step meta (3 steps if active subscription exists or default org, else 5 steps) ────────
+  const stepMeta = skipCommercial
     ? [
         { label: "Basics", description: "Identity & contacts" },
         { label: "Venue & Schedule", description: "Location & dates" },
@@ -438,7 +473,9 @@ function NewEventPageInner() {
   const canContinuePlan = Boolean(selectedPlan);
   // Add-ons step is always continuable
   const canContinueAddons = true;
-  const canContinueReview = Boolean(selectedPlan && (subscriptionActivated || !requiresPurchase));
+  const canContinueReview = Boolean(
+    (isDefaultOrg || selectedPlan) && (subscriptionActivated || !requiresPurchase)
+  );
 
   const handleToggleAddon = (value: string) => {
     setSelectedAddons((current) =>
@@ -515,14 +552,14 @@ function NewEventPageInner() {
   };
 
   const handleCreateEvent = async () => {
-    if (!selectedPlan) {
+    if (!isDefaultOrg && !selectedPlan) {
       toast.error("Select a plan before creating the event.");
       return;
     }
 
     setLoading(true);
     try {
-      if (requiresPurchase && !commercialRequestId) {
+      if (!isDefaultOrg && requiresPurchase && !commercialRequestId) {
         try {
           await handleCommercialAccessRequest();
         } catch (commErr) {
@@ -1046,8 +1083,8 @@ function NewEventPageInner() {
               </div>
             )}
 
-            {/* STEP 2 — CHOOSE PLAN (Only if no active subscription) */}
-            {!hasActiveSubscription && step === 2 && (
+            {/* STEP 2 — CHOOSE PLAN (Only if no active subscription and not default org) */}
+            {!skipCommercial && step === 2 && (
               <div className="space-y-6">
                 <SectionHeader
                   title="Choose Plan"
@@ -1066,7 +1103,11 @@ function NewEventPageInner() {
                             name: plan.name,
                             tagline: plan.tagline,
                             description: plan.description,
-                            priceLabel: formatCurrency(plan.price, plan.currency) + " / event",
+                            priceLabel:
+                              plan.price_display ||
+                              (plan.price !== null && plan.price !== undefined
+                                ? `${formatCurrency(plan.price, plan.currency)} / event`
+                                : "Contact Sales"),
                             isPopular: plan.popular,
                             isActive: true,
                             highlights: [
@@ -1092,8 +1133,8 @@ function NewEventPageInner() {
               </div>
             )}
 
-            {/* STEP 3 — ADD-ONS (Only if no active subscription) */}
-            {!hasActiveSubscription && step === 3 && (
+            {/* STEP 3 — ADD-ONS (Only if no active subscription and not default org) */}
+            {!skipCommercial && step === 3 && (
               <div className="space-y-6">
                 <SectionHeader
                   title="Add-ons"
@@ -1131,7 +1172,10 @@ function NewEventPageInner() {
                             description: addon.description,
                             type: "PLAN",
                             billingUnit: "PER_EVENT",
-                            priceLabel: formatCurrency(addon.price, addon.currency),
+                            priceLabel:
+                              addon.price !== null && addon.price !== undefined
+                                ? formatCurrency(addon.price, addon.currency)
+                                : "Included",
                             isActive: true,
                           }}
                           selected={selected}
@@ -1149,8 +1193,8 @@ function NewEventPageInner() {
               </div>
             )}
 
-            {/* REVIEW & DEPLOY (Step 2 if active subscription exists, else Step 4) */}
-            {((hasActiveSubscription && step === 2) || (!hasActiveSubscription && step === 4)) && (
+            {/* REVIEW & DEPLOY (Step 2 if skipCommercial exists, else Step 4) */}
+            {((skipCommercial && step === 2) || (!skipCommercial && step === 4)) && (
               <div className="space-y-6">
                 <SectionHeader
                   title="Review & Deploy"
@@ -1179,7 +1223,7 @@ function NewEventPageInner() {
                       <ReviewInfoBlock icon={Globe} label="Website" value={formData.organizer_details.website || "—"} />
                     </ReviewSection>
 
-                    {requiresPurchase && (
+                    {requiresPurchase && !isDefaultOrg && (
                       <div className="space-y-4 rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-bg)] p-5">
                         <div className="flex items-center justify-between">
                           <div>
@@ -1252,20 +1296,24 @@ function NewEventPageInner() {
                     </ReviewSection>
 
                     {/* Subscription status banner */}
-                  <div className="flex items-center gap-3 rounded-lg border border-[color-mix(in_srgb,var(--op-success)_25%,var(--op-border))] bg-[color-mix(in_srgb,var(--op-success)_6%,var(--op-panel-bg))] p-4">
+                    <div className="flex items-center gap-3 rounded-lg border border-[color-mix(in_srgb,var(--op-success)_25%,var(--op-border))] bg-[color-mix(in_srgb,var(--op-success)_6%,var(--op-panel-bg))] p-4">
                       <Zap className="h-5 w-5 shrink-0 text-[var(--op-success)]" />
                       <div>
                         <p className="text-[13px] font-semibold text-[var(--color-text-primary)]">
-                          {hasActiveSubscription
-                            ? activePlanName
-                              ? `Active subscription: ${activePlanName}`
-                              : "Active subscription name unavailable"
+                          {isDefaultOrg
+                            ? "Platform Organization — Unrestricted Workspace"
+                            : hasActiveSubscription
+                            ? (activePlanName
+                                ? `Active subscription: ${activePlanName}`
+                                : "Active subscription")
                             : "Entitlement available"}
                         </p>
                         <p className="text-[11px] text-[var(--color-text-muted)]">
-                          {hasActiveSubscription
+                          {isDefaultOrg
+                            ? "Your event will be created and activated immediately under your platform organization with full enterprise privileges."
+                            : hasActiveSubscription
                             ? "Your event will be created and activated automatically under your organization subscription."
-                            : "Your plan has unused slots. Click \"Publish\" to create the event without extra charges."}
+                            : "Your plan has unused slots. Click \"Publish Event\" to create the event without extra charges."}
                         </p>
                       </div>
                     </div>
@@ -1343,31 +1391,30 @@ function NewEventPageInner() {
                 )}
                 {step === 1 && (
                   <Button disabled={!canContinueVenue} onClick={() => setStep(2)} className="rounded-lg">
-                    {hasActiveSubscription ? "Review & Deploy" : "Continue to Plan"}
+                    {skipCommercial ? "Review & Deploy" : "Continue to Plan"}
                     <ChevronRight className="h-4 w-4 ml-2" aria-hidden="true" />
                   </Button>
                 )}
-                {!hasActiveSubscription && step === 2 && (
+                {!skipCommercial && step === 2 && (
                   <Button disabled={!canContinuePlan} onClick={() => setStep(3)} className="rounded-lg">
                     Continue to Add-ons
                     <ChevronRight className="h-4 w-4 ml-2" aria-hidden="true" />
                   </Button>
                 )}
-                {!hasActiveSubscription && step === 3 && (
+                {!skipCommercial && step === 3 && (
                   <Button onClick={() => setStep(4)} className="rounded-lg">
                     Review & Deploy
                     <ChevronRight className="h-4 w-4 ml-2" aria-hidden="true" />
                   </Button>
                 )}
-                {((hasActiveSubscription && step === 2) || (!hasActiveSubscription && step === 4)) && (
+                {((skipCommercial && step === 2) || (!skipCommercial && step === 4)) && (
                   <Button
                     disabled={
                       loading
-                      || eventLimitAccess.loading
-                      || !eventLimitAccess.enabled
+                      || (!isDefaultOrg && (eventLimitAccess.loading || !eventLimitAccess.enabled))
                     }
                     title={
-                      eventLimitAccess.enabled
+                      isDefaultOrg || eventLimitAccess.enabled
                         ? undefined
                         : `Unavailable: ${(eventLimitAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`
                     }

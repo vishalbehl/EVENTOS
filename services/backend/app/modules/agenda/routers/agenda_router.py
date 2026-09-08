@@ -13,7 +13,6 @@ from app.modules.agenda.schemas.agenda_schemas import (
     AgendaDayResponse, AgendaDayCreate, AgendaDayUpdate,
     AgendaSnapshotResponse
 )
-from app.modules.agenda.services.agenda_service import AgendaService
 from app.modules.agenda.application.queries import AgendaQueryService
 from app.modules.agenda.application.commands import AgendaCommandService
 from app.core.concurrency import require_if_match
@@ -69,11 +68,8 @@ async def list_agenda_days(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> List[AgendaDayResponse]:
-    agenda = await AgendaService.get_default_agenda(db, event)
-    if agenda is None:
-        return []
-    days = await AgendaQueryService(db).list_days_for_agenda(
-        organization_id=event.organization_id, event_id=event.id, agenda_id=agenda.id
+    days = await AgendaQueryService(db).list_days_for_event(
+        organization_id=event.organization_id, event_id=event.id
     )
     return [AgendaDayResponse.model_validate(d) for d in days]
 

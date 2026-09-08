@@ -92,8 +92,7 @@ export function OnboardingWizard() {
     timezone: "Asia/Kolkata",
     language: "English",
   });
-  const [slugAvailable, setSlugAvailable] = useState<boolean | null>(null);
-  const [checkingSlug, setCheckingSlug] = useState(false);
+
 
   // Step 3: Organisation Profile State
   const [orgProfile, setOrgProfile] = useState({
@@ -253,6 +252,23 @@ export function OnboardingWizard() {
       .then((result) => {
         setData(result);
         const org = result.organization;
+        const isDefault =
+          Boolean((org as any).is_platform_org) ||
+          Boolean((org as any).is_internal_unrestricted) ||
+          org.slug?.toLowerCase() === "eventos" ||
+          org.slug?.toLowerCase() === "default-org" ||
+          Boolean(org.onboarding_completed);
+
+        if (isDefault) {
+          const profile = useAuthStore.getState().user;
+          if (profile) {
+            useAuthStore.getState().updateUser({ ...profile, onboarding_completed: true });
+          }
+          router.replace("/dashboard");
+          return;
+        }
+
+        setData(result);
         
         // Auto-resume at saved step or query param step
         const paramStep = searchParams?.get("step");
@@ -279,7 +295,7 @@ export function OnboardingWizard() {
         setWorkspaceConfig({
           portal_name: org.portal_name || (org.name ? `${org.name.toUpperCase()} ORGANIZER PORTAL` : ""),
           logo_url: org.logo_url || "",
-          primary_color: org.primary_color || "var(--color-primary-mid)",
+          primary_color: org.primary_color || "var(--op-primary)",
           secondary_color: org.secondary_color || "#6366f1",
           date_format: org.date_format || "DD/MM/YYYY",
           time_format: org.time_format || "24 Hour",
@@ -329,23 +345,6 @@ export function OnboardingWizard() {
       })
       .finally(() => setLoadingDbBilling(false));
   }, [router, searchParams]);
-
-  useEffect(() => {
-    if (!orgIdentity.slug || orgIdentity.slug.length < 3 || (data && orgIdentity.slug === data.organization.slug)) {
-      setSlugAvailable(true);
-      return;
-    }
-    const timer = window.setTimeout(async () => {
-      setCheckingSlug(true);
-      try {
-        const result = await orgApi.checkSlug(orgIdentity.slug);
-        setSlugAvailable(result.available);
-      } catch {
-        setSlugAvailable(false);
-      }
-    }, 450);
-    return () => window.clearTimeout(timer);
-  }, [orgIdentity.slug, data]);
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -733,7 +732,7 @@ export function OnboardingWizard() {
 
                   <div className="space-y-5">
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Organisation Name *</label>
+                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--op-muted)]">Organisation Name *</label>
                       <Input
                         value={orgIdentity.name}
                         onChange={(e) => {
@@ -745,36 +744,12 @@ export function OnboardingWizard() {
                           }));
                         }}
                         placeholder="Enter your organization name"
-                        className="h-13 rounded-lg bg-[var(--color-surface-2)] border-[var(--color-border)] text-sm font-semibold focus:border-[var(--color-primary-mid)]"
+                        className="h-12 rounded-xl bg-[var(--op-panel-bg)] border-[var(--op-border)] text-sm font-semibold text-[var(--op-text)] focus:border-[var(--op-primary)]"
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Workspace URL Slug *</label>
-                      <div className="relative flex items-center">
-                        <span className="absolute left-4 text-xs font-bold text-[var(--color-text-muted)]">Event.in/</span>
-                        <Input
-                          value={orgIdentity.slug}
-                          onChange={(e) => setOrgIdentity({ ...orgIdentity, slug: slugify(e.target.value) })}
-                          placeholder="your-org-slug"
-                          className="h-13 rounded-lg bg-[var(--color-surface-2)] border-[var(--color-border)] pl-24 pr-12 text-sm font-semibold focus:border-[var(--color-primary-mid)]"
-                        />
-                        <div className="absolute right-4">
-                          {checkingSlug ? (
-                            <Loader2 className="h-4 w-4 animate-spin text-[var(--color-text-muted)]" />
-                          ) : slugAvailable === true ? (
-                            <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 flex items-center gap-1">
-                              <Check className="h-3.5 w-3.5 stroke-[3]" /> Available
-                            </span>
-                          ) : slugAvailable === false ? (
-                            <span className="text-[10px] font-black uppercase tracking-widest text-rose-400">Unavailable</span>
-                          ) : null}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Organisation Type</label>
+                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--op-muted)]">Organisation Type</label>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         {[
                           { id: "conference_organiser", label: "Conference Organiser", icon: Building2 },
@@ -793,12 +768,19 @@ export function OnboardingWizard() {
                               type="button"
                               onClick={() => setOrgIdentity({ ...orgIdentity, organization_type: t.id })}
                               className={cn(
-                                "rounded-lg border p-3.5 text-center flex flex-col items-center justify-center gap-2 transition-all cursor-pointer",
-                                isSelected ? "bg-[color-mix(in_srgb,var(--color-primary-mid)_12%,transparent)] border-[var(--color-primary-mid)] text-[var(--color-text-primary)]" : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-3)]"
+                                "relative rounded-xl border p-3.5 text-center flex flex-col items-center justify-center gap-2 transition-all cursor-pointer",
+                                isSelected
+                                  ? "bg-[color-mix(in_srgb,var(--op-primary)_14%,var(--op-panel-bg))] border-[var(--op-primary)] text-[var(--op-text)] ring-2 ring-[var(--op-primary)]/40 shadow-sm"
+                                  : "bg-[var(--op-panel-bg)] border-[var(--op-border)] text-[var(--op-muted)] hover:text-[var(--op-text)] hover:bg-[var(--op-panel-soft)] hover:border-[var(--op-border-soft)]"
                               )}
                             >
-                              <t.icon className={cn("h-5 w-5", isSelected ? "text-[var(--color-primary-mid)]" : "text-[var(--color-text-muted)]")} />
+                              <t.icon className={cn("h-5 w-5 transition-colors", isSelected ? "text-[var(--op-primary)]" : "text-[var(--op-muted)]")} />
                               <span className="text-[11px] font-bold">{t.label}</span>
+                              {isSelected && (
+                                <span className="absolute top-2 right-2 h-4 w-4 rounded-full bg-[var(--op-primary)] text-[var(--primary-contrast,#ffffff)] flex items-center justify-center shadow-sm">
+                                  <Check className="h-2.5 w-2.5 stroke-[3]" />
+                                </span>
+                              )}
                             </button>
                           );
                         })}
@@ -807,23 +789,23 @@ export function OnboardingWizard() {
 
                     <div className="grid md:grid-cols-3 gap-4">
                       <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Country *</label>
+                        <label className="text-[10px] font-black uppercase tracking-wider text-[var(--op-muted)]">Country *</label>
                         <Select value={orgIdentity.country} onValueChange={(val) => setOrgIdentity({ ...orgIdentity, country: val })}>
-                          <SelectTrigger className="h-12 rounded-xl bg-[var(--color-surface-2)] border-[var(--color-border)] text-xs font-semibold"><SelectValue /></SelectTrigger>
+                          <SelectTrigger className="h-12 rounded-xl bg-[var(--op-panel-bg)] border-[var(--op-border)] text-xs font-semibold text-[var(--op-text)]"><SelectValue /></SelectTrigger>
                           <SelectContent>{countries.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Timezone *</label>
+                        <label className="text-[10px] font-black uppercase tracking-wider text-[var(--op-muted)]">Timezone *</label>
                         <Select value={orgIdentity.timezone} onValueChange={(val) => setOrgIdentity({ ...orgIdentity, timezone: val })}>
-                          <SelectTrigger className="h-12 rounded-xl bg-[var(--color-surface-2)] border-[var(--color-border)] text-xs font-semibold"><SelectValue /></SelectTrigger>
+                          <SelectTrigger className="h-12 rounded-xl bg-[var(--op-panel-bg)] border-[var(--op-border)] text-xs font-semibold text-[var(--op-text)]"><SelectValue /></SelectTrigger>
                           <SelectContent>{timezones.map((tz) => <SelectItem key={tz} value={tz}>{tz}</SelectItem>)}</SelectContent>
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Language *</label>
+                        <label className="text-[10px] font-black uppercase tracking-wider text-[var(--op-muted)]">Language *</label>
                         <Select value={orgIdentity.language} onValueChange={(val) => setOrgIdentity({ ...orgIdentity, language: val })}>
-                          <SelectTrigger className="h-12 rounded-xl bg-[var(--color-surface-2)] border-[var(--color-border)] text-xs font-semibold"><SelectValue /></SelectTrigger>
+                          <SelectTrigger className="h-12 rounded-xl bg-[var(--op-panel-bg)] border-[var(--op-border)] text-xs font-semibold text-[var(--op-text)]"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             {["English", "Hindi", "Spanish", "French", "German"].map((lang) => (
                               <SelectItem key={lang} value={lang}>{lang}</SelectItem>
@@ -835,10 +817,10 @@ export function OnboardingWizard() {
                   </div>
 
                   <div className="flex justify-between items-center pt-4">
-                    <Button variant="outline" onClick={() => handleSaveStep(1, false)} disabled={saving} className="h-12 rounded-xl border-[var(--color-border)] bg-[var(--color-surface-3)] text-xs font-bold flex items-center gap-1.5">
-                      <Bookmark className="h-3.5 w-3.5 text-[var(--color-primary-mid)]" /> Save as Draft
+                    <Button variant="outline" onClick={() => handleSaveStep(1, false)} disabled={saving} className="h-12 rounded-xl border-[var(--op-border)] bg-[var(--op-panel-soft)] text-xs font-bold text-[var(--op-text)] flex items-center gap-1.5 hover:bg-[var(--op-panel-bg)]">
+                      <Bookmark className="h-3.5 w-3.5 text-[var(--op-primary)]" /> Save as Draft
                     </Button>
-                    <Button onClick={() => handleSaveStep(1, true)} disabled={saving} className="h-12 px-6 bg-[var(--color-primary-mid)] hover:bg-[var(--color-primary-end)] text-[var(--color-text-inverse)] font-black uppercase tracking-wider text-xs rounded-xl flex items-center gap-2">
+                    <Button onClick={() => handleSaveStep(1, true)} disabled={saving} className="h-12 px-6 bg-[var(--op-primary)] hover:opacity-90 text-[var(--primary-contrast,#ffffff)] font-black uppercase tracking-wider text-xs rounded-xl flex items-center gap-2">
                       {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Save & Next <ChevronRight className="h-4 w-4 stroke-[3]" /></>}
                     </Button>
                   </div>
@@ -869,7 +851,7 @@ export function OnboardingWizard() {
 
                   <div className="space-y-6">
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Industry *</label>
+                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--op-muted)]">Industry *</label>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         {[
                           { id: "medical", label: "Medical", icon: Shield },
@@ -887,12 +869,19 @@ export function OnboardingWizard() {
                               type="button"
                               onClick={() => setOrgProfile({ ...orgProfile, industry: ind.id })}
                               className={cn(
-                                "rounded-lg border p-3.5 text-center flex flex-col items-center justify-center gap-2 transition-all cursor-pointer",
-                                isSelected ? "bg-[color-mix(in_srgb,var(--color-primary-mid)_12%,transparent)] border-[var(--color-primary-mid)] text-[var(--color-text-primary)]" : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-3)]"
+                                "relative rounded-xl border p-3.5 text-center flex flex-col items-center justify-center gap-2 transition-all cursor-pointer",
+                                isSelected
+                                  ? "bg-[color-mix(in_srgb,var(--op-primary)_14%,var(--op-panel-bg))] border-[var(--op-primary)] text-[var(--op-text)] ring-2 ring-[var(--op-primary)]/40 shadow-sm"
+                                  : "bg-[var(--op-panel-bg)] border-[var(--op-border)] text-[var(--op-muted)] hover:text-[var(--op-text)] hover:bg-[var(--op-panel-soft)] hover:border-[var(--op-border-soft)]"
                               )}
                             >
-                              <ind.icon className={cn("h-5 w-5", isSelected ? "text-[var(--color-primary-mid)]" : "text-[var(--color-text-muted)]")} />
+                              <ind.icon className={cn("h-5 w-5 transition-colors", isSelected ? "text-[var(--op-primary)]" : "text-[var(--op-muted)]")} />
                               <span className="text-[11px] font-bold">{ind.label}</span>
+                              {isSelected && (
+                                <span className="absolute top-2 right-2 h-4 w-4 rounded-full bg-[var(--op-primary)] text-[var(--primary-contrast,#ffffff)] flex items-center justify-center shadow-sm">
+                                  <Check className="h-2.5 w-2.5 stroke-[3]" />
+                                </span>
+                              )}
                             </button>
                           );
                         })}
@@ -900,45 +889,57 @@ export function OnboardingWizard() {
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Expected Events Per Year *</label>
+                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--op-muted)]">Expected Events Per Year *</label>
                       <div className="grid grid-cols-3 gap-3">
-                        {["1-5", "5-20", "20+"].map((option) => (
-                          <button
-                            key={option}
-                            type="button"
-                            onClick={() => setOrgProfile({ ...orgProfile, expected_events_per_year: option })}
-                            className={cn(
-                              "h-12 rounded-xl border font-bold text-xs transition-all cursor-pointer",
-                              orgProfile.expected_events_per_year === option ? "bg-[var(--color-primary-mid)] text-[var(--color-text-inverse)] border-[var(--color-primary-mid)]" : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-3)]"
-                            )}
-                          >
-                            {option}
-                          </button>
-                        ))}
+                        {["1-5", "5-20", "20+"].map((option) => {
+                          const isSelected = orgProfile.expected_events_per_year === option;
+                          return (
+                            <button
+                              key={option}
+                              type="button"
+                              onClick={() => setOrgProfile({ ...orgProfile, expected_events_per_year: option })}
+                              className={cn(
+                                "h-12 rounded-xl border font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-2",
+                                isSelected
+                                  ? "bg-[var(--op-primary)] text-[var(--primary-contrast,#ffffff)] border-[var(--op-primary)] shadow-sm"
+                                  : "bg-[var(--op-panel-bg)] border-[var(--op-border)] text-[var(--op-muted)] hover:text-[var(--op-text)] hover:bg-[var(--op-panel-soft)]"
+                              )}
+                            >
+                              {isSelected && <Check className="h-3.5 w-3.5 stroke-[3]" />}
+                              {option}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Average Attendees Per Event *</label>
+                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--op-muted)]">Average Attendees Per Event *</label>
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
-                        {["< 100", "100-500", "500-1000", "1000-5000", "5000+"].map((att) => (
-                          <button
-                            key={att}
-                            type="button"
-                            onClick={() => setOrgProfile({ ...orgProfile, average_attendees_per_event: att })}
-                            className={cn(
-                              "h-11 rounded-xl border text-[11px] font-bold transition-all cursor-pointer px-2",
-                              orgProfile.average_attendees_per_event === att ? "bg-[var(--color-primary-mid)] text-[var(--color-text-inverse)] border-[var(--color-primary-mid)]" : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-3)]"
-                            )}
-                          >
-                            {att}
-                          </button>
-                        ))}
+                        {["< 100", "100-500", "500-1000", "1000-5000", "5000+"].map((att) => {
+                          const isSelected = orgProfile.average_attendees_per_event === att;
+                          return (
+                            <button
+                              key={att}
+                              type="button"
+                              onClick={() => setOrgProfile({ ...orgProfile, average_attendees_per_event: att })}
+                              className={cn(
+                                "h-11 rounded-xl border text-[11px] font-black transition-all cursor-pointer px-2 flex items-center justify-center gap-1.5",
+                                isSelected
+                                  ? "bg-[var(--op-primary)] text-[var(--primary-contrast,#ffffff)] border-[var(--op-primary)] shadow-sm"
+                                  : "bg-[var(--op-panel-bg)] border-[var(--op-border)] text-[var(--op-muted)] hover:text-[var(--op-text)] hover:bg-[var(--op-panel-soft)]"
+                              )}
+                            >
+                              {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
+                              {att}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Primary Goal *</label>
+                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--op-muted)]">Primary Goal *</label>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                         {[
                           { id: "registration", label: "Registration", icon: Ticket },
@@ -955,12 +956,19 @@ export function OnboardingWizard() {
                               type="button"
                               onClick={() => setOrgProfile({ ...orgProfile, primary_goal: goal.id })}
                               className={cn(
-                                "rounded-lg border p-3.5 text-center flex flex-col items-center justify-center gap-2 transition-all cursor-pointer",
-                                isSelected ? "bg-[color-mix(in_srgb,var(--color-primary-mid)_12%,transparent)] border-[var(--color-primary-mid)] text-[var(--color-text-primary)]" : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-3)]"
+                                "relative rounded-xl border p-3.5 text-center flex flex-col items-center justify-center gap-2 transition-all cursor-pointer",
+                                isSelected
+                                  ? "bg-[color-mix(in_srgb,var(--op-primary)_14%,var(--op-panel-bg))] border-[var(--op-primary)] text-[var(--op-text)] ring-2 ring-[var(--op-primary)]/40 shadow-sm"
+                                  : "bg-[var(--op-panel-bg)] border-[var(--op-border)] text-[var(--op-muted)] hover:text-[var(--op-text)] hover:bg-[var(--op-panel-soft)] hover:border-[var(--op-border-soft)]"
                               )}
                             >
-                              <goal.icon className={cn("h-5 w-5", isSelected ? "text-[var(--color-primary-mid)]" : "text-[var(--color-text-muted)]")} />
+                              <goal.icon className={cn("h-5 w-5 transition-colors", isSelected ? "text-[var(--op-primary)]" : "text-[var(--op-muted)]")} />
                               <span className="text-[11px] font-bold">{goal.label}</span>
+                              {isSelected && (
+                                <span className="absolute top-2 right-2 h-4 w-4 rounded-full bg-[var(--op-primary)] text-[var(--primary-contrast,#ffffff)] flex items-center justify-center shadow-sm">
+                                  <Check className="h-2.5 w-2.5 stroke-[3]" />
+                                </span>
+                              )}
                             </button>
                           );
                         })}
@@ -969,10 +977,10 @@ export function OnboardingWizard() {
                   </div>
 
                   <div className="flex justify-between items-center pt-4">
-                    <Button variant="outline" onClick={() => handleSaveStep(2, false)} disabled={saving} className="h-12 rounded-xl border-[var(--color-border)] bg-[var(--color-surface-3)] text-xs font-bold flex items-center gap-1.5">
-                      <Bookmark className="h-3.5 w-3.5 text-[var(--color-primary-mid)]" /> Save as Draft
+                    <Button variant="outline" onClick={() => handleSaveStep(2, false)} disabled={saving} className="h-12 rounded-xl border-[var(--op-border)] bg-[var(--op-panel-soft)] text-xs font-bold text-[var(--op-text)] flex items-center gap-1.5 hover:bg-[var(--op-panel-bg)]">
+                      <Bookmark className="h-3.5 w-3.5 text-[var(--op-primary)]" /> Save as Draft
                     </Button>
-                    <Button onClick={() => handleSaveStep(2, true)} disabled={saving} className="h-12 px-6 bg-[var(--color-primary-mid)] hover:bg-[var(--color-primary-end)] text-[var(--color-text-inverse)] font-black uppercase tracking-wider text-xs rounded-xl flex items-center gap-2">
+                    <Button onClick={() => handleSaveStep(2, true)} disabled={saving} className="h-12 px-6 bg-[var(--op-primary)] hover:opacity-90 text-[var(--primary-contrast,#ffffff)] font-black uppercase tracking-wider text-xs rounded-xl flex items-center gap-2">
                       {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Save & Next <ChevronRight className="h-4 w-4 stroke-[3]" /></>}
                     </Button>
                   </div>
@@ -1003,30 +1011,30 @@ export function OnboardingWizard() {
 
                   <div className="space-y-5">
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Portal Name *</label>
+                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--op-muted)]">Portal Name *</label>
                       <Input
                         value={workspaceConfig.portal_name}
                         onChange={(e) => setWorkspaceConfig({ ...workspaceConfig, portal_name: e.target.value })}
                         placeholder="Enter portal name"
-                        className="h-13 rounded-lg bg-[var(--color-surface-2)] border-[var(--color-border)] text-sm font-semibold focus:border-[var(--color-primary-mid)]"
+                        className="h-12 rounded-xl bg-[var(--op-panel-bg)] border-[var(--op-border)] text-sm font-semibold text-[var(--op-text)] focus:border-[var(--op-primary)]"
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Organisation Logo</label>
+                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--op-muted)]">Organisation Logo</label>
                       <input type="file" ref={fileInputRef} accept="image/*" className="hidden" onChange={handleLogoUpload} />
-                      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4 flex items-center justify-between gap-4">
+                      <div className="rounded-xl border border-[var(--op-border)] bg-[var(--op-panel-bg)] p-4 flex items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
-                          <div className="h-14 w-14 rounded-lg bg-[var(--color-surface-3)] border border-[var(--color-border)] flex items-center justify-center font-black text-xs text-[var(--color-primary-mid)] overflow-hidden shrink-0">
+                          <div className="h-14 w-14 rounded-xl bg-[var(--op-panel-soft)] border border-[var(--op-border)] flex items-center justify-center font-black text-xs text-[var(--op-primary)] overflow-hidden shrink-0">
                             {workspaceConfig.logo_url ? (
                               <img src={workspaceConfig.logo_url} alt="Uploaded Logo" className="h-full w-full object-cover" />
                             ) : (
-                              <ImageIcon className="h-6 w-6 text-[var(--color-text-muted)]" />
+                              <ImageIcon className="h-6 w-6 text-[var(--op-muted)]" />
                             )}
                           </div>
                           <div>
-                            <p className="text-xs font-bold text-[var(--color-text-primary)]">{workspaceConfig.logo_url ? "Logo Uploaded" : "No Logo Uploaded"}</p>
-                            <span className="text-[9px] text-[var(--color-text-muted)]">PNG, JPG or SVG (Max 5MB)</span>
+                            <p className="text-xs font-bold text-[var(--op-text)]">{workspaceConfig.logo_url ? "Logo Uploaded" : "No Logo Uploaded"}</p>
+                            <span className="text-[9px] text-[var(--op-muted)]">PNG, JPG or SVG (Max 5MB)</span>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -1034,9 +1042,9 @@ export function OnboardingWizard() {
                             type="button"
                             onClick={() => fileInputRef.current?.click()}
                             variant="outline"
-                            className="h-9 px-3 text-xs rounded-xl border-[var(--color-border)] bg-[var(--color-surface-3)] font-bold flex items-center gap-1.5"
+                            className="h-9 px-3 text-xs rounded-xl border-[var(--op-border)] bg-[var(--op-panel-soft)] text-[var(--op-text)] font-bold flex items-center gap-1.5"
                           >
-                            <Upload className="h-3.5 w-3.5 text-[var(--color-primary-mid)]" /> Upload
+                            <Upload className="h-3.5 w-3.5 text-[var(--op-primary)]" /> Upload
                           </Button>
                           {workspaceConfig.logo_url && (
                             <Button
@@ -1053,16 +1061,16 @@ export function OnboardingWizard() {
                     </div>
 
                     <div className="space-y-3">
-                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Primary Color</label>
+                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--op-muted)]">Primary Color</label>
                       <div className="flex items-center gap-3">
-                        {["var(--color-primary-mid)", "#6366f1", "#10b981", "#0284c7", "#f43f5e", "#f59e0b", "#8b5cf6"].map((hex) => (
+                        {["#4f46e5", "#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#f43f5e", "#8b5cf6"].map((hex) => (
                           <button
                             key={hex}
                             type="button"
                             onClick={() => setWorkspaceConfig({ ...workspaceConfig, primary_color: hex })}
                             className={cn(
-                              "h-8 w-8 rounded-full border-2 transition-transform cursor-pointer",
-                              workspaceConfig.primary_color === hex ? "border-[var(--op-text)] ring-2 ring-[var(--op-border)]" : "border-transparent opacity-80 hover:opacity-100"
+                              "h-8 w-8 rounded-full border-2 transition-all cursor-pointer",
+                              workspaceConfig.primary_color === hex ? "ring-2 ring-offset-2 ring-[var(--op-text)] scale-110 shadow-md" : "border-transparent opacity-80 hover:opacity-100"
                             )}
                             style={{ backgroundColor: hex }}
                           />
@@ -1072,9 +1080,9 @@ export function OnboardingWizard() {
 
                     <div className="grid md:grid-cols-3 gap-4">
                       <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Date Format</label>
+                        <label className="text-[10px] font-black uppercase tracking-wider text-[var(--op-muted)]">Date Format</label>
                         <Select value={workspaceConfig.date_format} onValueChange={(val) => setWorkspaceConfig({ ...workspaceConfig, date_format: val })}>
-                          <SelectTrigger className="h-12 rounded-xl bg-[var(--color-surface-2)] border-[var(--color-border)] text-xs font-semibold"><SelectValue /></SelectTrigger>
+                          <SelectTrigger className="h-12 rounded-xl bg-[var(--op-panel-bg)] border-[var(--op-border)] text-xs font-semibold text-[var(--op-text)]"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             {["DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD"].map((df) => (
                               <SelectItem key={df} value={df}>{df}</SelectItem>
@@ -1083,9 +1091,9 @@ export function OnboardingWizard() {
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Time Format</label>
+                        <label className="text-[10px] font-black uppercase tracking-wider text-[var(--op-muted)]">Time Format</label>
                         <Select value={workspaceConfig.time_format} onValueChange={(val) => setWorkspaceConfig({ ...workspaceConfig, time_format: val })}>
-                          <SelectTrigger className="h-12 rounded-xl bg-[var(--color-surface-2)] border-[var(--color-border)] text-xs font-semibold"><SelectValue /></SelectTrigger>
+                          <SelectTrigger className="h-12 rounded-xl bg-[var(--op-panel-bg)] border-[var(--op-border)] text-xs font-semibold text-[var(--op-text)]"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             {["24 Hour", "12 Hour"].map((tf) => (
                               <SelectItem key={tf} value={tf}>{tf}</SelectItem>
@@ -1094,9 +1102,9 @@ export function OnboardingWizard() {
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Currency</label>
+                        <label className="text-[10px] font-black uppercase tracking-wider text-[var(--op-muted)]">Currency</label>
                         <Select value={workspaceConfig.currency} onValueChange={(val) => setWorkspaceConfig({ ...workspaceConfig, currency: val })}>
-                          <SelectTrigger className="h-12 rounded-xl bg-[var(--color-surface-2)] border-[var(--color-border)] text-xs font-semibold"><SelectValue /></SelectTrigger>
+                          <SelectTrigger className="h-12 rounded-xl bg-[var(--op-panel-bg)] border-[var(--op-border)] text-xs font-semibold text-[var(--op-text)]"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             {["INR (₹)", "USD ($)", "EUR (€)", "GBP (£)"].map((cur) => (
                               <SelectItem key={cur} value={cur}>{cur}</SelectItem>
@@ -1108,10 +1116,10 @@ export function OnboardingWizard() {
                   </div>
 
                   <div className="flex justify-between items-center pt-4">
-                    <Button variant="outline" onClick={() => handleSaveStep(3, false)} disabled={saving} className="h-12 rounded-xl border-[var(--color-border)] bg-[var(--color-surface-3)] text-xs font-bold flex items-center gap-1.5">
-                      <Bookmark className="h-3.5 w-3.5 text-[var(--color-primary-mid)]" /> Save as Draft
+                    <Button variant="outline" onClick={() => handleSaveStep(3, false)} disabled={saving} className="h-12 rounded-xl border-[var(--op-border)] bg-[var(--op-panel-soft)] text-xs font-bold text-[var(--op-text)] flex items-center gap-1.5 hover:bg-[var(--op-panel-bg)]">
+                      <Bookmark className="h-3.5 w-3.5 text-[var(--op-primary)]" /> Save as Draft
                     </Button>
-                    <Button onClick={() => handleSaveStep(3, true)} disabled={saving} className="h-12 px-6 bg-[var(--color-primary-mid)] hover:bg-[var(--color-primary-end)] text-[var(--color-text-inverse)] font-black uppercase tracking-wider text-xs rounded-xl flex items-center gap-2">
+                    <Button onClick={() => handleSaveStep(3, true)} disabled={saving} className="h-12 px-6 bg-[var(--op-primary)] hover:opacity-90 text-[var(--primary-contrast,#ffffff)] font-black uppercase tracking-wider text-xs rounded-xl flex items-center gap-2">
                       {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Save & Next <ChevronRight className="h-4 w-4 stroke-[3]" /></>}
                     </Button>
                   </div>
@@ -1525,45 +1533,44 @@ export function OnboardingWizard() {
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-5">
-                  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-6 space-y-4">
-                    <h4 className="text-xs font-black uppercase tracking-wider text-[var(--color-primary-mid)]">1. Organisation Details</h4>
-                    <div className="space-y-2 text-xs text-[var(--color-text-secondary)] font-medium">
-                      <div className="flex justify-between"><span>Name:</span><span className="text-[var(--color-text-primary)] font-bold">{orgIdentity.name}</span></div>
-                      <div className="flex justify-between"><span>Slug:</span><span className="text-emerald-400 font-mono">Event.in/{orgIdentity.slug}</span></div>
-                      <div className="flex justify-between"><span>Type:</span><span className="text-[var(--color-text-primary)] capitalize">{orgIdentity.organization_type.replace('_', ' ')}</span></div>
-                      <div className="flex justify-between"><span>Country:</span><span className="text-[var(--color-text-primary)]">{orgIdentity.country}</span></div>
-                      <div className="flex justify-between"><span>Timezone:</span><span className="text-[var(--color-text-primary)]">{orgIdentity.timezone}</span></div>
+                  <div className="rounded-xl border border-[var(--op-border)] bg-[var(--op-panel-bg)] p-6 space-y-4">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-[var(--op-primary)]">1. Organisation Details</h4>
+                    <div className="space-y-2 text-xs text-[var(--op-muted)] font-medium">
+                      <div className="flex justify-between"><span>Name:</span><span className="text-[var(--op-text)] font-bold">{orgIdentity.name}</span></div>
+                      <div className="flex justify-between"><span>Type:</span><span className="text-[var(--op-text)] capitalize">{orgIdentity.organization_type.replace('_', ' ')}</span></div>
+                      <div className="flex justify-between"><span>Country:</span><span className="text-[var(--op-text)]">{orgIdentity.country}</span></div>
+                      <div className="flex justify-between"><span>Timezone:</span><span className="text-[var(--op-text)]">{orgIdentity.timezone}</span></div>
                     </div>
                   </div>
 
-                  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-6 space-y-4">
-                    <h4 className="text-xs font-black uppercase tracking-wider text-[var(--color-primary-mid)]">2. Workspace & Branding</h4>
-                    <div className="space-y-2 text-xs text-[var(--color-text-secondary)] font-medium">
-                      <div className="flex justify-between"><span>Portal Name:</span><span className="text-[var(--color-text-primary)] font-bold">{workspaceConfig.portal_name || "YOUR ORGANIZER PORTAL"}</span></div>
-                      <div className="flex justify-between"><span>Logo:</span><span className="text-[var(--color-text-primary)]">{workspaceConfig.logo_url ? "Uploaded" : "Default"}</span></div>
-                      <div className="flex justify-between"><span>Primary Color:</span><span className="font-mono text-[var(--color-text-primary)]" style={{ color: workspaceConfig.primary_color }}>{workspaceConfig.primary_color}</span></div>
-                      <div className="flex justify-between"><span>Date / Time:</span><span className="text-[var(--color-text-primary)]">{workspaceConfig.date_format} • {workspaceConfig.time_format}</span></div>
+                  <div className="rounded-xl border border-[var(--op-border)] bg-[var(--op-panel-bg)] p-6 space-y-4">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-[var(--op-primary)]">2. Workspace & Branding</h4>
+                    <div className="space-y-2 text-xs text-[var(--op-muted)] font-medium">
+                      <div className="flex justify-between"><span>Portal Name:</span><span className="text-[var(--op-text)] font-bold">{workspaceConfig.portal_name || "YOUR ORGANIZER PORTAL"}</span></div>
+                      <div className="flex justify-between"><span>Logo:</span><span className="text-[var(--op-text)]">{workspaceConfig.logo_url ? "Uploaded" : "Default"}</span></div>
+                      <div className="flex justify-between"><span>Primary Color:</span><span className="font-mono text-[var(--op-text)]" style={{ color: workspaceConfig.primary_color }}>{workspaceConfig.primary_color}</span></div>
+                      <div className="flex justify-between"><span>Date / Time:</span><span className="text-[var(--op-text)]">{workspaceConfig.date_format} • {workspaceConfig.time_format}</span></div>
                     </div>
                   </div>
 
-                  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-6 space-y-4">
-                    <h4 className="text-xs font-black uppercase tracking-wider text-[var(--color-primary-mid)]">3. First Event Configured</h4>
-                    <div className="space-y-2 text-xs text-[var(--color-text-secondary)] font-medium">
-                      <div className="flex justify-between"><span>Event Name:</span><span className="text-[var(--color-text-primary)] font-bold">{skippedEvent ? "Skipped" : (eventData.name || "Configured")}</span></div>
+                  <div className="rounded-xl border border-[var(--op-border)] bg-[var(--op-panel-bg)] p-6 space-y-4">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-[var(--op-primary)]">3. First Event Configured</h4>
+                    <div className="space-y-2 text-xs text-[var(--op-muted)] font-medium">
+                      <div className="flex justify-between"><span>Event Name:</span><span className="text-[var(--op-text)] font-bold">{skippedEvent ? "Skipped" : (eventData.name || "Configured")}</span></div>
                       {!skippedEvent && eventData.name && (
                         <>
                           <div className="flex justify-between"><span>Short Code:</span><span className="text-emerald-400 font-mono font-bold">{eventData.short_code || "CODE"}</span></div>
-                          <div className="flex justify-between"><span>Event Dates:</span><span className="text-[var(--color-text-primary)]">{eventData.start_date || "Start"} → {eventData.end_date || "End"}</span></div>
-                          <div className="flex justify-between"><span>Venue & Location:</span><span className="text-[var(--color-text-primary)]">{eventData.venue ? `${eventData.venue}, ${eventData.city}` : "N/A"}</span></div>
-                          <div className="flex justify-between"><span>Delegates / Speakers:</span><span className="text-[var(--color-text-primary)]">{eventData.delegates} Attendees / {eventData.speakers} Speakers</span></div>
+                          <div className="flex justify-between"><span>Event Dates:</span><span className="text-[var(--op-text)]">{eventData.start_date || "Start"} → {eventData.end_date || "End"}</span></div>
+                          <div className="flex justify-between"><span>Venue & Location:</span><span className="text-[var(--op-text)]">{eventData.venue ? `${eventData.venue}, ${eventData.city}` : "N/A"}</span></div>
+                          <div className="flex justify-between"><span>Delegates / Speakers:</span><span className="text-[var(--op-text)]">{eventData.delegates} Attendees / {eventData.speakers} Speakers</span></div>
                         </>
                       )}
                     </div>
                   </div>
 
-                  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-6 space-y-4">
-                    <h4 className="text-xs font-black uppercase tracking-wider text-[var(--color-primary-mid)]">4. Plan & Billing</h4>
-                    <div className="space-y-2 text-xs text-[var(--color-text-secondary)] font-medium">
+                  <div className="rounded-xl border border-[var(--op-border)] bg-[var(--op-panel-bg)] p-6 space-y-4">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-[var(--op-primary)]">4. Plan & Billing</h4>
+                    <div className="space-y-2 text-xs text-[var(--op-muted)] font-medium">
                       <div className="flex justify-between">
                         <span>Subscription Status:</span>
                         <span className="text-emerald-400 font-bold">
@@ -1571,33 +1578,33 @@ export function OnboardingWizard() {
                         </span>
                       </div>
                       {!hasActivePlan && (
-                        <div className="flex justify-between"><span>Selected Add-Ons:</span><span className="text-[var(--color-text-primary)] font-bold">{selectedAddonIds.length} Add-Ons</span></div>
+                        <div className="flex justify-between"><span>Selected Add-Ons:</span><span className="text-[var(--op-text)] font-bold">{selectedAddonIds.length} Add-Ons</span></div>
                       )}
                     </div>
                   </div>
                 </div>
 
-                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-5 flex items-center gap-4">
+                <div className="rounded-xl border border-[var(--op-border)] bg-[var(--op-panel-bg)] p-5 flex items-center gap-4">
                   <input
                     type="checkbox"
                     id="termsCheck"
                     checked={termsAgreed}
                     onChange={(e) => setTermsAgreed(e.target.checked)}
-                    className="h-5 w-5 rounded border-[var(--color-border)] bg-[var(--color-surface-3)] text-[var(--color-primary-mid)] focus:ring-0 cursor-pointer"
+                    className="h-5 w-5 rounded border-[var(--op-border)] bg-[var(--op-panel-soft)] text-[var(--op-primary)] focus:ring-0 cursor-pointer"
                   />
-                  <label htmlFor="termsCheck" className="text-xs text-[var(--color-text-secondary)] font-medium cursor-pointer">
-                    I agree to the <span className="text-[var(--color-primary-mid)] underline">Terms of Service</span>, <span className="text-[var(--color-primary-mid)] underline">Privacy Policy</span>, and Master Subscription Agreement for Event OS.
+                  <label htmlFor="termsCheck" className="text-xs text-[var(--op-muted)] font-medium cursor-pointer">
+                    I agree to the <span className="text-[var(--op-primary)] underline">Terms of Service</span>, <span className="text-[var(--op-primary)] underline">Privacy Policy</span>, and Master Subscription Agreement for Event OS.
                   </label>
                 </div>
 
-                <div className="flex justify-between items-center pt-4 border-t border-[var(--color-border)]">
-                  <Button variant="outline" onClick={() => setStep(skippedPlan ? 5 : 7)} className="h-12 rounded-xl border-[var(--color-border)] bg-[var(--color-surface-3)] text-xs font-bold">Back</Button>
+                <div className="flex justify-between items-center pt-4 border-t border-[var(--op-border)]">
+                  <Button variant="outline" onClick={() => setStep(skippedPlan ? 5 : 7)} className="h-12 rounded-xl border-[var(--op-border)] bg-[var(--op-panel-soft)] text-[var(--op-text)] text-xs font-bold hover:bg-[var(--op-panel-bg)]">Back</Button>
                   <Button
                     onClick={handleFinalizeWorkspace}
                     disabled={!termsAgreed || saving}
                     className={cn(
-                      "h-13 flex items-center gap-2 rounded-lg px-8 text-xs font-black uppercase tracking-wider",
-                      termsAgreed ? "bg-[var(--color-primary-mid)] text-[var(--color-text-inverse)] hover:bg-[var(--color-primary-end)]" : "bg-[var(--color-surface-4)] text-[var(--color-text-muted)] cursor-not-allowed"
+                      "h-13 flex items-center gap-2 rounded-xl px-8 text-xs font-black uppercase tracking-wider transition-all",
+                      termsAgreed ? "bg-[var(--op-primary)] text-[var(--primary-contrast,#ffffff)] hover:opacity-90 cursor-pointer shadow-sm" : "bg-[var(--op-panel-soft)] text-[var(--op-muted)] cursor-not-allowed border border-[var(--op-border)]"
                     )}
                   >
                     Confirm & Launch Workspace <ChevronRight className="h-4 w-4 stroke-[3]" />

@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from typing import Dict, Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Header
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_db, get_current_event, CurrentEvent
+from app.dependencies import get_db, get_current_event, CurrentEvent, get_current_user
+from app.modules.identity.models.user import User
 from app.modules.registration.application.commands import PricingCommandService
 from app.modules.registration.application.queries import PricingQueryService
 from app.schemas.common import MessageResponse
@@ -43,9 +44,12 @@ async def save_tiers(
     payload: TiersSaveRequest,
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ) -> MessageResponse:
     """Persist tier names in event.registration_settings.tiers."""
-    await PricingCommandService.save_tiers(db, event=event, tiers=payload.tiers)
+    await PricingCommandService.save_tiers(db, event=event, tiers=payload.tiers, actor=current_user, if_match=if_match, idempotency_key=idempotency_key)
     return MessageResponse(message="Tiers saved successfully.")
 
 
@@ -96,11 +100,17 @@ async def save_pricing(
     payload: PricingSaveRequest,
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ) -> MessageResponse:
     await PricingCommandService.save_matrix(
         db,
         event=event,
         pricing_data=payload.pricingData,
         tier_schedules=payload.tierSchedules,
+        actor=current_user,
+        if_match=if_match,
+        idempotency_key=idempotency_key,
     )
     return MessageResponse(message="Pricing matrix and schedules saved successfully.")

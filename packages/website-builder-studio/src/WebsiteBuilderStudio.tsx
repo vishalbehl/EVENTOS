@@ -703,6 +703,8 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
     injectCanvasTheme();
     window.setTimeout(injectCanvasTheme, 0);
 
+    const detachCanvasListeners: Array<() => void> = [];
+
     const guardCanvasLinks = () => {
       const frameDocument = editor.Canvas.getDocument();
       if (!frameDocument || (frameDocument as Document & { __wbLinkGuarded?: boolean }).__wbLinkGuarded) return;
@@ -731,7 +733,7 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
         }
         return false;
       };
-      frameDocument.addEventListener('click', (event) => {
+      const handleCanvasClick = (event: MouseEvent) => {
         const target = event.target as Element | null;
         const link = target?.closest?.('a[href]');
         if (selectCanvasElement(target)) {
@@ -747,7 +749,10 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
         const wrapper = editor.getWrapper();
         const candidates = wrapper?.find(`a[href="${CSS.escape(link.getAttribute('href') || '')}"]`) || [];
         if (candidates[0]) editor.select(candidates[0]);
-      }, true);
+      };
+
+      frameDocument.addEventListener('click', handleCanvasClick, true);
+      detachCanvasListeners.push(() => frameDocument.removeEventListener('click', handleCanvasClick, true));
     };
 
     function findComponentFromElement(editorInstance: Editor | null, el: HTMLElement | null): any {
@@ -843,9 +848,16 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
       frameDoc.addEventListener('drop', handleDrop, true);
       frameDoc.defaultView?.addEventListener('dragover', handleDragOver, true);
       frameDoc.defaultView?.addEventListener('drop', handleDrop, true);
+      detachCanvasListeners.push(() => {
+        frameDoc.removeEventListener('dragover', handleDragOver, true);
+        frameDoc.removeEventListener('drop', handleDrop, true);
+        frameDoc.defaultView?.removeEventListener('dragover', handleDragOver, true);
+        frameDoc.defaultView?.removeEventListener('drop', handleDrop, true);
+        delete (frameDoc as any).__wb_drop_attached__;
+      });
     };
 
-    editor.on('load', () => {
+    const handleEditorLoad = () => {
       setEditorReady(true);
       guardCanvasLinks();
       attachCanvasDropListeners();
@@ -855,14 +867,35 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
         // We no longer rely on GrapesJS style manager classes to show/hide sectors.
         // PropertyStudio (React) handles this now via component schemas.
       });
-    });
-    editor.on('canvas:frame:load', () => {
+    };
+    const handleFrameLoad = () => {
       guardCanvasLinks();
       attachCanvasDropListeners();
-    });
+    };
+    editor.on('load', handleEditorLoad);
+    editor.on('canvas:frame:load', handleFrameLoad);
 
     return () => {
-      editor.off('canvas:frame:load', guardCanvasLinks);
+      // GrapesJS keeps its drag auto-scroller alive on a scheduled callback.
+      // Stop it before the frame/editor is torn down, otherwise the callback
+      // can reach a destroyed FrameView and call getGlobalToolsEl on undefined.
+      try {
+        editor.Canvas.stopAutoscroll();
+      } catch {}
+      try {
+        // FrameView.showGlobalTools is debounced by GrapesJS. Cancel the
+        // pending callback as well, since it can run after FrameView removal.
+        const frameView = editor.Canvas.getFrame()?.view as unknown as {
+          showGlobalTools?: { cancel?: () => void };
+        } | undefined;
+        frameView?.showGlobalTools?.cancel?.();
+      } catch {}
+      try {
+        editor.Commands.stop('core:component-drag');
+      } catch {}
+      detachCanvasListeners.splice(0).forEach((detach) => detach());
+      editor.off('load', handleEditorLoad);
+      editor.off('canvas:frame:load', handleFrameLoad);
       adapterRef.current?.destroy();
       adapterRef.current = null;
       editor.destroy();

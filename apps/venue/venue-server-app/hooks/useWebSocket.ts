@@ -19,7 +19,7 @@ export function useWebSocket(eventId?: string) {
     socket.on("connect", () => {
       setIsConnected(true);
       if (eventId) {
-        socket.emit("join_event", { event_id: eventId });
+        socket.emit("join_event_room", { event_id: eventId });
       }
     });
 

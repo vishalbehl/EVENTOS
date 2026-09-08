@@ -466,7 +466,7 @@ resource "aws_ecs_task_definition" "worker" {
       essential   = true
       environment = local.common_environment
       secrets     = local.runtime_secrets
-      command     = ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=${lower(var.log_level)}", "--queues=celery", "--concurrency=2"]
+      command     = ["celery", "-A", "app.worker:celery_app", "worker", "--loglevel=${lower(var.log_level)}", "--queues=critical,default,notifications", "--concurrency=2"]
       stopTimeout = 120
       logConfiguration = {
         logDriver = "awslogs"
@@ -478,7 +478,24 @@ resource "aws_ecs_task_definition" "worker" {
       }
     },
     {
-      name      = "processing-worker"
+      name        = "application-processing-worker"
+      image       = var.backend_image
+      essential   = true
+      environment = local.common_environment
+      secrets     = local.runtime_secrets
+      command     = ["celery", "-A", "app.worker:celery_app", "worker", "--loglevel=${lower(var.log_level)}", "--queues=files,videos,imports,search,reports,reconciliation", "--concurrency=1"]
+      stopTimeout = 120
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = var.log_group_names["workers"]
+          awslogs-region        = var.aws_region
+          awslogs-stream-prefix = "application-processing"
+        }
+      }
+    },
+    {
+      name      = "legacy-processing-worker"
       image     = var.worker_image
       essential = true
       environment = concat(local.common_environment, [
@@ -486,14 +503,14 @@ resource "aws_ecs_task_definition" "worker" {
         { name = "UPLOAD_PORTAL_BASE_URL", value = var.speaker_portal_url }
       ])
       secrets     = local.runtime_secrets
-      command     = ["celery", "-A", "workers.celery_app:app", "worker", "--loglevel=${lower(var.log_level)}", "--queues=critical,default,files,videos,imports,notifications,reports,reconciliation,search", "--concurrency=1"]
+      command     = ["celery", "-A", "workers.celery_app:app", "worker", "--loglevel=${lower(var.log_level)}", "--queues=legacy-default,legacy-files,legacy-videos,legacy-imports,legacy-notifications,legacy-reports,legacy-reconciliation,legacy-search", "--concurrency=1"]
       stopTimeout = 120
       logConfiguration = {
         logDriver = "awslogs"
         options = {
           awslogs-group         = var.log_group_names["workers"]
           awslogs-region        = var.aws_region
-          awslogs-stream-prefix = "processing"
+          awslogs-stream-prefix = "legacy-processing"
         }
       }
     },
@@ -503,7 +520,7 @@ resource "aws_ecs_task_definition" "worker" {
       essential   = true
       environment = local.common_environment
       secrets     = local.runtime_secrets
-      command     = ["celery", "-A", "app.worker.celery_app", "beat", "--loglevel=${lower(var.log_level)}"]
+      command     = ["celery", "-A", "app.worker:celery_app", "beat", "--loglevel=${lower(var.log_level)}"]
       logConfiguration = {
         logDriver = "awslogs"
         options = {

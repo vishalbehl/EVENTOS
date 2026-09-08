@@ -10,14 +10,31 @@ from app.core.cache import invalidate_organization
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.events.models.event import Event
 from app.modules.platform.models.organization_console import OrganizationApprovalRule
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 
 
 class OrganizerApprovalRuleCommandService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def create(self, *, organization_id, actor, values: dict) -> OrganizationApprovalRule:
+    async def create(self, *, organization_id, actor, values: dict, idempotency_key: str | None = None) -> OrganizationApprovalRule:
         try:
+            idem = None
+            if idempotency_key:
+                idem = await begin_idempotent(
+                    self.db, organization_id=organization_id, actor_id=actor.id,
+                    operation="organiser.organization.approval_rule.create", key=idempotency_key,
+                    payload={"values": values},
+                )
+                if replay_response(idem) is not None:
+                    row = await self.db.scalar(select(OrganizationApprovalRule).where(
+                        OrganizationApprovalRule.id == idem.resource_id,
+                        OrganizationApprovalRule.organization_id == organization_id,
+                    ).with_for_update())
+                    if row is None:
+                        raise RuntimeError("Completed approval-rule idempotency resource is missing.")
+                    await self.db.commit()
+                    return row
             await self._verify_event(organization_id, values.get("event_id"))
             row = OrganizationApprovalRule(organization_id=organization_id, created_by=actor.id, **values)
             self.db.add(row)
@@ -29,6 +46,12 @@ class OrganizerApprovalRuleCommandService:
                 new_state={"name": row.name, "domain": row.domain, "version": row.version},
                 is_sensitive=True,
             ))
+            if idem is not None:
+                await complete_idempotent(
+                    self.db, idem, response_status=201,
+                    response_body={"id": str(row.id), "name": row.name, "domain": row.domain, "version": row.version},
+                    resource_id=row.id,
+                )
             await self.db.commit()
             await invalidate_organization(organization_id)
             return row
@@ -36,8 +59,24 @@ class OrganizerApprovalRuleCommandService:
             await self.db.rollback()
             raise
 
-    async def update(self, *, organization_id, rule_id, actor, values: dict, if_match: int) -> OrganizationApprovalRule:
+    async def update(self, *, organization_id, rule_id, actor, values: dict, if_match: int, idempotency_key: str | None = None) -> OrganizationApprovalRule:
         try:
+            idem = None
+            if idempotency_key:
+                idem = await begin_idempotent(
+                    self.db, organization_id=organization_id, actor_id=actor.id,
+                    operation="organiser.organization.approval_rule.update", key=idempotency_key,
+                    payload={"rule_id": str(rule_id), "values": values, "if_match": if_match},
+                )
+                if replay_response(idem) is not None:
+                    row = await self.db.scalar(select(OrganizationApprovalRule).where(
+                        OrganizationApprovalRule.id == rule_id,
+                        OrganizationApprovalRule.organization_id == organization_id,
+                    ).with_for_update())
+                    if row is None:
+                        raise RuntimeError("Completed approval-rule idempotency resource is missing.")
+                    await self.db.commit()
+                    return row
             await self._verify_event(organization_id, values.get("event_id"))
             row = await self.db.scalar(select(OrganizationApprovalRule).where(
                 OrganizationApprovalRule.id == rule_id,
@@ -60,6 +99,12 @@ class OrganizerApprovalRuleCommandService:
                 old_state={"version": if_match},
                 new_state={"version": row.version}, is_sensitive=True,
             ))
+            if idem is not None:
+                await complete_idempotent(
+                    self.db, idem, response_status=200,
+                    response_body={"id": str(row.id), "name": row.name, "domain": row.domain, "version": row.version},
+                    resource_id=row.id,
+                )
             await self.db.commit()
             await invalidate_organization(organization_id)
             return row

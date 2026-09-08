@@ -94,12 +94,15 @@
       "public/**/*",
       "store/**/*",
       ".next/**/*",
+      "!**/.next/cache/**",
+      "!**/.next/dev/**",
       "next.config.mjs",
       "package.json"
     ],
     "asar": true,
     "npmRebuild": false,
     "win": {
+      "icon": "../venue-server-app/public/logo/logo-icon.png",
       "target": [
         {
           "target": "msi",

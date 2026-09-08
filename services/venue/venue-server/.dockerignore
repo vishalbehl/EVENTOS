@@ -5,3 +5,11 @@ __pycache__
 *.pyo
 *.log
 tests
+.venv
+data
+scratch
+*.sqlite
+*.sqlite3
+dist
+release
+test_*.py

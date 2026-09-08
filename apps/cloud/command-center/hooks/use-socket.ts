@@ -22,6 +22,7 @@ export function useSocket(eventId?: string) {
     // 3. Join the specific event room if provided
     if (eventId) {
       socketService.joinEvent(eventId);
+      socketService.joinVenueOps(eventId);
     }
 
     // 4. Attach event listeners

@@ -10,7 +10,7 @@ export interface ApiError {
 }
 
 const DEFAULT_REGISTRATION_SERVER_URL = "http://127.0.0.1:8002"
-const DEFAULT_NODE_AGENT_URL = "http://127.0.0.1:8011"
+const DEFAULT_NODE_AGENT_URL = "http://127.0.0.1:8000"
 const CONFIGURED_API_URL = process.env.NEXT_PUBLIC_API_URL || DEFAULT_REGISTRATION_SERVER_URL
 
 export function resolveApiBaseUrl() {

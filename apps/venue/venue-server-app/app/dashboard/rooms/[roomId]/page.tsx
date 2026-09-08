@@ -56,9 +56,9 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
   const moderator = devices.moderator || {};
   const timer = devices.timer || {};
 
-  const techVersion = tech.current_presentation || "Cardiology_Final.pptx v7";
-  const stageVersion = stage.playing_presentation || "Cardiology_Final.pptx v7";
-  const isVersionMismatch = techVersion !== stageVersion;
+  const techVersion = tech.current_presentation || null;
+  const stageVersion = stage.playing_presentation || null;
+  const isVersionMismatch = Boolean(techVersion && stageVersion && techVersion !== stageVersion);
 
   return (
     <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6 pb-12">
@@ -74,14 +74,14 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
           </Link>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-black uppercase tracking-tight text-[var(--text)] sm:text-3xl">
-              {room?.name || "Hall 04"}
+              {room?.name || "Room unavailable"}
             </h1>
-            <span className="rounded-lg bg-emerald-500/15 border border-emerald-500/30 px-3 py-1 font-mono text-[10px] font-black uppercase text-emerald-400">
-              ● ROOM OPERATIONAL
+            <span className="rounded-lg bg-amber-500/15 border border-amber-500/30 px-3 py-1 font-mono text-[10px] font-black uppercase text-amber-300">
+              ● {room?.status?.toUpperCase() || "UNKNOWN"}
             </span>
           </div>
           <p className="text-xs text-[var(--muted)]">
-            {room?.type || "Cardiology Room"} · Capacity {room?.capacity || 500} · AV Tech: {room?.av_technician || "Amit Kumar"}
+            {room?.type || "Type unavailable"} · Capacity {room?.capacity ?? "Unknown"} · AV Tech: {room?.av_technician || "Unassigned"}
           </p>
         </div>
 
@@ -127,17 +127,17 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
                   ACTIVE SCIENTIFIC SESSION
                 </span>
                 <h2 className="text-lg font-black text-[var(--text)]">
-                  {currentSession?.title || "Cardiology Update & Cardiac Complications"}
+                  {currentSession?.title || "No current session"}
                 </h2>
                 <div className="mt-1 flex items-center gap-3 text-xs text-[var(--muted)]">
-                  <span>09:30 AM – 10:30 AM</span>
+                  <span>{currentSession?.start && currentSession?.end ? `${new Date(currentSession.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} – ${new Date(currentSession.end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Time unavailable"}</span>
                   <span>·</span>
-                  <span className="font-bold text-[var(--text)]">{currentSession?.speaker?.name || "Dr. Raj Sharma"}</span>
-                  <span>({currentSession?.speaker?.affiliation || "Apollo Hospitals"})</span>
+                  <span className="font-bold text-[var(--text)]">{currentSession?.speaker?.name || "Speaker unavailable"}</span>
+                  <span>({currentSession?.speaker?.affiliation || "Affiliation unavailable"})</span>
                 </div>
               </div>
               <span className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 font-mono text-[10px] font-bold text-emerald-400">
-                {currentSession?.code || "S-104"}
+                {currentSession?.code || "NO CODE"}
               </span>
             </div>
 
@@ -146,21 +146,21 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
               <div className="rounded-xl border border-[var(--border)] bg-[var(--surf)] p-3 text-xs space-y-1">
                 <span className="font-mono text-[9px] font-bold uppercase text-[var(--muted)]">PRESENTATION ASSET</span>
                 <div className="font-bold text-[var(--text)] truncate">
-                  {currentSession?.presentation?.filename || "Cardiology_Final.pptx"}
+                  {currentSession?.presentation?.filename || "No current presentation"}
                 </div>
                 <div className="flex items-center gap-2 font-mono text-[10px] text-emerald-400">
-                  <span>{currentSession?.presentation?.version || "v7"}</span>
+                  <span>{currentSession?.presentation?.version || "Version unavailable"}</span>
                   <span>·</span>
-                  <span>Checksum Verified ✓</span>
+                  <span>{currentSession?.presentation?.checksum ? "Checksum recorded" : "Checksum unavailable"}</span>
                 </div>
               </div>
 
               <div className="rounded-xl border border-[var(--border)] bg-[var(--surf)] p-3 text-xs space-y-1">
                 <span className="font-mono text-[9px] font-bold uppercase text-[var(--muted)]">PRESENTATION TIMER</span>
                 <div className="text-xl font-black text-[var(--text)]">
-                  08:42 REMAINING
+                  {timer.remaining_seconds != null ? `${Math.floor(timer.remaining_seconds / 60).toString().padStart(2, "0")}:${(timer.remaining_seconds % 60).toString().padStart(2, "0")} REMAINING` : "Time unavailable"}
                 </div>
-                <div className="text-[10px] text-[var(--muted)]">Session on schedule</div>
+                <div className="text-[10px] text-[var(--muted)]">{timer.status || "Timer state unavailable"}</div>
               </div>
             </div>
 
@@ -261,30 +261,30 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
                 </h3>
               </div>
               <span className="font-mono text-[10px] font-bold text-emerald-400">
-                ● {tech.status?.toUpperCase() || "ONLINE"}
+                ● {tech.status?.toUpperCase() || "UNKNOWN"}
               </span>
             </div>
 
             <div className="space-y-2 text-xs">
               <div className="flex justify-between">
                 <span className="text-[var(--muted)]">Device:</span>
-                <span className="font-mono font-bold text-[var(--text)]">{tech.name}</span>
+                <span className="font-mono font-bold text-[var(--text)]">{tech.name || "Unavailable"}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-[var(--muted)]">IP Address:</span>
-                <span className="font-mono text-[var(--text)]">{tech.ip}</span>
+                <span className="font-mono text-[var(--text)]">{tech.ip || "Unavailable"}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-[var(--muted)]">Current Presentation:</span>
-                <span className="font-bold text-[var(--acc)] truncate max-w-[180px]">{tech.current_presentation}</span>
+                <span className="font-bold text-[var(--acc)] truncate max-w-[180px]">{tech.current_presentation || "Unavailable"}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-[var(--muted)]">CPU / RAM:</span>
-                <span className="font-mono text-[var(--text)]">{tech.cpu_pct}% / {tech.ram_pct}%</span>
+                <span className="font-mono text-[var(--text)]">{tech.cpu_pct != null && tech.ram_pct != null ? `${tech.cpu_pct}% / ${tech.ram_pct}%` : "Unavailable"}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-[var(--muted)]">App Version:</span>
-                <span className="font-mono text-[var(--muted)]">v{tech.app_version}</span>
+                <span className="font-mono text-[var(--muted)]">{tech.app_version ? `v${tech.app_version}` : "Unavailable"}</span>
               </div>
             </div>
           </div>
@@ -299,30 +299,30 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
                 </h3>
               </div>
               <span className="font-mono text-[10px] font-bold text-emerald-400">
-                ● {stage.status?.toUpperCase() || "ONLINE"}
+                ● {stage.status?.toUpperCase() || "UNKNOWN"}
               </span>
             </div>
 
             <div className="space-y-2 text-xs">
               <div className="flex justify-between">
                 <span className="text-[var(--muted)]">Device:</span>
-                <span className="font-mono font-bold text-[var(--text)]">{stage.name}</span>
+                <span className="font-mono font-bold text-[var(--text)]">{stage.name || "Unavailable"}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-[var(--muted)]">IP Address:</span>
-                <span className="font-mono text-[var(--text)]">{stage.ip}</span>
+                <span className="font-mono text-[var(--text)]">{stage.ip || "Unavailable"}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-[var(--muted)]">Playing Deck:</span>
-                <span className="font-bold text-emerald-400 truncate max-w-[180px]">{stage.playing_presentation}</span>
+                <span className="font-bold text-emerald-400 truncate max-w-[180px]">{stage.playing_presentation || "Unavailable"}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-[var(--muted)]">Version Cached:</span>
-                <span className="font-mono font-bold text-[var(--acc)]">{stage.version_cached}</span>
+                <span className="font-mono font-bold text-[var(--acc)]">{stage.version_cached || "Unavailable"}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-[var(--muted)]">CPU Usage:</span>
-                <span className="font-mono text-[var(--text)]">{stage.cpu_pct}%</span>
+                <span className="font-mono text-[var(--text)]">{stage.cpu_pct != null ? `${stage.cpu_pct}%` : "Unavailable"}</span>
               </div>
             </div>
           </div>
@@ -335,11 +335,11 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
 
             <div className="flex items-center justify-between">
               <span className="text-[var(--muted)]">Moderator Tablet:</span>
-              <span className="font-bold text-emerald-400">● Connected</span>
+              <span className="font-bold text-amber-300">● {moderator.status?.toUpperCase() || "UNKNOWN"}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-[var(--muted)]">Stage Timer Display:</span>
-              <span className="font-bold text-emerald-400">● Active OSD</span>
+              <span className="font-bold text-amber-300">● {timer.status?.toUpperCase() || "UNKNOWN"}</span>
             </div>
           </div>
         </div>

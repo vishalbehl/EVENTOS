@@ -15,6 +15,7 @@ class ImportJobResponse(BaseModel):
     event_id: uuid.UUID
     filename: str
     status: str
+    version: int = 1
     rows_total: int
     rows_imported: int
     rows_failed: int

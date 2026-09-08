@@ -3410,6 +3410,26 @@ export const useConvertQuoteToProposal = (quoteId: string, organizationId?: stri
   })
 }
 
+export const useSendProposalToOrganiser = (propId: string, organizationId?: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ expectedVersion, reason, idempotencyKey }: { expectedVersion: number; reason: string; idempotencyKey: string }) =>
+      apiClient.post<CommercialProposal>(`/service-requests/proposals/${propId}/send`, {
+        expected_version: expectedVersion,
+        reason,
+      }, {
+        params: { organization_id: organizationId },
+        headers: { 'Idempotency-Key': idempotencyKey },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: platformKey('proposal-detail', organizationId, propId) })
+      qc.invalidateQueries({ queryKey: platformKey('quote-detail', organizationId) })
+      toast.success('Proposal sent to the organiser portal')
+    },
+    onError: (e: any) => toast.error(e.message || 'Proposal could not be sent'),
+  })
+}
+
 export const useProposalDetail = (propId: string, organizationId?: string) =>
   useQuery({
     queryKey: platformKey('proposal-detail', organizationId, propId),

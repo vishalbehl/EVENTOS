@@ -20,3 +20,10 @@ def test_security_command_is_tenant_locked_versioned_audited_and_fail_safe():
     assert "INVALID_AUTH_METHOD" in source and "VERSION_CONFLICT" in source
     assert "AuditLog" in source and "invalidate_organization" in source
     assert "await self.db.rollback()" in source
+
+
+def test_security_command_persists_durable_replay_result():
+    source = SERVICE.read_text(encoding="utf-8")
+    assert "begin_idempotent" in source
+    assert "complete_idempotent" in source
+    assert 'operation="organiser.organization.security.update"' in source

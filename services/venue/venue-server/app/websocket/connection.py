@@ -2,6 +2,7 @@ import json
 import asyncio
 import socketio
 import redis.asyncio as redis
+from http.cookies import SimpleCookie
 from typing import Dict, List
 from fastapi import APIRouter
 
@@ -94,9 +95,46 @@ async def connect(sid: str, environ: dict, auth: dict | None = None) -> bool:
     client_ip = (environ.get("REMOTE_ADDR") or environ.get("HTTP_X_FORWARDED_FOR", "")).split(",")[0].strip()
     is_loopback = client_ip in ["127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1", ""]
     
-    # Authenticated frontend users and local clients are always allowed
-    has_auth_token = bool(auth and (auth.get("token") or auth.get("auth")))
-    if not is_loopback and not has_auth_token:
+    # Resolve the credential before accepting a non-local connection. Browser
+    # clients use the HttpOnly venue cookie; installed devices may provide a
+    # short-lived access token in Socket.IO auth. Store only the validated
+    # scope in the Socket.IO session.
+    token = str((auth or {}).get("token") or (auth or {}).get("auth") or "").strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    if not token:
+        cookie = SimpleCookie()
+        cookie.load(environ.get("HTTP_COOKIE", ""))
+        token = cookie.get("venue_access_token").value if cookie.get("venue_access_token") else ""
+
+    scope: dict[str, str | None] = {"kind": "anonymous", "event_id": None, "room_id": None}
+    if token:
+        try:
+            from app.database import AsyncSessionLocal
+            from app.routers.auth import decode_token, validate_room_device_credential, resolve_srr_device_credential
+            from app.models.venue_user import VenueUser
+            import uuid
+
+            async with AsyncSessionLocal() as db:
+                try:
+                    payload = decode_token(token, "access")
+                    user = await db.get(VenueUser, uuid.UUID(str(payload.get("sub"))))
+                    if user and user.is_active:
+                        scope = {"kind": "user", "event_id": None, "room_id": None}
+                except Exception:
+                    try:
+                        device_id = uuid.UUID(str((auth or {}).get("device_id")))
+                        device = await validate_room_device_credential(db, device_id, token)
+                        if device:
+                            scope = {"kind": "room_device", "event_id": str(device.event_id), "room_id": str(device.room_id)}
+                    except Exception:
+                        station = await resolve_srr_device_credential(db, token)
+                        if station:
+                            scope = {"kind": "srr_station", "event_id": str(station.event_id), "room_id": None}
+        except Exception as exc:
+            logger.warning(f"Socket.IO credential validation failed: {exc}")
+
+    if scope["kind"] == "anonymous" and not is_loopback:
         # Lookup MAC address using ARP for unauthenticated edge hardware
         mac_address = None
         try:
@@ -124,6 +162,13 @@ async def connect(sid: str, environ: dict, auth: dict | None = None) -> bool:
                 raise
             except Exception as e:
                 logger.error(f"Error checking database for MAC {mac_address}: {e}")
+
+        # MAC discovery is diagnostic only; it is not an authentication
+        # mechanism. Production/staging clients must present a credential.
+        if settings.DEPLOYMENT_PROFILE != "local":
+            raise ConnectionRefusedError("A valid Venue Server credential is required.")
+
+    await sio.save_session(sid, scope)
     
     # We emit a 'connected' ack so the client knows the connection succeeded.
     await sio.emit("connected", {"sid": sid, "status": "ok"}, to=sid)
@@ -142,6 +187,17 @@ async def join_event_room(sid: str, data: dict) -> None:
     event_id = data.get("event_id")
     if not event_id:
         await sio.emit("error", {"message": "event_id required"}, to=sid)
+        return
+
+    try:
+        scope = await sio.get_session(sid)
+    except Exception:
+        scope = {"kind": "anonymous", "event_id": None}
+    if settings.DEPLOYMENT_PROFILE != "local" and scope.get("kind") == "anonymous":
+        await sio.emit("error", {"message": "A valid Venue Server credential is required"}, to=sid)
+        return
+    if scope.get("event_id") and scope["event_id"] != str(event_id):
+        await sio.emit("error", {"message": "Credential is not scoped to this event"}, to=sid)
         return
 
     room = f"event_{event_id}"

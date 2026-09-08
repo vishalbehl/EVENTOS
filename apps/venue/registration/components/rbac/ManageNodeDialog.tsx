@@ -63,7 +63,7 @@ export function ManageNodeDialog({ user, open, onOpenChange, roles, onSuccess }:
       const token = useAuthStore.getState().accessToken;
       if (!token) return;
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/events`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8002"}/api/v1/events`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }

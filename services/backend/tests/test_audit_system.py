@@ -12,10 +12,10 @@ from httpx import AsyncClient
 
 from app.database import AsyncSessionLocal
 from app.modules.audit.models.audit_log import AuditLog
-from app.modules.audit.models.api_request_log import WorkerJobLog
+from app.modules.audit.models.api_request_log import APIRequestLog, WorkerJobLog
 from app.modules.audit.services.audit_service import AuditService, AuditContext
 from app.middleware.audit_middleware import make_json_diff, _derive_action
-from app.tasks.audit_tasks import write_audit_log
+from app.tasks.audit_tasks import write_api_request_log, write_audit_log
 from tests.conftest import activate_event_for_test, auth_headers
 
 # Override database URL for Celery task testing to point to test database
@@ -276,6 +276,45 @@ async def test_celery_worker_task_writes_log(db: AsyncSession, super_admin):
 
 
 @pytest.mark.asyncio
+async def test_api_request_log_task_is_idempotent_and_preserves_telemetry(db: AsyncSession):
+    log_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
+    api_data = {
+        "id": str(log_id),
+        "request_id": str(uuid.uuid4()),
+        "correlation_id": str(uuid.uuid4()),
+        "organization_id": str(organization_id),
+        "method": "GET",
+        "path": "/api/v1/portal/dashboard",
+        "status_code": 200,
+        "duration_ms": 75.0,
+        "db_query_count": 7,
+        "db_query_duration_ms": 28.3,
+        "cache_hit": True,
+        "ip_address": "127.0.0.1",
+        "user_id": None,
+        "user_agent": "audit-idempotency-test",
+        "request_size_bytes": 0,
+        "response_size_bytes": 0,
+        "rate_limit_remaining": 42,
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Late acknowledgement may redeliver the exact same operation. Both
+    # executions must succeed while PostgreSQL retains one logical row.
+    write_api_request_log.run(api_data)
+    write_api_request_log.run(api_data)
+
+    rows = (
+        await db.scalars(select(APIRequestLog).where(APIRequestLog.id == log_id))
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].organization_id == organization_id
+    assert rows[0].cache_hit is True
+    assert rows[0].rate_limit_remaining == 42
+
+
+@pytest.mark.asyncio
 async def test_celery_worker_task_failure_fallback(db: AsyncSession):
     audit_data = {
         "id": str(uuid.uuid4()),
@@ -302,5 +341,5 @@ async def test_celery_worker_task_failure_fallback(db: AsyncSession):
         worker_log = res.scalar_one_or_none()
         assert worker_log is not None
         assert worker_log.status == "FAILURE"
-        assert "Max retries exceeded" in worker_log.exception
+        assert "DB connection error" in worker_log.exception
         assert worker_log.task_name == "app.tasks.write_audit_log"

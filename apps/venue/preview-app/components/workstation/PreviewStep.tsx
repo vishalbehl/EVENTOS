@@ -52,7 +52,7 @@ export function PreviewStep({
 
   const currentSession = (sessions && sessions[selectedSessionIndex]) || sessions?.[0] || null;
   const activeFile = currentSession?.presentations?.[0];
-  const totalSlides = activeFile?.slides_count || 1;
+  const totalSlides = activeFile?.slides_count ?? 0;
   const previewSlides = Array.from({ length: totalSlides }, (_, idx) => ({
     id: idx + 1,
     title: activeFile ? `${activeFile.original_filename} - Slide ${idx + 1}` : `Slide ${idx + 1}`,
@@ -66,7 +66,7 @@ export function PreviewStep({
   // Slideshow auto-advance timer
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (isPlaying) {
+    if (isPlaying && totalSlides > 0) {
       interval = setInterval(() => {
         incrementTimer();
         if (slideTimerSeconds >= 5) {
@@ -190,7 +190,7 @@ export function PreviewStep({
           {/* Slide Footer */}
           <div className="relative z-10 flex items-center justify-between border-t border-[var(--border)]/60 pt-4 text-xs font-medium text-[var(--muted)]">
             <span>{currentSession?.title || "No session assigned"} • {activeFile?.upload_status || "No file"}</span>
-            <span className="font-mono font-bold text-[var(--text)]">Slide {activeSlideIndex + 1}</span>
+            <span className="font-mono font-bold text-[var(--text)]">{totalSlides > 0 ? `Slide ${activeSlideIndex + 1} / ${totalSlides}` : "Slide count unavailable"}</span>
           </div>
         </div>
 
@@ -389,15 +389,15 @@ export function PreviewStep({
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-2.5 text-xs font-medium text-[var(--text)] shadow-sm">
               <div className="flex items-center justify-between">
                 <span className="text-[var(--muted)]">Videos</span>
-                <span className="font-bold text-[var(--text)] font-mono">{activeFile?.videos_count || 2}</span>
+        <span className="font-bold text-[var(--text)] font-mono">{activeFile?.videos_count ?? "Unavailable"}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-[var(--muted)]">Animations</span>
-                <span className="font-bold text-[var(--text)] font-mono">{activeFile?.animations_count || 3}</span>
+                <span className="font-bold text-[var(--text)] font-mono">{activeFile?.animations_count ?? "Unavailable"}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-[var(--muted)]">Images</span>
-                <span className="font-bold text-[var(--text)] font-mono">{activeFile?.images_count || 21}</span>
+                <span className="font-bold text-[var(--text)] font-mono">{activeFile?.images_count ?? "Unavailable"}</span>
               </div>
             </div>
           </div>

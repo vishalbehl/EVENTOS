@@ -9,14 +9,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.cache import invalidate_organization
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.billing.models.billing_domain_tables import OrganizationBillingProfile
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 
 
 class OrganizerBillingCommandService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def update_profile(self, *, organization_id, actor, values: dict, expected_version: int) -> OrganizationBillingProfile:
+    async def update_profile(self, *, organization_id, actor, values: dict, expected_version: int, idempotency_key: str | None = None) -> OrganizationBillingProfile:
         try:
+            idem = None
+            if idempotency_key:
+                idem = await begin_idempotent(
+                    self.db, organization_id=organization_id, actor_id=actor.id,
+                    operation="organiser.organization.billing.update", key=idempotency_key,
+                    payload={"values": values, "if_match": expected_version},
+                )
+                if replay_response(idem) is not None:
+                    profile = await self.db.scalar(select(OrganizationBillingProfile).where(
+                        OrganizationBillingProfile.organization_id == organization_id
+                    ).with_for_update())
+                    if profile is None:
+                        raise RuntimeError("Completed billing idempotency resource is missing.")
+                    await self.db.commit()
+                    return profile
             profile = await self.db.scalar(select(OrganizationBillingProfile).where(
                 OrganizationBillingProfile.organization_id == organization_id,
             ).with_for_update())
@@ -49,6 +65,12 @@ class OrganizerBillingCommandService:
                 old_state=old_state, new_state={**values, "version": profile.version},
                 is_sensitive=True,
             ))
+            if idem is not None:
+                await complete_idempotent(
+                    self.db, idem, response_status=200,
+                    response_body={**values, "id": str(profile.id), "version": profile.version},
+                    resource_id=profile.id,
+                )
             await self.db.commit()
             await invalidate_organization(organization_id)
             return profile

@@ -230,6 +230,7 @@ class EventCampaignMutationService:
         campaign_id: uuid.UUID,
         payload: CampaignUpdate,
         actor: User,
+        expected_version: int | None = None,
     ) -> tuple[EmailCampaign, dict[str, Any], list[str]]:
         await EventCampaignMutationService._enforce_base(db, event, actor)
         row = await db.scalar(
@@ -248,6 +249,8 @@ class EventCampaignMutationService:
                 status_code=409,
                 detail="Only draft or scheduled campaigns can be edited",
             )
+        if expected_version is not None and row.version != expected_version:
+            raise HTTPException(status_code=409, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": row.version})
         changes = payload.model_dump(exclude_unset=True)
         if not changes:
             raise HTTPException(status_code=422, detail="No campaign fields supplied")
@@ -270,6 +273,7 @@ class EventCampaignMutationService:
         old = {key: getattr(row, key, None) for key in changes}
         for key, value in changes.items():
             setattr(row, key, value)
+        row.version += 1
         await db.flush()
         return row, old, sorted(changes)
 
@@ -280,6 +284,7 @@ class EventCampaignMutationService:
         event: Event,
         campaign_id: uuid.UUID,
         actor: User,
+        expected_version: int | None = None,
     ) -> tuple[EmailCampaign, str]:
         await EventCampaignMutationService._enforce_base(db, event, actor)
         row = await db.scalar(
@@ -292,6 +297,8 @@ class EventCampaignMutationService:
         )
         if row is None:
             raise HTTPException(status_code=404, detail="Campaign not found")
+        if expected_version is not None and row.version != expected_version:
+            raise HTTPException(status_code=409, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": row.version})
         if (
             actor.role not in EventCampaignMutationService.ELEVATED_ROLES
             and row.created_by != actor.id
@@ -308,6 +315,7 @@ class EventCampaignMutationService:
                 detail="A sending campaign cannot be archived",
             )
         row.deleted_at = datetime.now(timezone.utc)
+        row.version += 1
         row.deleted_by = actor.id
         await db.flush()
         return row, "SOFT_DELETED"
@@ -346,5 +354,6 @@ class EventCampaignMutationService:
         )
         row.deleted_at = None
         row.deleted_by = None
+        row.version += 1
         await db.flush()
         return row, "RESTORED"

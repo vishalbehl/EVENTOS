@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 from starlette.datastructures import Headers
 from starlette.datastructures import UploadFile as StarletteUploadFile
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.event import Event
 from app.models.speaker import Speaker
@@ -14,8 +15,10 @@ from app.models.srr_station import SRRStation
 from app.models.session_speaker import SessionSpeaker
 from app.models.presentation_file import PresentationFile
 from app.models.presentation_queue import PresentationQueue
+from app.models.room_device import RoomDevice
 from app.models.venue_sync_job import VenueSyncJob
-from app.routers import srr
+from app.node_replica import NodeReplica
+from app.routers import srr, workstations
 
 
 def result_with(*rows, scalar=None):
@@ -109,6 +112,9 @@ async def test_device_enroll_returns_secret_once_and_persists_hash(mocker):
     assert station.enrollment_token_prefix == response["token_prefix"]
     assert station.enrollment_token_hash == srr.hash_device_key(response["enrollment_token"])
     assert response["enrollment_token"] not in station.enrollment_token_hash
+    executed_queries = [call.args[0] for call in db.execute.call_args_list]
+    assert any("srr_stations.event_id" in str(query) for query in executed_queries)
+    assert any("srr_stations.station_number" in str(query) for query in executed_queries)
 
 
 @pytest.mark.asyncio
@@ -197,19 +203,124 @@ async def test_checkin_assigns_lowest_online_idle_station(mocker):
     assert db.add.call_count >= 2
 
 
+@pytest.mark.asyncio
+async def test_workstation_device_cannot_perform_srr_checkin():
+    station = make_station(uuid.uuid4())
+    station.device_role = "workstation"
+    db = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc:
+        await srr.srr_speaker_checkin(
+            srr.CheckinRequest(qr_code="speaker@example.com"),
+            db=db,
+            actor=station,
+        )
+
+    assert exc.value.status_code == 403
+    assert "check-in node or master" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_manual_assignment_rejects_cross_event_speaker():
+    event_id = uuid.uuid4()
+    station = make_station(event_id)
+    speaker = make_speaker(uuid.uuid4())
+    db = AsyncMock()
+    db.get.side_effect = [station, speaker]
+
+    with pytest.raises(HTTPException) as exc:
+        await srr.assign_speaker_to_station(
+            str(station.id),
+            srr.AssignStationRequest(speaker_id=str(speaker.id)),
+            db=db,
+            _=None,
+        )
+
+    assert exc.value.status_code == 403
+    assert "event scope" in exc.value.detail
+    assert db.commit.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_manual_assignment_does_not_overwrite_occupied_station():
+    event = make_event()
+    station = make_station(event.id, status="occupied")
+    station.assigned_speaker_id = uuid.uuid4()
+    speaker = make_speaker(event.id)
+    db = AsyncMock()
+    db.get.side_effect = [station, speaker]
+
+    with pytest.raises(HTTPException) as exc:
+        await srr.assign_speaker_to_station(
+            str(station.id),
+            srr.AssignStationRequest(speaker_id=str(speaker.id)),
+            db=db,
+            _=None,
+        )
+
+    assert exc.value.status_code == 409
+    assert "already assigned" in exc.value.detail
+    assert db.commit.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_manual_assignment_replays_idempotently():
+    event = make_event()
+    station = make_station(event.id)
+    speaker = make_speaker(event.id)
+    previous = MagicMock(station_id=station.id, speaker_id=speaker.id)
+    db = AsyncMock()
+    db.get.return_value = station
+    db.execute.return_value = result_with(previous)
+
+    response = await srr.assign_speaker_to_station(
+        str(station.id),
+        srr.AssignStationRequest(speaker_id=str(speaker.id), operation_id="manual-assignment-1"),
+        db=db,
+        _=None,
+    )
+
+    assert response["duplicate"] is True
+    assert response["station_number"] == station.station_number
+    db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_checkin_replay_rejects_operation_from_another_event():
+    requested_event = make_event()
+    other_event = make_event()
+    previous = MagicMock(event_id=other_event.id, station_id=None, speaker_id=uuid.uuid4())
+    db = AsyncMock()
+    db.execute.return_value = result_with(previous)
+
+    with pytest.raises(HTTPException) as exc:
+        await srr.srr_speaker_checkin(
+            srr.CheckinRequest(operation_id="offline-op-1", event_id=str(requested_event.id)),
+            db=db,
+            actor=MagicMock(),
+        )
+
+    assert exc.value.status_code == 403
+    assert "event scope" in exc.value.detail
+
+
 def test_enrolled_station_requires_matching_device_key():
     station = make_station(uuid.uuid4())
     station.enrollment_token_hash = srr.hash_device_key("correct-key")
 
-    with pytest.raises(HTTPException) as exc:
-        srr.verify_station_device_key(station, "wrong-key")
+    with pytest.raises(HTTPException) as missing:
+        srr.verify_station_device_key(station, None)
+    assert missing.value.status_code == 401
 
-    assert exc.value.status_code == 403
+    with pytest.raises(HTTPException) as wrong:
+        srr.verify_station_device_key(station, "any-key")
+    assert wrong.value.status_code == 401
+
     srr.verify_station_device_key(station, "correct-key")
 
 
 @pytest.mark.asyncio
-async def test_unknown_station_heartbeat_returns_not_configured_without_auto_enroll(mocker):
+async def test_unknown_station_heartbeat_requires_enrolled_device_without_auto_enroll(mocker):
     mocker.patch.object(srr, "broadcast_srr", AsyncMock())
     db = AsyncMock()
     db.add = MagicMock()
@@ -218,8 +329,8 @@ async def test_unknown_station_heartbeat_returns_not_configured_without_auto_enr
     with pytest.raises(HTTPException) as exc:
         await srr.station_heartbeat(srr.StationHeartbeatRequest(station_number=88, device_name="Unenrolled"), db=db)
 
-    assert exc.value.status_code == 404
-    assert "not configured" in exc.value.detail
+    assert exc.value.status_code == 401
+    assert "enrolled SRR station key" in exc.value.detail
     assert db.add.call_count == 0
 
 
@@ -238,8 +349,20 @@ def test_build_srr_replica_creates_sqlite_tables(tmp_path):
         assert connection.execute("SELECT COUNT(*) FROM srr_stations").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM srr_speakers").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM srr_sessions").fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='node_outbox'").fetchone()[0] == "node_outbox"
+        assert connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='delivery_acknowledgements'").fetchone()[0] == "delivery_acknowledgements"
     finally:
         connection.close()
+
+    replica = NodeReplica(target)
+    try:
+        station_row = replica.connection.execute("SELECT station_number,status FROM srr_stations").fetchone()
+        assert station_row[0] == 1
+        assert station_row[1] == "idle"
+        assert replica.connection.execute("PRAGMA user_version").fetchone()[0] == 4
+    finally:
+        replica.close()
 
 
 @pytest.mark.asyncio
@@ -271,6 +394,105 @@ async def test_upload_persists_binary_checksum_and_version(mocker, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_upload_rejects_cross_event_session_assignment(mocker, tmp_path):
+    event = make_event()
+    other_event = make_event()
+    speaker = make_speaker(event.id)
+    slot = make_session_speaker(speaker.id)
+    db = MagicMock()
+    mocker.patch.object(srr, "AsyncSession", type(db))
+    db.get.side_effect = [speaker, slot]
+    db.get = AsyncMock(side_effect=[speaker, slot])
+    db.execute = AsyncMock(return_value=result_with(scalar=slot))
+    db.scalar = AsyncMock(return_value=other_event.id)
+
+    with pytest.raises(HTTPException) as exc:
+        await srr.upload_presentation_file(
+            speaker_id=str(speaker.id),
+            session_speaker_id=str(slot.id),
+            filename="cross-event.pptx",
+            file_size_bytes=len(b"real-presentation"),
+            file=upload_file(tmp_path, name="cross-event.pptx"),
+            db=db,
+        )
+
+    assert exc.value.status_code == 409
+    assert "different events" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_unsupported_format_before_storage(tmp_path):
+    event = make_event()
+    speaker = make_speaker(event.id)
+    slot = make_session_speaker(speaker.id)
+    db = AsyncMock()
+    db.get.side_effect = [speaker, slot]
+    db.execute.side_effect = [result_with(), result_with()]
+
+    with pytest.raises(HTTPException) as exc:
+        await srr.upload_presentation_file(
+            speaker_id=str(speaker.id),
+            session_speaker_id=str(slot.id),
+            filename="malware.exe",
+            file_size_bytes=len(b"real-presentation"),
+            file=upload_file(tmp_path, name="malware.exe"),
+            db=db,
+        )
+
+    assert exc.value.status_code == 415
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_declared_size_mismatch(tmp_path):
+    event = make_event()
+    speaker = make_speaker(event.id)
+    slot = make_session_speaker(speaker.id)
+    install = MagicMock(storage_path=str(tmp_path / "content"), created_at=datetime.now(timezone.utc))
+    db = AsyncMock()
+    db.add = MagicMock()
+    db.get.side_effect = [speaker, slot]
+    db.execute.side_effect = [result_with(), result_with(install, scalar=install)]
+
+    with pytest.raises(HTTPException) as exc:
+        await srr.upload_presentation_file(
+            speaker_id=str(speaker.id),
+            session_speaker_id=str(slot.id),
+            filename="wrong-size.pptx",
+            file_size_bytes=999,
+            file=upload_file(tmp_path, name="wrong-size.pptx"),
+            db=db,
+        )
+
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_upload_idempotency_replays_existing_version_without_new_file(tmp_path):
+    event = make_event()
+    speaker = make_speaker(event.id)
+    slot = make_session_speaker(speaker.id)
+    previous = make_presentation_file(tmp_path, event.id, speaker.id, slot.id)
+    previous.upload_idempotency_key = "upload-op-1"
+    db = AsyncMock()
+    db.get.side_effect = [speaker, slot]
+    db.execute.return_value = result_with(previous)
+
+    response = await srr.upload_presentation_file(
+        speaker_id=str(speaker.id),
+        session_speaker_id=str(slot.id),
+        filename="replacement.pptx",
+        file_size_bytes=5,
+        operation_id="upload-op-1",
+        file=upload_file(tmp_path, name="replacement.pptx"),
+        db=db,
+    )
+
+    assert response["idempotent"] is True
+    assert response["version"] == previous.version_number
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_finalize_fails_when_binary_missing():
     file = PresentationFile(
         id=uuid.uuid4(),
@@ -296,6 +518,29 @@ async def test_finalize_fails_when_binary_missing():
 
 
 @pytest.mark.asyncio
+async def test_station_cannot_finalize_or_download_another_speakers_file(tmp_path):
+    event = make_event()
+    speaker = make_speaker(event.id)
+    other_speaker = make_speaker(event.id)
+    slot = make_session_speaker(speaker.id)
+    file = make_presentation_file(tmp_path, event.id, other_speaker.id, slot.id)
+    station = make_station(event.id)
+    station.assigned_speaker_id = speaker.id
+    db = AsyncMock()
+    db.get.return_value = file
+
+    with pytest.raises(HTTPException) as finalize_error:
+        await srr.finalize_presentation(
+            str(file.id), srr.FinalizeFileRequest(), db=db, actor=station
+        )
+    assert finalize_error.value.status_code == 403
+
+    with pytest.raises(HTTPException) as download_error:
+        await srr.download_file(str(file.id), db=db, actor=station)
+    assert download_error.value.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_finalize_creates_delivery_queue_and_upload_sync_job(mocker, tmp_path):
     mocker.patch.object(srr, "broadcast_srr", AsyncMock())
     event = make_event()
@@ -304,8 +549,8 @@ async def test_finalize_creates_delivery_queue_and_upload_sync_job(mocker, tmp_p
     file = make_presentation_file(tmp_path, event.id, speaker.id, slot.id)
     db = AsyncMock()
     db.add = MagicMock()
-    db.get.side_effect = [file, slot]
-    db.execute.side_effect = [result_with(), result_with(), result_with(), result_with()]
+    db.get.side_effect = [file, slot, None]
+    db.execute.side_effect = [result_with(), result_with(), result_with(), result_with(), result_with(), result_with()]
 
     response = await srr.finalize_presentation(str(file.id), srr.FinalizeFileRequest(notes="checked"), db=db)
 
@@ -335,3 +580,51 @@ async def test_ensure_delivery_records_reuses_existing_pending_sync_job(tmp_path
     assert returned_queue is queue
     assert returned_job is job
     db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delivery_intents_target_only_stage_and_technical_devices(tmp_path):
+    event = make_event()
+    speaker = make_speaker(event.id)
+    slot = make_session_speaker(speaker.id)
+    file = make_presentation_file(tmp_path, event.id, speaker.id, slot.id)
+    session = type("SessionStub", (), {"room_id": uuid.uuid4()})()
+    stage = RoomDevice(id=uuid.uuid4(), event_id=event.id, room_id=session.room_id, device_type="presentation_pc", device_name="Stage", enrollment_token_hash="stage-enrolled")
+    technical = RoomDevice(id=uuid.uuid4(), event_id=event.id, room_id=session.room_id, device_type="technician_tablet", device_name="Technical", enrollment_token_hash="technical-enrolled")
+    signage = RoomDevice(id=uuid.uuid4(), event_id=event.id, room_id=session.room_id, device_type="signage", device_name="Signage", enrollment_token_hash="signage-enrolled")
+    un_enrolled_stage = RoomDevice(id=uuid.uuid4(), event_id=event.id, room_id=session.room_id, device_type="stage_app", device_name="Unenrolled Stage")
+    revoked_technical = RoomDevice(id=uuid.uuid4(), event_id=event.id, room_id=session.room_id, device_type="technical_app", device_name="Revoked Technical", enrollment_token_hash="revoked", enrollment_token_revoked_at=datetime.now(timezone.utc))
+    db = AsyncMock()
+    db.add = MagicMock()
+    db.get.return_value = session
+    db.execute.side_effect = [result_with(), result_with(stage, technical, signage, un_enrolled_stage, revoked_technical), result_with()]
+
+    await srr.create_asset_transfer_intents(db, file, session.id if hasattr(session, "id") else uuid.uuid4())
+
+    transfers = [call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], srr.VenueAssetTransfer)]
+    assert {transfer.target_type for transfer in transfers} == {"presentation_pc", "technician_tablet"}
+    assert all(transfer.target_type not in {"signage", "stage_app", "technical_app"} for transfer in transfers)
+
+
+@pytest.mark.asyncio
+async def test_new_room_device_backfills_existing_current_files(monkeypatch):
+    event_id = uuid.uuid4()
+    room_id = uuid.uuid4()
+    device = RoomDevice(
+        id=uuid.uuid4(), event_id=event_id, room_id=room_id,
+        device_type="stage_app", device_name="Stage", enrollment_token_hash="enrolled",
+    )
+    presentation_file = MagicMock(
+        event_id=event_id, room_id=room_id, session_id=uuid.uuid4(),
+        is_current_version=True,
+    )
+    db = AsyncMock()
+    db.execute.return_value = result_with(presentation_file)
+    create_intents = AsyncMock()
+    monkeypatch.setattr(srr, "create_asset_transfer_intents", create_intents)
+
+    count = await workstations._backfill_room_delivery_intents(db, device)
+
+    assert count == 1
+    create_intents.assert_awaited_once_with(db, presentation_file, presentation_file.session_id)
+    db.commit.assert_awaited_once()

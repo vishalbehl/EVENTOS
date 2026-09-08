@@ -1,5 +1,5 @@
 param(
-  [ValidateSet('up','down','restart','status','logs','migrate','seed','seed-test-identity','seed-load','backup','backup-verify','restore','load','soak','capacity-probe','dashboard-load','queue-isolation','worker-crash','authenticated-upload','redis-topology','db-evidence','db-hot-plans','db-plan-compare','db-badge-plan-compare','failure-checks','rollback-check','verify-certificate','alert-test','release-check')]
+  [ValidateSet('up','down','restart','status','logs','migrate','seed','seed-test-identity','seed-load','backup','backup-verify','restore','load','soak','capacity-probe','dashboard-load','queue-isolation','worker-crash','import-progress-recovery','authenticated-upload','redis-topology','db-evidence','db-hot-plans','db-plan-compare','db-badge-plan-compare','failure-checks','task-family-matrix','task-failure-matrix','retry-replay-probe','rollback-check','verify-certificate','alert-test','release-check')]
   [string]$Action = 'status',
   [string]$DumpFile,
   [ValidateSet('small','large','cross-tenant')][string]$Profile = 'small',
@@ -133,11 +133,15 @@ try {
       & powershell -ExecutionPolicy Bypass -File (Join-Path $root 'ops/staging_worker_crash_probe.ps1')
       if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'Worker crash recovery probe failed' }
     }
+    'import-progress-recovery' {
+      & powershell -ExecutionPolicy Bypass -File (Join-Path $root 'ops/staging_import_progress_recovery.ps1')
+      if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'Import progress recovery probe failed' }
+    }
     'authenticated-upload' {
       $python = Join-Path $root 'services\backend\.venv\Scripts\python.exe'
       if (-not (Test-Path -LiteralPath $python)) { $python = 'python' }
       $previousApiUrl = $env:STAGING_API_URL
-      $env:STAGING_API_URL = 'http://127.0.0.1:8001'
+      $env:STAGING_API_URL = 'http://127.0.0.1:8000'
       try {
         & $python (Join-Path $root 'ops\staging_authenticated_upload_test.py')
       } finally {
@@ -214,6 +218,42 @@ try {
       $failureArgs = @()
       if ($Run) { $failureArgs = @('-Run') }
       & powershell -ExecutionPolicy Bypass -File (Join-Path $root 'ops/staging_failure_checks.ps1') @failureArgs
+    }
+    'task-family-matrix' {
+      $reportDir = 'D:\conf-platform\reports\tasks'
+      New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
+      $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+      $report = Join-Path $reportDir "task-family-matrix-$stamp.json"
+      & docker @compose exec -T backend python /runtime-ops/staging_task_family_matrix.py --output /tmp/task-family-matrix.json
+      if ($LASTEXITCODE -ne 0) { throw 'Task-family registration or queue matrix failed' }
+      $container = (& docker @compose ps -q backend).Trim()
+      if ($container) { & docker cp "$container`:/tmp/task-family-matrix.json" $report }
+      if (-not (Test-Path -LiteralPath $report)) { throw 'Task-family matrix completed but its report could not be copied' }
+      Write-Output "task_family_report=$report"
+    }
+    'task-failure-matrix' {
+      $reportDir = 'D:\conf-platform\reports\tasks'
+      New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
+      $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+      $report = Join-Path $reportDir "task-failure-matrix-$stamp.json"
+      & docker @compose exec -T backend python /runtime-ops/staging_task_failure_matrix.py --output /tmp/task-failure-matrix.json
+      if ($LASTEXITCODE -ne 0) { throw 'Task failure persistence matrix failed' }
+      $container = (& docker @compose ps -q backend).Trim()
+      if ($container) { & docker cp "$container`:/tmp/task-failure-matrix.json" $report }
+      if (-not (Test-Path -LiteralPath $report)) { throw 'Task failure matrix completed but its report could not be copied' }
+      Write-Output "task_failure_report=$report"
+    }
+    'retry-replay-probe' {
+      $reportDir = 'D:\conf-platform\reports\tasks'
+      New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
+      $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+      $report = Join-Path $reportDir "retry-replay-$stamp.json"
+      & docker @compose exec -T backend python /runtime-ops/staging_retry_replay_probe.py --output /tmp/retry-replay.json
+      if ($LASTEXITCODE -ne 0) { throw 'Retry-exhaustion/replay probe failed' }
+      $container = (& docker @compose ps -q backend).Trim()
+      if ($container) { & docker cp "$container`:/tmp/retry-replay.json" $report }
+      if (-not (Test-Path -LiteralPath $report)) { throw 'Retry-exhaustion/replay probe completed but its report could not be copied' }
+      Write-Output "retry_replay_report=$report"
     }
     'rollback-check' {
       if (-not $RollbackImage) { throw 'Set -RollbackImage to an existing local backend image tag.' }

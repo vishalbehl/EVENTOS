@@ -139,6 +139,7 @@ export default function CommandCenterPage() {
     : 0;
 
   const totalSyncedFiles = (overview?.content?.synced || 0) + (overview?.content?.verified || 0);
+  const venueStatus = overview?.status?.toUpperCase() || "UNKNOWN";
 
   return (
     <div className="mx-auto flex w-full max-w-[1720px] flex-col gap-6 pb-12">
@@ -152,7 +153,7 @@ export default function CommandCenterPage() {
             </span>
           </div>
           <h1 className="mt-1 text-2xl font-black uppercase tracking-tight text-[var(--text)] sm:text-3xl">
-            {overview?.event?.name || "Live Event Core"}
+            {overview?.event?.name || "No active event"}
           </h1>
           <p className="text-xs font-semibold text-[var(--muted)]">
             {overview?.event?.venue_name || overview?.event?.location || overview?.installation_name || "Authoritative Venue Node"} · Live Operations
@@ -164,7 +165,7 @@ export default function CommandCenterPage() {
             <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
             <div>
               <div className="text-[10px] font-black uppercase tracking-wider text-emerald-400">VENUE STATUS</div>
-              <div className="text-xs font-black text-emerald-300">● {overview?.status?.toUpperCase() || "OPERATIONAL"}</div>
+              <div className={cn("text-xs font-black", venueStatus === "HEALTHY" ? "text-emerald-300" : "text-amber-300")}>● {venueStatus}</div>
             </div>
           </div>
 
@@ -197,7 +198,7 @@ export default function CommandCenterPage() {
           </div>
           <div className="mt-1 flex items-center gap-1.5 text-[11px] font-bold text-emerald-400">
             <span className="size-1.5 rounded-full bg-emerald-400" />
-            <span>{overview?.devices?.total ? Math.round(((overview.devices.healthy || 0) / overview.devices.total) * 100) : 100}% ONLINE · {overview?.devices?.offline ?? 0} OFFLINE</span>
+            <span>{overview?.devices?.total ? Math.round(((overview.devices.healthy || 0) / overview.devices.total) * 100) + "% ONLINE" : "ONLINE UNKNOWN"} · {overview?.devices?.offline ?? 0} OFFLINE</span>
           </div>
         </Link>
 
@@ -227,7 +228,7 @@ export default function CommandCenterPage() {
           </div>
           <div className="mt-1 flex items-center gap-1.5 text-[11px] font-bold text-emerald-400">
             <span className="size-1.5 rounded-full bg-emerald-400" />
-            <span>{srrData?.active_stations ?? 0} ACTIVE · 1 INTAKE NODE</span>
+            <span>{srrData?.active_stations ?? 0} ACTIVE · {srrData?.checkin_nodes ?? "UNKNOWN"} INTAKE NODES</span>
           </div>
         </Link>
 

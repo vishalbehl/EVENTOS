@@ -68,6 +68,9 @@ async def test_exhausted_import_retry_persists_upload_and_job_terminal_state(mon
         async def scalar(self, _statement):
             return upload if not hasattr(self, "looked_up_job") else job
 
+        async def flush(self):
+            return None
+
         async def commit(self):
             nonlocal commits
             commits += 1

@@ -74,6 +74,11 @@ def srr_room(event_id: uuid.UUID | str) -> str:
     return f"srr:{event_id}"
 
 
+def venue_ops_room(event_id: uuid.UUID | str) -> str:
+    """Organiser and Command Center workflow room for Venue Ops."""
+    return f"venue-ops:{event_id}"
+
+
 # ── Broadcast helpers ─────────────────────────────────────────
 
 async def broadcast_to_event(
@@ -244,6 +249,25 @@ async def join_srr_room(sid: str, data: dict) -> None:
     room = srr_room(event_id)
     await sio.enter_room(sid, room)
     logger.info(f"sid={sid} joined SRR room: {room}")
+    await sio.emit("room_joined", {"room": room}, to=sid)
+
+
+@sio.event
+async def join_venue_ops_room(sid: str, data: dict) -> None:
+    """Join the authenticated organiser/Command Center Venue Ops workflow room."""
+    try:
+        event_id = uuid.UUID(str(data.get("event_id")))
+        principal = await _principal_for(sid)
+        if principal.kind != "user":
+            raise RealtimeAuthError("Venue Ops requires a user session.")
+        async with AsyncSessionLocal() as db:
+            await authorize_event(db, principal, event_id)
+    except (RealtimeAuthError, TypeError, ValueError):
+        await _emit_denied(sid)
+        return
+    room = venue_ops_room(event_id)
+    await sio.enter_room(sid, room)
+    logger.info(f"sid={sid} joined Venue Ops room: {room}")
     await sio.emit("room_joined", {"room": room}, to=sid)
 
 

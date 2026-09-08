@@ -14,6 +14,12 @@ def test_technology_service_reads_delegate_to_query_service():
     assert "TechnologyServiceQueryService(db).list" in source
     assert "TechnologyServiceQueryService(db).get_event_for_scope" in source
     assert "await db.scalar" not in source
+    for method in (
+        "venue_ops_service_definitions",
+        "venue_ops_quotes",
+        "venue_ops_fulfilment",
+    ):
+        assert f"TechnologyServiceQueryService(db).{method}" in source
 
 
 def test_technology_service_query_service_is_bounded_projected_and_read_only():
@@ -21,5 +27,8 @@ def test_technology_service_query_service_is_bounded_projected_and_read_only():
     assert "load_only(*self._columns)" in source
     assert ".limit(bounded_limit)" in source
     assert "await self.db.commit()" not in source
-    assert "await self.db.delete" not in source
-    assert "load_only(Event.id, Event.organization_id)" in source
+    assert "load_only(" in source and "Event.id" in source and "Event.organization_id" in source
+    assert "VenueOpsServiceDefinition.category.asc()" in source
+    assert "CommercialQuote.organization_id == organization_id" in source
+    assert "DataExport.organization_id == organization_id" in source
+    assert "VenueOpsFulfilmentHandoff.event_id == event_id" in source

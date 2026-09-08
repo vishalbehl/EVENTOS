@@ -10,9 +10,12 @@ def test_role_lists_use_batched_tenant_safe_projections():
 
     list_region = router.split("async def list_roles", 1)[1].split("@router.", 1)[0]
     admin_region = router.split("async def admin_list_roles", 1)[1].split("@admin_router.", 1)[0]
+    admin_cursor_region = router.split("async def admin_cursor_roles", 1)[1].split("@admin_router.", 1)[0]
     detail_region = router.split("async def get_role", 1)[1].split("@router.", 1)[0]
     assert "RoleQueryService(service.db).list_with_counts" in list_region
     assert "RoleQueryService(service.db).list_with_counts" in admin_region
+    assert "service.repository.cursor_page" in admin_cursor_region
+    assert "TenantContextGuard.scoped" in admin_cursor_region
     assert "RoleQueryService(service.db).get_with_counts" in detail_region
     assert "perm_count_stmt" not in router
     assert "user_count_stmt" not in router

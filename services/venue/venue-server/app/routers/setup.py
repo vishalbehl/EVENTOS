@@ -33,8 +33,20 @@ def require_local_request(request: Request) -> None:
 
 @router.get("/status")
 async def setup_status(db: AsyncSession = Depends(get_database)) -> dict:
-    user_count = int(await db.scalar(select(func.count(VenueUser.id))) or 0)
-    install = await db.scalar(select(VenueInstallation).order_by(VenueInstallation.created_at.asc()).limit(1))
+    try:
+        user_count = int(await db.scalar(select(func.count(VenueUser.id))) or 0)
+        install = await db.scalar(select(VenueInstallation).order_by(VenueInstallation.created_at.asc()).limit(1))
+    except Exception as exc:
+        # Setup status is also the first-run probe. A database connection or
+        # schema failure must not be mistaken for a configured login surface.
+        return {
+            "setup_required": True,
+            "administrator_created": False,
+            "installation": None,
+            "security_ready": False,
+            "database_ready": False,
+            "reason": f"Venue database unavailable: {exc}",
+        }
     return {
         "setup_required": user_count == 0,
         "administrator_created": user_count > 0,

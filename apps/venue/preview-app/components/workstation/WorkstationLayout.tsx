@@ -80,7 +80,7 @@ export function WorkstationLayout({
         <div className="hidden md:flex items-center gap-3">
           <div className="flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surf)] px-4 py-2 text-xs font-black uppercase tracking-wider text-[var(--text)] shadow-xs">
             <Monitor className="size-4 text-[var(--pri)]" />
-            <span>Workstation #{stationNumber || 1}</span>
+            <span>Workstation #{stationNumber ?? "Not configured"}</span>
           </div>
         </div>
 
@@ -148,7 +148,7 @@ export function WorkstationLayout({
               onClick={() => setMenuOpen(!menuOpen)}
               className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-xs font-black uppercase tracking-wider text-[var(--text)] hover:bg-[var(--raised)] shadow-xs cursor-pointer"
             >
-              <span>WS #{stationNumber || 1}</span>
+              <span>WS #{stationNumber ?? "Not configured"}</span>
               <ChevronDown className="size-3.5 text-[var(--muted)]" />
             </button>
 

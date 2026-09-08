@@ -202,6 +202,7 @@ function VenueHeader({
   const overview = overviewQuery.data;
   const activeAlertsCount = alertsQuery.data?.items?.length || 0;
   const hasCritical = alertsQuery.data?.items?.some((a) => a.severity === "critical");
+  const venueState = overview?.status?.toUpperCase() || "UNKNOWN";
 
   const initials = (user?.full_name || user?.first_name || "Admin").slice(0, 2).toUpperCase();
 
@@ -214,32 +215,24 @@ function VenueHeader({
             <span className="font-mono text-[9px] font-black uppercase tracking-widest text-[var(--acc)]">EVENT</span>
           </div>
           <span className="block truncate text-xs font-black uppercase tracking-wider text-[var(--text)]">
-            {overview?.event?.name || "Live Event Core"}
-          </span>
-        </div>
-
-        <div className="hidden h-6 w-px bg-[var(--border)] sm:block" />
-
-        <div className="hidden sm:block">
-          <div className="flex items-center gap-1.5">
-            <span className="font-mono text-[9px] font-black uppercase tracking-widest text-[var(--muted)]">VENUE</span>
-          </div>
-          <span className="block truncate text-xs font-bold text-[var(--muted)]">
-            {overview?.event?.venue_name || overview?.installation_name || "Local Venue Server"}
+            {overview?.event?.name || "No active event"}
           </span>
         </div>
 
         <div className="hidden h-6 w-px bg-[var(--border)] md:block" />
 
-        {/* 2 Status indicators: Venue Healthy & Cloud Connected */}
+        {/* Status indicators are derived from the authoritative overview. */}
         <div className="hidden items-center gap-3 lg:flex">
-          <div className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-400">
-            <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Venue Operational</span>
+          <div className={cn(
+            "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide",
+            venueState === "HEALTHY" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" : "border-amber-500/30 bg-amber-500/10 text-amber-400"
+          )}>
+            <span className={cn("size-1.5 rounded-full", venueState === "HEALTHY" ? "bg-emerald-400" : "bg-amber-400")} />
+            <span>Venue {venueState}</span>
           </div>
-          <div className="flex items-center gap-1.5 rounded-full border border-blue-500/30 bg-blue-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-blue-400">
+          <div className="flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-[10px] font-black uppercase tracking-wide text-amber-400 px-2.5 py-1">
             <Wifi className="size-3" />
-            <span>Cloud Connected (62ms)</span>
+            <span>Cloud UNKNOWN</span>
           </div>
         </div>
       </div>
@@ -268,8 +261,8 @@ function VenueHeader({
             hasCritical
               ? "border-rose-500/50 bg-rose-500/15 text-rose-400 animate-pulse"
               : activeAlertsCount > 0
-              ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
-              : "border-[var(--border)] bg-[var(--card)] text-[var(--muted)] hover:text-[var(--text)]"
+                ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                : "border-[var(--border)] bg-[var(--card)] text-[var(--muted)] hover:text-[var(--text)]"
           )}
         >
           <Bell className="size-3.5" />
@@ -287,12 +280,12 @@ function VenueHeader({
           <span>
             {time
               ? `${time.toLocaleTimeString("en-IN", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  second: "2-digit",
-                  hour12: true,
-                  timeZone: "Asia/Kolkata",
-                })} IST`
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: true,
+                timeZone: "Asia/Kolkata",
+              })} IST`
               : "--:--:-- IST"}
           </span>
         </div>
@@ -344,6 +337,8 @@ function VenueHeader({
                   setUserMenuOpen(false);
                   try {
                     await apiClient.post("/auth/logout");
+                  } catch {
+                    // Suppress error if session already expired/unauthenticated
                   } finally {
                     logout();
                     router.replace("/login");
@@ -369,7 +364,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [searchOpen, setSearchOpen] = useState(false);
   const [attentionOpen, setAttentionOpen] = useState(false);
   const { initializeFromStorage } = useAuthStore();
-  
+
   // Workstation-bound time-based inactivity session watcher
   useSessionTimeout();
 
@@ -396,7 +391,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className="flex h-screen overflow-hidden bg-[var(--base)] font-sans text-[var(--text)]">
       <VenueSidebar collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <VenueHeader 
+        <VenueHeader
           onOpenSearch={() => setSearchOpen(true)}
           onOpenAttention={() => setAttentionOpen(true)}
         />

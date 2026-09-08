@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import Date, and_, case, distinct, func, or_, select, text
+from sqlalchemy import Date, and_, case, distinct, func, literal, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -22,6 +22,8 @@ from app.modules.billing.models.subscription import (
     RevenueMetric,
     SubscriptionTransaction,
 )
+from app.modules.communications.models.email_campaign import EmailCampaign
+from app.modules.communications.models.email_log import EmailLog
 from app.modules.agenda.models import Room, Session
 from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.events.models.capacity_rule import CapacityRule
@@ -29,9 +31,13 @@ from app.modules.events.models.event import Event
 from app.modules.events.models.speaker import Speaker
 from app.modules.presentations.models.file_validation import FileValidation
 from app.modules.presentations.models.presentation_file import PresentationFile
+from app.modules.presentations.models.poster import Poster
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.venue.models.room_device import RoomDevice
+from app.modules.venue.models.srr_checkin import SRRCheckin
+from app.modules.venue.models.venue_sync_job import VenueSyncJob
+from app.modules.speakers.constants.speaker_types import UPLOAD_REQUIRED_CODES
 from app.modules.platform.models.organization import Organization
 from app.modules.identity.models.user import User as IdentityUser
 from app.modules.support.models.ticket import SupportTicket
@@ -800,6 +806,400 @@ class AnalyticsDashboardQueryService:
             self._mrr_point(row.period, row.total, (row.total or 0) * 12)
             for row in transaction_rows
         ]
+
+    async def room_readiness(self, *, event_id: uuid.UUID) -> list[dict]:
+        """Return room readiness from one bounded grouped projection."""
+        ready_statuses = ["valid", "approved", "pending_validation", "processing", "uploaded"]
+        rows = (await self.db.execute(
+            select(
+                Room.id.label("room_id"),
+                Room.name.label("room_name"),
+                func.count(distinct(Session.id)).label("session_count"),
+                func.count(distinct(SessionSpeaker.id)).label("speaker_slots"),
+                func.count(distinct(PresentationFile.id)).label("files_ready"),
+            )
+            .select_from(Room)
+            .outerjoin(Session, and_(Session.room_id == Room.id, Session.event_id == event_id))
+            .outerjoin(SessionSpeaker, SessionSpeaker.session_id == Session.id)
+            .outerjoin(
+                PresentationFile,
+                and_(
+                    PresentationFile.session_speaker_id == SessionSpeaker.id,
+                    PresentationFile.is_current_version.is_(True),
+                    PresentationFile.upload_status.in_(ready_statuses),
+                ),
+            )
+            .where(Room.event_id == event_id, Room.is_active.is_(True))
+            .group_by(Room.id, Room.name)
+            .order_by(Room.name, Room.id)
+            .limit(500)
+        )).all()
+        result: list[dict] = []
+        for row in rows:
+            slots = int(row.speaker_slots or 0)
+            files_ready = int(row.files_ready or 0)
+            result.append({
+                "room_id": str(row.room_id),
+                "room_name": row.room_name,
+                "session_count": int(row.session_count or 0),
+                "speaker_slots": slots,
+                "files_ready": files_ready,
+                "readiness_pct": round(files_ready / slots * 100, 1) if slots else 0.0,
+            })
+        return result
+
+    async def room_heatmap(self, *, event_id: uuid.UUID) -> list[dict]:
+        """Return the dashboard heatmap contract from the bounded room projection."""
+        rows = await self.room_readiness(event_id=event_id)
+        return [
+            {
+                "room_name": row["room_name"],
+                "readiness_pct": row["readiness_pct"],
+                "total_sessions": row["session_count"],
+                "ready_sessions": int(row["session_count"] * (row["readiness_pct"] / 100))
+                if row["session_count"] > 0 else 0,
+            }
+            for row in rows
+        ]
+
+    async def overview(self, *, event_id: uuid.UUID, coverage_data: dict | None = None) -> dict:
+        """Return dashboard overview counters with two bounded projections."""
+        scalar = lambda statement: statement.scalar_subquery()
+        row = (await self.db.execute(select(
+            scalar(select(func.count()).select_from(Room).where(
+                Room.event_id == event_id, Room.is_active.is_(True)
+            )).label("total_rooms"),
+            scalar(select(func.count()).select_from(Session).where(
+                Session.event_id == event_id
+            )).label("total_sessions"),
+            scalar(select(func.count()).select_from(Speaker).where(
+                Speaker.event_id == event_id
+            )).label("total_speakers"),
+        ))).mappings().one()
+
+        status_rows = (await self.db.execute(union_all(
+            select(
+                literal("file").label("kind"),
+                PresentationFile.upload_status.label("status"),
+                func.count().label("count"),
+            ).where(
+                PresentationFile.event_id == event_id,
+                PresentationFile.is_current_version.is_(True),
+            ).group_by(PresentationFile.upload_status),
+            select(
+                literal("poster").label("kind"),
+                Poster.status.label("status"),
+                func.count().label("count"),
+            ).where(Poster.event_id == event_id).group_by(Poster.status),
+        ))).mappings().all()
+        file_counts = {r["status"]: int(r["count"] or 0) for r in status_rows if r["kind"] == "file"}
+        poster_counts = {r["status"]: int(r["count"] or 0) for r in status_rows if r["kind"] == "poster"}
+
+        files_approved = poster_counts.get("approved", 0) + file_counts.get("approved", 0)
+        files_rejected = poster_counts.get("rejected", 0) + file_counts.get("rejected", 0)
+        files_uploaded = (
+            sum(file_counts.get(s, 0) for s in ("processing", "pending_validation", "valid", "approved", "rejected", "uploaded"))
+            + sum(poster_counts.get(s, 0) for s in ("submitted", "under_review", "approved", "rejected"))
+        )
+        files_pending = (
+            sum(file_counts.get(s, 0) for s in ("processing", "pending_validation", "valid", "invalid"))
+            + sum(poster_counts.get(s, 0) for s in ("submitted", "under_review"))
+        )
+        coverage = coverage_data or {}
+        return {
+            "total_rooms": int(row["total_rooms"] or 0),
+            "total_sessions": int(row["total_sessions"] or 0),
+            "total_speakers": int(row["total_speakers"] or 0),
+            "total_files": sum(file_counts.values()) + sum(poster_counts.values()),
+            "files_uploaded": files_uploaded,
+            "files_approved": files_approved,
+            "files_pending": files_pending,
+            "files_rejected": files_rejected,
+            "sessions_ready": coverage.get("complete", 0),
+            "talks_pending_upload": coverage.get("talks_pending_upload", 0),
+        }
+
+    async def email_stats(self, *, event_id: uuid.UUID) -> dict:
+        """Return event email delivery counters with one grouped projection."""
+        row = (await self.db.execute(
+            select(
+                func.count(EmailLog.id).label("total"),
+                func.count(EmailLog.id).filter(EmailLog.status == "delivered").label("delivered"),
+                func.count(EmailLog.id).filter(EmailLog.status == "bounced").label("bounced"),
+                func.count(EmailLog.id).filter(EmailLog.status == "failed").label("failed"),
+                func.count(EmailLog.id).filter(EmailLog.opened_at.is_not(None)).label("opened"),
+            )
+            .select_from(EmailLog)
+            .join(EmailCampaign, EmailCampaign.id == EmailLog.campaign_id)
+            .where(EmailCampaign.event_id == event_id)
+        )).mappings().one()
+
+        total = int(row["total"] or 0)
+        delivered = int(row["delivered"] or 0)
+        opened = int(row["opened"] or 0)
+        return {
+            "total_sent": total,
+            "delivered": delivered,
+            "bounced": int(row["bounced"] or 0),
+            "failed": int(row["failed"] or 0),
+            "opened": opened,
+            "open_rate_pct": round(opened / delivered * 100, 1) if delivered > 0 else 0.0,
+            "delivery_rate_pct": round(delivered / total * 100, 1) if total > 0 else 0.0,
+        }
+
+    async def email_campaign_analytics(
+        self,
+        *,
+        event_id: uuid.UUID,
+        target_type: str,
+    ) -> dict:
+        """Return campaign and delivery aggregates without loading campaign rows."""
+        campaign_row = (await self.db.execute(
+            select(
+                func.count(EmailCampaign.id).label("campaigns"),
+                func.coalesce(func.sum(EmailCampaign.total_recipients), 0).label("recipients"),
+                func.coalesce(func.sum(EmailCampaign.sent_count), 0).label("sent"),
+            ).where(
+                EmailCampaign.event_id == event_id,
+                EmailCampaign.target_type == target_type,
+            )
+        )).mappings().one()
+
+        log_source = Participant if target_type == "participant" else Speaker
+        log_owner = EmailLog.participant_id if target_type == "participant" else EmailLog.speaker_id
+        log_row = (await self.db.execute(
+            select(
+                func.count(EmailLog.id).filter(EmailLog.status.in_(["failed", "bounced"])).label("failed"),
+                func.count(EmailLog.id).filter(EmailLog.opened_at.is_not(None)).label("opened"),
+            )
+            .select_from(EmailLog)
+            .join(log_source, log_owner == log_source.id)
+            .where(log_source.event_id == event_id)
+        )).mappings().one()
+
+        total_recipients = int(campaign_row["recipients"] or 0)
+        total_sent = int(campaign_row["sent"] or 0)
+        opened_count = int(log_row["opened"] or 0)
+        return {
+            "total_campaigns": int(campaign_row["campaigns"] or 0),
+            "total_recipients": total_recipients,
+            "total_sent": total_sent,
+            "failed_count": int(log_row["failed"] or 0),
+            "opened_count": opened_count,
+            "success_rate": round(total_sent / total_recipients * 100, 1) if total_recipients > 0 else 0.0,
+            "open_rate": round(opened_count / total_sent * 100, 1) if total_sent > 0 else 0.0,
+        }
+
+    async def upload_funnel(self, *, event_id: uuid.UUID) -> dict:
+        """Return speaker upload funnel counters from one grouped projection."""
+        rows = (await self.db.execute(
+            select(Speaker.upload_status, func.count().label("count"))
+            .where(Speaker.event_id == event_id)
+            .group_by(Speaker.upload_status)
+        )).all()
+        counts = {row.upload_status: int(row.count or 0) for row in rows}
+        total = sum(counts.values())
+
+        def pct(value: int) -> float:
+            return round(value / total * 100, 1) if total > 0 else 0.0
+
+        pending = counts.get("pending", 0)
+        uploaded = counts.get("uploaded", 0)
+        replaced = counts.get("replaced", 0)
+        approved = counts.get("approved", 0)
+        rejected = counts.get("rejected", 0)
+        uploaded_total = uploaded + replaced + approved + rejected
+        approval_rate = round(approved / uploaded_total * 100, 1) if uploaded_total > 0 else 0.0
+        return {
+            "invited": total,
+            "total_speakers": total,
+            "pending": pending,
+            "uploaded": uploaded_total,
+            "approved": approved,
+            "rejected": rejected,
+            "pending_pct": pct(pending),
+            "uploaded_pct": pct(uploaded_total),
+            "upload_rate_pct": pct(uploaded_total),
+            "approved_pct": pct(approved),
+            "approval_rate_pct": approval_rate,
+            "rejected_pct": pct(rejected),
+            "completion_rate": pct(approved),
+        }
+
+    async def file_format_distribution(self, *, event_id: uuid.UUID) -> list[dict]:
+        """Return current presentation-file counts grouped by format."""
+        rows = (await self.db.execute(
+            select(PresentationFile.file_format, func.count().label("count"))
+            .where(
+                PresentationFile.event_id == event_id,
+                PresentationFile.is_current_version.is_(True),
+            )
+            .group_by(PresentationFile.file_format)
+            .order_by(func.count().desc())
+        )).all()
+        return [{"format": row.file_format, "count": int(row.count or 0)} for row in rows]
+
+    async def daily_upload_history(self, *, event_id: uuid.UUID) -> list[dict]:
+        """Return upload counts grouped by day for the existing chart contract."""
+        rows = (await self.db.execute(
+            select(
+                func.date_trunc("day", PresentationFile.created_at).label("day"),
+                func.count().label("count"),
+            )
+            .where(
+                PresentationFile.event_id == event_id,
+                PresentationFile.is_current_version.is_(True),
+            )
+            .group_by("day")
+            .order_by("day")
+        )).all()
+        return [
+            {"label": row.day.strftime("%d %b"), "value": float(row.count)}
+            for row in rows
+            if row.day
+        ]
+
+    async def venue_sync_stats(self, *, event_id: uuid.UUID) -> dict:
+        """Return the latest venue synchronization state using explicit columns."""
+        row = (await self.db.execute(
+            select(
+                VenueSyncJob.created_at,
+                VenueSyncJob.status,
+                VenueSyncJob.completed_at,
+            )
+            .where(VenueSyncJob.event_id == event_id)
+            .order_by(VenueSyncJob.created_at.desc(), VenueSyncJob.id.desc())
+            .limit(1)
+        )).mappings().one_or_none()
+        if row is None:
+            return {"last_sync": None, "status": "never_synced"}
+        return {
+            "last_sync": row["created_at"].isoformat() if row["created_at"] else None,
+            "status": row["status"],
+            "files_synced": None,
+            "completed_at": row["completed_at"].isoformat() if row["completed_at"] else None,
+        }
+
+    async def srr_stats(self, *, event_id: uuid.UUID) -> dict:
+        """Return SRR totals and active check-ins with one aggregate projection."""
+        row = (await self.db.execute(
+            select(
+                func.count(SRRCheckin.id).label("total"),
+                func.count(SRRCheckin.id).filter(SRRCheckin.checked_out_at.is_(None)).label("active"),
+                func.count(SRRCheckin.id).filter(SRRCheckin.checkin_method == "qr_scan").label("qr_scan"),
+                func.count(SRRCheckin.id).filter(SRRCheckin.checkin_method == "manual").label("manual"),
+                func.count(SRRCheckin.id).filter(SRRCheckin.checkin_method == "token").label("token"),
+            )
+            .where(SRRCheckin.event_id == event_id)
+        )).mappings().one()
+        by_method = {
+            "qr_scan": int(row["qr_scan"] or 0),
+            "manual": int(row["manual"] or 0),
+            "token": int(row["token"] or 0),
+        }
+        return {
+            "total_checkins": int(row["total"] or 0),
+            "currently_active": int(row["active"] or 0),
+            "by_method": by_method,
+            "qr_scan": by_method["qr_scan"],
+            "manual": by_method["manual"],
+            "token": by_method["token"],
+        }
+
+    async def session_coverage(self, *, event_id: uuid.UUID) -> dict:
+        """Return bounded session/file coverage without loading full ORM graphs."""
+        total_rows = (await self.db.execute(
+            select(SessionSpeaker.session_id, func.count().label("total_slots"))
+            .join(Session, Session.id == SessionSpeaker.session_id)
+            .where(Session.event_id == event_id)
+            .group_by(SessionSpeaker.session_id)
+        )).all()
+        total_slots = {row.session_id: int(row.total_slots or 0) for row in total_rows}
+
+        file_rows = (await self.db.execute(
+            select(PresentationFile.session_speaker_id)
+            .join(SessionSpeaker, SessionSpeaker.id == PresentationFile.session_speaker_id)
+            .join(Session, Session.id == SessionSpeaker.session_id)
+            .where(
+                Session.event_id == event_id,
+                PresentationFile.is_current_version.is_(True),
+                PresentationFile.upload_status.in_(["valid", "approved", "pending_validation", "processing", "uploaded"]),
+            )
+            .group_by(PresentationFile.session_speaker_id)
+        )).all()
+        has_file = {row.session_speaker_id for row in file_rows}
+
+        slot_rows = (await self.db.execute(
+            select(SessionSpeaker.session_id, SessionSpeaker.id, SessionSpeaker.role)
+            .join(Session, Session.id == SessionSpeaker.session_id)
+            .where(Session.event_id == event_id)
+        )).all()
+        session_slots: dict[uuid.UUID, list[uuid.UUID]] = {}
+        pending_talks_count = 0
+        for row in slot_rows:
+            session_slots.setdefault(row.session_id, []).append(row.id)
+            if row.id not in has_file and (
+                row.role is None
+                or row.role in UPLOAD_REQUIRED_CODES
+                or row.role in ["Speaker", "KEY", "INV", "ORL", "Oral Presenter", "Keynote Speaker", "Invited Speaker"]
+            ):
+                pending_talks_count += 1
+
+        complete = partial = missing = 0
+        for session_id, slots in session_slots.items():
+            filled = sum(1 for slot_id in slots if slot_id in has_file)
+            if filled == len(slots):
+                complete += 1
+            elif filled > 0:
+                partial += 1
+            else:
+                missing += 1
+
+        pending_eposters = await self.db.scalar(
+            select(func.count(Poster.id)).where(
+                Poster.event_id == event_id,
+                Poster.status == "pending",
+            )
+        ) or 0
+        session_rows = (await self.db.execute(
+            select(
+                Session.id,
+                Session.name,
+                Session.session_code,
+                Session.start_time,
+                Room.name.label("room_name"),
+            )
+            .outerjoin(Room, Room.id == Session.room_id)
+            .where(Session.event_id == event_id)
+        )).all()
+
+        session_details = []
+        for row in session_rows:
+            slots = session_slots.get(row.id, [])
+            total_speakers = len(slots)
+            files_approved = sum(1 for slot_id in slots if slot_id in has_file)
+            session_details.append({
+                "session_id": str(row.id),
+                "session_name": row.name,
+                "session_code": row.session_code or "",
+                "room_name": row.room_name,
+                "start_time": row.start_time.isoformat() if row.start_time else None,
+                "total_speakers": total_speakers,
+                "files_approved": files_approved,
+                "files_pending": total_speakers - files_approved,
+                "readiness_pct": round(files_approved / total_speakers * 100, 1) if total_speakers else 0.0,
+            })
+        session_details.sort(key=lambda item: item["start_time"] or "9999-12-31T00:00:00+00:00")
+        total = len(session_slots)
+        return {
+            "total_sessions": total,
+            "complete": complete,
+            "partial": partial,
+            "missing": missing,
+            "coverage_pct": round(complete / total * 100, 1) if total else 0.0,
+            "talks_pending_upload": pending_talks_count + int(pending_eposters),
+            "sessions": session_details,
+        }
 
     @staticmethod
     def _mrr_point(period: str, mrr: object, arr: object) -> dict:

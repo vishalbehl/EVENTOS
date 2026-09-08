@@ -129,37 +129,13 @@ async def get_department(
     current_user: OrganizerOrAbove,
     service: DepartmentService = Depends(get_department_service)
 ):
-    dept = await service.get_department(current_user.organization_id, id)
-    
-    from sqlalchemy import select, func
-    from app.modules.platform.departments.models import DepartmentMember
-    from app.modules.platform.teams.models import Team
-    
-    # Get count of members
-    member_count_stmt = select(func.count(DepartmentMember.id)).where(
-        DepartmentMember.department_id == dept.id,
-        DepartmentMember.deleted_at == None
+    projection = await DepartmentQueryService(service.db).get_with_counts(
+        organization_id=current_user.organization_id,
+        department_id=id,
     )
-    # Get count of teams
-    team_count_stmt = select(func.count(Team.id)).where(
-        Team.department_id == dept.id,
-        Team.deleted_at == None
-    )
-    
-    m_count = (await service.db.execute(member_count_stmt)).scalar_one()
-    t_count = (await service.db.execute(team_count_stmt)).scalar_one()
-    
-    return DepartmentResponse(
-        id=dept.id,
-        organization_id=dept.organization_id,
-        name=dept.name,
-        code=dept.code,
-        description=dept.description,
-        created_at=dept.created_at,
-        updated_at=dept.updated_at,
-        members_count=m_count,
-        teams_count=t_count
-    )
+    if projection is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Department not found.")
+    return DepartmentResponse(**projection)
 
 
 @router.patch("/{id}", response_model=DepartmentSummary)
@@ -222,11 +198,13 @@ async def add_department_member(
         user_id=payload.user_id
     )
     
-    # Load user details for response
-    from app.modules.identity.models.user import User
-    user = await service.db.get(User, payload.user_id)
-    user_name = f"{user.first_name} {user.last_name}" if user else ""
-    user_email = user.email if user else ""
+    user = await DepartmentQueryService(service.db).get_member_user(
+        organization_id=current_user.organization_id,
+        department_id=id,
+        user_id=payload.user_id,
+    )
+    user_name = f"{user['first_name']} {user['last_name']}" if user else ""
+    user_email = user["email"] if user else ""
     
     return DepartmentMemberResponse(
         id=member.id,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useParams, usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { Lock, Loader2, X } from "lucide-react";
@@ -55,11 +55,12 @@ export default function DashboardLayout({
   const isPlatformWorkspace = !eventId;
   const { data: event, isLoading: isEventLoading } = useEvent(eventId);
 
-  const { isAuthenticated, accessToken, user, setAuth, logout, hasHydrated } =
+  const { isAuthenticated, accessToken, user, logout, hasHydrated } =
     useAuthStore();
   const { isSidebarCollapsed, isMobileOpen, setMobileOpen, isSecondarySidebarOpen } = useUIStore();
   const [hydrated, setHydrated] = useState(false);
   const [impersonatingOrg, setImpersonatingOrg] = useState<string | null>(null);
+  const profileFetchTokenRef = useRef<string | null>(null);
 
   useSocket();
 
@@ -120,38 +121,43 @@ export default function DashboardLayout({
   useEffect(() => {
     const fetchUser = async () => {
       if (!isAuthenticated || !accessToken) return;
-      if (user && user.onboarding_completed) return;
+      // Fetch once for each token. The previous user-dependent effect updated
+      // the same user object it watched, creating an auth/me request loop for
+      // accounts whose onboarding flag was false or absent.
+      if (profileFetchTokenRef.current === accessToken) return;
+      profileFetchTokenRef.current = accessToken;
       try {
+        const baseUrl =
+          process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
         const response = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/me`,
+          `${baseUrl}/api/v1/auth/me`,
           {
             headers: { Authorization: `Bearer ${accessToken}` },
           },
         );
         if (response.ok) {
           const userData = await response.json();
-          setAuth(
-            userData,
-            accessToken,
-            useAuthStore.getState().refreshToken || undefined,
-            useAuthStore.getState().rememberMe,
-          );
+          // Do not reset login/activity timestamps while refreshing profile
+          // data; this is a read, not a new login.
+          useAuthStore.getState().updateUser(userData);
         } else if (response.status === 401) {
+          profileFetchTokenRef.current = null;
           logout();
         }
       } catch (error) {
+        profileFetchTokenRef.current = null;
         console.error("[Auth] Profile fetch network error:", error);
       }
     };
 
-    if (hydrated && hasHydrated) {
+    if (!accessToken) {
+      profileFetchTokenRef.current = null;
+    } else if (hydrated && hasHydrated) {
       fetchUser();
     }
   }, [
     isAuthenticated,
     accessToken,
-    user,
-    setAuth,
     logout,
     hydrated,
     hasHydrated,
@@ -223,6 +229,15 @@ export default function DashboardLayout({
       }
 
       if (user && !user.onboarding_completed) {
+        const isDefaultOrg =
+          user.is_platform_admin ||
+          (user as any).organization_slug?.toLowerCase() === "eventos" ||
+          (user as any).organization_slug?.toLowerCase() === "default-org";
+
+        if (isDefaultOrg) {
+          return;
+        }
+
         router.push("/onboarding");
         return;
       }

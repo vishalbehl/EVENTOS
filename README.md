@@ -59,15 +59,21 @@ Ensure you have the following installed on your machine:
 
 ---
 
-## 3. Quick Start (One-Click Launch)
+## 3. Quick Start (Docker Staging + Cloud Portals)
 
-On Windows systems, you can spin up the complete cloud platform (API, Celery worker, and all three next-gen portals) simultaneously using the provided PowerShell launcher script:
+On Windows systems, the default launcher starts the production-like staging backend stack in Docker and one process for each cloud portal. The backend, database, Redis, MinIO, ClamAV, and Celery workers are therefore the same services used by the staging checks, while the Next.js portals remain available for local development:
 
 ```powershell
 ./devrun.ps1
 ```
 
-This script will automatically terminate any hanging node/python processes and launch the services in separate, labeled terminals.
+Open `http://127.0.0.1:3000` for Command Center, `http://127.0.0.1:3001` for Organiser Portal, and `http://127.0.0.1:3003` for the unified Event Portal. Frontend output is written to the temporary runtime log directory shown by the launcher. Stop only the processes and Docker services owned by this launcher with:
+
+```powershell
+./devrun.ps1 -Action down
+```
+
+The launcher does not terminate unrelated Python or Node processes. For a manual backend development setup, use `./devrun.ps1 -BackendMode manual`.
 
 ---
 
@@ -103,26 +109,26 @@ python -m celery -A app.worker worker --loglevel=info -P solo
 ### Step 4: Start Venue Offline Server (Port 8001)
 For local venue synchronizations and hardware integrations:
 ```bash
-cd services/venue-server
-..\backend\.venv\Scripts\activate
+cd services/venue/venue-server
+..\..\backend\.venv\Scripts\activate
 
 python -m uvicorn app.main:app --reload --port 8001
 ```
 
 ### Step 5: Start Frontend Portals
-Start the web portals from the root workspace folder:
+Start the web portals from the root workspace folder when the backend is already running:
 
 * **Command Center**:
   ```bash
-  npm run dev:command-center
+  npm.cmd run dev:command-center
   ```
-* **Speaker Portal**:
+* **Organiser Portal**:
   ```bash
-  npm run dev:speaker
+  npm.cmd run dev:organiser-portal
   ```
-* **Registration Portal**:
+* **Event Portal** (participant, registration, and speaker routes):
   ```bash
-  npm run dev:registration
+  npm.cmd run dev:portal
   ```
 
 ---
@@ -140,8 +146,8 @@ python -m pytest
 
 ### Venue Server Test Suite
 ```bash
-cd services/venue-server
-..\backend\.venv\Scripts\activate
+cd services/venue/venue-server
+..\..\backend\.venv\Scripts\activate
 python -m pytest
 ```
 

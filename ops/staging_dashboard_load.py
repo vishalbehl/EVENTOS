@@ -63,7 +63,14 @@ async def main() -> None:
         await asyncio.gather(*(one() for _ in range(args.requests)))
 
     ordered = sorted(durations)
-    p95 = ordered[min(len(ordered) - 1, max(0, int(len(ordered) * 0.95) - 1))]
+    def percentile(fraction: float) -> float:
+        # Nearest-rank percentile, deterministic for small staging samples.
+        index = min(len(ordered) - 1, max(0, int(len(ordered) * fraction) - 1))
+        return round(ordered[index], 2)
+
+    p50 = percentile(0.50)
+    p95 = percentile(0.95)
+    p99 = percentile(0.99)
     result = {
         "url": url,
         "authenticated": True,
@@ -73,8 +80,14 @@ async def main() -> None:
         "statuses": statuses,
         "min_ms": round(min(durations), 2),
         "mean_ms": round(statistics.mean(durations), 2),
+        "p50_ms": p50,
         "p95_ms": round(p95, 2),
+        "p99_ms": p99,
         "max_ms": round(max(durations), 2),
+        "error_count": args.requests - sum(
+            count for code, count in statuses.items()
+            if code.isdigit() and 200 <= int(code) < 300
+        ),
     }
     rendered = json.dumps(result, indent=2)
     print(rendered)

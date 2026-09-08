@@ -18,6 +18,7 @@ from app.modules.commercial.quote_service import request_fingerprint
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
 from app.modules.platform.application.governed_mutation_commands import GovernedMutationCommandService
+from app.modules.platform.application.queries import PlatformReportQueryService
 from app.modules.platform.report_schemas import (
     CommercialExportCreate,
     CommercialExportDownload,
@@ -154,13 +155,14 @@ async def list_commercial_exports(
 ) -> list[CommercialExportOut]:
     del current_user
     async with TenantContextGuard.scoped(db, organization_id):
-        query = select(DataExport).where(
-            DataExport.organization_id == organization_id,
-            DataExport.source_type == "commercial_report",
+        exports = await PlatformReportQueryService(db).list_commercial_exports(
+            organization_id=organization_id,
+            export_type=(
+                f"{COMMERCIAL_EXPORT_PREFIX}{report_type.value}"
+                if report_type else None
+            ),
+            limit=limit,
         )
-        if report_type:
-            query = query.where(DataExport.export_type == f"{COMMERCIAL_EXPORT_PREFIX}{report_type.value}")
-        exports = list((await db.scalars(query.order_by(DataExport.created_at.desc()).limit(limit))).all())
         return [_out(item) for item in exports]
 
 
@@ -173,11 +175,10 @@ async def get_commercial_export(
 ) -> CommercialExportOut:
     del current_user
     async with TenantContextGuard.scoped(db, organization_id):
-        export = await db.scalar(select(DataExport).where(
-            DataExport.id == export_id,
-            DataExport.organization_id == organization_id,
-            DataExport.source_type == "commercial_report",
-        ))
+        export = await PlatformReportQueryService(db).get_commercial_export(
+            organization_id=organization_id,
+            export_id=export_id,
+        )
         if export is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found.")
         return _out(export)
@@ -191,11 +192,10 @@ async def download_commercial_export(
     db: AsyncSession = Depends(get_db),
 ) -> CommercialExportDownload:
     async with TenantContextGuard.scoped(db, organization_id):
-        export = await db.scalar(select(DataExport).where(
-            DataExport.id == export_id,
-            DataExport.organization_id == organization_id,
-            DataExport.source_type == "commercial_report",
-        ))
+        export = await PlatformReportQueryService(db).get_commercial_export(
+            organization_id=organization_id,
+            export_id=export_id,
+        )
         if export is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found.")
         if export.status != "COMPLETED" or not export.storage_key:

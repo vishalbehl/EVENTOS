@@ -63,6 +63,7 @@ class ImportJob(Base):
     status: Mapped[str] = mapped_column(
         String(30), nullable=False, default="uploaded", index=True
     )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     # Counters updated as rows are processed
     rows_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

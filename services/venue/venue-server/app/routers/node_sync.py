@@ -1,5 +1,5 @@
 """Event-scoped workstation enrollment, snapshots, heartbeats and offline uploads."""
-import base64, hashlib, hmac, json, secrets, uuid
+import base64, binascii, hashlib, hmac, json, secrets, uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -13,10 +13,20 @@ from app.config import settings
 from app.database import get_database
 from app.models.event import Event
 from app.models.participant import Participant
+from app.models.speaker import Speaker
+from app.models.room import Room
+from app.models.session import Session
+from app.models.session_speaker import SessionSpeaker
+from app.models.speaker import Speaker
+from app.models.presentation_file import PresentationFile
+from app.models.srr_station import SRRStation
+from app.models.srr_checkin import SRRCheckin
 from app.models.companion import Companion
 from app.models.participant_registration import ParticipantRegistration
 from app.models.room_device import RoomDevice
 from app.models.venue_capacity_rule import VenueCapacityRule
+from app.models.venue_runtime_event import VenueRuntimeEvent
+from app.runtime_events import record_runtime_event
 from app.models.venue_node import VenueNodeAssignment, VenueNodeOperation
 from app.models.venue_user import VenueUser
 from app.models.badge_models import Badge, BadgePrintJob, BadgeScan
@@ -31,7 +41,7 @@ node_router = APIRouter(prefix="/api/v1/venue/nodes", tags=["venue-nodes"])
 
 class AssignNodeRequest(BaseModel):
     device_id: uuid.UUID
-    mode: str = Field(pattern="^(registration|scanning|self_checkin)$")
+    mode: str = Field(pattern="^(registration|scanning|self_checkin|srr_master|srr_checkin|srr_workstation)$")
     station_id: Optional[str] = Field(default=None, max_length=120)
     capacity_rule_id: Optional[uuid.UUID] = None
     permissions: dict[str, Any] = Field(default_factory=dict)
@@ -56,15 +66,16 @@ def _encode(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
 
-def _node_token(assignment_id: uuid.UUID, event_id: uuid.UUID) -> str:
+def _node_token(assignment_id: uuid.UUID, event_id: uuid.UUID, *, access: bool = False) -> str:
     now = datetime.now(timezone.utc)
-    body = {"typ": "venue-node", "assignment_id": str(assignment_id), "event_id": str(event_id), "iat": int(now.timestamp()), "exp": int((now + timedelta(days=30)).timestamp()), "nonce": secrets.token_urlsafe(8)}
+    lifetime = timedelta(minutes=settings.VENUE_ACCESS_TOKEN_MINUTES) if access else timedelta(days=30)
+    body = {"typ": "venue-node-access" if access else "venue-node", "assignment_id": str(assignment_id), "event_id": str(event_id), "iat": int(now.timestamp()), "exp": int((now + lifetime).timestamp()), "nonce": secrets.token_urlsafe(8)}
     raw = _encode(json.dumps(body, separators=(",", ":")).encode())
     sig = _encode(hmac.new(settings.VENUE_AUTH_SECRET.encode(), raw.encode(), hashlib.sha256).digest())
     return f"{raw}.{sig}"
 
 
-async def _authorize_node(token: str | None, db: AsyncSession) -> VenueNodeAssignment:
+async def _authorize_node(token: str | None, db: AsyncSession, *, allow_enrollment: bool = False) -> VenueNodeAssignment:
     if not token:
         raise HTTPException(status_code=401, detail="Node credential required")
     payload: dict[str, Any] = {}
@@ -74,10 +85,11 @@ async def _authorize_node(token: str | None, db: AsyncSession) -> VenueNodeAssig
         if not hmac.compare_digest(expected, base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4))):
             raise ValueError("signature")
         payload = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
-        if payload.get("typ") != "venue-node" or int(payload.get("exp", 0)) < int(datetime.now(timezone.utc).timestamp()):
+        token_type = payload.get("typ")
+        if token_type not in ({"venue-node", "venue-node-access"} if allow_enrollment else {"venue-node-access"}) or int(payload.get("exp", 0)) < int(datetime.now(timezone.utc).timestamp()):
             raise ValueError("expired")
         assignment = await db.get(VenueNodeAssignment, uuid.UUID(payload["assignment_id"]))
-    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError, binascii.Error):
         assignment = None
     try:
         token_event_id = uuid.UUID(str(payload.get("event_id")))
@@ -93,6 +105,13 @@ def _iso(value: Any) -> Any:
 
 
 async def _snapshot(db: AsyncSession, event: Event, assignment: VenueNodeAssignment) -> dict[str, Any]:
+    rooms = (await db.execute(select(Room).where(Room.event_id == event.id).order_by(Room.display_order, Room.name))).scalars().all()
+    sessions = (await db.execute(select(Session).where(Session.event_id == event.id).order_by(Session.start_time, Session.id))).scalars().all()
+    session_speakers = (await db.execute(select(SessionSpeaker).where(SessionSpeaker.session_id.in_([s.id for s in sessions])))).scalars().all() if sessions else []
+    speaker_ids = [item.speaker_id for item in session_speakers]
+    speakers = (await db.execute(select(Speaker).where(Speaker.id.in_(speaker_ids)))).scalars().all() if speaker_ids else []
+    files = (await db.execute(select(PresentationFile).where(PresentationFile.event_id == event.id, PresentationFile.is_current_version.is_(True)))).scalars().all()
+    srr_stations = (await db.execute(select(SRRStation).where(SRRStation.event_id == event.id).order_by(SRRStation.station_number))).scalars().all()
     participants = (await db.execute(select(Participant).where(Participant.event_id == event.id).order_by(Participant.regno, Participant.id))).scalars().all()
     registrations = (await db.execute(select(ParticipantRegistration).where(ParticipantRegistration.event_id == event.id))).scalars().all()
     participant_ids = [p.id for p in participants]
@@ -104,9 +123,15 @@ async def _snapshot(db: AsyncSession, event: Event, assignment: VenueNodeAssignm
     checkins = (await db.execute(select(VenueCheckIn).where(VenueCheckIn.event_id == event.id).order_by(VenueCheckIn.checkin_time, VenueCheckIn.id))).scalars().all()
     rules = (await db.execute(select(VenueCapacityRule).order_by(VenueCapacityRule.station_name))).scalars().all()
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "event": {"id": str(event.id), "name": event.name, "short_code": event.short_code, "start_date": _iso(event.start_date), "end_date": _iso(event.end_date), "timezone": event.timezone, "venue_name": event.venue_name, "location": event.location},
         "assignment": {"id": str(assignment.id), "mode": assignment.mode, "station_id": assignment.station_id, "capacity_rule_id": str(assignment.capacity_rule_id) if assignment.capacity_rule_id else None, "permissions": assignment.permissions or {}},
+        "rooms": [{"id": str(r.id), "name": r.name, "room_type": r.room_type, "capacity": r.capacity, "is_active": r.is_active} for r in rooms],
+        "sessions": [{"id": str(s.id), "room_id": str(s.room_id) if s.room_id else None, "session_code": s.session_code, "name": s.name, "session_type": s.session_type, "status": s.status, "start_time": _iso(s.start_time), "end_time": _iso(s.end_time)} for s in sessions],
+        "session_speakers": [{"id": str(ss.id), "session_id": str(ss.session_id), "speaker_id": str(ss.speaker_id), "is_confirmed": ss.is_confirmed, "presentation_title": ss.presentation_title} for ss in session_speakers],
+        "speakers": [{"id": str(s.id), "event_id": str(s.event_id), "first_name": s.first_name, "last_name": s.last_name, "full_name": s.full_name, "email": s.email, "affiliation": s.affiliation} for s in speakers],
+        "presentation_files": [{"id": str(f.id), "session_speaker_id": str(f.session_speaker_id), "speaker_id": str(f.speaker_id), "event_id": str(f.event_id), "original_filename": f.original_filename, "file_format": f.file_format, "version_number": f.version_number, "content_sha256": f.content_sha256, "file_size_bytes": f.file_size_bytes, "upload_status": f.upload_status, "local_sync_status": f.local_sync_status, "download_url": f"/api/v1/srr/files/{f.id}/download"} for f in files],
+        "srr_stations": [{"id": str(s.id), "station_number": s.station_number, "device_name": s.device_name, "status": s.status, "assigned_speaker_id": str(s.assigned_speaker_id) if s.assigned_speaker_id else None, "last_heartbeat_at": _iso(s.last_heartbeat_at)} for s in srr_stations],
         "participants": [{"id": str(p.id), "regno": p.regno, "name": p.name, "first_name": p.first_name, "last_name": p.last_name, "email": p.email, "phone": p.phone, "role": p.role, "company": p.company, "designation": p.designation, "country": p.country, "paid_status": p.paid_status, "source": p.source, "custom_fields": p.custom_fields or {}, "registered_at": _iso(p.registered_at)} for p in participants],
         "registrations": [{"id": str(r.id), "participant_id": str(r.participant_id) if r.participant_id else None, "registration_status": r.registration_status, "registration_data": r.registration_data or {}, "submitted_at": _iso(r.submitted_at), "reviewed_at": _iso(r.reviewed_at)} for r in registrations],
         "companions": [{"id": str(c.id), "primary_participant_id": str(c.primary_participant_id), "first_name": c.first_name, "last_name": c.last_name, "relationship": c.relationship, "email": c.email, "phone": c.phone, "badge_code": c.badge_code, "badge_status": c.badge_status, "checked_in": c.checked_in, "checked_in_at": _iso(c.checked_in_at), "dietary_preference": c.dietary_preference, "special_assistance": c.special_assistance, "notes": c.notes, "created_at": _iso(c.created_at)} for c in companions],
@@ -117,8 +142,9 @@ async def _snapshot(db: AsyncSession, event: Event, assignment: VenueNodeAssignm
         "venue_scan_events": [{"id": str(s.id), "event_id": str(s.event_id) if s.event_id else None, "participant_id": str(s.participant_id) if s.participant_id else None, "companion_id": str(s.companion_id) if s.companion_id else None, "checkin_gate_id": str(s.checkin_gate_id) if s.checkin_gate_id else None, "badge_id": str(s.badge_id) if s.badge_id else None, "station_name": s.station_name, "station_type": s.station_type, "location": s.location, "badge_code": s.badge_code, "scan_type": s.scan_type, "status": s.status, "rejection_reason": s.rejection_reason, "admin_overridden_by": s.admin_overridden_by, "created_at": _iso(s.created_at)} for s in scan_events],
         "venue_checkins": [{"id": str(c.id), "event_id": str(c.event_id) if c.event_id else None, "participant_id": str(c.participant_id) if c.participant_id else None, "companion_id": str(c.companion_id) if c.companion_id else None, "checkin_gate_id": str(c.checkin_gate_id) if c.checkin_gate_id else None, "gate_name": c.gate_name, "gate_type": c.gate_type, "gate_capacity": c.gate_capacity, "badge_code": c.badge_code, "scan_type": c.scan_type, "status": c.status, "rejection_reason": c.rejection_reason, "admin_overridden_by": c.admin_overridden_by, "checkin_time": _iso(c.checkin_time), "checkout_time": _iso(c.checkout_time), "duration": c.duration, "session_id": str(c.session_id) if c.session_id else None, "method": c.method, "device_id": c.device_id, "operation_id": c.operation_id, "created_at": _iso(c.created_at)} for c in checkins],
     }
+    latest_runtime_sequence = await db.scalar(select(VenueRuntimeEvent.sequence).where(VenueRuntimeEvent.event_id == event.id).order_by(VenueRuntimeEvent.sequence.desc()).limit(1))
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    payload["snapshot"] = {"version": assignment.snapshot_version, "sha256": hashlib.sha256(canonical).hexdigest(), "generated_at": datetime.now(timezone.utc).isoformat()}
+    payload["snapshot"] = {"version": assignment.snapshot_version, "server_sequence": int(latest_runtime_sequence or 0), "sha256": hashlib.sha256(canonical).hexdigest(), "generated_at": datetime.now(timezone.utc).isoformat()}
     return payload
 
 
@@ -148,10 +174,32 @@ async def _apply_operation(db: AsyncSession, assignment: VenueNodeAssignment, op
         return _operation_error(f"Action '{action}' is not enabled for this workstation")
     if action in {"check_in", "check_out", "scan"} and assignment.mode != "scanning":
         return _operation_error("Attendance actions are only allowed for scanning workstations")
+    if action == "srr_checkin" and assignment.mode not in {"srr_checkin", "srr_master"}:
+        return _operation_error("SRR check-in actions are only allowed for SRR nodes")
     if action in {"badge_issue", "badge_reprint", "registration_update", "registration_create"} and assignment.mode != "registration":
         return _operation_error("Registration actions are only allowed for registration workstations")
     if action == "kit_issue" and assignment.mode != "registration":
         return _operation_error("Kit distribution actions are only allowed for kit or registration workstations")
+
+    if action == "srr_checkin":
+        try:
+            speaker = await db.get(Speaker, uuid.UUID(str(payload.get("speaker_id"))))
+        except (TypeError, ValueError):
+            speaker = None
+        if not speaker or speaker.event_id != assignment.event_id:
+            return _operation_error("Speaker was not found in this event snapshot")
+        station = (await db.execute(select(SRRStation).where(
+            SRRStation.event_id == assignment.event_id,
+            SRRStation.is_active.is_(True),
+            SRRStation.status.in_(["idle", "completed"]),
+        ).order_by(SRRStation.station_number).with_for_update(skip_locked=True))).scalars().first()
+        if not station:
+            return _operation_error("No healthy SRR station is available")
+        now = operation.occurred_at.astimezone(timezone.utc)
+        station.assigned_speaker_id, station.status, station.session_assigned_at = speaker.id, "occupied", now
+        speaker.checked_in_at = now
+        db.add(SRRCheckin(event_id=assignment.event_id, speaker_id=speaker.id, station_id=station.id, checkin_method="offline_node", checked_in_at=now, operation_id=operation.operation_id))
+        return "applied", None
 
     participant = await _participant_for_operation(db, assignment.event_id, payload)
     companion = None
@@ -325,7 +373,7 @@ async def assign_node(event_id: uuid.UUID, payload: AssignNodeRequest, db: Async
         requested_allowed_modes = [payload.mode]
     allowed_modes = []
     for value in [payload.mode, *requested_allowed_modes]:
-        if value not in {"registration", "scanning", "self_checkin"}:
+        if value not in {"registration", "scanning", "self_checkin", "srr_master", "srr_checkin", "srr_workstation"}:
             raise HTTPException(422, "allowed_modes contains an unsupported mode")
         if value not in allowed_modes:
             allowed_modes.append(value)
@@ -386,6 +434,21 @@ async def bootstrap_node(assignment_id: uuid.UUID, x_venue_node_token: str | Non
     return payload
 
 
+@node_router.post("/{assignment_id}/token")
+async def issue_node_access_token(assignment_id: uuid.UUID, x_venue_node_token: str | None = Header(default=None), db: AsyncSession = Depends(get_database)):
+    """Exchange the one-time/long-lived node enrollment credential for short-lived access."""
+    assignment = await _authorize_node(x_venue_node_token, db, allow_enrollment=True)
+    if assignment.id != assignment_id:
+        raise HTTPException(403, "Credential does not match node")
+    return {
+        "access_token": _node_token(assignment.id, assignment.event_id, access=True),
+        "token_type": "Node",
+        "expires_in": settings.VENUE_ACCESS_TOKEN_MINUTES * 60,
+        "assignment_id": str(assignment.id),
+        "event_id": str(assignment.event_id),
+    }
+
+
 @node_router.post("/{assignment_id}/heartbeat")
 async def heartbeat_node(assignment_id: uuid.UUID, x_venue_node_token: str | None = Header(default=None), db: AsyncSession = Depends(get_database)):
     assignment = await _authorize_node(x_venue_node_token, db)
@@ -408,6 +471,14 @@ async def upload_operations(assignment_id: uuid.UUID, batch: OperationBatch, x_v
         await db.flush()
         state, reason = await _apply_operation(db, assignment, op)
         operation.status, operation.conflict_reason = state, reason
+        record_runtime_event(
+            db,
+            event_id=assignment.event_id,
+            event_type="node.operation_reconciled" if state == "applied" else "node.operation_conflict",
+            entity_type="venue_node_operation",
+            entity_id=str(operation.id),
+            payload={"operation_id": op.operation_id, "action": op.action, "status": state, "reason": reason, "assignment_id": str(assignment.id)},
+        )
         if state == "applied": accepted.append(op.operation_id)
         else: conflicts.append({"operation_id": op.operation_id, "reason": reason})
     assignment.last_sync_at = datetime.now(timezone.utc)

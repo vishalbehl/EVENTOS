@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -9,16 +10,30 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.idempotency import request_hash
+from app.config import settings
 from app.modules.platform.models.idempotency import IdempotencyRecord
 
 
-async def begin_idempotent(db: AsyncSession, *, organization_id, actor_id, operation: str, key: str, payload: Any, ttl_seconds: int = 86400) -> IdempotencyRecord:
+def default_ttl_seconds(operation: str) -> int:
+    """Return a bounded retention policy for retryable command families."""
+    normalized = str(operation or "").lower()
+    if any(term in normalized for term in ("payment", "financial", "refund")):
+        return settings.IDEMPOTENCY_FINANCIAL_TTL_SECONDS
+    if any(term in normalized for term in ("webhook", "callback")):
+        return settings.IDEMPOTENCY_WEBHOOK_TTL_SECONDS
+    if any(term in normalized for term in ("registration", "import", "upload")):
+        return settings.IDEMPOTENCY_REGISTRATION_TTL_SECONDS
+    return settings.IDEMPOTENCY_DEFAULT_TTL_SECONDS
+
+
+async def begin_idempotent(db: AsyncSession, *, organization_id, actor_id, operation: str, key: str, payload: Any, ttl_seconds: int | None = None) -> IdempotencyRecord:
     operation = str(operation or "").strip()
     key = str(key or "").strip()
     if not operation or len(operation) > 120:
         raise HTTPException(status_code=400, detail={"code": "INVALID_IDEMPOTENCY_OPERATION", "message": "Operation name is invalid."})
     if not key or len(key) > 255:
         raise HTTPException(status_code=400, detail={"code": "INVALID_IDEMPOTENCY_KEY", "message": "Idempotency key is invalid."})
+    ttl_seconds = default_ttl_seconds(operation) if ttl_seconds is None else ttl_seconds
     if ttl_seconds <= 0:
         raise HTTPException(status_code=400, detail={"code": "INVALID_IDEMPOTENCY_TTL", "message": "Idempotency retention must be positive."})
     digest = request_hash(payload)
@@ -50,6 +65,28 @@ async def begin_idempotent(db: AsyncSession, *, organization_id, actor_id, opera
 
 
 async def complete_idempotent(db: AsyncSession, row: IdempotencyRecord, *, response_status: int, response_body: dict, resource_id=None) -> None:
+    try:
+        response_size = len(
+            json.dumps(response_body, separators=(",", ":"), default=str).encode(
+                "utf-8"
+            )
+        )
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "IDEMPOTENCY_RESPONSE_SERIALIZATION_FAILED",
+                "message": "The command result could not be stored for replay.",
+            },
+        ) from exc
+    if response_size > settings.IDEMPOTENCY_MAX_RESPONSE_BYTES:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "IDEMPOTENCY_RESPONSE_TOO_LARGE",
+                "message": "The command result exceeds the replay storage limit.",
+            },
+        )
     row.status = "COMPLETED"
     row.response_status = response_status
     row.response_body = response_body
@@ -78,3 +115,4 @@ class IdempotencyService:
     complete = staticmethod(complete_idempotent)
     replay = staticmethod(replay_response)
     purge_expired = staticmethod(purge_expired)
+    default_ttl_seconds = staticmethod(default_ttl_seconds)

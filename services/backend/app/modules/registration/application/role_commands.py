@@ -7,16 +7,14 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.cache import delete, delete_pattern
-from app.core.cache_keys import TenantCacheKey
+from app.core.cache import cache_service
 from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
 
 
 async def _invalidate_role_cache(organization_id: uuid.UUID, event_id: uuid.UUID) -> None:
-    await delete(TenantCacheKey.event_roles(event_id, organization_id))
-    await delete_pattern(f"cache:v1:tenant:{organization_id}:event:{event_id}:*")
+    await cache_service.invalidate_domain("registration_roles", organization_id, event_id)
 
 
 class ParticipantRoleCommandService:

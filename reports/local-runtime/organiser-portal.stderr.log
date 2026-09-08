@@ -1,0 +1,105 @@
+[browser] [Socket.IO] Authentication rejected or expired. Disconnecting socket. (lib\socket.ts:55:17)
+[browser] [Socket.IO] Authentication rejected or expired. Disconnecting socket. (lib\socket.ts:55:17)
+[browser] [Socket.IO] Authentication rejected or expired. Disconnecting socket. (lib\socket.ts:55:17)
+⨯ Error: Manifest file is empty
+    at ignore-listed frames {
+  page: '/events/00000000-0000-4000-8000-000000000005/venue-ops/requirements'
+}
+[browser] [Socket.IO] Authentication rejected or expired. Disconnecting socket. (lib\socket.ts:55:17)
+[browser] Uncaught TypeError: rawItems.reduce is not a function
+    at FloatingNeedsAttentionBoard.useMemo[totalCount] (components\organizer\layout\FloatingNeedsAttentionBoard.tsx:61:21)
+    at FloatingNeedsAttentionBoard (components\organizer\layout\FloatingNeedsAttentionBoard.tsx:60:29)
+    at DashboardLayout (app\(dashboard)\layout.tsx:375:13)
+  59 |   // Aggregate items and counts
+  60 |   const totalCount = useMemo(() => {
+> 61 |     return rawItems.reduce((acc, item) => acc + (item.count || 1), 0);
+     |                     ^
+  62 |   }, [rawItems]);
+  63 |
+  64 |   const criticalCount = useMemo(() => {
+[browser] [Socket.IO] Authentication rejected or expired. Disconnecting socket. (lib\socket.ts:55:17)
+[browser] [Socket.IO] Authentication rejected or expired. Disconnecting socket. (lib\socket.ts:55:17)
+[browser] ../../../packages/email-builder-studio/src/studio.tsx
+Error:   x Unexpected token `(`. Expected identifier, string literal, numeric literal or [ for the computed key
+      ,-[D:\DEV\conf-platform\packages\email-builder-studio\src\studio.tsx:3271:1]
+ 3268 |   const openMedia = (kind: "IMAGE" | "ICON" | "SVG") => {
+ 3269 |     if (kind !== "SVG") setMediaKind(kind);
+ 3270 |     setMediaTab(kind === "ICON" ? "icons" : kind === "SVG" ? "svg" : "library");
+ 3271 |                                     onChange={(event) =>
+      :                                               ^
+ 3272 |                                       updateNode("props", {
+ 3273 |                                         buttonStyle: event.target.value,
+ 3273 |                                       })
+      `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+../../../packages/email-builder-studio/src/studio.tsx
+../../../packages/email-builder-studio/src/index.ts
+./components/organizer/emails/designer/EventEmailStudio.tsx
+./app/(dashboard)/events/[eventId]/design-studio/emails/designer/page.tsx 
+⨯ ../../../packages/email-builder-studio/src/studio.tsx
+Error:   x Unexpected token `(`. Expected identifier, string literal, numeric literal or [ for the computed key
+      ,-[D:\DEV\conf-platform\packages\email-builder-studio\src\studio.tsx:3271:1]
+ 3268 |   const openMedia = (kind: "IMAGE" | "ICON" | "SVG") => {
+ 3269 |     if (kind !== "SVG") setMediaKind(kind);
+ 3270 |     setMediaTab(kind === "ICON" ? "icons" : kind === "SVG" ? "svg" : "library");
+ 3271 |                                     onChange={(event) =>
+      :                                               ^
+ 3272 |                                       updateNode("props", {
+ 3273 |                                         buttonStyle: event.target.value,
+ 3273 |                                       })
+      `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+../../../packages/email-builder-studio/src/studio.tsx
+../../../packages/email-builder-studio/src/index.ts
+./components/organizer/emails/designer/EventEmailStudio.tsx
+./app/(dashboard)/events/[eventId]/design-studio/emails/designer/page.tsx
+⨯ ../../../packages/email-builder-studio/src/studio.tsx
+Error:   x Unexpected token `(`. Expected identifier, string literal, numeric literal or [ for the computed key
+      ,-[D:\DEV\conf-platform\packages\email-builder-studio\src\studio.tsx:3271:1]
+ 3268 |   const openMedia = (kind: "IMAGE" | "ICON" | "SVG") => {
+ 3269 |     if (kind !== "SVG") setMediaKind(kind);
+ 3270 |     setMediaTab(kind === "ICON" ? "icons" : kind === "SVG" ? "svg" : "library");
+ 3271 |                                     onChange={(event) =>
+      :                                               ^
+ 3272 |                                       updateNode("props", {
+ 3273 |                                         buttonStyle: event.target.value,
+ 3273 |                                       })
+      `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+../../../packages/email-builder-studio/src/studio.tsx
+../../../packages/email-builder-studio/src/index.ts
+./components/organizer/emails/designer/EventEmailStudio.tsx
+./app/(dashboard)/events/[eventId]/design-studio/emails/designer/page.tsx
+[browser] ../../../packages/email-builder-studio/src/studio.tsx
+Error:   x Unexpected token `(`. Expected identifier, string literal, numeric literal or [ for the computed key
+      ,-[D:\DEV\conf-platform\packages\email-builder-studio\src\studio.tsx:3271:1]
+ 3268 |   const openMedia = (kind: "IMAGE" | "ICON" | "SVG") => {
+ 3269 |     if (kind !== "SVG") setMediaKind(kind);
+ 3270 |     setMediaTab(kind === "ICON" ? "icons" : kind === "SVG" ? "svg" : "library");
+ 3271 |                                     onChange={(event) =>
+      :                                               ^
+ 3272 |                                       updateNode("props", {
+ 3273 |                                         buttonStyle: event.target.value,
+ 3273 |                                       })
+      `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+../../../packages/email-builder-studio/src/studio.tsx
+../../../packages/email-builder-studio/src/index.ts
+./components/organizer/emails/designer/EventEmailStudio.tsx
+./app/(dashboard)/events/[eventId]/design-studio/emails/designer/page.tsx 

@@ -423,6 +423,7 @@ async def run_import(
         all_rows = parse_workbook(workbook_bytes, tz_name=tz_name, is_poster=is_poster)
     except Exception as exc:
         job.status = "failed"
+        job.version = int(getattr(job, "version", 1) or 1) + 1
         job.error_summary = [{"row": 0, "error": f"Could not parse workbook: {exc}"}]
         await db.commit()
         logger.error(f"Import job {job.id} failed at parse: {exc}")
@@ -430,6 +431,7 @@ async def run_import(
 
     job.rows_total = len(all_rows)
     job.status = "importing"
+    job.version = int(getattr(job, "version", 1) or 1) + 1
     job.rows_updated = 0
     await db.commit()
 
@@ -498,6 +500,14 @@ async def run_import(
             
             # Periodically commit to avoid losing all progress if a later row fails
             if i % 10 == 0:
+                # Persist the counters in the same transaction as each batch so
+                # the status endpoint can report durable progress after a worker
+                # restart or task redelivery.  Keep the local counters as the
+                # source of truth for the final aggregate, but never let a
+                # successful batch commit without its visible progress.
+                job.rows_imported = rows_imported
+                job.rows_failed = rows_failed
+                job.version = int(getattr(job, "version", 1) or 1) + 1
                 await db.commit()
                 logger.debug(f"Committed batch up to row {row.row_num}")
 
@@ -521,6 +531,7 @@ async def run_import(
     job = result.scalar_one()
 
     job.status = "completed"
+    job.version = int(getattr(job, "version", 1) or 1) + 1
     job.rows_imported = rows_imported
     job.rows_failed = rows_failed
     job.rows_updated = stats["rows_updated"]

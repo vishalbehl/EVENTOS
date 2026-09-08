@@ -10,9 +10,16 @@ export type EmailStudioRecord = {
 export type EmailFragmentRecord = { id: string; name: string; stable_key: string; component_kind: "BLOCK" | "SECTION"; category: string; scope_type: "PLATFORM" | "ORGANIZATION" | "EVENT"; document_fragment: Record<string, unknown>; editable: boolean };
 export type EmailAssetRecord = { id: string; name: string; url: string; file_type: string; scope_type: "PLATFORM" | "ORGANIZATION" | "EVENT"; asset_kind?: "IMAGE" | "ICON"; source_type?: "UPLOAD" | "URL_IMPORT" | "BUILTIN_ICON" | "DERIVED"; width?: number | null; height?: number | null; metadata?: Record<string, unknown> };
 
+export type EventPreviewContextResponse = {
+  variables: Array<{ key: string; label: string; required?: boolean; sampleValue?: string }>;
+  sample_values: Record<string, string>;
+  sample_collections: Record<string, Array<Record<string, string>>>;
+};
+
 const headers = (version: number) => ({ "Idempotency-Key": crypto.randomUUID(), "If-Match": String(version) });
 export const eventEmailTemplates = {
   list: (eventId: string, targetType = "speaker") => apiClient.get<EmailStudioRecord[]>(`/events/${eventId}/notifications/template-studio`, { params: { target_type: targetType } }),
+  getPreviewContext: (eventId: string) => apiClient.get<EventPreviewContextResponse>(`/events/${eventId}/notifications/template-studio/preview-context`),
   create: (eventId: string, payload: object) => apiClient.post<EmailStudioRecord>(`/events/${eventId}/notifications/template-studio`, payload, { headers: { "Idempotency-Key": crypto.randomUUID() } }),
   saveDraft: (eventId: string, id: string, version: number, payload: object) => apiClient.put<EmailStudioRecord>(`/events/${eventId}/notifications/template-studio/${id}/draft`, payload, { headers: headers(version) }),
   publish: (eventId: string, id: string, version: number, reason: string) => apiClient.post<EmailStudioRecord>(`/events/${eventId}/notifications/template-studio/${id}/publish`, { reason }, { headers: headers(version) }),

@@ -18,8 +18,12 @@ from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.client_ip import resolve_client_ip
+from app.core.cache import cache_service
+from app.core.cache_keys import TenantCacheKey
+from app.core.cache_policy import CacheTTL, ttl
 from app.core.tenant_context import TenantContextGuard
 from app.dependencies import StepUpAuth, get_db
+from app.modules.audit.application.queries import AuditQueryService
 from app.modules.audit.models.audit_log import AuditLog, compute_audit_hash
 from app.modules.audit.models.audit_domain_tables import DataExport
 from app.modules.audit.services.audit_service import AuditContext, AuditService
@@ -47,6 +51,15 @@ from app.modules.events.services.event_job_control_service import (
     EventJobControlService,
 )
 from app.modules.platform.application.organization_team_commands import OrganizationTeamCommandService
+from app.modules.platform.application.organization_team_queries import OrganizationTeamQueryService
+from app.modules.platform.application.queries import OrganizationConsoleQueryService, OrganizationLifecycleQueryService, CommercialAccessQueryService, FinancialAdjustmentQueryService, PrivilegedAccessQueryService, OrganizationExportQueryService, CapabilityRestrictionQueryService, EntitlementOverrideQueryService, EventContractQueryService, ComplianceEvidenceQueryService, UsageQueryService, CapabilityDiagnosticsQueryService
+from app.modules.platform.application.organization_search_queries import (
+    OrganizationConsoleRegistrationQueryService,
+    OrganizationConsoleSearchQueryService,
+    OrganizationConsoleEventWorkspaceQueryService,
+    OrganizationConsoleAnalyticsQueryService,
+    SEARCH_DOMAINS,
+)
 from app.modules.platform.application.location_commands import OrganizationLocationCommandService
 from app.modules.platform.application.security_commands import OrganizationSecurityCommandService
 from app.modules.platform.application.governance_commands import OrganizationGovernanceCommandService
@@ -204,7 +217,6 @@ from app.modules.commercial.quote_service import request_fingerprint
 from app.modules.presentations.services.upload_service import create_presigned_download
 from app.config import settings
 from app.worker import celery_app
-from app.modules.analytics.services.analytics_service import build_analytics_snapshot
 from app.modules.developer.models.developer_registry import ApiKey
 from app.modules.developer.services.developer_service import DeveloperService
 from app.modules.integrations.models.integrations_domain_tables import IntegrationConnection, IntegrationProvider
@@ -243,9 +255,6 @@ router = APIRouter(
         Depends(_selected_organization_scope),
     ],
 )
-
-SEARCH_DOMAINS = {"events", "speakers", "sessions", "registrations", "files", "campaigns", "users"}
-
 
 async def _require_scoped_event(db: AsyncSession, organization_id: uuid.UUID, event_id: uuid.UUID) -> Event:
     event = await db.scalar(select(Event).where(Event.id == event_id, Event.organization_id == organization_id))
@@ -397,6 +406,30 @@ def _search_cursor(value: str | None) -> int:
         raise HTTPException(status_code=422, detail="Invalid search cursor") from exc
 
 
+def _search_seek_cursor(value: str | None) -> tuple[datetime, uuid.UUID] | None:
+    """Decode the stable search cursor; return None for legacy offset cursors."""
+    if not value:
+        return None
+    try:
+        decoded = base64.urlsafe_b64decode(value.encode()).decode()
+        prefix, position = decoded.split(":", 1)
+        if prefix != "search" or "|" not in position:
+            return None
+        occurred_at, record_id = position.split("|", 1)
+        return datetime.fromisoformat(occurred_at), uuid.UUID(record_id)
+    except (ValueError, TypeError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=422, detail="Invalid search cursor") from exc
+
+
+def _encode_search_seek_cursor(position: tuple[datetime, uuid.UUID] | None) -> str | None:
+    if position is None:
+        return None
+    occurred_at, record_id = position
+    return base64.urlsafe_b64encode(
+        f"search:{occurred_at.isoformat()}|{record_id}".encode()
+    ).decode()
+
+
 def _console_export_out(row: DataExport) -> ConsoleExportOut:
     metadata = row.request_metadata or {}
     return ConsoleExportOut(id=row.id, organization_id=row.organization_id, event_id=row.event_id, status=row.status, domains=metadata.get("domains", []), include_sensitive=bool(metadata.get("include_sensitive")), created_at=row.created_at, completed_at=row.completed_at, expires_at=row.expires_at, failure_reason=row.failure_reason)
@@ -524,20 +557,23 @@ async def list_organization_audit(
     db: AsyncSession = Depends(get_db),
 ):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    query = select(AuditLog).where(AuditLog.organization_id == organization_id)
-    if action_type: query = query.where(AuditLog.action_type == action_type)
-    if resource_type: query = query.where(AuditLog.resource_type == resource_type)
-    if actor_user_id: query = query.where(AuditLog.actor_user_id == actor_user_id)
-    if sensitive is not None: query = query.where(AuditLog.is_sensitive.is_(sensitive))
+    cursor_time = cursor_id = None
     if cursor:
         try:
             cursor_time_raw, cursor_id_raw = cursor.rsplit("|", 1)
             cursor_time, cursor_id = datetime.fromisoformat(cursor_time_raw), uuid.UUID(cursor_id_raw)
         except (ValueError, TypeError) as exc:
             raise HTTPException(status_code=422, detail="Invalid audit cursor") from exc
-        query = query.where(or_(AuditLog.occurred_at < cursor_time, and_(AuditLog.occurred_at == cursor_time, AuditLog.id < cursor_id)))
-    rows = (await db.scalars(query.order_by(AuditLog.occurred_at.desc(), AuditLog.id.desc()).limit(limit + 1))).all()
-    page, has_more = rows[:limit], len(rows) > limit
+    page, has_more = await AuditQueryService(db).list_organization_cursor(
+        organization_id=organization_id,
+        cursor_time=cursor_time,
+        cursor_id=cursor_id,
+        limit=limit,
+        action_type=action_type,
+        resource_type=resource_type,
+        actor_user_id=actor_user_id,
+        sensitive=sensitive,
+    )
     items = []
     for row in page:
         expected_hash = compute_audit_hash(row, version=row.hash_version or 1)
@@ -648,69 +684,19 @@ async def get_capability_diagnostics(
     await OrganizationConsoleService(db).require_organization(organization_id)
     now = datetime.now(timezone.utc)
     since = now - timedelta(hours=since_hours)
-
-    scoped = select(CapabilityDiagnosticEvent).where(
-        CapabilityDiagnosticEvent.organization_id == organization_id,
-        CapabilityDiagnosticEvent.occurred_at >= since,
+    diagnostics = CapabilityDiagnosticsQueryService(db)
+    events = await diagnostics.events(
+        organization_id=organization_id,
+        since=since,
+        event_type=event_type,
+        reason_code=reason_code,
+        limit=limit,
     )
-    if event_type:
-        scoped = scoped.where(CapabilityDiagnosticEvent.event_type == event_type.upper())
-    if reason_code:
-        scoped = scoped.where(CapabilityDiagnosticEvent.reason_code == reason_code)
-    events = (
-        await db.scalars(
-            scoped.order_by(
-                CapabilityDiagnosticEvent.occurred_at.desc(),
-                CapabilityDiagnosticEvent.id.desc(),
-            ).limit(limit)
-        )
-    ).all()
-
-    type_counts = dict(
-        (
-            await db.execute(
-                select(
-                    CapabilityDiagnosticEvent.event_type,
-                    func.count(CapabilityDiagnosticEvent.id),
-                )
-                .where(
-                    CapabilityDiagnosticEvent.organization_id == organization_id,
-                    CapabilityDiagnosticEvent.occurred_at >= since,
-                )
-                .group_by(CapabilityDiagnosticEvent.event_type)
-            )
-        ).all()
-    )
-    reason_counts = dict(
-        (
-            await db.execute(
-                select(
-                    CapabilityDiagnosticEvent.reason_code,
-                    func.count(CapabilityDiagnosticEvent.id),
-                )
-                .where(
-                    CapabilityDiagnosticEvent.organization_id == organization_id,
-                    CapabilityDiagnosticEvent.occurred_at >= since,
-                    CapabilityDiagnosticEvent.reason_code.is_not(None),
-                )
-                .group_by(CapabilityDiagnosticEvent.reason_code)
-            )
-        ).all()
+    type_counts, reason_counts = await diagnostics.counts(
+        organization_id=organization_id, since=since
     )
 
-    rollout_flags = (
-        await db.scalars(
-            select(FeatureFlag).where(
-                FeatureFlag.organization_id == organization_id,
-                FeatureFlag.flag_key.in_(
-                    [
-                        "organizer_console_entitlement_shadow",
-                        "organizer_console_entitlement_enforce",
-                    ]
-                ),
-            )
-        )
-    ).all()
+    rollout_flags = await diagnostics.rollout_flags(organization_id=organization_id)
     rollout_values = {row.flag_key: row.is_enabled for row in rollout_flags}
     rollout_mode = (
         "ENFORCED"
@@ -720,24 +706,18 @@ async def get_capability_diagnostics(
         else "LEGACY"
     )
 
-    latest_comparison_at = await db.scalar(
-        select(func.max(EntitlementShadowComparison.compared_at)).where(
-            EntitlementShadowComparison.organization_id == organization_id
-        )
+    latest_comparison_at = await diagnostics.latest_comparison_at(
+        organization_id=organization_id
     )
-    latest_reconciliation_at = await db.scalar(
-        select(func.max(UsageReconciliationRun.reconciled_at)).where(
-            UsageReconciliationRun.organization_id == organization_id
-        )
+    latest_reconciliation_at = await diagnostics.latest_reconciliation_at(
+        organization_id=organization_id
     )
 
     registry = registry_coverage()
     catalogue_keys = set(
         (
-            await db.scalars(
-                select(FeatureCatalog.key).where(FeatureCatalog.is_active.is_(True))
-            )
-        ).all()
+            await diagnostics.active_catalogue_keys()
+        )
     )
     registered_keys = set(registry["features"]) | set(registry["catalog_limit_keys"])
     missing_catalogue_keys = sorted(registered_keys - catalogue_keys)
@@ -765,25 +745,9 @@ async def get_capability_diagnostics(
     )
 
     stale_cutoff = now - timedelta(days=90)
-    flag_definitions = (
-        await db.scalars(select(PlatformFlagDefinition).order_by(PlatformFlagDefinition.updated_at))
-    ).all()
-    override_counts = dict(
-        (
-            await db.execute(
-                select(
-                    PlatformFlagOverride.flag_id,
-                    func.count(PlatformFlagOverride.id),
-                )
-                .where(
-                    or_(
-                        PlatformFlagOverride.organization_id == organization_id,
-                        PlatformFlagOverride.organization_id.is_(None),
-                    )
-                )
-                .group_by(PlatformFlagOverride.flag_id)
-            )
-        ).all()
+    flag_definitions = await diagnostics.flag_definitions()
+    override_counts = await diagnostics.override_counts(
+        organization_id=organization_id
     )
     stale_flags = []
     for definition in flag_definitions:
@@ -1111,10 +1075,13 @@ async def update_compliance_control(organization_id: uuid.UUID, control_id: uuid
 
 @router.get("/compliance/controls/{control_id}/evidence")
 async def list_compliance_evidence(organization_id: uuid.UUID, control_id: uuid.UUID, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    control = await db.scalar(select(OrganizationComplianceControl.id).where(OrganizationComplianceControl.id == control_id, OrganizationComplianceControl.organization_id == organization_id))
-    if not control: raise HTTPException(status_code=404, detail="Compliance control not found")
-    rows = (await db.scalars(select(OrganizationComplianceEvidence).where(OrganizationComplianceEvidence.organization_id == organization_id, OrganizationComplianceEvidence.control_id == control_id).order_by(OrganizationComplianceEvidence.collected_at.desc()))).all()
-    return {"items": [OrganizationConsoleService._model_dict(row) for row in rows], "freshness_at": datetime.now(timezone.utc), "source": "platform_compliance.organization_compliance_evidence"}
+    exists, rows = await ComplianceEvidenceQueryService(db).list_for_control(
+        organization_id=organization_id,
+        control_id=control_id,
+    )
+    if not exists:
+        raise HTTPException(status_code=404, detail="Compliance control not found")
+    return {"items": rows, "freshness_at": datetime.now(timezone.utc), "source": "platform_compliance.organization_compliance_evidence"}
 
 
 @router.post("/compliance/controls/{control_id}/evidence", status_code=status.HTTP_201_CREATED)
@@ -1167,10 +1134,9 @@ async def list_lifecycle_jobs(
     db: AsyncSession = Depends(get_db),
 ) -> list[LifecycleJobOut]:
     await OrganizationConsoleService(db).require_organization(organization_id)
-    query = select(OrganizationLifecycleJob).where(OrganizationLifecycleJob.organization_id == organization_id)
-    if status_filter:
-        query = query.where(OrganizationLifecycleJob.status == status_filter.upper())
-    rows = (await db.scalars(query.order_by(OrganizationLifecycleJob.created_at.desc()).limit(100))).all()
+    rows = await OrganizationLifecycleQueryService(db).list(
+        organization_id=organization_id, status_filter=status_filter
+    )
     return [LifecycleJobOut.model_validate(row) for row in rows]
 
 
@@ -1181,7 +1147,9 @@ async def get_lifecycle_job(
     actor: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ) -> LifecycleJobOut:
-    row = await db.scalar(select(OrganizationLifecycleJob).where(OrganizationLifecycleJob.id == job_id, OrganizationLifecycleJob.organization_id == organization_id))
+    row = await OrganizationLifecycleQueryService(db).get(
+        organization_id=organization_id, job_id=job_id
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Lifecycle job not found")
     return LifecycleJobOut.model_validate(row)
@@ -1230,43 +1198,10 @@ async def list_commercial_access_requests(
     db: AsyncSession = Depends(get_db),
 ):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    filters = [CommercialAccessRequest.organization_id == organization_id]
-    if request_status:
-        filters.append(CommercialAccessRequest.status == request_status.upper())
-    rows = (await db.scalars(
-        select(CommercialAccessRequest)
-        .where(*filters)
-        .order_by(CommercialAccessRequest.created_at.desc())
-        .limit(200)
-    )).all()
-    plans = {
-        row.id: row for row in (await db.scalars(select(SubscriptionPlan).where(
-            SubscriptionPlan.id.in_({item.requested_plan_id for item in rows})
-        ))).all()
-    } if rows else {}
-    return {"items": [{
-        "id": row.id,
-        "event_id": row.event_id,
-        "request_type": row.request_type,
-        "requested_plan_id": row.requested_plan_id,
-        "requested_plan_name": plans[row.requested_plan_id].name if row.requested_plan_id in plans else None,
-        "requested_plan_version": plans[row.requested_plan_id].version if row.requested_plan_id in plans else None,
-        "requested_addon_keys": row.requested_addon_keys,
-        "billing_profile": row.billing_profile,
-        "quoted_amount": row.quoted_amount,
-        "currency": row.currency,
-        "reason": row.reason,
-        "case_reference": row.case_reference,
-        "status": row.status,
-        "requested_by": row.requested_by,
-        "decided_by": row.decided_by,
-        "decision_reason": row.decision_reason,
-        "decided_at": row.decided_at,
-        "applied_subscription_id": row.applied_subscription_id,
-        "version": row.version,
-        "created_at": row.created_at,
-        "updated_at": row.updated_at,
-    } for row in rows], "freshness_at": datetime.now(timezone.utc)}
+    items = await CommercialAccessQueryService(db).list(
+        organization_id=organization_id, status_filter=request_status
+    )
+    return {"items": items, "freshness_at": datetime.now(timezone.utc)}
 
 
 @router.post("/commercial/access-requests/{access_request_id}/decision")
@@ -1301,24 +1236,13 @@ async def list_organization_console_events(
     db: AsyncSession = Depends(get_db),
 ):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    filters = [Event.organization_id == organization_id]
-    if not include_archived:
-        filters.extend(
-            (
-                Event.deleted_at.is_(None),
-                ~func.lower(Event.status).in_(["archived", "cancelled"]),
-            )
-        )
-    rows = (
-        await db.scalars(
-            select(Event)
-            .where(*filters)
-            .order_by(Event.start_date.desc(), Event.id.desc())
-            .limit(limit)
-        )
-    ).all()
+    rows = await OrganizationConsoleQueryService(db).list_events(
+        organization_id=organization_id,
+        include_archived=include_archived,
+        limit=limit,
+    )
     return {
-        "items": [_console_event_out(row) for row in rows],
+        "items": rows,
         "has_more": len(rows) == limit,
         "availability": "AVAILABLE",
         "freshness_at": datetime.now(timezone.utc),
@@ -1434,8 +1358,15 @@ async def create_event_contract(
 @router.get("/events/{event_id}/contract")
 async def get_event_contract(organization_id: uuid.UUID, event_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     await _require_scoped_event(db, organization_id, event_id)
-    rows = (await db.scalars(select(EventCommercialContract).where(EventCommercialContract.organization_id == organization_id, EventCommercialContract.event_id == event_id).order_by(EventCommercialContract.version.desc()))).all()
-    return {"items": [{"id": row.id, "version": row.version, "status": row.status, "plan_key": row.plan_key, "plan_version": row.plan_version, "currency": row.currency, "entitlements": row.entitlements, "hard_ceilings": row.hard_ceilings, "addons": row.addons, "source": row.source, "effective_at": row.effective_at, "ends_at": row.ends_at, "created_at": row.created_at} for row in rows]}
+    rows = await EventContractQueryService(db).list(
+        organization_id=organization_id,
+        event_id=event_id,
+    )
+    return {"items": [{key: row[key] for key in (
+        "id", "version", "status", "plan_key", "plan_version", "currency",
+        "entitlements", "hard_ceilings", "addons", "source", "effective_at",
+        "ends_at", "created_at",
+    )} for row in rows]}
 
 
 @router.get("/events/{event_id}/entitlements/resolved")
@@ -1493,13 +1424,15 @@ async def request_override(organization_id: uuid.UUID, payload: OverrideRequestC
 @router.get("/override-requests")
 async def list_override_requests(organization_id: uuid.UUID, event_id: uuid.UUID | None = None, request_status: str | None = None, limit: int = 50, db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    query = select(EntitlementOverrideRequest).where(EntitlementOverrideRequest.organization_id == organization_id)
     if event_id:
         await _require_scoped_event(db, organization_id, event_id)
-        query = query.where(EntitlementOverrideRequest.event_id == event_id)
-    if request_status: query = query.where(EntitlementOverrideRequest.status == request_status)
-    rows = (await db.scalars(query.order_by(EntitlementOverrideRequest.created_at.desc()).limit(min(max(limit, 1), 100)))).all()
-    return {"items": [{"id": row.id, "event_id": row.event_id, "entitlement_key": row.entitlement_key, "operation": row.operation, "requested_value": row.requested_value, "reason": row.reason, "case_reference": row.case_reference, "status": row.status, "version": row.version, "requested_by": row.requested_by, "approved_by": row.approved_by, "effective_at": row.effective_at, "expires_at": row.expires_at, "created_at": row.created_at, "decided_at": row.decided_at, "revocation_status": row.revocation_status, "revocation_reason": row.revocation_reason, "revocation_case_reference": row.revocation_case_reference, "revocation_requested_by": row.revocation_requested_by, "revocation_approved_by": row.revocation_approved_by, "revocation_requested_at": row.revocation_requested_at, "revoked_at": row.revoked_at, "revoked_by": row.revoked_by} for row in rows]}
+    rows = await EntitlementOverrideQueryService(db).list(
+        organization_id=organization_id,
+        event_id=event_id,
+        status_filter=request_status,
+        limit=limit,
+    )
+    return {"items": rows}
 
 
 @router.post("/override-requests/{override_id}/decision")
@@ -1589,14 +1522,14 @@ async def decide_override_revocation(organization_id: uuid.UUID, override_id: uu
 @router.get("/restrictions")
 async def list_capability_restrictions(organization_id: uuid.UUID, event_id: uuid.UUID | None = None, request_status: str | None = None, db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    query = select(CapabilityRestriction).where(CapabilityRestriction.organization_id == organization_id)
     if event_id:
         await _require_scoped_event(db, organization_id, event_id)
-        query = query.where(CapabilityRestriction.event_id == event_id)
-    if request_status:
-        query = query.where(CapabilityRestriction.status == request_status)
-    rows = (await db.scalars(query.order_by(CapabilityRestriction.created_at.desc()).limit(100))).all()
-    return {"items": [{column.name: getattr(row, column.name) for column in row.__table__.columns} for row in rows]}
+    rows = await CapabilityRestrictionQueryService(db).list(
+        organization_id=organization_id,
+        event_id=event_id,
+        status_filter=request_status,
+    )
+    return {"items": rows}
 
 
 @router.post("/restrictions", status_code=status.HTTP_202_ACCEPTED)
@@ -1763,15 +1696,21 @@ async def create_usage_adjustment(organization_id: uuid.UUID, payload: UsageAdju
 async def get_usage(organization_id: uuid.UUID, event_id: uuid.UUID | None = None, db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
     if event_id: await _require_scoped_event(db, organization_id, event_id)
-    query = select(UsageLedgerEntry.metric_key, UsageLedgerEntry.unit).where(UsageLedgerEntry.organization_id == organization_id)
-    query = query.where(UsageLedgerEntry.event_id == event_id) if event_id else query.where(UsageLedgerEntry.event_id.is_(None))
-    keys = (await db.execute(query.distinct())).all()
+    usage_queries = UsageQueryService(db)
+    keys = await usage_queries.metric_keys(
+        organization_id=organization_id,
+        event_id=event_id,
+    )
     resolved = await EventEntitlementService.resolve(db, organization_id, event_id, explain=True) if event_id else None
     items = []
     now = datetime.now(timezone.utc)
     for key, unit in keys:
         quantity, epoch, freshness = await MeteringService.current_value(db, organization_id, event_id, key)
-        reconciliation = await db.scalar(select(UsageReconciliationRun).where(UsageReconciliationRun.organization_id == organization_id, UsageReconciliationRun.event_id == event_id, UsageReconciliationRun.metric_key == key).order_by(UsageReconciliationRun.reconciled_at.desc()).limit(1)) if event_id else None
+        reconciliation = await usage_queries.latest_reconciliation(
+            organization_id=organization_id,
+            event_id=event_id,
+            metric_key=key,
+        ) if event_id else None
         entitlement_key = MeteringService.ENTITLEMENT_METRICS.get(key, key)
         limit = resolved["limits"].get(entitlement_key) if resolved else None
         sources = resolved["sources"].get(entitlement_key, []) if resolved else []
@@ -1809,8 +1748,9 @@ async def create_privileged_access_session(organization_id: uuid.UUID, payload: 
 async def list_privileged_access_sessions(organization_id: uuid.UUID, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
     now = datetime.now(timezone.utc)
-    rows = (await db.scalars(select(PrivilegedAccessSession).where(PrivilegedAccessSession.organization_id == organization_id, PrivilegedAccessSession.actor_user_id == actor.id).order_by(PrivilegedAccessSession.created_at.desc()).limit(20))).all()
-    return {"items": [{"id": row.id, "field_categories": row.field_categories, "case_reference": row.case_reference, "created_at": row.created_at, "expires_at": row.expires_at, "revoked_at": row.revoked_at, "active": row.revoked_at is None and row.expires_at > now} for row in rows]}
+    return {"items": await PrivilegedAccessQueryService(db).list(
+        organization_id=organization_id, actor_user_id=actor.id, now=now
+    )}
 
 
 @router.delete("/privileged-access-sessions/{session_id}")
@@ -1837,8 +1777,9 @@ async def create_financial_adjustment(organization_id: uuid.UUID, payload: Finan
 @router.get("/financial-adjustments")
 async def list_financial_adjustments(organization_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    rows = (await db.scalars(select(OrganizationFinancialAdjustment).where(OrganizationFinancialAdjustment.organization_id == organization_id).order_by(OrganizationFinancialAdjustment.created_at.desc()).limit(100))).all()
-    return {"items": [{"id": row.id, "event_id": row.event_id, "adjustment_type": row.adjustment_type, "amount": row.amount, "currency": row.currency, "reason": row.reason, "case_reference": row.case_reference, "status": row.status, "version": row.version, "requested_by": row.requested_by, "approved_by": row.approved_by, "effective_at": row.effective_at, "expires_at": row.expires_at, "created_at": row.created_at, "decided_at": row.decided_at} for row in rows]}
+    return {"items": await FinancialAdjustmentQueryService(db).list(
+        organization_id=organization_id
+    )}
 
 
 @router.post("/financial-adjustments/{adjustment_id}/decision")
@@ -1865,17 +1806,44 @@ async def create_organization_api_key(organization_id: uuid.UUID, payload: Organ
     )
 
 
-async def _team_out(db: AsyncSession, team: OrganizationTeam) -> dict:
-    member_ids = list((await db.scalars(select(OrganizationTeamMember.organization_member_id).where(OrganizationTeamMember.team_id == team.id))).all())
-    event_rows = (await db.execute(select(OrganizationTeamEvent.event_id, OrganizationTeamEvent.permissions).where(OrganizationTeamEvent.team_id == team.id))).all()
-    return {"id": team.id, "name": team.name, "description": team.description, "version": team.version, "member_ids": member_ids, "events": [{"event_id": event_id, "permissions": permissions} for event_id, permissions in event_rows], "created_at": team.created_at, "updated_at": team.updated_at}
+async def _team_out(db: AsyncSession, organization_id: uuid.UUID, team_id: uuid.UUID) -> dict:
+    projection = await OrganizationTeamQueryService(db).get_for_team(
+        organization_id=organization_id,
+        team_id=team_id,
+    )
+    if projection is None:
+        raise HTTPException(status_code=404, detail="Organization team not found")
+    return {
+        "id": projection.id,
+        "name": projection.name,
+        "description": projection.description,
+        "version": projection.version,
+        "member_ids": projection.member_ids,
+        "events": projection.events,
+        "created_at": projection.created_at,
+        "updated_at": projection.updated_at,
+    }
 
 
 @router.get("/teams")
 async def list_organization_teams(organization_id: uuid.UUID, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    rows = (await db.scalars(select(OrganizationTeam).where(OrganizationTeam.organization_id == organization_id, OrganizationTeam.deleted_at.is_(None)).order_by(OrganizationTeam.name))).all()
-    return {"items": [await _team_out(db, row) for row in rows], "freshness_at": datetime.now(timezone.utc), "source": "organizer_access.organization_teams"}
+    rows = await OrganizationTeamQueryService(db).list_for_organization(
+        organization_id=organization_id,
+    )
+    return {"items": [
+        {
+            "id": row.id,
+            "name": row.name,
+            "description": row.description,
+            "version": row.version,
+            "member_ids": row.member_ids,
+            "events": row.events,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+        for row in rows
+    ], "freshness_at": datetime.now(timezone.utc), "source": "organizer_access.organization_teams"}
 
 
 @router.post("/teams", status_code=status.HTTP_201_CREATED)
@@ -1888,7 +1856,7 @@ async def create_organization_team(organization_id: uuid.UUID, payload: Organiza
         description=payload.description,
         reason=payload.reason,
     )
-    return await _team_out(db, row)
+    return await _team_out(db, organization_id, row.id)
 
 
 @router.patch("/teams/{team_id}")
@@ -1902,7 +1870,7 @@ async def update_organization_team(organization_id: uuid.UUID, team_id: uuid.UUI
         if_match=if_match,
         reason=payload.reason,
     )
-    return await _team_out(db, row)
+    return await _team_out(db, organization_id, row.id)
 
 
 @router.delete("/teams/{team_id}")
@@ -1920,25 +1888,25 @@ async def archive_organization_team(organization_id: uuid.UUID, team_id: uuid.UU
 @router.put("/teams/{team_id}/members/{member_id}")
 async def assign_organization_team_member(organization_id: uuid.UUID, team_id: uuid.UUID, member_id: uuid.UUID, payload: OrganizationTeamAssignment, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     team = await OrganizationTeamCommandService(db).assign_member(organization_id=organization_id, team_id=team_id, member_id=member_id, actor=actor, reason=payload.reason)
-    return await _team_out(db, team)
+    return await _team_out(db, organization_id, team.id)
 
 
 @router.delete("/teams/{team_id}/members/{member_id}")
 async def unassign_organization_team_member(organization_id: uuid.UUID, team_id: uuid.UUID, member_id: uuid.UUID, payload: LegalHoldRelease, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     team = await OrganizationTeamCommandService(db).unassign_member(organization_id=organization_id, team_id=team_id, member_id=member_id, actor=actor, reason=payload.reason)
-    return await _team_out(db, team)
+    return await _team_out(db, organization_id, team.id)
 
 
 @router.put("/teams/{team_id}/events/{event_id}")
 async def assign_organization_team_event(organization_id: uuid.UUID, team_id: uuid.UUID, event_id: uuid.UUID, payload: OrganizationTeamAssignment, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     team = await OrganizationTeamCommandService(db).assign_event(organization_id=organization_id, team_id=team_id, event_id=event_id, actor=actor, permissions=payload.permissions, reason=payload.reason)
-    return await _team_out(db, team)
+    return await _team_out(db, organization_id, team.id)
 
 
 @router.delete("/teams/{team_id}/events/{event_id}")
 async def unassign_organization_team_event(organization_id: uuid.UUID, team_id: uuid.UUID, event_id: uuid.UUID, payload: LegalHoldRelease, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     team = await OrganizationTeamCommandService(db).unassign_event(organization_id=organization_id, team_id=team_id, event_id=event_id, actor=actor, reason=payload.reason)
-    return await _team_out(db, team)
+    return await _team_out(db, organization_id, team.id)
 
 
 @router.post("/api-keys/{key_id}/revoke")
@@ -2103,7 +2071,9 @@ async def create_console_export(
 @router.get("/exports", response_model=list[ConsoleExportOut])
 async def list_console_exports(organization_id: uuid.UUID, limit: int = Query(default=25, ge=1, le=100), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)) -> list[ConsoleExportOut]:
     await OrganizationConsoleService(db).require_organization(organization_id)
-    rows = (await db.scalars(select(DataExport).where(DataExport.organization_id == organization_id, DataExport.source_type == "organization_console_export").order_by(DataExport.created_at.desc()).limit(limit))).all()
+    rows = await OrganizationExportQueryService(db).list(
+        organization_id=organization_id, limit=limit
+    )
     return [_console_export_out(row) for row in rows]
 
 
@@ -2144,33 +2114,52 @@ async def search_organization_console(
     if unknown: raise HTTPException(status_code=422, detail=f"Unsupported search domains: {', '.join(sorted(unknown))}")
     access = await _require_privileged_access(db, organization_id, actor.id, privileged_access_session, {"IDENTITY", "CONTACT"}) if include_sensitive else None
     pattern = f"%{q.strip()}%"
-    event_scope = select(Event.id).where(Event.organization_id == organization_id)
-    if event_id: event_scope = event_scope.where(Event.id == event_id)
-    items: list[dict] = []
-    if "events" in selected:
-        rows = (await db.scalars(select(Event).where(Event.organization_id == organization_id, or_(Event.name.ilike(pattern), Event.short_code.ilike(pattern))).limit(101))).all()
-        items.extend({"domain": "events", "resource_type": "event", "id": row.id, "event_id": row.id, "title": row.name, "subtitle": row.short_code, "status": row.status, "occurred_at": row.updated_at} for row in rows)
-    if "speakers" in selected:
-        rows = (await db.scalars(select(Speaker).where(Speaker.event_id.in_(event_scope), Speaker.deleted_at.is_(None), or_(Speaker.first_name.ilike(pattern), Speaker.last_name.ilike(pattern), Speaker.email.ilike(pattern), Speaker.affiliation.ilike(pattern))).limit(101))).all()
-        items.extend({"domain": "speakers", "resource_type": "speaker", "id": row.id, "event_id": row.event_id, "title": f"{row.first_name} {row.last_name}" if include_sensitive else f"{row.first_name[:1]}*** {row.last_name[:1]}***", "subtitle": row.email if include_sensitive else _mask_email(row.email), "status": row.upload_status, "occurred_at": row.updated_at} for row in rows)
-    if "sessions" in selected:
-        rows = (await db.scalars(select(Session).where(Session.event_id.in_(event_scope), Session.deleted_at.is_(None), or_(Session.name.ilike(pattern), Session.session_code.ilike(pattern), Session.description.ilike(pattern))).limit(101))).all()
-        items.extend({"domain": "sessions", "resource_type": "session", "id": row.id, "event_id": row.event_id, "title": row.name, "subtitle": row.session_code, "status": row.status, "occurred_at": row.updated_at} for row in rows)
-    if "registrations" in selected:
-        rows = (await db.scalars(select(ParticipantRegistration).where(ParticipantRegistration.event_id.in_(event_scope), ParticipantRegistration.deleted_at.is_(None), or_(ParticipantRegistration.registration_data["name"].astext.ilike(pattern), ParticipantRegistration.registration_data["email"].astext.ilike(pattern))).limit(101))).all()
-        items.extend({"domain": "registrations", "resource_type": "registration", "id": row.id, "event_id": row.event_id, "title": str((row.registration_data or {}).get("name", "Registration")) if include_sensitive else f"{str((row.registration_data or {}).get('name', 'R'))[:1]}***", "subtitle": (row.registration_data or {}).get("email") if include_sensitive else _mask_email((row.registration_data or {}).get("email")), "status": row.registration_status, "occurred_at": row.updated_at} for row in rows)
-    if "files" in selected:
-        rows = (await db.scalars(select(PresentationFile).where(PresentationFile.event_id.in_(event_scope), PresentationFile.deleted_at.is_(None), PresentationFile.original_filename.ilike(pattern)).limit(101))).all()
-        items.extend({"domain": "files", "resource_type": "presentation_file", "id": row.id, "event_id": row.event_id, "title": row.original_filename, "subtitle": row.file_format, "status": row.upload_status, "occurred_at": row.updated_at} for row in rows)
-    if "campaigns" in selected:
-        rows = (await db.scalars(select(EmailCampaign).where(EmailCampaign.event_id.in_(event_scope), EmailCampaign.deleted_at.is_(None), EmailCampaign.name.ilike(pattern)).limit(101))).all()
-        items.extend({"domain": "campaigns", "resource_type": "email_campaign", "id": row.id, "event_id": row.event_id, "title": row.name, "subtitle": row.target_type, "status": row.status, "occurred_at": row.updated_at} for row in rows)
-    if "users" in selected:
-        rows = (await db.execute(select(UserEventAssignment, User).join(User, User.id == UserEventAssignment.user_id).where(User.organization_id == organization_id, UserEventAssignment.event_id.in_(event_scope), or_(User.first_name.ilike(pattern), User.last_name.ilike(pattern), User.email.ilike(pattern))).limit(101))).all()
-        items.extend({"domain": "users", "resource_type": "user_event_assignment", "id": assignment.id, "event_id": assignment.event_id, "title": f"{user.first_name or ''} {user.last_name or ''}".strip() if include_sensitive else f"{(user.first_name or 'U')[:1]}***", "subtitle": user.email if include_sensitive else _mask_email(user.email), "status": "active", "occurred_at": assignment.assigned_at} for assignment, user in rows)
-    items.sort(key=lambda item: (item["occurred_at"] or datetime.min.replace(tzinfo=timezone.utc), str(item["id"])), reverse=True)
-    offset = _search_cursor(cursor); page = items[offset:offset + limit]; next_offset = offset + len(page)
-    next_cursor = base64.urlsafe_b64encode(f"search:{next_offset}".encode()).decode() if next_offset < len(items) else None
+    seek_cursor = _search_seek_cursor(cursor)
+    offset = 0 if seek_cursor is not None else _search_cursor(cursor)
+    async def load_search_response() -> dict:
+        page, next_cursor_position = await OrganizationConsoleSearchQueryService(db).search(
+            organization_id=organization_id,
+            pattern=pattern,
+            selected=selected,
+            event_id=event_id,
+            offset=offset,
+            limit=limit,
+            include_sensitive=bool(access),
+            cursor_position=seek_cursor,
+        )
+        if isinstance(next_cursor_position, tuple):
+            next_cursor = _encode_search_seek_cursor(next_cursor_position)
+        elif next_cursor_position is not None:
+            next_cursor = base64.urlsafe_b64encode(f"search:{next_cursor_position}".encode()).decode()
+        else:
+            next_cursor = None
+        return {
+            "items": page,
+            "next_cursor": next_cursor,
+            "has_more": next_cursor is not None,
+            "availability": {"available": True, "freshness_at": datetime.now(timezone.utc)},
+            "source": sorted(selected),
+            "sensitive_data_included": bool(access),
+        }
+
+    # Sensitive results are never cached. The non-sensitive path is tenant-
+    # keyed, bounded, and stampede-protected; event mutations invalidate the
+    # targeted organization search namespace after commit.
+    if include_sensitive:
+        response = await load_search_response()
+    else:
+        fingerprint = hashlib.sha256(json.dumps({
+            "q": q.strip().casefold(),
+            "domains": sorted(selected),
+            "event_id": str(event_id) if event_id else None,
+            "cursor": cursor,
+            "limit": limit,
+        }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        response = await cache_service.get_or_set(
+            TenantCacheKey.search(fingerprint, organization_id),
+            load_search_response,
+            ttl(CacheTTL.SEARCH_SUGGESTIONS),
+        )
     if access:
         await _dispatch_read_audit(
             request,
@@ -2179,9 +2168,9 @@ async def search_organization_console(
             "SENSITIVE_CROSS_DOMAIN_SEARCH",
             "organization",
             organization_id,
-            new_state={"query": q, "domains": sorted(selected), "event_id": str(event_id) if event_id else None, "record_count": len(page), "privileged_access_session_id": str(access.id)},
+            new_state={"query": q, "domains": sorted(selected), "event_id": str(event_id) if event_id else None, "record_count": len(response.get("items", [])), "privileged_access_session_id": str(access.id)},
         )
-    return {"items": page, "next_cursor": next_cursor, "has_more": next_cursor is not None, "availability": {"available": True, "freshness_at": datetime.now(timezone.utc)}, "source": sorted(selected), "sensitive_data_included": bool(access)}
+    return response
 
 
 @router.get("/events/{event_id}/workspace/registrations")
@@ -2201,18 +2190,22 @@ async def event_registration_workspace(
     access = None
     if include_sensitive:
         access = await _require_privileged_access(db, organization_id, actor.id, privileged_access_session, {"IDENTITY", "CONTACT"})
-    query = select(ParticipantRegistration).where(ParticipantRegistration.event_id == event_id, ParticipantRegistration.deleted_at.is_(None))
-    if registration_status: query = query.where(ParticipantRegistration.registration_status == registration_status.lower())
+    cursor_position = None
     if cursor:
         try:
             decoded = base64.urlsafe_b64decode(cursor.encode()).decode()
             submitted_raw, id_raw = decoded.split("|", 1)
-            submitted_at, cursor_id = datetime.fromisoformat(submitted_raw), uuid.UUID(id_raw)
+            cursor_position = datetime.fromisoformat(submitted_raw), uuid.UUID(id_raw)
         except (ValueError, TypeError):
             raise HTTPException(status_code=422, detail="Invalid registration cursor")
-        query = query.where(or_(ParticipantRegistration.submitted_at < submitted_at, and_(ParticipantRegistration.submitted_at == submitted_at, ParticipantRegistration.id < cursor_id)))
     page_size = min(max(limit, 1), 100)
-    rows = (await db.scalars(query.order_by(ParticipantRegistration.submitted_at.desc(), ParticipantRegistration.id.desc()).limit(page_size + 1))).all()
+    rows = await OrganizationConsoleRegistrationQueryService(db).list_page(
+        organization_id=organization_id,
+        event_id=event_id,
+        limit=page_size,
+        cursor_position=cursor_position,
+        registration_status=registration_status,
+    )
     has_more = len(rows) > page_size
     rows = rows[:page_size]
     next_cursor = None
@@ -2253,9 +2246,10 @@ async def event_domain_workspace(
     data: dict = {}
     source = ""
     if workspace == "overview":
-        counts = {}
-        for key, model in (("registrations", ParticipantRegistration), ("speakers", Speaker), ("sessions", Session), ("rooms", Room), ("files", PresentationFile), ("payments", PaymentTransaction)):
-            counts[key] = await db.scalar(select(func.count(model.id)).where(model.event_id == event_id)) or 0
+        counts = await OrganizationConsoleQueryService(db).event_overview_counts(
+            organization_id=organization_id,
+            event_id=event_id,
+        )
         capability = await CapabilityService.resolve_event(
             db,
             organization_id,
@@ -2287,70 +2281,20 @@ async def event_domain_workspace(
         }
         source = "events.events+canonical_capabilities"
     elif workspace == "settings":
-        data = {
-            "event": {
-                "id": event.id,
-                "name": event.name,
-                "short_code": event.short_code,
-                "status": event.status,
-                "tagline": event.tagline,
-                "description": event.description,
-                "location": event.location,
-                "venue_name": event.venue_name,
-                "country": event.country,
-                "state": event.state,
-                "organizer_name": event.organizer_name,
-                "organizer_details": event.organizer_details,
-                "start_date": event.start_date,
-                "end_date": event.end_date,
-                "timezone": event.timezone,
-                "upload_deadline": event.upload_deadline,
-                "max_file_size_mb": event.max_file_size_mb,
-                "allowed_formats": event.allowed_formats,
-                "currency": event.currency,
-                "map_link": event.map_link,
-                "venue_images": event.venue_images,
-                "venue_details": event.venue_details,
-                "speaker_settings": event.speaker_settings,
-                "registration_settings": event.registration_settings,
-                "branding_settings": event.branding_settings,
-                "updated_at": event.updated_at,
-            }
-        }
+        settings = await OrganizationConsoleQueryService(db).event_settings(
+            organization_id=organization_id,
+            event_id=event_id,
+        )
+        data = {"event": settings or {}}
         source = "events.events"
     elif workspace == "operations":
-        import_failures = int(
-            await db.scalar(
-                select(func.count(ImportJob.id)).where(
-                    ImportJob.event_id == event_id,
-                    func.lower(ImportJob.status).in_(["failed", "error"]),
-                )
-            )
-            or 0
+        failures = await OrganizationConsoleQueryService(db).event_operations_failures(
+            organization_id=organization_id,
+            event_id=event_id,
         )
-        sync_failures = int(
-            await db.scalar(
-                select(func.count(VenueSyncJob.id)).where(
-                    VenueSyncJob.event_id == event_id,
-                    func.lower(VenueSyncJob.status).in_(["failed", "error"]),
-                )
-            )
-            or 0
-        )
-        processing_failures = int(
-            await db.scalar(
-                select(func.count(PresentationProcessingJob.id))
-                .join(
-                    PresentationFile,
-                    PresentationFile.id == PresentationProcessingJob.file_id,
-                )
-                .where(
-                    PresentationFile.event_id == event_id,
-                    func.lower(PresentationProcessingJob.status).in_(["failed", "error"]),
-                )
-            )
-            or 0
-        )
+        import_failures = failures["import_jobs"]
+        sync_failures = failures["venue_sync_jobs"]
+        processing_failures = failures["processing_jobs"]
         data = {
             "control": {
                 "status": event.status,
@@ -2368,228 +2312,114 @@ async def event_domain_workspace(
         }
         source = "events.events,registration.import_jobs,venue.sync_jobs,presentations.processing_jobs"
     elif workspace == "attendees":
-        participant_filters = [Participant.event_id == event_id]
-        if not include_archived:
-            participant_filters.append(Participant.deleted_at.is_(None))
-        rows = (await db.execute(
-            select(Participant, RegistrationConfirmationQR)
-            .outerjoin(
-                RegistrationConfirmationQR,
-                RegistrationConfirmationQR.participant_id == Participant.id,
-            )
-            .where(*participant_filters)
-            .order_by(Participant.registered_at.desc())
-            .limit(100)
-        )).all()
-        data = {
-            "items": [
-                {
-                    "id": participant.id,
-                    "registration_number": participant.regno,
-                    "name": participant.name if include_sensitive else f"{participant.first_name[:1]}*** {participant.last_name[:1]}***",
-                    "email": participant.email if include_sensitive else _mask_email(participant.email),
-                    "phone": participant.phone if include_sensitive else _mask_phone(participant.phone),
-                    "role": participant.role,
-                    "role_id": participant.role_id,
-                    "company": participant.company if include_sensitive else None,
-                    "designation": participant.designation if include_sensitive else None,
-                    "country": participant.country,
-                    "approval_status": participant.approval_status,
-                    "paid_status": participant.paid_status,
-                    "source": participant.source,
-                    "custom_fields": participant.custom_fields if include_sensitive else None,
-                    "registered_at": participant.registered_at,
-                    "updated_at": participant.updated_at,
-                    "lifecycle_state": "archived" if participant.deleted_at else "active",
-                    "deleted_at": participant.deleted_at,
-                    "qr_status": credential.status if credential else "NOT_ISSUED",
-                    "qr_version": credential.credential_version if credential else 0,
-                    "qr_image_url": (
-                        build_confirmation_image_url(
-                            build_confirmation_token(
-                                credential.id,
-                                credential.credential_version,
-                            )
-                        )
-                        if credential
-                        else None
-                    ),
-                }
-                for participant, credential in rows
-            ],
-            "has_more": len(rows) == 100,
-            "sensitive_edit_allowed": include_sensitive,
-        }
+        items, has_more = await OrganizationConsoleEventWorkspaceQueryService(db).list_attendees(
+            organization_id=organization_id,
+            event_id=event_id,
+            include_archived=include_archived,
+            include_sensitive=include_sensitive,
+        )
+        data = {"items": items, "has_more": has_more, "sensitive_edit_allowed": include_sensitive}
         source = "registration.participants,registration.confirmation_qr_credentials"
     elif workspace == "speakers":
-        speaker_filter = [Speaker.event_id == event_id]
-        if not include_archived: speaker_filter.append(Speaker.deleted_at.is_(None))
-        rows = (await db.scalars(select(Speaker).where(*speaker_filter).order_by(Speaker.created_at.desc()).limit(100))).all()
-        data = {"items": [{"id": row.id, "first_name": row.first_name if include_sensitive else f"{row.first_name[:1]}***", "last_name": row.last_name if include_sensitive else f"{row.last_name[:1]}***", "email": row.email if include_sensitive else _mask_email(row.email), "phone": row.phone if include_sensitive else _mask_phone(row.phone), "designation": row.designation, "affiliation": row.affiliation, "country": row.country, "upload_status": row.upload_status, "allow_override": row.allow_override, "checked_in_at": row.checked_in_at, "created_at": row.created_at, "lifecycle_state": "archived" if row.deleted_at else "active", "deleted_at": row.deleted_at} for row in rows], "has_more": len(rows) == 100}; source = "speakers.speakers"
+        items, has_more = await OrganizationConsoleEventWorkspaceQueryService(db).list_speakers(
+            organization_id=organization_id,
+            event_id=event_id,
+            include_archived=include_archived,
+            include_sensitive=include_sensitive,
+        )
+        data = {"items": items, "has_more": has_more}; source = "speakers.speakers"
     elif workspace == "abstracts":
-        rows = (await db.execute(
-            select(SessionSpeaker, Speaker, Session)
-            .join(Speaker, Speaker.id == SessionSpeaker.speaker_id)
-            .join(Session, Session.id == SessionSpeaker.session_id)
-            .where(
-                Speaker.event_id == event_id,
-                Session.event_id == event_id,
-                Speaker.deleted_at.is_(None),
-                Session.deleted_at.is_(None),
-            )
-            .order_by(SessionSpeaker.abstract_submitted_at.desc().nullslast(), SessionSpeaker.id)
-            .limit(100)
-        )).all()
-        data = {
-            "items": [
-                {
-                    "id": slot.id,
-                    "speaker_id": speaker.id,
-                    "speaker_name": speaker.full_name if include_sensitive else f"{speaker.first_name[:1]}*** {speaker.last_name[:1]}***",
-                    "speaker_email": speaker.email if include_sensitive else _mask_email(speaker.email),
-                    "session_id": session.id,
-                    "session_name": session.name,
-                    "presentation_title": slot.presentation_title,
-                    "abstract_text": slot.abstract_text,
-                    "keywords": slot.abstract_keywords or [],
-                    "status": slot.abstract_status,
-                    "version": slot.abstract_version,
-                    "submitted_at": slot.abstract_submitted_at,
-                    "reviewed_at": slot.abstract_reviewed_at,
-                    "reviewed_by": slot.abstract_reviewed_by,
-                    "review_notes": slot.abstract_review_notes,
-                }
-                for slot, speaker, session in rows
-            ],
-            "has_more": len(rows) == 100,
-        }
-        source = "events.session_speakers"
+        items, has_more = await OrganizationConsoleEventWorkspaceQueryService(db).list_abstracts(
+            organization_id=organization_id,
+            event_id=event_id,
+            include_sensitive=include_sensitive,
+        )
+        data = {"items": items, "has_more": has_more}
+        source = "abstract.abstract_submissions"
     elif workspace == "sessions":
-        session_filter = [Session.event_id == event_id]
-        if not include_archived: session_filter.append(Session.deleted_at.is_(None))
-        rows = (await db.scalars(select(Session).where(*session_filter).order_by(Session.start_time).limit(100))).all()
-        data = {"items": [{"id": row.id, "room_id": row.room_id, "session_code": row.session_code, "name": row.name, "session_type": row.session_type, "start_time": row.start_time, "end_time": row.end_time, "moderator_id": row.moderator_id, "moderator_name": row.moderator_name, "description": row.description, "status": row.status, "lifecycle_state": "archived" if row.deleted_at else "active", "deleted_at": row.deleted_at} for row in rows], "has_more": len(rows) == 100}; source = "events.sessions"
+        items, has_more = await OrganizationConsoleEventWorkspaceQueryService(db).list_sessions(
+            organization_id=organization_id,
+            event_id=event_id,
+            include_archived=include_archived,
+        )
+        data = {"items": items, "has_more": has_more}; source = "events.sessions"
     elif workspace == "rooms":
-        rows = (await db.scalars(select(Room).where(Room.event_id == event_id).order_by(Room.name).limit(100))).all()
-        data = {"items": [{"id": row.id, "name": row.name, "code": getattr(row, "code", None), "room_type": row.room_type, "room_coordinator": getattr(row, "room_coordinator", None), "is_active": row.is_active, "lifecycle_state": "active" if row.is_active else "archived"} for row in rows], "has_more": len(rows) == 100}; source = "events.rooms"
+        items, has_more = await OrganizationConsoleEventWorkspaceQueryService(db).list_rooms(
+            organization_id=organization_id,
+            event_id=event_id,
+        )
+        data = {"items": items, "has_more": has_more}; source = "events.rooms"
     elif workspace == "communications":
-        campaign_filter = [EmailCampaign.event_id == event_id]
-        if not include_archived: campaign_filter.append(EmailCampaign.deleted_at.is_(None))
-        campaigns = (await db.scalars(select(EmailCampaign).where(*campaign_filter).order_by(EmailCampaign.created_at.desc()).limit(100))).all()
-        logs = (await db.scalars(select(EmailLog).where(EmailLog.event_id == event_id).order_by(EmailLog.sent_at.desc()).limit(100))).all()
-        data = {"campaigns": [{"id": row.id, "template_id": row.template_id, "name": row.name, "recipient_filter": row.recipient_filter, "target_type": row.target_type, "scheduled_at": row.scheduled_at, "sent_at": row.sent_at, "status": row.status, "total_recipients": row.total_recipients, "sent_count": row.sent_count, "lifecycle_state": "archived" if row.deleted_at else "active", "deleted_at": row.deleted_at} for row in campaigns], "delivery_logs": [{"id": row.id, "campaign_id": row.campaign_id, "to_email": row.to_email if include_sensitive else _mask_email(row.to_email), "subject": row.subject, "status": row.status, "error_message": row.error_message, "opened_at": row.opened_at, "sent_at": row.sent_at} for row in logs]}; source = "communications.email_campaigns,email_logs"
+        data, _has_more = await OrganizationConsoleEventWorkspaceQueryService(db).list_communications(
+            organization_id=organization_id,
+            event_id=event_id,
+            include_archived=include_archived,
+            include_sensitive=include_sensitive,
+        )
+        source = "communications.email_campaigns,email_logs"
     elif workspace == "templates":
-        email_filter = [EmailTemplate.event_id == event_id]; print_filter = [PrintTemplate.event_id == event_id]
-        if not include_archived: email_filter.append(EmailTemplate.deleted_at.is_(None)); print_filter.append(PrintTemplate.deleted_at.is_(None))
-        email_rows = (await db.scalars(select(EmailTemplate).where(*email_filter).order_by(EmailTemplate.created_at.desc()).limit(100).execution_options(skip_tenant_filter=True))).all()
-        print_rows = (await db.scalars(select(PrintTemplate).where(*print_filter).order_by(PrintTemplate.updated_at.desc()).limit(100).execution_options(skip_tenant_filter=True))).all()
-        data = {"email_templates": [{"id": row.id, "kind": "email", "name": row.name, "template_type": row.template_type, "target_type": row.target_type, "subject": row.subject, "body_html": row.body_html, "body_text": row.body_text, "is_default": row.is_default, "created_at": row.created_at, "lifecycle_state": "archived" if row.deleted_at else "active", "deleted_at": row.deleted_at} for row in email_rows], "print_templates": [{"id": row.id, "kind": "print", "template_name": row.template_name, "template_type": row.template_type, "template_data": row.template_data, "updated_at": row.updated_at, "lifecycle_state": "archived" if row.deleted_at else "active", "deleted_at": row.deleted_at} for row in print_rows]}; source = "communications.email_templates,registration.print_templates"
+        data, _has_more = await OrganizationConsoleEventWorkspaceQueryService(db).list_templates(
+            organization_id=organization_id,
+            event_id=event_id,
+            include_archived=include_archived,
+        )
+        source = "communications.email_templates,registration.print_templates"
     elif workspace == "files":
-        rows = (await db.scalars(select(PresentationFile).where(PresentationFile.event_id == event_id, PresentationFile.deleted_at.is_(None)).order_by(PresentationFile.uploaded_at.desc()).limit(100))).all()
-        data = {"items": [{"id": row.id, "speaker_id": row.speaker_id, "session_speaker_id": row.session_speaker_id, "original_filename": row.original_filename, "file_size_bytes": row.file_size_bytes, "mime_type": row.mime_type, "file_format": row.file_format, "version_number": row.version_number, "is_current_version": row.is_current_version, "upload_source": row.upload_source, "upload_status": row.upload_status, "approved_by": row.approved_by, "approved_at": row.approved_at, "rejection_reason": row.rejection_reason, "is_locked": row.is_locked, "local_sync_status": row.local_sync_status, "uploaded_at": row.uploaded_at} for row in rows], "has_more": len(rows) == 100}; source = "presentations.files"
+        items, has_more = await OrganizationConsoleEventWorkspaceQueryService(db).list_files(
+            organization_id=organization_id,
+            event_id=event_id,
+        )
+        data = {"items": items, "has_more": has_more}; source = "presentations.files"
     elif workspace == "payments":
-        rows = (await db.scalars(select(PaymentTransaction).where(PaymentTransaction.event_id == event_id).order_by(PaymentTransaction.created_at.desc()).limit(100))).all()
-        data = {"items": [{"id": row.id, "registration_id": row.registration_id, "amount": row.amount, "currency": row.currency, "status": row.status, "payment_method": row.payment_method, "gateway_order_id": row.gateway_order_id if include_sensitive else (f"***{row.gateway_order_id[-6:]}" if row.gateway_order_id else None), "gateway_payment_id": row.gateway_payment_id if include_sensitive else (f"***{row.gateway_payment_id[-6:]}" if row.gateway_payment_id else None), "discount_applied": row.discount_applied, "created_at": row.created_at, "updated_at": row.updated_at} for row in rows], "has_more": len(rows) == 100}; source = "registration.payment_transactions"
+        items, has_more = await OrganizationConsoleEventWorkspaceQueryService(db).list_payments(
+            organization_id=organization_id,
+            event_id=event_id,
+            include_sensitive=include_sensitive,
+        )
+        data = {"items": items, "has_more": has_more}; source = "registration.payment_transactions"
     elif workspace == "tickets":
-        rows = (await db.scalars(select(TicketType).where(TicketType.event_id == event_id).order_by(TicketType.role_name, TicketType.tier_name).limit(500))).all()
-        data = {"items": [{"id": row.id, "role_name": row.role_name, "tier_name": row.tier_name, "price": row.price} for row in rows], "tiers": list(dict.fromkeys(row.tier_name for row in rows)), "has_more": len(rows) == 500}; source = "registration.ticket_types"
+        items, has_more = await OrganizationConsoleEventWorkspaceQueryService(db).list_tickets(
+            organization_id=organization_id,
+            event_id=event_id,
+        )
+        data = {"items": items, "tiers": list(dict.fromkeys(row["tier_name"] for row in items)), "has_more": has_more}; source = "registration.ticket_types"
     elif workspace == "checkins":
-        rows = (await db.scalars(select(CheckIn).where(CheckIn.event_id == event_id).order_by(CheckIn.check_in_time.desc()).limit(100))).all()
-        data = {"items": [{"id": row.id, "participant_id": row.participant_id, "session_id": row.session_id, "check_in_time": row.check_in_time, "updated_at": row.updated_at} for row in rows], "has_more": len(rows) == 100}; source = "registration.attendance"
+        items, has_more = await OrganizationConsoleEventWorkspaceQueryService(db).list_checkins(
+            organization_id=organization_id,
+            event_id=event_id,
+        )
+        data = {"items": items, "has_more": has_more}; source = "registration.attendance"
     elif workspace == "users":
-        rows = (await db.execute(select(UserEventAssignment, User).join(User, User.id == UserEventAssignment.user_id).where(UserEventAssignment.event_id == event_id).order_by(UserEventAssignment.assigned_at.desc()).limit(100))).all()
-        data = {"items": [{"id": assignment.id, "user_id": user.id, "name": f"{user.first_name or ''} {user.last_name or ''}".strip(), "email": user.email if include_sensitive else _mask_email(user.email), "permissions": assignment.permissions, "assigned_at": assignment.assigned_at} for assignment, user in rows], "has_more": len(rows) == 100}; source = "rbac.user_event_assignments,identity.users"
+        items, has_more = await OrganizationConsoleEventWorkspaceQueryService(db).list_users(
+            organization_id=organization_id,
+            event_id=event_id,
+            include_sensitive=include_sensitive,
+        )
+        data = {"items": items, "has_more": has_more}; source = "rbac.user_event_assignments,identity.users"
     elif workspace == "jobs":
-        imports = (await db.scalars(select(ImportJob).where(ImportJob.event_id == event_id).order_by(ImportJob.created_at.desc()).limit(100))).all()
-        sync_jobs = (await db.scalars(select(VenueSyncJob).where(VenueSyncJob.event_id == event_id).order_by(VenueSyncJob.created_at.desc()).limit(100))).all()
-        processing = (await db.execute(select(PresentationProcessingJob, PresentationFile).join(PresentationFile, PresentationFile.id == PresentationProcessingJob.file_id).where(PresentationFile.event_id == event_id).order_by(PresentationProcessingJob.created_at.desc()).limit(100))).all()
-        import_items = [
-            {
-                "id": row.id,
-                "source": "IMPORT",
-                "job_type": row.job_type,
-                "filename": row.filename,
-                "status": row.status,
-                "rows_total": row.rows_total,
-                "rows_imported": row.rows_imported,
-                "rows_failed": row.rows_failed,
-                "rows_updated": row.rows_updated,
-                "sessions_created": row.sessions_created,
-                "speakers_created": row.speakers_created,
-                "rooms_created": row.rooms_created,
-                "error_summary": row.error_summary,
-                "created_at": row.created_at,
-                "completed_at": row.completed_at,
-                "capabilities": {
-                    "retry": row.status.lower() in {"failed", "error"},
-                    "cancel": False,
-                },
-            }
-            for row in imports
-        ]
-        sync_items = [
-            {
-                "id": row.id,
-                "source": "VENUE_SYNC",
-                "file_id": row.file_id,
-                "sync_type": row.sync_type,
-                "priority": row.priority,
-                "status": row.status,
-                "retry_count": row.retry_count,
-                "error_message": row.error_message,
-                "bytes_transferred": row.bytes_transferred,
-                "transfer_speed_mbps": row.transfer_speed_mbps,
-                "checksum_verified": row.checksum_verified,
-                "storage_provider": row.storage_provider,
-                "started_at": row.started_at,
-                "completed_at": row.completed_at,
-                "created_at": row.created_at,
-                "capabilities": {
-                    "retry": row.status.lower() in {"failed", "error"},
-                    "cancel": False,
-                },
-            }
-            for row in sync_jobs
-        ]
-        processing_items = [
-            {
-                "id": job.id,
-                "source": "PROCESSING",
-                "file_id": file.id,
-                "filename": file.original_filename,
-                "status": job.status,
-                "logs": job.logs,
-                "created_at": job.created_at,
-                "capabilities": {
-                    "retry": False,
-                    "cancel": False,
-                    "retry_workspace": "files",
-                    "retry_resource_id": file.id,
-                    "unavailable_reason": (
-                        "Use RETRY_PROCESSING on the associated file."
-                    ),
-                },
-            }
-            for job, file in processing
-        ]
-        data = {
-            "items": [*import_items, *sync_items, *processing_items],
-            "import_jobs": import_items,
-            "venue_sync_jobs": sync_items,
-            "processing_jobs": processing_items,
-            "has_more": any(
-                len(items) == 100
-                for items in (imports, sync_jobs, processing)
-            ),
-        }
+        data = await OrganizationConsoleEventWorkspaceQueryService(db).list_jobs(
+            organization_id=organization_id,
+            event_id=event_id,
+        )
         source = "registration.import_jobs,venue.sync_jobs,presentations.processing_jobs"
     elif workspace == "integrations":
-        rows = (await db.scalars(select(Webhook).where(Webhook.event_id == event_id).order_by(Webhook.created_at.desc()).limit(100))).all()
-        data = {"webhooks": [{"id": row.id, "url": row.url, "description": row.description, "subscribed_events": row.subscribed_events, "status": row.status, "version": row.version, "created_at": row.created_at, "updated_at": row.updated_at, "lifecycle_state": "archived" if row.status == "paused" else "active", "consecutive_failures": row.consecutive_failures, "last_triggered_at": row.last_triggered_at, "last_success_at": row.last_success_at, "last_failure_reason": row.last_failure_reason, "total_deliveries": row.total_deliveries, "total_failures": row.total_failures, "secret_configured": bool(row.secret_hash)} for row in rows]}; source = "integrations.webhooks"
+        webhooks, _has_more = await OrganizationConsoleEventWorkspaceQueryService(db).list_integrations(
+            organization_id=organization_id,
+            event_id=event_id,
+        )
+        data = {"webhooks": webhooks}; source = "integrations.webhooks"
     elif workspace == "analytics":
-        data = await build_analytics_snapshot(db, event_id); source = "analytics.build_analytics_snapshot"
+        data = await OrganizationConsoleAnalyticsQueryService(db).snapshot(
+            organization_id=organization_id,
+            event_id=event_id,
+        )
+        source = "analytics.dashboard_query_service"
     elif workspace == "audit":
-        rows = (await db.scalars(select(AuditLog).where(AuditLog.organization_id == organization_id, AuditLog.resource_id == event_id).order_by(AuditLog.occurred_at.desc()).limit(100))).all()
+        rows, _has_more = await AuditQueryService(db).list_organization_cursor(
+            organization_id=organization_id,
+            resource_id=event_id,
+            limit=100,
+        )
         data = {"items": [{"id": row.id, "actor_user_id": row.actor_user_id, "impersonated_by": row.impersonated_by, "actor_role": row.actor_role, "resource_type": row.resource_type, "action_type": row.action_type, "change_diff": row.change_diff, "is_sensitive": row.is_sensitive, "occurred_at": row.occurred_at} for row in rows]}; source = "audit.logs"
     if access:
         await _dispatch_read_audit(

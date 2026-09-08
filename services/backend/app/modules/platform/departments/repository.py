@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import uuid
 from typing import List, Optional, Tuple
-from sqlalchemy import select, func, or_, desc, asc, and_
+from sqlalchemy import inspect as sa_inspect, select, func, or_, desc, asc, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.modules.platform.departments.models import Department, DepartmentMember
 from app.modules.identity.models.user import User
-from app.schemas.cursor_pagination import CursorPage, decode_cursor, encode_cursor
+from app.schemas.cursor_pagination import CursorPage, bounded_page_size, decode_cursor, encode_cursor
 
 
 class DepartmentRepository:
@@ -123,9 +123,11 @@ class DepartmentRepository:
         return (await self.db.scalar(statement)) is not None
 
     async def update(self, entity: Department, values: dict) -> Department:
+        mapped_fields = {attribute.key for attribute in sa_inspect(entity).mapper.column_attrs}
         for key, value in values.items():
-            if hasattr(entity, key):
-                setattr(entity, key, value)
+            if key.startswith("_") or key not in mapped_fields:
+                raise ValueError(f"Unsupported repository update field: {key}")
+            setattr(entity, key, value)
         self.db.add(entity)
         await self.db.flush()
         return entity
@@ -142,7 +144,7 @@ class DepartmentRepository:
         limit: int = 20,
         search: Optional[str] = None,
     ) -> CursorPage[Department]:
-        bounded_limit = max(1, min(limit, 100))
+        bounded_limit = bounded_page_size(limit, default=20, maximum=100)
         statement = select(Department).where(
             Department.organization_id == org_id,
             Department.deleted_at.is_(None),
@@ -222,18 +224,33 @@ class DepartmentRepository:
         return member
 
     async def list_members(
-        self, dept_id: uuid.UUID, *, limit: int = 100
+        self, org_id: uuid.UUID, dept_id: uuid.UUID, *, limit: int = 100
     ) -> List[Tuple[DepartmentMember, User]]:
         limit = max(1, min(limit, 100))
         stmt = (
             select(DepartmentMember, User)
             .join(User, DepartmentMember.user_id == User.id)
+            .join(Department, Department.id == DepartmentMember.department_id)
             .where(
                 DepartmentMember.department_id == dept_id,
-                DepartmentMember.deleted_at == None
+                DepartmentMember.deleted_at == None,
+                Department.organization_id == org_id,
+                User.organization_id == org_id,
+                User.deleted_at == None,
             )
             .order_by(User.first_name, User.last_name, User.id)
             .limit(limit)
         )
         result = await self.db.execute(stmt)
         return result.all()
+
+    async def get_user_for_organization(
+        self, org_id: uuid.UUID, user_id: uuid.UUID
+    ) -> Optional[User]:
+        return await self.db.scalar(
+            select(User).where(
+                User.id == user_id,
+                User.organization_id == org_id,
+                User.deleted_at.is_(None),
+            )
+        )

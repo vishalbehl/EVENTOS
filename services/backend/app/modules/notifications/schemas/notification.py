@@ -121,6 +121,7 @@ class CampaignResponse(BaseModel):
     sent_count: int
     target_type: str
     created_at: datetime
+    version: int = 1
 
 
 class SendToSpeakersRequest(BaseModel):

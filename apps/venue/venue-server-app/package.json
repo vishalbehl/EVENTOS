@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3006",
+    "dev": "next dev --webpack --port 3006",
     "desktop:dev": "node electron/dev-runner.mjs",
-    "desktop:dev:next": "next dev --port 3006",
+    "desktop:dev:next": "next dev --webpack --port 3006",
     "desktop:dev:electron": "wait-on http://127.0.0.1:3006 && tsc -p electron/tsconfig.json && electron electron-dist/main.js",
     "build": "next build",
     "start": "next start",

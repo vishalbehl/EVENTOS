@@ -21,6 +21,7 @@ from app.dependencies import get_db, get_current_user, get_current_event, Curren
 from app.core.job_status import JobStatus
 from app.core.job_status_service import JobStatusService
 from app.modules.identity.models.user import User
+from app.modules.events.models.event import Event
 from app.modules.registration.schemas.import_job import (
     ImportJobResponse, ImportPreviewResponse, ImportPreviewRow,
 )
@@ -33,6 +34,7 @@ from app.core.upload_service import UploadService
 from app.modules.files.models.file import DurableUpload
 from app.modules.presentations.services.upload_service import create_presigned_upload
 from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
+from app.core.concurrency import require_if_match, raise_version_conflict
 from app.modules.registration.application.queries import ImportJobQueryService
 from app.schemas.cursor_pagination import CursorPage
 
@@ -103,16 +105,21 @@ async def complete_import_upload_session(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
 ) -> dict:
     """Confirm a direct upload and queue verification before parsing."""
     job = await db.scalar(
-        select(ImportJob).where(
+        select(ImportJob).join(Event, Event.id == ImportJob.event_id).where(
             ImportJob.id == job_id,
+            Event.organization_id == event.organization_id,
             ImportJob.event_id == event.id,
         ).with_for_update()
     )
     if job is None or job.durable_upload_id is None:
         raise HTTPException(status_code=404, detail="Import upload session not found.")
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    if expected_version is not None and job.version != expected_version:
+        raise_version_conflict("import_job", job.version)
     idem = None
     if idempotency_key:
         idem = await begin_idempotent(
@@ -138,6 +145,7 @@ async def complete_import_upload_session(
     if upload.status == "uploading":
         await UploadService.transition(db, upload.id, "uploaded", organization_id=event.organization_id)
         job.status = "uploaded"
+        job.version += 1
         response = {"job_id": str(job.id), "upload_id": str(upload.id), "status": upload.status}
         if idem is not None:
             await complete_idempotent(db, idem, response_status=202, response_body=response, resource_id=job.id)
@@ -161,6 +169,7 @@ async def upload_schedule(
     db: AsyncSession = Depends(get_db),
     file: UploadFile = File(...),
     import_type: str = "schedule",
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ) -> ImportJobResponse:
     """Upload an Excel schedule file. Creates an ImportJob and queues async processing."""
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
@@ -186,6 +195,35 @@ async def upload_schedule(
             digest.update(chunk)
             staged_file.write(chunk)
         checksum = digest.hexdigest()
+        idem = await begin_idempotent(
+            db,
+            organization_id=event.organization_id,
+            actor_id=current_user.id,
+            operation="import_job.create",
+            key=idempotency_key or f"legacy-import-job-{uuid.uuid4()}",
+            payload={
+                "event_id": str(event.id),
+                "filename": file.filename,
+                "import_type": import_type,
+                "checksum": checksum,
+                "size_bytes": streamed_size,
+            },
+        )
+        replay = replay_response(idem)
+        if replay is not None:
+            existing = await db.scalar(
+                select(ImportJob)
+                .join(Event, Event.id == ImportJob.event_id)
+                .where(
+                    ImportJob.id == idem.resource_id,
+                    ImportJob.event_id == event.id,
+                    Event.organization_id == event.organization_id,
+                )
+            )
+            if existing is None:
+                raise RuntimeError("Completed import idempotency resource is missing.")
+            await db.commit()
+            return ImportJobResponse.model_validate(existing)
         staged_file.seek(0)
         upload_service.upload_fileobj(
             bucket=settings.S3_BUCKET_IMPORTS,
@@ -230,6 +268,15 @@ async def upload_schedule(
         durable_upload_id=durable_upload.id,
     )
     db.add(job)
+    await db.flush()
+    response = ImportJobResponse.model_validate(job)
+    await complete_idempotent(
+        db,
+        idem,
+        response_status=202,
+        response_body=response.model_dump(mode="json"),
+        resource_id=job.id,
+    )
     await db.commit()
     await db.refresh(job)
 
@@ -242,20 +289,10 @@ async def upload_schedule(
         )
         logger.info(f"Import job {job.id} dispatched to Celery worker.")
     except Exception as exc:
-        job.status = "failed"
-        job.error_summary = [{"row": 0, "error": "Background processing is unavailable."}]
-        await UploadService.transition(
-            db,
-            durable_upload.id,
-            "failed",
-            organization_id=event.organization_id,
-            error="Background processing is unavailable.",
-        )
-        await db.commit()
         logger.exception(f"Failed to dispatch import job {job.id}: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Import processing is temporarily unavailable. No background fallback was started.",
+            detail="Import processing is temporarily unavailable. The committed job will be recovered by the import dispatcher.",
         ) from exc
 
     return ImportJobResponse.model_validate(job)

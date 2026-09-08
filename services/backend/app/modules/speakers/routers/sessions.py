@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_db, get_current_event, CurrentEvent, OrganizerOrAbove, get_current_user
 from app.modules.agenda.models import Session
 from app.modules.agenda.models import SessionPerson as SessionSpeaker
+from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
 from app.modules.speakers.schemas.session import (
     SessionCreate, SessionUpdate, SessionResponse, SessionSummary,
@@ -619,21 +620,17 @@ async def _get_session_or_404(
     event_id: uuid.UUID,
     user: Optional[User] = None
 ) -> Session:
-    result = await db.execute(
-        select(Session)
-        .options(
-            selectinload(Session.event),
-            selectinload(Session.room),
-            selectinload(Session.track),
-            selectinload(Session.session_speakers).selectinload(SessionSpeaker.speaker),
+    scope_org = getattr(user, "organization_id", None) if user else None
+    if scope_org is None:
+        event_row = await SessionQueryService(db).get_for_event(
+            organization_id=(await db.scalar(select(Event.organization_id).where(Event.id == event_id))),
+            event_id=event_id, session_id=session_id,
         )
-        .where(
-            Session.id == session_id,
-            Session.event_id == event_id,
-            Session.deleted_at.is_(None),
+    else:
+        event_row = await SessionQueryService(db).get_for_event(
+            organization_id=scope_org, event_id=event_id, session_id=session_id,
         )
-    )
-    s = result.scalar_one_or_none()
+    s = event_row
     if s is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
 

@@ -15,6 +15,7 @@ import {
   useProposalShares,
   useCreateProposalShare,
   useRevokeProposalShare,
+  useSendProposalToOrganiser,
 } from "@/services/super-admin-service"
 import { toast } from "sonner"
 
@@ -33,6 +34,7 @@ export default function ProposalPreviewPage() {
   const shares = useProposalShares(params.id, organizationId)
   const createShare = useCreateProposalShare(params.id, organizationId)
   const revokeShare = useRevokeProposalShare(params.id, organizationId)
+  const sendProposal = useSendProposalToOrganiser(params.id, organizationId)
   const [generationReason, setGenerationReason] = useState("")
   const [generationKey] = useState(() => `proposal-document-${crypto.randomUUID()}`)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
@@ -43,6 +45,8 @@ export default function ProposalPreviewPage() {
   const [shareKey, setShareKey] = useState(() => `proposal-share-${crypto.randomUUID()}`)
   const [createdLink, setCreatedLink] = useState("")
   const [revocationReason, setRevocationReason] = useState("")
+  const [sendReason, setSendReason] = useState("")
+  const [sendKey] = useState(() => `proposal-send-${crypto.randomUUID()}`)
   const [revocationKeys, setRevocationKeys] = useState<Record<string, string>>({})
 
   const currentVersion = proposal.data?.versions.find(version => version.version === proposal.data.current_version)
@@ -168,6 +172,14 @@ export default function ProposalPreviewPage() {
               <h2 className="text-lg font-black text-primary">Client link ledger</h2>
               <label className="mt-4 block space-y-2 text-xs font-semibold text-secondary">Revocation reason<textarea value={revocationReason} onChange={event => setRevocationReason(event.target.value)} className="min-h-16 w-full rounded-xl border border-border bg-surface-2 p-3 text-primary" minLength={3} maxLength={500} /></label>
               {shares.isLoading ? <p className="mt-4 text-sm text-secondary" role="status">Loading client links...</p> : shares.isError ? <p className="mt-4 text-sm text-destructive" role="alert">Client links could not be loaded.</p> : shares.data?.length ? <ul className="mt-4 space-y-3">{shares.data.map(share => <li key={share.id} className="rounded-2xl border border-border bg-surface-2 p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-black text-primary">{share.recipient_name}</p><p className="mt-1 text-xs text-secondary">{share.recipient_email}</p><p className="mt-2 text-xs font-bold uppercase tracking-wider text-brand-primary">{share.status} / {share.access_count} views</p><p className="mt-1 text-xs text-tertiary">Expires {new Date(share.expires_at).toLocaleString()}</p></div>{share.status === "ACTIVE" && <Button size="icon" variant="ghost" aria-label={`Revoke link for ${share.recipient_name}`} disabled={revocationReason.trim().length < 3 || revokeShare.isPending} onClick={() => revoke(share.id)}><Ban className="h-4 w-4" /></Button>}</div>{share.decision && <p className="mt-3 text-xs text-secondary">{share.decision} by {share.signer_name} at {share.decided_at ? new Date(share.decided_at).toLocaleString() : "Not recorded"}</p>}{share.revocation_reason && <p className="mt-3 text-xs text-destructive">{share.revocation_reason}</p>}</li>)}</ul> : <p className="mt-4 text-sm text-secondary">No client links have been issued.</p>}
+            </Card>
+
+            <Card className="rounded-3xl border-brand-primary/30 bg-brand-primary/5 p-6">
+              <CheckCircle2 className="h-7 w-7 text-brand-primary" />
+              <h2 className="mt-3 text-lg font-black text-primary">Send to organiser portal</h2>
+              <p className="mt-1 text-sm text-secondary">Freeze this approved snapshot and make it available inside the authenticated organiser workspace.</p>
+              <label className="mt-5 block space-y-2 text-sm font-semibold text-secondary">Send reason<textarea className="min-h-20 w-full rounded-xl border border-border bg-surface p-3 text-primary" value={sendReason} onChange={event => setSendReason(event.target.value)} minLength={3} maxLength={500} /></label>
+              <Button className="mt-4 w-full" disabled={proposal.data.status !== "DRAFT" || sendReason.trim().length < 3 || sendProposal.isPending} onClick={() => sendProposal.mutate({ expectedVersion: proposal.data.current_version, reason: sendReason.trim(), idempotencyKey: sendKey })}>{sendProposal.isPending ? "Sending..." : "Send proposal"}</Button>
             </Card>
 
             <Card className="rounded-3xl border-brand-primary/30 bg-brand-primary/5 p-6">

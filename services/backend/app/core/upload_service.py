@@ -4,15 +4,46 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.upload_state import TERMINAL_UPLOAD_STATES, transition_upload
 from app.core.upload_validation import validate_upload_metadata
 from app.modules.files.models.file import DurableUpload
+from app.modules.files.infrastructure.repositories import DurableUploadRepository
 
 
 class UploadService:
+    @staticmethod
+    async def apply_transition(
+        db: AsyncSession,
+        row: DurableUpload,
+        target: str,
+        *,
+        error: str | None = None,
+        task_id: str | None = None,
+    ) -> DurableUpload:
+        """Apply one validated transition to an already locked upload row."""
+        same_state = row.status == target
+        row.status = transition_upload(row.status, target)
+
+        # A duplicate terminal retry must be observationally idempotent. In
+        # particular, do not move completion time or transfer ownership to a
+        # later task that is replaying an already-finalized operation.
+        if same_state and target in TERMINAL_UPLOAD_STATES:
+            return row
+
+        if error is not None and (not same_state or not row.processing_error):
+            row.processing_error = error[:2000]
+        if task_id is not None and (row.task_id is None or row.task_id == task_id):
+            row.task_id = task_id[:255]
+        row.updated_at = datetime.now(timezone.utc)
+        if target == "ready" and row.completed_at is None:
+            row.completed_at = datetime.now(timezone.utc)
+        if not same_state and hasattr(row, "version"):
+            row.version = int(row.version or 1) + 1
+        await db.flush()
+        return row
+
     @staticmethod
     async def create(
         db: AsyncSession,
@@ -33,7 +64,7 @@ class UploadService:
             mime_type=mime_type, size_bytes=size_bytes, checksum=checksum,
             status="created",
         )
-        db.add(row)
+        DurableUploadRepository(db).create(row)
         await db.flush()
         return row
 
@@ -47,31 +78,17 @@ class UploadService:
         error: str | None = None,
         task_id: str | None = None,
     ) -> DurableUpload:
-        row = await db.scalar(
-            select(DurableUpload)
-            .where(
-                DurableUpload.id == upload_id,
-                DurableUpload.organization_id == organization_id,
-            )
-            .with_for_update()
+        row = await DurableUploadRepository(db).get_by_id(
+            upload_id=upload_id,
+            organization_id=organization_id,
+            for_update=True,
         )
         if row is None:
             raise LookupError("upload_not_found")
-        same_state = row.status == target
-        row.status = transition_upload(row.status, target)
-
-        # A duplicate terminal retry must be observationally idempotent. In
-        # particular, do not move completion time or transfer ownership to a
-        # later task that is replaying an already-finalized operation.
-        if same_state and target in TERMINAL_UPLOAD_STATES:
-            return row
-
-        if error is not None and (not same_state or not row.processing_error):
-            row.processing_error = error[:2000]
-        if task_id is not None and (row.task_id is None or row.task_id == task_id):
-            row.task_id = task_id[:255]
-        row.updated_at = datetime.now(timezone.utc)
-        if target == "ready" and row.completed_at is None:
-            row.completed_at = datetime.now(timezone.utc)
-        await db.flush()
-        return row
+        return await UploadService.apply_transition(
+            db,
+            row,
+            target,
+            error=error,
+            task_id=task_id,
+        )

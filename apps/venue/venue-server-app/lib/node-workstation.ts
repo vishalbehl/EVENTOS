@@ -83,8 +83,17 @@ export async function fetchVenueNodeBootstrap(): Promise<{ assignment: VenueNode
   if (!config) return null;
   let shouldClearStaleConfiguration = false;
   try {
-    const response = await fetch(`${config.venue_server.replace(/\/$/, "")}/api/v1/venue/nodes/${config.assignment_id}/bootstrap`, {
+    const baseUrl = config.venue_server.replace(/\/$/, "");
+    const tokenResponse = await fetch(`${baseUrl}/api/v1/venue/nodes/${config.assignment_id}/token`, {
+      method: "POST",
       headers: { "X-Venue-Node-Token": config.enrollment_token },
+      cache: "no-store",
+    });
+    if (!tokenResponse.ok) throw new Error("This workstation enrollment is unavailable or has been revoked.");
+    const tokenPayload = await tokenResponse.json() as { access_token?: string };
+    if (!tokenPayload.access_token) throw new Error("Venue Server returned no node access token.");
+    const response = await fetch(`${config.venue_server.replace(/\/$/, "")}/api/v1/venue/nodes/${config.assignment_id}/bootstrap`, {
+      headers: { "X-Venue-Node-Token": tokenPayload.access_token },
       cache: "no-store",
     });
     if (!response.ok) {
@@ -94,7 +103,7 @@ export async function fetchVenueNodeBootstrap(): Promise<{ assignment: VenueNode
     return response.json();
   } catch (error) {
     try {
-      const localResponse = await fetch("http://127.0.0.1:8011/health", { cache: "no-store" });
+      const localResponse = await fetch("http://127.0.0.1:8000/health", { cache: "no-store" });
       if (!localResponse.ok) throw error;
     const local = await localResponse.json();
     const assignment = local?.assignment;

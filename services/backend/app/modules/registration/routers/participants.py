@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Set
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status, UploadFile, File
 from loguru import logger
 from openpyxl import Workbook, load_workbook
-from sqlalchemy import case, func, select, and_
+from sqlalchemy import Integer, case, cast, exists, func, select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
@@ -127,6 +127,47 @@ async def get_role_by_name(db: AsyncSession, event_id: uuid.UUID, role_name: str
 
 async def generate_next_regno(db: AsyncSession, event_id: uuid.UUID, role: str) -> str:
     prefix = await get_role_prefix_for_event(db, event_id, role)
+    # PostgreSQL can find the first missing number without transferring every
+    # existing registration number to the API process. Keep the legacy Python
+    # path for SQLite and other dialects used by local compatibility tests.
+    bind = db.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        normalized_prefix = prefix.lower()
+        numeric_filter = and_(
+            Participant.event_id == event_id,
+            Participant.regno.ilike(f"{prefix}-%"),
+            Participant.regno.op("~*")(rf"^{re.escape(prefix)}-[0-9]+$"),
+        )
+        number_expr = cast(
+            func.regexp_replace(
+                func.lower(Participant.regno),
+                rf"^{re.escape(normalized_prefix)}-",
+                "",
+                "g",
+            ),
+            Integer,
+        )
+        max_number = (
+            select(func.coalesce(func.max(number_expr), 0))
+            .where(numeric_filter)
+            .scalar_subquery()
+        )
+        candidates = func.generate_series(1, max_number + 1).table_valued(
+            "number"
+        ).render_derived(name="candidate_numbers")
+        candidate_number = candidates.c.number
+        used_number = (
+            select(1)
+            .where(numeric_filter, number_expr == candidate_number)
+            .correlate(Participant)
+        )
+        next_number = await db.scalar(
+            select(candidate_number)
+            .where(~exists(used_number))
+            .order_by(candidate_number)
+            .limit(1)
+        )
+        return f"{prefix}-{int(next_number or 1):04d}"
     used = await get_used_numbers_for_prefix(db, event_id, prefix)
     return f"{prefix}-{smallest_available_number(used):04d}"
 
@@ -243,6 +284,31 @@ async def insert_participants(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="Bulk participant imports are limited to 5,000 rows per transaction. Use the asynchronous import workflow for larger files.",
         )
+
+    event_obj = await db.scalar(
+        # Event has an optional joined portal-theme relationship; lock only the
+        # authoritative event row so PostgreSQL does not attempt to lock the
+        # nullable side of that outer join.
+        select(Event).where(Event.id == event_id).with_for_update(of=Event)
+    )
+    if event_obj is None:
+        raise HTTPException(status_code=404, detail="Event not found.")
+    parent_idem = await begin_idempotent(
+        db,
+        organization_id=event_obj.organization_id,
+        actor_id=actor_user_id,
+        operation=f"registration.participant.{default_source}",
+        key=idempotency_key,
+        payload={
+            "event_id": str(event_id),
+            "source": default_source,
+            "participants": [item.model_dump(mode="json") for item in payload],
+        },
+    )
+    parent_replay = replay_response(parent_idem)
+    if parent_replay is not None:
+        body = parent_replay[1]
+        return int(body.get("inserted", 0)), int(body.get("waitlisted", 0)), int(body.get("merged", 0))
 
     inserted_count = 0
     waitlisted_count = 0
@@ -367,10 +433,8 @@ async def insert_participants(
         if prefix and number_text.isdigit():
             used_numbers_by_prefix.setdefault(prefix.upper(), set()).add(int(number_text))
 
-    from app.modules.events.models.event import Event
     from app.modules.registration.services.pricing_service import get_active_prices_for_event
 
-    event_obj = await db.get(Event, event_id)
     payment_enabled = event_obj.registration_settings.get("payment_enabled", False) if (event_obj and event_obj.registration_settings) else False
 
     active_prices = {}
@@ -496,6 +560,12 @@ async def insert_participants(
             db.add(reg)
             waitlisted_count += 1
 
+    await complete_idempotent(
+        db,
+        parent_idem,
+        response_status=200,
+        response_body={"inserted": inserted_count, "waitlisted": waitlisted_count, "merged": merged_count},
+    )
     return inserted_count, waitlisted_count, merged_count
 
 
@@ -520,6 +590,7 @@ async def list_participants(
         active_prices = await get_active_prices_for_event(db, event)
 
     db_participants = await ParticipantQueryService(db).list_legacy(
+        organization_id=event.organization_id,
         event_id=event.id,
         search=search,
         role=role,
@@ -580,7 +651,9 @@ async def get_registration_stats(
     db: AsyncSession = Depends(get_db),
 ):
     await enforce_event_operation(db, event.organization_id, event.id, "registration.analytics.view", user_id=current_user.id)
-    return await RegistrationQueryService(db).stats(event_id=event.id)
+    return await RegistrationQueryService(db).stats(
+        organization_id=event.organization_id, event_id=event.id
+    )
 
 
 @router.post("", response_model=ParticipantResponse, status_code=status.HTTP_201_CREATED)
@@ -1272,7 +1345,7 @@ async def update_participant(
         participant_id=participant_id,
         payload=payload,
         actor_user_id=current_user.id,
-        idempotency_key=idempotency_key if isinstance(idempotency_key, str) else None,
+        idempotency_key=idempotency_key if isinstance(idempotency_key, str) else f"legacy-participant-update-{uuid.uuid4()}",
         expected_version=(
             require_if_match(if_match)
             if isinstance(if_match, (str, int)) and if_match
@@ -1303,7 +1376,7 @@ async def delete_participant(
         actor_user_id=current_user.id,
         source="organizer_portal",
         expected_version=require_if_match(if_match) if if_match else None,
-        idempotency_key=idempotency_key,
+        idempotency_key=idempotency_key or f"legacy-participant-archive-{uuid.uuid4()}",
     )
     return MessageResponse(message="Participant registration archived and remains recoverable through Command Center.")
 
@@ -1315,6 +1388,7 @@ async def restore_participant(
     idempotency_key: str = Header(
         ..., alias="Idempotency-Key", min_length=8, max_length=200
     ),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ParticipantResponse:
@@ -1328,6 +1402,7 @@ async def restore_participant(
         actor_user_id=current_user.id,
         idempotency_key=idempotency_key,
         source="organizer_portal",
+        expected_version=require_if_match(if_match) if if_match is not None else None,
     )
     response = ParticipantResponse.model_validate(participant)
     response.is_free = is_free

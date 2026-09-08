@@ -17,6 +17,8 @@ import {
 } from "lucide-react"
 
 import { timeAgo } from "@/lib/formatters"
+import { useSocket } from "@/hooks/use-socket"
+import { socketService } from "@/lib/socket"
 
 export default function ServiceRequestsPage() {
   const router = useRouter()
@@ -30,6 +32,7 @@ export default function ServiceRequestsPage() {
   const events = eventsData ?? []
   
   const [selectedEventId, setSelectedEventId] = useState<string>("")
+  const [requestView, setRequestView] = useState<"ALL" | "VENUE_OPS">("ALL")
 
   // Load from local storage
   useEffect(() => {
@@ -78,6 +81,16 @@ export default function ServiceRequestsPage() {
   const requestedCardLimit = Math.max(10, ...Object.values(columnLimits))
   const { data: kpis, refetch: refetchKpis, isLoading: kpisLoading, error: kpisError } = useServiceRequestsKpi(selectedOrgId, selectedEventId)
   const { data: columnsData, refetch: refetchKanban, isLoading: kanbanLoading, error: kanbanError } = useServiceRequestsKanban(selectedOrgId, selectedEventId, requestedCardLimit, 0)
+  useSocket(selectedEventId)
+
+  useEffect(() => {
+    const socket = socketService.socket
+    if (!socket || !selectedEventId) return
+    const refresh = () => { refetchKpis(); refetchKanban() }
+    const names = ["venue_ops.request.created", "venue_ops.request.updated", "venue_ops.request.submitted", "venue_ops.clarification.created", "venue_ops.quote.revised", "venue_ops.organiser_decision.recorded", "venue_ops.fulfilment.created"]
+    names.forEach(name => socket.on(name, refresh))
+    return () => names.forEach(name => socket.off(name, refresh))
+  }, [selectedEventId, refetchKpis, refetchKanban])
 
   // Create Service Request
   const createRequestMutation = useCreateServiceRequest()
@@ -171,6 +184,11 @@ export default function ServiceRequestsPage() {
         </div>
       </div>
 
+      <div className="mb-5 flex items-center gap-2" aria-label="Request queue filter">
+        <span className="text-[10px] font-extrabold uppercase tracking-wider text-tertiary">Queue</span>
+        {(["ALL", "VENUE_OPS"] as const).map(view => <button key={view} type="button" onClick={() => setRequestView(view)} className={`rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-wider ${requestView === view ? "border-brand-primary bg-brand-primary/10 text-brand-primary" : "border-border text-secondary"}`}>{view === "ALL" ? "All requests" : "Venue Ops"}</button>)}
+      </div>
+
       {!selectedEventId ? (
         <Card className="p-12 text-center border-dashed border-border bg-surface-2/40 rounded-3xl">
           <div className="max-w-xs mx-auto space-y-3">
@@ -209,8 +227,9 @@ export default function ServiceRequestsPage() {
             {(columnsData?.columns ?? []).map(col => {
               const colKey = col.key
               const limit = columnLimits[colKey]
-              const visibleCards = col.cards.slice(0, limit ?? 10)
-              const remaining = col.count - visibleCards.length
+              const filteredCards = col.cards.filter((card: any) => requestView === "ALL" || card.request_type === "VENUE_OPS")
+              const visibleCards = filteredCards.slice(0, limit ?? 10)
+              const remaining = filteredCards.length - visibleCards.length
 
               return (
                 <div key={colKey} className="flex flex-col space-y-3 min-w-[240px]">
@@ -220,7 +239,7 @@ export default function ServiceRequestsPage() {
                       {col.label}
                     </span>
                     <span className="text-[10px] font-black text-brand-primary bg-brand-primary/10 border border-brand-primary/20 px-2 py-0.5 rounded-full">
-                      {col.count}
+                      {requestView === "ALL" ? col.count : filteredCards.length}
                     </span>
                   </div>
 

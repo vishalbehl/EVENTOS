@@ -44,13 +44,9 @@ async def check_profile_access(
     """
     # 1. Try token auth first
     if token:
-        q = select(Speaker).where(
-            Speaker.id == speaker_id,
-            Speaker.event_id == event_id,
-            (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
-        ).options(selectinload(Speaker.event))
-        res = await db.execute(q)
-        speaker = res.scalar_one_or_none()
+        speaker = await SpeakerQueryService(db).profile_access_speaker(
+            event_id=event_id, speaker_id=speaker_id, token=token
+        )
         if speaker:
             # Check if speaker portal is active
             if not speaker.event.speaker_mode_enabled:
@@ -69,8 +65,7 @@ async def check_profile_access(
     # 2. Try JWT auth
     if current_user:
         # Check if user has organizer-level access to the event
-        event_res = await db.execute(select(Event).where(Event.id == event_id))
-        event = event_res.scalar_one_or_none()
+        event = await SpeakerQueryService(db).event_for_profile_access(event_id=event_id)
         if not event:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
 
@@ -115,10 +110,7 @@ async def check_profile_access(
                     )
         
         # Verify speaker exists in this event
-        speaker_exists = await db.scalar(
-            select(func.count(Speaker.id)).where(Speaker.id == speaker_id, Speaker.event_id == event_id)
-        )
-        if not speaker_exists:
+        if not await SpeakerQueryService(db).profile_exists(event_id=event_id, speaker_id=speaker_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Speaker not found.")
         await enforce_event_operation(
             db,
@@ -383,17 +375,12 @@ async def get_profile_template(
         )
 
     # 1. Fetch speaker
-    speaker_res = await db.execute(
-        select(Speaker).where(Speaker.id == speaker_id, Speaker.event_id == event_id)
+    template_data = await SpeakerQueryService(db).profile_template_data(
+        event_id=event_id, speaker_id=speaker_id
     )
-    speaker = speaker_res.scalar_one_or_none()
-    if not speaker:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Speaker not found.")
-
-    # 2. Fetch event
-    event = await db.get(Event, event_id)
-    if not event:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
+    if not template_data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Speaker or event not found.")
+    speaker, event, session_speakers = template_data
 
     # Redirect to custom template if uploaded
     speaker_settings = event.speaker_settings or {}
@@ -402,15 +389,6 @@ async def get_profile_template(
     if custom_template_url:
         from fastapi.responses import RedirectResponse
         return RedirectResponse(url=custom_template_url)
-
-    # 3. Fetch session speakers
-    ss_result = await db.execute(
-        select(SessionSpeaker)
-        .join(Session, SessionSpeaker.session_id == Session.id)
-        .where(SessionSpeaker.speaker_id == speaker_id, Session.event_id == event_id)
-        .options(selectinload(SessionSpeaker.session))
-    )
-    session_speakers = ss_result.scalars().all()
 
     # Create DOCX
     doc = docx.Document()

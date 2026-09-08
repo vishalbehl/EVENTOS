@@ -1,7 +1,7 @@
 import uuid
 from typing import Optional, List, Dict, Any
 # pyrefly: ignore [missing-import]
-from fastapi import APIRouter, Depends, HTTPException, Header, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from sqlalchemy import select, desc, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,7 +10,8 @@ from app.modules.identity.models.user import User
 from app.modules.pricing.services import PricingService
 from app.modules.pricing.application.commands import PricingCommandService
 from app.modules.platform.application.governed_mutation_commands import GovernedMutationCommandService
-from app.modules.pricing.application.queries import PricingQueryService
+from app.modules.pricing.application.queries import PricingQueryService, PricingCatalogQueryService
+from app.core.response import ResponseEnvelope
 from app.modules.pricing.models import PricingSimulation, RevenueForecast
 from app.modules.pricing.schemas import (
     PriceCalculateRequest, PriceCalculateResponse,
@@ -92,15 +93,16 @@ async def delete_simulation(
 @router.get("/forecast", response_model=List[RevenueForecastOut])
 async def get_forecast(
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(100, ge=1, le=100),
 ):
     org_id = current_user.organization_id
     if not org_id:
         return []
     
-    stmt = select(RevenueForecast).where(RevenueForecast.organization_id == org_id).order_by(desc(RevenueForecast.month))
-    res = await db.execute(stmt)
-    return list(res.scalars().all())
+    return await PricingQueryService.list_forecasts(
+        db, organization_id=org_id, limit=limit
+    )
 
 
 # ── SUPER ADMIN PRICING & TEMPLATES CATALOG ENDPOINTS ─────────────────────────
@@ -174,51 +176,11 @@ class PricingSimulationRunRequest(BaseModel):
 @router.get("/superadmin/catalog/pricing-rules")
 async def superadmin_get_pricing_rules(
     current_user: User = Depends(require_super_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(100, ge=1, le=100),
 ):
     await seed_pricing_rules_if_empty(db)
-    stmt = select(PricingRule).order_by(PricingRule.name)
-    res = await db.execute(stmt)
-    rules = []
-    for r in res.scalars().all():
-        is_default = False
-        hardware_markup_pct = 15.0
-        staffing_markup_pct = 20.0
-        management_fee_pct = 10.0
-        contingency_pct = 5.0
-        gst_pct = 18.0
-        clean_desc = r.description
-        
-        if r.description and r.description.strip().startswith("{"):
-            try:
-                meta = json.loads(r.description)
-                is_default = meta.get("is_default", False)
-                hardware_markup_pct = meta.get("hardware_markup_pct", 15.0)
-                staffing_markup_pct = meta.get("staffing_markup_pct", 20.0)
-                management_fee_pct = meta.get("management_fee_pct", 10.0)
-                contingency_pct = meta.get("contingency_pct", 5.0)
-                gst_pct = meta.get("gst_pct", 18.0)
-                clean_desc = meta.get("description", "")
-            except Exception:
-                pass
-                
-        rules.append({
-            "id": str(r.id),
-            "name": r.name,
-            "rule_code": r.code,
-            "is_default": is_default,
-            "hardware_markup_pct": hardware_markup_pct,
-            "staffing_markup_pct": staffing_markup_pct,
-            "management_fee_pct": management_fee_pct,
-            "contingency_pct": contingency_pct,
-            "gst_pct": gst_pct,
-            "is_active": r.status == "ACTIVE",
-            "status": r.status,
-            "description": clean_desc,
-            "created_at": r.effective_from.isoformat() if r.effective_from else None,
-            "updated_at": r.effective_to.isoformat() if r.effective_to else None
-        })
-    return rules
+    return await PricingCatalogQueryService(db).list_rules(limit=limit)
 
 @router.get("/superadmin/catalog/pricing-rules/{rule_id}")
 async def superadmin_get_pricing_rule_detail(
@@ -226,49 +188,10 @@ async def superadmin_get_pricing_rule_detail(
     current_user: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    stmt = select(PricingRule).where(PricingRule.id == rule_id)
-    r = (await db.execute(stmt)).scalar_one_or_none()
-    if not r:
+    rule = await PricingCatalogQueryService(db).get_rule(rule_id=rule_id)
+    if rule is None:
         raise HTTPException(status_code=404, detail="Pricing rule not found")
-        
-    is_default = False
-    hardware_markup_pct = 15.0
-    staffing_markup_pct = 20.0
-    management_fee_pct = 10.0
-    contingency_pct = 5.0
-    gst_pct = 18.0
-    clean_desc = r.description
-    
-    if r.description and r.description.strip().startswith("{"):
-        try:
-            meta = json.loads(r.description)
-            is_default = meta.get("is_default", False)
-            hardware_markup_pct = meta.get("hardware_markup_pct", 15.0)
-            staffing_markup_pct = meta.get("staffing_markup_pct", 20.0)
-            management_fee_pct = meta.get("management_fee_pct", 10.0)
-            contingency_pct = meta.get("contingency_pct", 5.0)
-            gst_pct = meta.get("gst_pct", 18.0)
-            clean_desc = meta.get("description", "")
-        except Exception:
-            pass
-            
-    return {
-        "id": str(r.id),
-        "name": r.name,
-        "rule_code": r.code,
-        "is_default": is_default,
-        "hardware_markup_pct": hardware_markup_pct,
-        "staffing_markup_pct": staffing_markup_pct,
-        "management_fee_pct": management_fee_pct,
-        "contingency_pct": contingency_pct,
-        "gst_pct": gst_pct,
-        "is_active": r.status == "ACTIVE",
-        "status": r.status,
-        "description": clean_desc,
-        "created_at": r.effective_from.isoformat() if r.effective_from else None,
-        "updated_at": r.effective_to.isoformat() if r.effective_to else None,
-        "history": []
-    }
+    return rule
 
 @router.post("/superadmin/catalog/pricing-rules")
 async def superadmin_create_pricing_rule(
@@ -458,197 +381,50 @@ async def get_template_details(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_active_user)
 ):
-    from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
-    
-    # 1. Check RoomTemplate
-    room_stmt = select(RoomTemplate).where(RoomTemplate.slug == slug)
-    room_res = await db.execute(room_stmt)
-    room = room_res.scalars().first()
-    if room:
-        return {
-            "name": room.name,
-            "slug": room.slug,
-            "description": room.description or "",
-            "version": room.version,
-            "is_default": room.is_default,
-            "is_active": room.status == "ACTIVE",
-            "usage_count": room.usage_count,
-            "default_capacity": room.default_capacity,
-            "room_type": room.room_type,
-            "setup_time": float(room.setup_time) if room.setup_time else 0.0,
-            "teardown_time": float(room.teardown_time) if room.teardown_time else 0.0,
-            "hardware_allocation": room.hardware_allocation or [],
-            "staff_allocation": room.staff_allocation or [],
-            "podiums": room.podiums or 0,
-            "image_url": room.image_url,
-            "template_type": "room",
-            **_template_commercial_fields(room),
-        }
-        
-    # 2. Check RegistrationTemplate
-    reg_stmt = select(RegistrationTemplate).where(RegistrationTemplate.slug == slug)
-    reg_res = await db.execute(reg_stmt)
-    reg = reg_res.scalars().first()
-    if reg:
-        return {
-            "name": reg.name,
-            "slug": reg.slug,
-            "description": reg.description or "",
-            "version": reg.version,
-            "is_default": reg.is_default,
-            "is_active": reg.status == "ACTIVE",
-            "usage_count": reg.usage_count,
-            "registration_type": reg.registration_type,
-            "min_attendees": reg.min_attendees,
-            "max_attendees": reg.max_attendees,
-            "recommended_reg_type": reg.recommended_reg_type,
-            "reg_counters": reg.reg_counters,
-            "kiosks": reg.kiosks,
-            "badge_stations": reg.badge_stations,
-            "qr_stations": reg.qr_stations,
-            "helpdesk_counters": reg.helpdesk_counters,
-            "checkins_per_hour": reg.checkins_per_hour,
-            "setup_time": float(reg.setup_time) if reg.setup_time else 0.0,
-            "teardown_time": float(reg.teardown_time) if reg.teardown_time else 0.0,
-            "hardware_allocation": reg.hardware_allocation or [],
-            "staff_allocation": reg.staff_allocation or [],
-            "image_url": reg.image_url,
-            "template_type": "registration",
-            **_template_commercial_fields(reg),
-        }
-        
-    # 3. Check SrrTemplate
-    srr_stmt = select(SrrTemplate).where(SrrTemplate.slug == slug)
-    srr_res = await db.execute(srr_stmt)
-    srr = srr_res.scalars().first()
-    if srr:
-        return {
-            "name": srr.name,
-            "slug": srr.slug,
-            "description": srr.description or "",
-            "version": srr.version,
-            "is_default": srr.is_default,
-            "is_active": srr.status == "ACTIVE",
-            "usage_count": srr.usage_count,
-            "min_speakers": srr.min_speakers,
-            "max_speakers": srr.max_speakers,
-            "preview_stations": srr.preview_stations,
-            "checkin_counters": srr.checkin_counters,
-            "consultation_desks": srr.consultation_desks,
-            "printer_stations": srr.printer_stations,
-            "speakers_per_hour": srr.speakers_per_hour,
-            "setup_time": float(srr.setup_time) if srr.setup_time else 0.0,
-            "teardown_time": float(srr.teardown_time) if srr.teardown_time else 0.0,
-            "hardware_allocation": srr.hardware_allocation or [],
-            "staff_allocation": srr.staff_allocation or [],
-            "image_url": srr.image_url,
-            "template_type": "srr",
-            **_template_commercial_fields(srr),
-        }
-        
-    raise HTTPException(status_code=404, detail="Template not found")
+    template = await PricingCatalogQueryService(db).get_template(slug=slug)
+    if template is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return template
 
 
 @router.get("/superadmin/catalog/templates")
 async def superadmin_get_templates(
     current_user: User = Depends(require_super_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(100, ge=1, le=100),
 ):
-    from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
-    
-    # Get room templates
-    room_res = await db.execute(select(RoomTemplate))
-    room_templates = []
-    for r in room_res.scalars().all():
-        room_templates.append({
-            "name": r.name,
-            "slug": r.slug,
-            "description": r.description or "",
-            "version": r.version,
-            "is_default": r.is_default,
-            "is_active": r.status == "ACTIVE",
-            "usage_count": r.usage_count,
-            "default_capacity": r.default_capacity,
-            "room_type": r.room_type,
-            "setup_time": float(r.setup_time),
-            "teardown_time": float(r.teardown_time),
-            "hardware_allocation": r.hardware_allocation or [],
-            "staff_allocation": r.staff_allocation or [],
-            "podiums": r.podiums or 0,
-            "image_url": r.image_url,
-            "template_type": "room",
-            **_template_commercial_fields(r),
-        })
+    await seed_templates_if_empty(db)
+    return await PricingCatalogQueryService(db).list_templates(limit=limit)
 
-    # Get registration templates
-    reg_res = await db.execute(select(RegistrationTemplate))
-    registration_templates = []
-    for r in reg_res.scalars().all():
-        registration_templates.append({
-            "name": r.name,
-            "slug": r.slug,
-            "description": r.description or "",
-            "version": r.version,
-            "is_default": r.is_default,
-            "is_active": r.status == "ACTIVE",
-            "usage_count": r.usage_count,
-            "registration_type": r.registration_type,
-            "min_attendees": r.min_attendees,
-            "max_attendees": r.max_attendees,
-            "recommended_reg_type": r.recommended_reg_type,
-            "reg_counters": r.reg_counters,
-            "kiosks": r.kiosks,
-            "badge_stations": r.badge_stations,
-            "qr_stations": r.qr_stations,
-            "helpdesk_counters": r.helpdesk_counters,
-            "checkins_per_hour": r.checkins_per_hour,
-            "badge_per_piece_cost": float(r.badge_per_piece_cost),
-            "setup_time": float(r.setup_time),
-            "teardown_time": float(r.teardown_time),
-            "hardware_allocation": r.hardware_allocation or [],
-            "staff_allocation": r.staff_allocation or [],
-            "is_single_kiosk": r.is_single_kiosk,
-            "image_url": r.image_url,
-            "template_type": "registration",
-            **_template_commercial_fields(r),
-        })
 
-    # Get SRR templates
-    srr_res = await db.execute(select(SrrTemplate))
-    srr_templates = []
-    for r in srr_res.scalars().all():
-        srr_templates.append({
-            "name": r.name,
-            "slug": r.slug,
-            "description": r.description or "",
-            "version": r.version,
-            "is_default": r.is_default,
-            "is_active": r.status == "ACTIVE",
-            "usage_count": r.usage_count,
-            "srr_type": r.srr_type,
-            "min_speakers": r.min_speakers,
-            "max_speakers": r.max_speakers,
-            "recommended_event_size": r.recommended_event_size,
-            "preview_stations": r.preview_stations,
-            "checkin_counters": r.checkin_counters,
-            "consultation_desks": r.consultation_desks,
-            "printer_stations": r.printer_stations,
-            "speakers_per_hour": r.speakers_per_hour,
-            "setup_time": float(r.setup_time),
-            "teardown_time": float(r.teardown_time),
-            "hardware_allocation": r.hardware_allocation or [],
-            "staff_allocation": r.staff_allocation or [],
-            "is_single_station": r.is_single_station,
-            "image_url": r.image_url,
-            "template_type": "srr",
-            **_template_commercial_fields(r),
-        })
+@router.get("/superadmin/catalog/v2/pricing-rules", response_model=ResponseEnvelope[list[dict[str, Any]]])
+async def superadmin_get_pricing_rules_enveloped(
+    request: Request,
+    current_user: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(100, ge=1, le=100),
+):
+    await seed_pricing_rules_if_empty(db)
+    return ResponseEnvelope.success(
+        await PricingCatalogQueryService(db).list_rules(limit=limit),
+        request_id=request.headers.get("X-Request-ID"),
+        freshness_at=datetime.now(timezone.utc).isoformat(),
+    )
 
-    return {
-        "room_templates": room_templates,
-        "registration_templates": registration_templates,
-        "srr_templates": srr_templates
-    }
+
+@router.get("/superadmin/catalog/v2/templates", response_model=ResponseEnvelope[dict[str, list[dict[str, Any]]]])
+async def superadmin_get_templates_enveloped(
+    request: Request,
+    current_user: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(100, ge=1, le=100),
+):
+    await seed_templates_if_empty(db)
+    return ResponseEnvelope.success(
+        await PricingCatalogQueryService(db).list_templates(limit=limit),
+        request_id=request.headers.get("X-Request-ID"),
+        freshness_at=datetime.now(timezone.utc).isoformat(),
+    )
 
 class SuperAdminTemplateInput(BaseModel):
     name: str

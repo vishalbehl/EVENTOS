@@ -27,6 +27,7 @@ from app.modules.platform.models.organization import Organization
 from app.modules.superadmin.dependencies import require_super_admin
 from app.modules.venue.models.room_device import RoomDevice
 from app.modules.venue.models.venue_sync_job import VenueSyncJob
+from app.schemas.cursor_pagination import CursorPage, bounded_page_size, decode_cursor, encode_cursor
 
 
 router = APIRouter(prefix="/platform/operations", tags=["platform-operations-control"])
@@ -44,6 +45,27 @@ async def list_task_failures(
         organization_id=organization_id,
         limit=limit,
     )
+
+
+@router.get("/task-failures/page", response_model=CursorPage[dict[str, Any]])
+async def list_task_failures_cursor(
+    organization_id: Optional[uuid.UUID] = None,
+    page_size: int = Query(50, ge=1, le=100),
+    cursor: Optional[str] = Query(None, max_length=512),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_super_admin),
+) -> CursorPage[dict[str, Any]]:
+    position = decode_cursor(cursor) if cursor else None
+    items, has_next = await TaskFailureQueryService(db).list_cursor(
+        organization_id=organization_id,
+        cursor_time=position.occurred_at if position else None,
+        cursor_id=position.record_id if position else None,
+        limit=bounded_page_size(page_size, maximum=100),
+    )
+    next_cursor = None
+    if has_next and items:
+        next_cursor = encode_cursor(items[-1]["created_at"], uuid.UUID(items[-1]["id"]))
+    return CursorPage(items=items, next_cursor=next_cursor, has_next=has_next)
 
 
 @router.post("/task-failures/{failure_id}/replay", status_code=202)
@@ -308,6 +330,27 @@ async def service_request_projection(
     return {"items": [{"id": str(row.id), "organization_id": str(row.organization_id), "event_id": str(row.event_id) if row.event_id else None, "status": row.status, "priority": row.priority, "title": row.title, "version": row.version, "created_at": row.created_at} for row in rows], "count": len(rows)}
 
 
+@router.get("/requests/page", response_model=CursorPage[dict[str, Any]])
+async def service_request_projection_cursor(
+    organization_id: Optional[uuid.UUID] = None,
+    event_id: Optional[uuid.UUID] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    cursor: Optional[str] = Query(None, max_length=512),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_super_admin),
+) -> CursorPage[dict[str, Any]]:
+    position = decode_cursor(cursor) if cursor else None
+    rows, has_next = await OperationsControlQueryService(db).list_requests_cursor(
+        organization_id=organization_id, event_id=event_id,
+        cursor_time=position.occurred_at if position else None,
+        cursor_id=position.record_id if position else None,
+        limit=bounded_page_size(page_size, maximum=200),
+    )
+    items = [{"id": str(row.id), "organization_id": str(row.organization_id), "event_id": str(row.event_id) if row.event_id else None, "status": row.status, "priority": row.priority, "title": row.title, "version": row.version, "created_at": row.created_at} for row in rows]
+    next_cursor = encode_cursor(rows[-1].created_at, rows[-1].id) if has_next and rows else None
+    return CursorPage(items=items, next_cursor=next_cursor, has_next=has_next)
+
+
 @router.get("/risks")
 async def operations_risks(
     organization_id: Optional[uuid.UUID] = None,
@@ -319,6 +362,27 @@ async def operations_risks(
         organization_id=organization_id, event_id=event_id
     )
     return {"items": [{"id": str(row.id), "status": row.status, "priority": row.priority, "title": row.title, "event_id": str(row.event_id) if row.event_id else None} for row in rows], "count": len(rows)}
+
+
+@router.get("/risks/page", response_model=CursorPage[dict[str, Any]])
+async def operations_risks_cursor(
+    organization_id: Optional[uuid.UUID] = None,
+    event_id: Optional[uuid.UUID] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    cursor: Optional[str] = Query(None, max_length=512),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_super_admin),
+) -> CursorPage[dict[str, Any]]:
+    position = decode_cursor(cursor) if cursor else None
+    rows, has_next = await OperationsControlQueryService(db).list_risks_cursor(
+        organization_id=organization_id, event_id=event_id,
+        cursor_time=position.occurred_at if position else None,
+        cursor_id=position.record_id if position else None,
+        limit=bounded_page_size(page_size, maximum=200),
+    )
+    items = [{"id": str(row.id), "status": row.status, "priority": row.priority, "title": row.title, "event_id": str(row.event_id) if row.event_id else None} for row in rows]
+    next_cursor = encode_cursor(rows[-1].created_at, rows[-1].id) if has_next and rows else None
+    return CursorPage(items=items, next_cursor=next_cursor, has_next=has_next)
 
 
 @router.get("/storage")

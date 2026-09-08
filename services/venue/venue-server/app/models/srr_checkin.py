@@ -67,6 +67,7 @@ class SRRCheckin(Base):
         DateTime(timezone=True), nullable=True
     )
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    operation_id: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, unique=True, index=True)
 
     # ── Relationships ─────────────────────────────────────
     event: Mapped["Event"] = relationship("Event")

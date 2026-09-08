@@ -13,7 +13,6 @@ test("invalid login reports the real backend failure", async ({ page }) => {
   await page.goto("/");
   await page.getByPlaceholder(/username or email/i).fill("not-a-real-user");
   await page.getByPlaceholder("••••••••").fill("wrong-password");
-  await page.getByPlaceholder(/paste enrolled srr station key/i).fill("invalid-station-key");
   await page.getByRole("button", { name: /login to workstation mode/i }).click();
 
   await expect(page.locator("[data-sonner-toast]").first()).toContainText(/failed|unavailable|invalid|unauthorized|network error/i, { timeout: 10_000 });

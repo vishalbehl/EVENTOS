@@ -10,9 +10,16 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.concurrency import raise_version_conflict
+from app.core.cache import cache_service
 
 from app.modules.events.models.event import Event
+from app.modules.events.infrastructure.repositories import EventRepository
 from app.modules.operations_planning.models import Milestone, Project, ProjectTask
+from app.modules.operations_planning.infrastructure.repositories import (
+    MilestoneRepository,
+    ProjectRepository,
+    ProjectTaskRepository,
+)
 
 
 def _date_value(value: Any) -> date | None:
@@ -33,23 +40,15 @@ class OperationsPlanningCommandService:
         self.db = db
 
     async def _event(self, event_id: uuid.UUID, organization_id: uuid.UUID) -> Event:
-        event = await self.db.scalar(
-            select(Event).where(
-                Event.id == event_id,
-                Event.organization_id == organization_id,
-                Event.deleted_at.is_(None),
-            )
-        )
+        event = await EventRepository(self.db).get_for_organization(event_id, organization_id)
         if event is None:
             raise HTTPException(status_code=404, detail="Event not found.")
         return event
 
     async def _project(self, project_id: uuid.UUID, organization_id: uuid.UUID) -> Project:
-        project = await self.db.scalar(
-            select(Project).where(
-                Project.id == project_id,
-                Project.organization_id == organization_id,
-            )
+        project = await ProjectRepository(self.db).get_by_id(
+            project_id=project_id,
+            organization_id=organization_id,
         )
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found.")
@@ -74,12 +73,14 @@ class OperationsPlanningCommandService:
             status="PLANNING",
             completion_percentage=0,
         )
-        self.db.add(project)
+        ProjectRepository(self.db).create(project)
         await self.db.flush()
         task = ProjectTask(project_id=project.id, title="Project setup", status="TODO", priority="NORMAL")
         milestone = Milestone(project_id=project.id, name="Project setup", status="TODO")
-        self.db.add_all([milestone, task])
+        MilestoneRepository(self.db).bulk_insert([milestone])
+        ProjectTaskRepository(self.db).create(task)
         await self.db.commit()
+        await cache_service.invalidate_domain("venue_ops_recommendations", event.organization_id, event.id)
         await self.db.refresh(project)
         return project, task, milestone
 
@@ -91,21 +92,22 @@ class OperationsPlanningCommandService:
         data: dict[str, Any],
         expected_version: int | None = None,
     ) -> Project:
-        project = await self.db.scalar(
-            select(Project)
-            .where(Project.id == project_id, Project.organization_id == organization_id)
-            .with_for_update()
+        project = await ProjectRepository(self.db).get_by_id(
+            project_id=project_id,
+            organization_id=organization_id,
+            for_update=True,
         )
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found.")
         if expected_version is not None and project.version != expected_version:
             raise_version_conflict(project.version)
-        for key, value in data.items():
-            if key == "version":
-                continue
-            setattr(project, key, value)
+        ProjectRepository(self.db).update(
+            project,
+            {key: value for key, value in data.items() if key != "version"},
+        )
         project.version = int(project.version or 1) + 1
         await self.db.commit()
+        await cache_service.invalidate_domain("venue_ops_recommendations", organization_id, project.event_id)
         await self.db.refresh(project)
         return project
 
@@ -128,8 +130,9 @@ class OperationsPlanningCommandService:
             )
             for item in items
         ]
-        self.db.add_all(rows)
+        MilestoneRepository(self.db).bulk_insert(rows)
         await self.db.commit()
+        await cache_service.invalidate_domain("venue_ops_recommendations", organization_id, project.event_id)
         return rows
 
     async def create_task(
@@ -143,8 +146,9 @@ class OperationsPlanningCommandService:
     ) -> ProjectTask:
         project = await self._project(project_id, organization_id)
         task = ProjectTask(project_id=project.id, title=title, priority=priority, status=status)
-        self.db.add(task)
+        ProjectTaskRepository(self.db).create(task)
         await self.db.commit()
+        await cache_service.invalidate_domain("venue_ops_recommendations", organization_id, project.event_id)
         await self.db.refresh(task)
         return task
 
@@ -156,20 +160,23 @@ class OperationsPlanningCommandService:
         data: dict[str, Any],
         expected_version: int | None = None,
     ) -> ProjectTask:
-        task = await self.db.scalar(
-            select(ProjectTask)
-            .join(Project, Project.id == ProjectTask.project_id)
-            .where(ProjectTask.id == task_id, Project.organization_id == organization_id)
-            .with_for_update()
+        task = await ProjectTaskRepository(self.db).get_by_id(
+            task_id=task_id,
+            organization_id=organization_id,
+            for_update=True,
         )
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found.")
         if expected_version is not None and task.version != expected_version:
             raise_version_conflict(task.version)
-        for key in ("title", "description", "status", "priority"):
-            if key in data:
-                setattr(task, key, data[key])
+        ProjectTaskRepository(self.db).update(
+            task,
+            {key: value for key, value in data.items() if key in {"title", "description", "status", "priority"}},
+        )
         task.version = int(task.version or 1) + 1
         await self.db.commit()
+        project = await self.db.scalar(select(Project).where(Project.id == task.project_id))
+        if project is not None:
+            await cache_service.invalidate_domain("venue_ops_recommendations", organization_id, project.event_id)
         await self.db.refresh(task)
         return task

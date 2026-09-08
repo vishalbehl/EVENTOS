@@ -59,16 +59,18 @@ TABLE_SCHEMAS = {
     # analytics
     "adoption_metrics": "analytics",
 
+    # abstract
+    "abstract_assignments": "abstract",
+    "abstract_attachments": "abstract",
+    "abstract_authors": "abstract",
+    "abstract_calls": "abstract",
+    "abstract_decisions": "abstract",
+    "abstract_forms": "abstract",
+    "abstract_reviewers": "abstract",
+    "abstract_reviews": "abstract",
+    "abstract_submissions": "abstract",
+
     # events
-    "abstract_assignments": "events",
-    "abstract_attachments": "events",
-    "abstract_authors": "events",
-    "abstract_calls": "events",
-    "abstract_decisions": "events",
-    "abstract_forms": "events",
-    "abstract_reviewers": "events",
-    "abstract_reviews": "events",
-    "abstract_submissions": "events",
     "agenda_items": "events",
     "agendas": "events",
 
@@ -114,15 +116,8 @@ TABLE_SCHEMAS = {
     # automation
     "assistants": "automation",
 
-    # registration
-    "attendance": "registration",
-
     # analytics
     "attendance_logs": "analytics",
-
-    # registration
-    "attendance_mutations": "registration",
-    "badge_scans": "registration",
 
     # websites
     "blogs": "websites",
@@ -294,11 +289,13 @@ TABLE_SCHEMAS = {
     # commerce
     "financial_audit_trail": "commerce",
 
+    # design
+    "form_categories": "design",
+    "form_fields": "design",
+    "form_templates": "design",
+
     # registration
-    "form_categories": "registration",
-    "form_fields": "registration",
     "form_submissions": "registration",
-    "form_templates": "registration",
 
     # communications
     "global_announcements": "communications",
@@ -684,7 +681,6 @@ TABLE_SCHEMAS = {
 
     # speakers
     "speaker_profiles": "speakers",
-    "speaker_theme_settings": "speakers",
     "speakers": "speakers",
 
     # sponsors
@@ -839,7 +835,6 @@ TABLE_SCHEMAS = {
 AMBIGUOUS_TABLE_SCHEMAS = {
     "assets": ("content", "sponsors"),
     "badge_history": ("registration", "venue"),
-    "badge_print_jobs": ("registration", "venue"),
     "badges": ("registration", "venue"),
     "contacts": ("business", "sponsors"),
     "form_submissions": ("registration", "websites"),

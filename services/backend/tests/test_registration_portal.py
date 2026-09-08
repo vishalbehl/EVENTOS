@@ -130,7 +130,7 @@ async def test_update_form_config(
     
     payload = RegistrationFormConfigUpdate(
         is_live=True,
-        fields=fields_payload
+        fields=[field.model_dump() for field in fields_payload]
     )
     
     config = await update_registration_form_config(payload=payload, event=event, db=db)
@@ -222,7 +222,7 @@ async def test_public_registration_flow(
     
     setup_payload = RegistrationFormConfigUpdate(
         is_live=True,
-        fields=fields_payload
+        fields=[field.model_dump() for field in fields_payload]
     )
     await update_registration_form_config(payload=setup_payload, event=event, db=db)
     

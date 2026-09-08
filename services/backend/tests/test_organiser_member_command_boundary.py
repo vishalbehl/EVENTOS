@@ -29,3 +29,12 @@ def test_member_commands_are_tenant_locked_versioned_and_rollback_safe():
     assert "AuditLog" in source
     assert "invalidate_organization" in source
     assert "await self.db.rollback()" in source
+
+
+def test_member_commands_persist_tenant_scoped_idempotency_for_retries():
+    source = SERVICE.read_text(encoding="utf-8")
+    assert source.count("begin_idempotent") >= 4
+    assert source.count("complete_idempotent") >= 4
+    assert source.count('organization_id=organization_id') >= 4
+    assert '"if_match": if_match' in source
+    assert "IDEMPOTENCY_CONFLICT" not in source

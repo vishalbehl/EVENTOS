@@ -196,21 +196,32 @@ async def seed_operational_venue_data(db: AsyncSession) -> None:
                 db.add(sess)
                 await db.flush()
 
-                db.add(SessionSpeaker(session_id=sess.id, speaker_id=speaker.id, role="primary_speaker", sort_order=1))
-
-                pres = PresentationFile(
-                    event_id=event_id,
+                session_speaker = SessionSpeaker(
                     session_id=sess.id,
                     speaker_id=speaker.id,
+                    talk_order=0,
+                    is_confirmed=True,
+                )
+                db.add(session_speaker)
+                await db.flush()
+
+                pres = PresentationFile(
+                    id=uuid.uuid4(),
+                    event_id=event_id,
+                    session_speaker_id=session_speaker.id,
+                    speaker_id=speaker.id,
                     original_filename=file_name,
+                    stored_filename=f"seed-{uuid.uuid4()}.{file_name.rsplit('.', 1)[-1].lower()}",
+                    storage_path=f"presentations/{event_id}/{speaker.id}/{file_name}",
                     file_format="pptx" if file_name.endswith(".pptx") else "pdf",
+                    mime_type="application/pdf" if file_name.endswith(".pdf") else "application/vnd.openxmlformats-officedocument.presentationml.presentation",
                     file_size_bytes=1024 * 1024 * (12 + (i * 3)),
+                    content_sha256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    upload_source="seed",
                     version_number=file_ver,
                     is_current_version=True,
                     upload_status="approved",
-                    local_sync_status="synced" if i != 3 else "transferring",
-                    local_cache_path=f"/var/eventos/storage/presentations/{file_name}",
-                    file_hash_sha256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    local_sync_status="pending",
                     uploaded_at=now - timedelta(minutes=45)
                 )
                 db.add(pres)
@@ -218,9 +229,10 @@ async def seed_operational_venue_data(db: AsyncSession) -> None:
 
                 db.add(PresentationQueue(
                     session_id=sess.id,
-                    presentation_file_id=pres.id,
-                    sort_order=1,
-                    queue_status="playing" if sess.status == "in_progress" else "queued"
+                    session_speaker_id=session_speaker.id,
+                    file_id=pres.id,
+                    queue_order=0,
+                    status="active" if sess.status == "in_progress" else "queued"
                 ))
 
         # 6. Create Room Devices (Tech PC, Stage PC, Moderator Tablet)

@@ -25,6 +25,28 @@ services:
       timeout: 5s
       retries: 20
 
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    env_file:
+      - .env.staging
+    environment:
+      PGADMIN_CONFIG_SERVER_MODE: "True"
+      PGADMIN_CONFIG_SESSION_COOKIE_NAME: "'pga4_session_staging'"
+      PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
+      PGADMIN_REPLACE_SERVERS_ON_STARTUP: "True"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5051:80"
+    volumes:
+      - staging_pgadmin_data:/var/lib/pgadmin
+      - ./ops/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: "0.50"
+    logging: *default-logging
+
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
@@ -172,7 +194,7 @@ services:
       S3_ENDPOINT_URL: http://minio:9000
       S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://127.0.0.1:9000}
       ANTIVIRUS_COMMAND: tcp://clamav:3310
-      API_BASE_URL: http://127.0.0.1:8001
+      API_BASE_URL: http://127.0.0.1:8000
     depends_on:
       postgres:
         condition: service_healthy
@@ -183,7 +205,7 @@ services:
       clamav:
         condition: service_healthy
     ports:
-      - "127.0.0.1:8001:8000"
+      - "127.0.0.1:${BACKEND_HOST_PORT:-8000}:8000"
     volumes:
       - .:/workspace:ro
       - ./ops:/runtime-ops:ro
@@ -269,8 +291,45 @@ services:
     healthcheck:
       disable: true
 
+  # Compatibility task families live in a separate image and queue namespace.
+  # This prevents an application worker from consuming an unregistered task.
+  workers-legacy:
+    build:
+      context: .
+      dockerfile: services/workers/Dockerfile
+    command: ["celery", "-A", "workers.celery_app:app", "worker", "--loglevel=INFO", "--queues=legacy-default,legacy-files,legacy-videos,legacy-imports,legacy-search,legacy-reports,legacy-reconciliation,legacy-notifications"]
+    env_file:
+      - .env.staging
+    environment:
+      DATABASE_URL_SYNC: postgresql+psycopg2://postgres:postgres@postgres:5432/eventos_db
+      DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@postgres:5432/eventos_db
+      REDIS_URL: redis://redis:6379/0
+      REDIS_CACHE_URL: redis://redis:6379/2
+      REDIS_LOCK_URL: redis://redis:6379/3
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://127.0.0.1:9000}
+      ANTIVIRUS_COMMAND: tcp://clamav:3310
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 1536m
+    cpus: "1.50"
+    logging: *default-logging
+    healthcheck:
+      disable: true
+
 volumes:
   staging_postgres_data:
+  staging_pgadmin_data:
   staging_redis_data:
   staging_caddy_data:
   staging_caddy_config:

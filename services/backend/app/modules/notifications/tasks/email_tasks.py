@@ -2,7 +2,7 @@
 import asyncio
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from loguru import logger
 from sqlalchemy import select, update, or_
 from sqlalchemy.orm import selectinload
@@ -13,6 +13,7 @@ from app.config import settings
 from app.modules.communications.models.email_campaign import EmailCampaign
 from app.modules.communications.models.email_log import EmailLog
 from app.modules.events.models.speaker import Speaker
+from app.modules.events.models.event import Event
 from app.modules.presentations.models.poster import Poster
 from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.agenda.models import Session
@@ -32,6 +33,49 @@ def _run_async(coro):
     return stable_run_async(coro)
 
 _NOTIFICATIONS_POLICY = policy_for("notifications")
+
+
+@celery_app.task(
+    name="app.tasks.recover_email_campaign_dispatches",
+    queue=_NOTIFICATIONS_POLICY.queue,
+    soft_time_limit=_NOTIFICATIONS_POLICY.soft_timeout_seconds,
+    time_limit=_NOTIFICATIONS_POLICY.hard_timeout_seconds,
+    acks_late=True,
+)
+def recover_email_campaign_dispatches() -> int:
+    """Re-publish committed campaign intents left sending by broker outages."""
+    return _run_async(_recover_email_campaign_dispatches())
+
+
+async def _recover_email_campaign_dispatches() -> int:
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+    queued = 0
+    async with AsyncSessionLocal() as db:
+        rows = list((await db.execute(
+            select(EmailCampaign.id, EmailCampaign.event_id)
+            .where(
+                EmailCampaign.status == "sending",
+                EmailCampaign.sent_at.is_(None),
+                EmailCampaign.updated_at < cutoff,
+                EmailCampaign.deleted_at.is_(None),
+            )
+            .order_by(EmailCampaign.updated_at)
+            .limit(50)
+        )).all())
+        for campaign_id, event_id in rows:
+            organization_id = await db.scalar(
+                select(Event.organization_id).where(Event.id == event_id)
+            )
+            if not organization_id:
+                continue
+            try:
+                process_email_campaign.delay(str(campaign_id), str(organization_id))
+                queued += 1
+            except Exception:
+                # The committed campaign state is the durable intent; the
+                # next scheduled recovery attempt will retry publication.
+                continue
+    return queued
 
 
 @celery_app.task(
@@ -100,6 +144,7 @@ async def _fail_campaign_async(campaign_id: uuid.UUID, organization_id: uuid.UUI
                 await UsageReservationService.release(db, reservation.id)
             if campaign and campaign.status != "sent":
                 campaign.status = "failed"
+                campaign.version += 1
             logger.error(f"Email campaign permanently failed: campaign={campaign_id} failure={failure}")
             await db.commit()
     finally:
@@ -149,14 +194,18 @@ async def _process_email_campaign_with_session(
         result = await db.execute(
             select(EmailCampaign)
             .options(selectinload(EmailCampaign.template), selectinload(EmailCampaign.event))
-            .where(EmailCampaign.id == campaign_id)
+            .where(EmailCampaign.id == campaign_id).with_for_update()
         )
         campaign = result.scalar_one_or_none()
         if not campaign or campaign.status == "sent":
             return
 
-        # 2. Update status to sending
-        campaign.status = "sending"
+        # 2. Claim draft/scheduled work under the row lock. A retry that
+        # arrives after a worker has already claimed the campaign continues
+        # the same logical operation without creating a second claim.
+        if campaign.status in {"draft", "scheduled", "failed"}:
+            campaign.status = "sending"
+            campaign.version += 1
         await db.commit()
 
         # 3. Identify Recipients (Snapshot)
@@ -440,6 +489,7 @@ async def _process_email_campaign_with_session(
 
         # 5. Mark as Sent
         campaign.status = "sent"
+        campaign.version += 1
         campaign.sent_at = datetime.now(timezone.utc)
         if reservation.status == "RESERVED":
             await UsageReservationService.consume(

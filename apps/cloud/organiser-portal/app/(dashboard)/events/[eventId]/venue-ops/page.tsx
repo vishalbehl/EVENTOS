@@ -1,4 +1,4 @@
-import { redirect } from "next/navigation";
+import VenueOpsSectionPage from "@/components/organizer/venue-ops/VenueOpsSectionPage";
 
 export default async function EventVenueOpsPage({
   params,
@@ -6,5 +6,5 @@ export default async function EventVenueOpsPage({
   params: Promise<{ eventId: string }>;
 }) {
   const { eventId } = await params;
-  redirect(`/events/${eventId}/program/rooms`);
+  return <VenueOpsSectionPage eventId={eventId} section="overview" />;
 }

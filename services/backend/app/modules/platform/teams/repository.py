@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import uuid
 from typing import List, Optional, Tuple
-from sqlalchemy import select, func, or_, desc, asc, and_
+from sqlalchemy import inspect as sa_inspect, select, func, or_, desc, asc, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.modules.platform.teams.models import Team, TeamMember
 from app.modules.platform.departments.models import Department
 from app.modules.identity.models.user import User
-from app.schemas.cursor_pagination import CursorPage, decode_cursor, encode_cursor
+from app.schemas.cursor_pagination import CursorPage, bounded_page_size, decode_cursor, encode_cursor
 
 
 class TeamRepository:
@@ -132,9 +132,11 @@ class TeamRepository:
         return (await self.db.scalar(statement)) is not None
 
     async def update(self, entity: Team, values: dict) -> Team:
+        mapped_fields = {attribute.key for attribute in sa_inspect(entity).mapper.column_attrs}
         for key, value in values.items():
-            if hasattr(entity, key):
-                setattr(entity, key, value)
+            if key.startswith("_") or key not in mapped_fields:
+                raise ValueError(f"Unsupported repository update field: {key}")
+            setattr(entity, key, value)
         self.db.add(entity)
         await self.db.flush()
         return entity
@@ -152,7 +154,7 @@ class TeamRepository:
         department_id: Optional[uuid.UUID] = None,
         search: Optional[str] = None,
     ) -> CursorPage[Team]:
-        bounded_limit = max(1, min(limit, 100))
+        bounded_limit = bounded_page_size(limit, default=20, maximum=100)
         statement = select(Team).where(
             Team.organization_id == org_id, Team.deleted_at.is_(None)
         )
@@ -242,7 +244,7 @@ class TeamRepository:
         return member
 
     async def list_members(
-        self, team_id: uuid.UUID, *, limit: int = 100
+        self, org_id: uuid.UUID, team_id: uuid.UUID, *, limit: int = 100
     ) -> List[Tuple[TeamMember, User]]:
         limit = max(1, min(limit, 100))
         stmt = (
@@ -250,10 +252,24 @@ class TeamRepository:
             .join(User, TeamMember.user_id == User.id)
             .where(
                 TeamMember.team_id == team_id,
-                TeamMember.deleted_at == None
+                TeamMember.deleted_at == None,
+                Team.organization_id == org_id,
+                User.organization_id == org_id,
+                User.deleted_at == None,
             )
             .order_by(User.first_name, User.last_name, User.id)
             .limit(limit)
         )
         result = await self.db.execute(stmt)
         return result.all()
+
+    async def get_user_for_organization(
+        self, org_id: uuid.UUID, user_id: uuid.UUID
+    ) -> Optional[User]:
+        return await self.db.scalar(
+            select(User).where(
+                User.id == user_id,
+                User.organization_id == org_id,
+                User.deleted_at.is_(None),
+            )
+        )

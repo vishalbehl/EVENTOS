@@ -8,7 +8,7 @@ import statistics
 import sys
 import time
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
 
@@ -29,6 +29,11 @@ async def main() -> None:
     parser.add_argument("--token", default=None)
     parser.add_argument("--prometheus-url", default=None)
     parser.add_argument(
+        "--metrics-url",
+        default=None,
+        help="backend Prometheus text endpoint; defaults to the request URL origin plus /metrics",
+    )
+    parser.add_argument(
         "--pool-sample-seconds",
         type=float,
         default=35.0,
@@ -47,21 +52,30 @@ async def main() -> None:
 
     async with httpx.AsyncClient(timeout=30, headers=headers) as client:
         async def sample_pool() -> None:
-            if not args.prometheus_url:
-                return
             # The current gauge is normally back to zero by the time a burst
             # finishes. The process-lifetime peak preserves the useful signal.
-            query = quote("confplatform_db_pool_peak_checked_out{engine=\"async\"}")
+            metrics_url = args.metrics_url
+            if not args.prometheus_url and not metrics_url:
+                parsed = urlsplit(args.url)
+                metrics_url = urlunsplit((parsed.scheme, parsed.netloc, "/metrics", "", ""))
             deadline = time.perf_counter() + max(0.25, args.pool_sample_seconds)
             while time.perf_counter() < deadline:
                 try:
-                    response = await client.get(
-                        f"{args.prometheus_url.rstrip('/')}/api/v1/query?query={query}"
-                    )
-                    payload = response.json()
-                    values = payload.get("data", {}).get("result", [])
-                    if values:
-                        pool_samples.append(float(values[0]["value"][1]))
+                    if args.prometheus_url:
+                        query = quote("confplatform_db_pool_peak_checked_out{engine=\"async\"}")
+                        response = await client.get(
+                            f"{args.prometheus_url.rstrip('/')}/api/v1/query?query={query}"
+                        )
+                        payload = response.json()
+                        values = payload.get("data", {}).get("result", [])
+                        if values:
+                            pool_samples.append(float(values[0]["value"][1]))
+                    else:
+                        response = await client.get(metrics_url)
+                        for line in response.text.splitlines():
+                            if line.startswith("confplatform_db_pool_peak_checked_out{") and "engine=\"async\"" in line:
+                                pool_samples.append(float(line.rsplit(" ", 1)[1]))
+                                break
                 except Exception:
                     pass
                 await asyncio.sleep(0.25)

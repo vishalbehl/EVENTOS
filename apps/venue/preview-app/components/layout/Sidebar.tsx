@@ -167,7 +167,7 @@ export function Sidebar({
             <span className="min-w-0 flex-1">
               <span className="block truncate text-xs font-black text-[var(--text)]">{title}</span>
               <span className="block truncate text-[9px] font-semibold text-[var(--muted)]">
-                {activeMode === "workstation" ? `Station #${stationNumber}` : "Active Mode"}
+                {activeMode === "workstation" ? `Station #${stationNumber ?? "Not configured"}` : "Active Mode"}
               </span>
             </span>
           </button>

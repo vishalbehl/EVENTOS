@@ -173,7 +173,7 @@ export default function LiveOperationsPage() {
                           {room.current_speaker}
                         </div>
                         <div className="text-[11px] font-medium text-[var(--muted)] truncate">
-                          {room.current_session.title}
+                          {room.current_session?.title || "No session configured"}
                         </div>
                       </div>
 
@@ -182,13 +182,13 @@ export default function LiveOperationsPage() {
                         <div className="flex items-center justify-between">
                           <span className="text-[var(--muted)]">Tech PC:</span>
                           <span className={cn("font-bold", room.technical.status === "healthy" ? "text-emerald-400" : "text-amber-400")}>
-                            ● {room.technical.status === "healthy" ? "Online" : "Check"} ({room.technical.cpu_pct}%)
+                            ● {room.technical.status || "UNKNOWN"}{room.technical.cpu_pct != null ? ` (${room.technical.cpu_pct}%)` : ""}
                           </span>
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-[var(--muted)]">Stage PC:</span>
                           <span className={cn("font-bold", room.stage.status === "healthy" ? "text-emerald-400" : "text-rose-400")}>
-                            ● {room.stage.status === "healthy" ? "Playing" : "Offline"}
+                            ● {room.stage.playback_status || room.stage.status || "UNKNOWN"}
                           </span>
                         </div>
                         <div className="flex items-center justify-between">
@@ -199,7 +199,7 @@ export default function LiveOperationsPage() {
                         </div>
                         <div className="flex items-center justify-between border-t border-[var(--border)] pt-1">
                           <span className="text-[var(--muted)]">Timer:</span>
-                          <span className="font-bold text-[var(--text)]">{formatTimer(room.timer_seconds || 522)}</span>
+                          <span className="font-bold text-[var(--text)]">{room.timer_seconds != null ? formatTimer(room.timer_seconds) : "--:--"}</span>
                         </div>
                       </div>
                     </div>

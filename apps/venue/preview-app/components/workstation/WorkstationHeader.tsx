@@ -37,7 +37,7 @@ export function WorkstationHeader() {
               </span>
             </div>
             <p className="text-[10px] font-bold text-[var(--pri)]">
-              Workstation #{stationNumber}
+              Workstation #{stationNumber ?? "Not configured"}
             </p>
           </div>
         </div>

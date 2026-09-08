@@ -24,6 +24,8 @@ export function useWebSocket() {
 
     socket.on("connect", () => {
       setIsConnected(true);
+      const eventId = process.env.NEXT_PUBLIC_VENUE_EVENT_ID;
+      if (eventId) socket.emit("join_event_room", { event_id: eventId });
     });
 
     socket.on("disconnect", () => {

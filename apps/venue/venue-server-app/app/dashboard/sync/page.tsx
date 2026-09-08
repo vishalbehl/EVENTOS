@@ -71,8 +71,10 @@ type SyncStatus = {
   };
 };
 
-function sourceLabel(_type?: string) {
-  return "EventOS Cloud API (Port 8000)";
+function sourceLabel(type?: string) {
+  if (!type) return "Source unavailable";
+  if (type === "cloud") return "EventOS Cloud API";
+  return type;
 }
 
 function statusTone(status?: string, reachable?: boolean) {
@@ -83,6 +85,17 @@ function statusTone(status?: string, reachable?: boolean) {
     return "border-red-500/25 bg-red-500/10 text-red-400";
   }
   return "border-amber-500/25 bg-amber-500/10 text-amber-400";
+}
+
+function countState(value?: number | null) {
+  if (value == null) return "UNKNOWN";
+  return value > 0 ? "OBSERVED" : "EMPTY";
+}
+
+function sourceState(status?: string, reachable?: boolean) {
+  if (reachable === true) return "REACHABLE";
+  if (reachable === false) return status === "failed" || status === "down" ? "UNREACHABLE" : "OFFLINE";
+  return "UNKNOWN";
 }
 
 export default function VenueSyncPage() {
@@ -137,7 +150,7 @@ export default function VenueSyncPage() {
     }
 
     setSyncingWholeVenue(true);
-    setSyncLogs(["[Venue Master] Initiating whole-venue multi-domain synchronization..."]);
+      setSyncLogs(["[Venue Master] Requesting whole-venue multi-domain synchronization..."]);
 
     try {
       setSyncLogs((prev) => [
@@ -156,14 +169,12 @@ export default function VenueSyncPage() {
 
       setSyncLogs((prev) => [
         ...prev,
-        "[Registry] Attendees directory & badge templates updated.",
-        "[SRR] Presentation files downloaded and verified into local MinIO bucket.",
-        "[Halls] Stage queues & session run-orders synchronized.",
-        "[Gatekeeper] Check-in capacity rules loaded into PostgreSQL.",
-        "[Sync Complete] Whole venue operations are 100% locally authoritative and ready for offline execution.",
+        "[Venue Server] Synchronization request accepted by the local control plane.",
+        "[Verification] Refreshing local counts and delivery states from the server...",
+        "[Sync Result] Completion and file verification will be shown after the refreshed server response.",
       ]);
 
-      toast.success("Whole venue operations synchronized successfully!");
+      toast.success("Whole venue synchronization request accepted.");
       void refreshAll();
     } catch (err: any) {
       setSyncLogs((prev) => [...prev, `[Sync Error] ${err?.message || "Whole venue synchronization failed."}`]);
@@ -251,7 +262,7 @@ export default function VenueSyncPage() {
             <p className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Current Fetch Source</p>
             <p className="mt-2 text-sm font-black text-[var(--text)] truncate">{sourceLabel(fetchSource?.source_type)}</p>
             <p className="mt-1 break-all text-xs font-semibold font-mono text-[var(--muted)]">
-              {fetchSource?.base_url || "http://127.0.0.1:8000"}
+              {fetchSource?.base_url || "Source URL unavailable"}
             </p>
           </div>
 
@@ -264,10 +275,10 @@ export default function VenueSyncPage() {
               )}`}
             >
               {syncStatus?.source?.reachable ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
-              {syncStatus?.source?.status || "online"}
+              {sourceState(syncStatus?.source?.status, syncStatus?.source?.reachable)}
             </div>
             <p className="mt-1 text-xs font-semibold text-[var(--muted)] truncate">
-              {syncStatus?.source?.detail || "Connected to upstream edge feed"}
+              {syncStatus?.source?.detail || "No reachability evidence received"}
             </p>
           </div>
 
@@ -292,9 +303,9 @@ export default function VenueSyncPage() {
 
           <div className="rounded-2xl border border-[var(--border)] bg-[var(--surf)] p-4">
             <p className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Auto Sync Frequency</p>
-            <p className="mt-2 text-sm font-black text-[var(--text)]">Every 30 Seconds</p>
+            <p className="mt-2 text-sm font-black text-[var(--text)]">Interval unavailable</p>
             <p className="mt-1 text-xs font-semibold text-[var(--muted)]">
-              Last check: {formatDateTime(syncStatus?.source?.last_checked_at || new Date().toISOString())}
+              Last check: {syncStatus?.source?.last_checked_at ? formatDateTime(syncStatus.source.last_checked_at) : "Not checked"}
             </p>
           </div>
         </div>
@@ -314,8 +325,8 @@ export default function VenueSyncPage() {
                   Multi-domain data synchronized from upstream into authoritative local PostgreSQL
                 </p>
               </div>
-              <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 text-[10px] font-mono font-black uppercase text-emerald-400">
-                100% Authoritative
+              <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-[10px] font-mono font-black uppercase text-amber-400">
+                {syncStatus ? "SERVER COUNTS OBSERVED" : "STATUS UNKNOWN"}
               </span>
             </div>
 
@@ -328,7 +339,7 @@ export default function VenueSyncPage() {
                     <Users className="h-4 w-4 text-[var(--pri)]" />
                     <span className="text-xs font-black uppercase text-[var(--text)]">Attendee Directory</span>
                   </div>
-                  <span className="text-[10px] font-mono font-black text-emerald-400">SYNCED</span>
+                  <span className="text-[10px] font-mono font-black text-emerald-400">{countState(modules.participants)}</span>
                 </div>
                 <div className="text-2xl font-black text-[var(--text)]">{modules.participants.toLocaleString()}</div>
                 <p className="text-[10px] text-[var(--muted)]">
@@ -343,7 +354,7 @@ export default function VenueSyncPage() {
                     <Mic className="h-4 w-4 text-purple-400" />
                     <span className="text-xs font-black uppercase text-[var(--text)]">Speaker Presentations</span>
                   </div>
-                  <span className="text-[10px] font-mono font-black text-purple-400">MINIO ACTIVE</span>
+                  <span className="text-[10px] font-mono font-black text-purple-400">{countState(modules.presentations_total)}</span>
                 </div>
                 <div className="text-2xl font-black text-[var(--text)]">
                   {modules.presentations_approved}{" "}
@@ -361,7 +372,7 @@ export default function VenueSyncPage() {
                     <Tv className="h-4 w-4 text-blue-400" />
                     <span className="text-xs font-black uppercase text-[var(--text)]">Stage Run-Orders</span>
                   </div>
-                  <span className="text-[10px] font-mono font-black text-blue-400">READY</span>
+                  <span className="text-[10px] font-mono font-black text-blue-400">{countState(modules.sessions)}</span>
                 </div>
                 <div className="text-2xl font-black text-[var(--text)]">
                   {modules.sessions}{" "}
@@ -379,7 +390,7 @@ export default function VenueSyncPage() {
                     <MonitorSmartphone className="h-4 w-4 text-amber-400" />
                     <span className="text-xs font-black uppercase text-[var(--text)]">Workstations Fleet</span>
                   </div>
-                  <span className="text-[10px] font-mono font-black text-amber-400">LAN ACTIVE</span>
+                  <span className="text-[10px] font-mono font-black text-amber-400">{countState(modules.devices)}</span>
                 </div>
                 <div className="text-2xl font-black text-[var(--text)]">
                   {modules.devices}{" "}

@@ -67,7 +67,7 @@ export default function WorkflowsPage() {
     try {
       setLoading(true);
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/workflows`,
+        `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/workflows`,
         { headers: { "Authorization": `Bearer ${token}` } }
       );
       if (response.ok) {
@@ -100,7 +100,7 @@ export default function WorkflowsPage() {
     for (const id of instanceIds) {
       try {
         const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/workflows/instances/${id}`,
+          `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/workflows/instances/${id}`,
           { headers: { "Authorization": `Bearer ${token}` } }
         );
         if (res.ok) {
@@ -129,7 +129,7 @@ export default function WorkflowsPage() {
     setTriggering(true);
     try {
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/workflows/${workflowId}/trigger`,
+          `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/workflows/${workflowId}/trigger`,
         {
           method: "POST",
           headers: { "Authorization": `Bearer ${token}` }
@@ -158,7 +158,7 @@ export default function WorkflowsPage() {
   const handleCompleteTask = async (taskId: string, instanceId: string) => {
     try {
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/workflows/tasks/${taskId}/complete`,
+          `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/workflows/tasks/${taskId}/complete`,
         {
           method: "POST",
           headers: {
@@ -172,7 +172,7 @@ export default function WorkflowsPage() {
         setCommentText("");
         // Reload instance state
         const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/workflows/instances/${instanceId}`,
+          `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/workflows/instances/${instanceId}`,
           { headers: { "Authorization": `Bearer ${token}` } }
         );
         if (res.ok) {
@@ -202,7 +202,7 @@ export default function WorkflowsPage() {
       };
 
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/workflows`,
+          `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/workflows`,
         {
           method: "POST",
           headers: {

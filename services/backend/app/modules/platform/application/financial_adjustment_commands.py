@@ -109,7 +109,8 @@ class FinancialAdjustmentCommandService:
                 old_state={"status": "PENDING", "version": if_match},
                 new_state={"decision": decision, "reason": reason,
                            "effective_at": row.effective_at.isoformat() if row.effective_at else None,
-                           "version": row.version, "idempotency_key": idempotency_key},
+                           "version": row.version, "idempotency_key": idempotency_key,
+                           "case_reference": case_reference},
                 is_sensitive=True,
             ))
             self.db.add(PrivilegedMutationReceipt(

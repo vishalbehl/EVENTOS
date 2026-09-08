@@ -82,15 +82,21 @@ export function ReuploadModal({
       const primaryFile =
         selectedFiles.find((f) => f.name.endsWith(".pptx") || f.name.endsWith(".ppt")) ||
         selectedFiles[0];
-      const sizeMB = parseFloat(totalSizeMB) || 24.5;
+      const sizeMB = parseFloat(totalSizeMB) || 0;
+      const operationId = crypto.randomUUID();
       const form = new FormData();
       form.append("speaker_id", speaker.id);
       form.append("session_speaker_id", currentSession.session_speaker_id);
       form.append("filename", primaryFile.name);
-      form.append("file_size_bytes", String(selectedFiles.reduce((acc, f) => acc + f.size, 0)));
+      // The Venue Server stores one immutable presentation version per upload;
+      // the multipart payload contains the selected primary file only.
+      form.append("file_size_bytes", String(primaryFile.size));
+      form.append("operation_id", operationId);
+      const currentVersion = currentSession.presentations?.[0]?.version;
+      if (currentVersion !== undefined) form.append("expected_version", String(currentVersion));
       form.append("file", primaryFile);
       const response = await apiClient.post<any>("/api/v1/srr/files/upload", form, {
-        headers: { "Content-Type": "multipart/form-data" },
+        headers: { "Content-Type": "multipart/form-data", "Idempotency-Key": operationId },
       });
 
       updatePresentationFile(selectedSessionIndex, {
@@ -105,7 +111,7 @@ export function ReuploadModal({
 
       if (uploadMode === "folder" || selectedFiles.length > 1) {
         toast.success(
-          `Successfully replaced session folder with ${selectedFiles.length} files (${sizeMB} MB)!`
+          `Uploaded the primary presentation from ${selectedFiles.length} selected files (${sizeMB} MB).`
         );
       } else {
         toast.success(`Successfully uploaded ${primaryFile.name}`);
@@ -132,11 +138,11 @@ export function ReuploadModal({
         {/* Title Header */}
         <div className="space-y-1">
           <h3 className="text-lg font-black tracking-tight text-[var(--text)]">
-            {uploadMode === "folder" ? "Replace Entire Session Folder" : "Upload Presentation File"}
+            {uploadMode === "folder" ? "Select Primary Presentation" : "Upload Presentation File"}
           </h3>
           <p className="text-xs text-[var(--muted)]">
             {uploadMode === "folder"
-              ? "Select or drop a folder from USB or local drive containing all slides and media assets."
+              ? "Select a folder to identify the primary presentation. The Venue Server stores one authoritative file version; embed required media in that file."
               : "Supported formats: Microsoft PowerPoint (.pptx, .ppt), Adobe PDF (.pdf), Keynote (.key), Video (.mp4)"}
           </p>
         </div>
@@ -174,7 +180,7 @@ export function ReuploadModal({
             )}
           >
             <FolderUp className="size-4 text-[var(--pri)]" />
-            <span>Entire Session Folder</span>
+            <span>Choose From Folder</span>
           </button>
         </div>
 
@@ -227,7 +233,7 @@ export function ReuploadModal({
           </p>
           <p className="text-[10px] text-[var(--muted)] mt-1 font-medium">
             {uploadMode === "folder"
-              ? "Ingests slides, videos, spreadsheets, and reference handouts together"
+              ? "Selects the primary supported presentation file from the folder"
               : "Supports .pptx, .ppt, .pdf, .key, .mp4 up to 2 GB"}
           </p>
         </div>
@@ -299,7 +305,7 @@ export function ReuploadModal({
               <>
                 <Check className="size-3.5 stroke-[3]" />
                 <span>
-                  {uploadMode === "folder" ? "Confirm & Replace Folder" : "Confirm Upload"}
+                  {uploadMode === "folder" ? "Confirm Primary Presentation" : "Confirm Upload"}
                 </span>
               </>
             )}

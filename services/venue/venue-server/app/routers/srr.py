@@ -12,16 +12,19 @@ from fastapi import APIRouter, Cookie, Depends, File, Form, Header, HTTPExceptio
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_database
+from app.config import settings
 from app.models.operational_control import VenueInstallation
 from app.models.event import Event
 from app.models.presentation_file import PresentationFile
 from app.models.presentation_queue import PresentationQueue
+from app.models.operational_control import VenueAssetTransfer
+from app.models.room_device import RoomDevice
 from app.models.session import Session
 from app.models.session_speaker import SessionSpeaker
 from app.models.speaker import Speaker
@@ -30,26 +33,40 @@ from app.models.srr_checkin import SRRCheckin
 from app.models.srr_station import SRRStation
 from app.models.venue_sync_job import VenueSyncJob
 from app.models.venue_user import VenueUser
-from app.routers.auth import BEARER, decode_token, mode_allowed, require_admin, require_operator, require_viewer
+from app.models.venue_runtime_event import VenueRuntimeEvent
+from app.runtime_events import record_runtime_event
+from app.routers.auth import BEARER, decode_token, mode_allowed, require_admin, require_operator, require_viewer, resolve_srr_device_credential
 from app.websocket.connection import manager
 
 router = APIRouter(prefix="/api/v1/srr", tags=["srr"])
+SUPPORTED_PRESENTATION_EXTENSIONS = {
+    "ppt", "pptx", "pdf", "mp4", "webm", "png", "jpg", "jpeg", "gif",
+    "txt", "doc", "docx", "xls", "xlsx", "odp",
+}
 
 ONLINE_WINDOW = timedelta(seconds=45)
 VALID_STATION_STATUSES = {"idle", "occupied", "uploading", "previewing", "completed", "error", "locked"}
+DELIVERY_ROOM_DEVICE_TYPES = {
+    "presentation_pc", "stage_app", "stage",
+    "technician_tablet", "technical_app", "technician", "technical",
+}
 
 
 class StationHeartbeatRequest(BaseModel):
     station_number: int
-    device_name: Optional[str] = None
+    device_name: Optional[str] = Field(default=None, max_length=100)
+    hostname: Optional[str] = Field(default=None, max_length=100)
+    app_version: Optional[str] = Field(default=None, max_length=30)
     ip_address: Optional[str] = None
     status: Optional[str] = "idle"
     event_id: Optional[str] = None
+    last_server_sequence: Optional[int] = None
 
 
 class AssignStationRequest(BaseModel):
     speaker_id: str
     session_id: Optional[str] = None
+    operation_id: Optional[str] = None
 
 
 class CheckinRequest(BaseModel):
@@ -58,6 +75,7 @@ class CheckinRequest(BaseModel):
     event_id: Optional[str] = None
     preferred_station: Optional[int] = None
     checkin_method: Optional[str] = "qr_scan"
+    operation_id: Optional[str] = None
 
 
 class FinalizeFileRequest(BaseModel):
@@ -99,13 +117,22 @@ def generate_device_key() -> str:
     return f"srrdev_{secrets.token_urlsafe(40)}"
 
 
-def verify_station_device_key(station: SRRStation, device_key: str | None) -> None:
-    if not station.enrollment_token_hash:
-        return
+def verify_station_device_key(station: SRRStation, device_key: str | None = None) -> None:
+    """Require the enrolled station secret for station-context operations."""
+    if not station.enrollment_token_hash or not device_key:
+        raise HTTPException(status_code=401, detail="A valid enrolled SRR station key is required.")
     if station.enrollment_token_revoked_at:
-        raise HTTPException(status_code=403, detail="SRR station enrollment has been revoked.")
-    if not device_key or not secrets.compare_digest(hash_device_key(device_key), station.enrollment_token_hash):
-        raise HTTPException(status_code=403, detail="Valid SRR station device key is required.")
+        raise HTTPException(status_code=401, detail="Invalid or revoked SRR station key.")
+    if device_key.count(".") == 2:
+        try:
+            payload = decode_token(device_key, "srr_device_access")
+            if payload.get("sub") == str(station.id) and payload.get("event_id") == str(station.event_id):
+                return
+        except HTTPException:
+            pass
+    if settings.DEPLOYMENT_PROFILE == "local" and secrets.compare_digest(station.enrollment_token_hash, hash_device_key(device_key)):
+        return
+    raise HTTPException(status_code=401, detail="Invalid or revoked SRR station key.")
 
 
 async def require_srr_operator_or_device(
@@ -127,15 +154,9 @@ async def require_srr_operator_or_device(
         ):
             return user
     if x_device_key:
-        station = (
-            await db.execute(
-                select(SRRStation).where(
-                    SRRStation.enrollment_token_hash == hash_device_key(x_device_key),
-                    SRRStation.is_active.is_(True),
-                    SRRStation.enrollment_token_revoked_at.is_(None),
-                )
-            )
-        ).scalar_one_or_none()
+        station = await resolve_srr_device_credential(
+            db, x_device_key, allow_enrollment_token=settings.DEPLOYMENT_PROFILE == "local"
+        )
         if station:
             return station
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Operator session or valid SRR station device key required")
@@ -143,9 +164,18 @@ async def require_srr_operator_or_device(
 
 async def broadcast_srr(event_name: str, payload: dict) -> None:
     try:
-        await manager.publish("venue_events", {"event": event_name, **payload})
+        event_id = payload.get("event_id")
+        await manager.publish("venue_events", {"event": event_name, **payload, **({"room": f"event_{event_id}"} if event_id else {})})
     except Exception as exc:
         logger.warning(f"Failed to publish SRR WebSocket event '{event_name}': {exc}")
+
+
+def assert_station_file_scope(actor: VenueUser | SRRStation | Any, file: PresentationFile) -> None:
+    """Prevent an SRR workstation from reading or finalizing another station's file."""
+    if not isinstance(actor, SRRStation):
+        return
+    if actor.event_id != file.event_id or actor.assigned_speaker_id != file.speaker_id:
+        raise HTTPException(status_code=403, detail="Station is not assigned to this presentation speaker.")
 
 
 def station_online(station: SRRStation, now: datetime | None = None) -> bool:
@@ -207,6 +237,8 @@ def station_payload(station: SRRStation, now: datetime | None = None) -> dict:
         "id": str(station.id),
         "station_number": station.station_number,
         "device_name": station.device_name or f"Station {station.station_number}",
+        "hostname": station.hostname,
+        "agent_version": station.agent_version,
         "ip_address": str(station.ip_address) if station.ip_address else None,
         "status": status,
         "reported_status": station.status,
@@ -233,7 +265,7 @@ async def content_root(db: AsyncSession) -> Path:
     return root
 
 
-async def store_upload_file(upload: UploadFile, root: Path, relative_path: str) -> tuple[Path, str, int]:
+async def store_upload_file(upload: UploadFile, root: Path, relative_path: str, max_bytes: int | None = None) -> tuple[Path, str, int]:
     target = (root / relative_path).resolve()
     if not str(target).startswith(str(root)):
         raise HTTPException(status_code=400, detail="Invalid storage path")
@@ -248,6 +280,8 @@ async def store_upload_file(upload: UploadFile, root: Path, relative_path: str) 
                 if not chunk:
                     break
                 size += len(chunk)
+                if max_bytes is not None and size > max_bytes:
+                    raise HTTPException(status_code=413, detail=f"Presentation exceeds the {max_bytes // (1024 * 1024)} MB Venue Server limit.")
                 digest.update(chunk)
                 handle.write(chunk)
             handle.flush()
@@ -364,7 +398,50 @@ async def ensure_delivery_records(db: AsyncSession, pf: PresentationFile) -> tup
     if not sync_job:
         sync_job = VenueSyncJob(id=uuid.uuid4(), event_id=pf.event_id, file_id=pf.id, sync_type="upload", priority=1, status="pending")
         db.add(sync_job)
+
     return queue_entry, sync_job
+
+
+async def create_asset_transfer_intents(db: AsyncSession, pf: PresentationFile, session_id: uuid.UUID | None = None) -> None:
+    """Create one pending transfer ledger row per SRR station and room device."""
+    target_rows: list[tuple[str, str, uuid.UUID | None, str | None]] = []
+    stations = list((await db.execute(
+        select(SRRStation).where(SRRStation.event_id == pf.event_id, SRRStation.is_active.is_(True))
+    )).scalars().all())
+    target_rows.extend((f"SRR-{station.station_number:02d}", "srr_station", station.id, None) for station in stations)
+    if session_id:
+        session = await db.get(Session, session_id)
+        devices = list((await db.execute(
+            select(RoomDevice).where(
+                RoomDevice.event_id == pf.event_id,
+                RoomDevice.room_id == session.room_id,
+                RoomDevice.enrollment_token_hash.is_not(None),
+                RoomDevice.enrollment_token_revoked_at.is_(None),
+            )
+        )).scalars().all()) if session else []
+        devices = [
+            device for device in devices
+            if device.enrollment_token_hash
+            and device.enrollment_token_revoked_at is None
+            and (device.device_type or "").strip().lower() in DELIVERY_ROOM_DEVICE_TYPES
+        ]
+        target_rows.extend((device.device_name, device.device_type, device.id, f"http://{device.ip_address}" if device.ip_address else None) for device in devices)
+    existing = {
+        (row.target_node, row.target_type, row.target_id) for row in (await db.execute(select(VenueAssetTransfer).where(
+            VenueAssetTransfer.file_id == pf.id,
+            VenueAssetTransfer.version_number == pf.version_number,
+        ))).scalars().all()
+    }
+    for target_node, target_type, target_id, target_url in target_rows:
+        if (target_node, target_type, target_id) not in existing:
+            db.add(VenueAssetTransfer(
+                id=uuid.uuid4(), file_id=pf.id, filename=pf.original_filename,
+                version_number=pf.version_number, source_node="venue_server",
+                target_node=target_node, target_id=target_id, target_url=target_url, target_type=target_type, priority="normal",
+                progress_pct=0, status="pending", checksum_verified=False,
+                source_acknowledged_at=utcnow(),
+                idempotency_key=f"delivery:{pf.id}:{pf.version_number}:{target_id or target_node}",
+            ))
 
 
 @router.get("/stations")
@@ -393,12 +470,14 @@ async def station_context(
     await db.refresh(station, attribute_names=["assigned_speaker"])
     event = await db.get(Event, station.event_id)
     sessions = await get_speaker_sessions_helper(db, station.assigned_speaker_id) if station.assigned_speaker_id else []
+    latest_sequence = await db.scalar(select(VenueRuntimeEvent.sequence).where(VenueRuntimeEvent.event_id == station.event_id).order_by(VenueRuntimeEvent.sequence.desc()).limit(1))
     return {
         "state": "assigned" if station.assigned_speaker_id else ("locked" if station.status == "locked" else "idle"),
         "station": station_payload(station),
         "event": {"id": str(event.id), "name": event.name, "short_code": event.short_code} if event else None,
         "speaker": speaker_payload(station.assigned_speaker),
         "sessions": sessions,
+        "server_sequence": int(latest_sequence or 0),
         "server_time": iso(utcnow()),
     }
 
@@ -410,40 +489,80 @@ async def station_heartbeat(
     db: AsyncSession = Depends(get_database),
 ):
     status = req.status if req.status in VALID_STATION_STATUSES else "error"
-    station = (await db.execute(select(SRRStation).where(SRRStation.station_number == req.station_number))).scalar_one_or_none()
+    # Resolve the station from its enrolled secret first. Station numbers are
+    # only unique inside an event and must never select another event's node.
+    if not isinstance(x_device_key, str) or not x_device_key:
+        raise HTTPException(status_code=401, detail="A valid enrolled SRR station key is required.")
+    station = await resolve_srr_device_credential(
+        db, x_device_key, allow_enrollment_token=settings.DEPLOYMENT_PROFILE == "local"
+    )
     now = utcnow()
     if station:
         verify_station_device_key(station, x_device_key)
+        if station.station_number != req.station_number:
+            raise HTTPException(status_code=403, detail="Station number does not match the enrolled device.")
+        if req.event_id and str(station.event_id) != str(req.event_id):
+            raise HTTPException(status_code=403, detail="Station is outside the requested event scope.")
         station.last_heartbeat_at = now
         station.device_name = req.device_name or station.device_name
+        station.hostname = req.hostname or station.hostname
+        station.agent_version = req.app_version or station.agent_version
         station.ip_address = req.ip_address or station.ip_address
         if station.status != "locked":
             station.status = status
+        if req.last_server_sequence is not None:
+            station.last_server_sequence = req.last_server_sequence
     else:
         raise HTTPException(status_code=404, detail="SRR station is not configured. Enroll this device from the admin console before sending heartbeats.")
     await db.commit()
     await db.refresh(station)
-    await broadcast_srr("srr:station_heartbeat", {"station_id": str(station.id), "station_number": station.station_number, "status": station.status, "last_heartbeat_at": iso(station.last_heartbeat_at)})
-    return {"status": "ok", "station_id": str(station.id), "station_number": station.station_number}
+    latest_sequence = await db.scalar(select(VenueRuntimeEvent.sequence).where(VenueRuntimeEvent.event_id == station.event_id).order_by(VenueRuntimeEvent.sequence.desc()).limit(1))
+    await broadcast_srr("srr:station_heartbeat", {"event_id": str(station.event_id), "station_id": str(station.id), "station_number": station.station_number, "status": station.status, "last_heartbeat_at": iso(station.last_heartbeat_at)})
+    return {"status": "ok", "station_id": str(station.id), "station_number": station.station_number, "server_sequence": int(latest_sequence or 0)}
 
 
 @router.post("/stations/{station_id}/assign")
 async def assign_speaker_to_station(station_id: str, req: AssignStationRequest, db: AsyncSession = Depends(get_database), _: Any = Depends(require_operator)):
-    station = await find_station(db, station_id)
+    if isinstance(db, AsyncSession):
+        try:
+            station_uuid = uuid.UUID(station_id)
+            station = (await db.execute(select(SRRStation).where(SRRStation.id == station_uuid).with_for_update())).scalar_one_or_none()
+        except ValueError:
+            station = await find_station(db, station_id)
+    else:
+        station = await find_station(db, station_id)
     if not station:
         raise HTTPException(status_code=404, detail="Station not found")
+    if req.operation_id:
+        previous = (await db.execute(select(SRRCheckin).where(SRRCheckin.operation_id == req.operation_id))).scalar_one_or_none()
+        if previous:
+            if previous.station_id != station.id or previous.speaker_id != as_uuid(req.speaker_id, "speaker_id"):
+                raise HTTPException(status_code=409, detail="Assignment operation ID belongs to another station or speaker.")
+            return {"status": "success", "duplicate": True, "station_id": str(station.id), "station_number": station.station_number, "speaker_id": str(previous.speaker_id), "message": "Assignment operation was already applied."}
     if station.status == "locked":
         raise HTTPException(status_code=409, detail="Station is locked")
-    speaker = await db.get(Speaker, as_uuid(req.speaker_id, "speaker_id"))
+    requested_speaker_id = as_uuid(req.speaker_id, "speaker_id")
+    if station.assigned_speaker_id and station.assigned_speaker_id != requested_speaker_id:
+        raise HTTPException(status_code=409, detail="Station is already assigned to another speaker.")
+    if not station.is_active or station.status not in {"idle", "completed"}:
+        raise HTTPException(status_code=409, detail="Station is not idle and healthy for assignment.")
+    if not station_online(station):
+        raise HTTPException(status_code=409, detail="Station has not sent a recent heartbeat and cannot be assigned.")
+    speaker = await db.get(Speaker, requested_speaker_id)
     if not speaker:
         raise HTTPException(status_code=404, detail="Speaker not found")
+    if speaker.event_id != station.event_id:
+        raise HTTPException(status_code=403, detail="Speaker is outside the station event scope.")
     station.assigned_speaker_id = speaker.id
     station.status = "occupied"
     station.session_assigned_at = utcnow()
     speaker.checked_in_at = utcnow()
+    if req.operation_id:
+        db.add(SRRCheckin(event_id=station.event_id, speaker_id=speaker.id, station_id=station.id, checkin_method="manual", checked_in_at=station.session_assigned_at, operation_id=req.operation_id))
     await add_log(db, event_id=station.event_id, station_id=station.id, speaker_id=speaker.id, action="assign", details={"station_number": station.station_number, "session_id": req.session_id})
+    record_runtime_event(db, event_id=station.event_id, event_type="srr.speaker_assigned", entity_type="srr_station", entity_id=str(station.id), payload={"station_number": station.station_number, "speaker_id": str(speaker.id), "speaker_name": speaker.full_name, "session_id": req.session_id})
     await db.commit()
-    await broadcast_srr("srr:speaker_assigned", {"station_id": str(station.id), "station_number": station.station_number, "speaker_id": str(speaker.id), "speaker_name": speaker.full_name})
+    await broadcast_srr("srr:speaker_assigned", {"event_id": str(station.event_id), "station_id": str(station.id), "station_number": station.station_number, "speaker_id": str(speaker.id), "speaker_name": speaker.full_name})
     return {"status": "success", "message": f"Assigned {speaker.full_name} to Station #{station.station_number}"}
 
 
@@ -457,8 +576,9 @@ async def reset_station(station_id: str, db: AsyncSession = Depends(get_database
     station.status = "idle"
     station.session_assigned_at = None
     await add_log(db, event_id=station.event_id, station_id=station.id, speaker_id=prev_speaker_id, action="reset", details={"station_number": station.station_number})
+    record_runtime_event(db, event_id=station.event_id, event_type="srr.station_released", entity_type="srr_station", entity_id=str(station.id), payload={"station_number": station.station_number, "previous_speaker_id": str(prev_speaker_id) if prev_speaker_id else None})
     await db.commit()
-    await broadcast_srr("srr:station_reset", {"station_id": str(station.id), "station_number": station.station_number})
+    await broadcast_srr("srr:station_reset", {"event_id": str(station.event_id), "station_id": str(station.id), "station_number": station.station_number})
     return {"status": "success", "message": f"Station #{station.station_number} reset to idle"}
 
 
@@ -469,8 +589,9 @@ async def lock_station(station_id: str, db: AsyncSession = Depends(get_database)
         raise HTTPException(status_code=404, detail="Station not found")
     station.status = "locked"
     await add_log(db, event_id=station.event_id, station_id=station.id, action="lock", details={"station_number": station.station_number})
+    record_runtime_event(db, event_id=station.event_id, event_type="srr.station_locked", entity_type="srr_station", entity_id=str(station.id), payload={"station_number": station.station_number, "locked": True})
     await db.commit()
-    await broadcast_srr("srr:station_locked", {"station_id": str(station.id), "station_number": station.station_number, "locked": True})
+    await broadcast_srr("srr:station_locked", {"event_id": str(station.event_id), "station_id": str(station.id), "station_number": station.station_number, "locked": True})
     return {"status": "success", "message": f"Station #{station.station_number} locked"}
 
 
@@ -481,18 +602,33 @@ async def unlock_station(station_id: str, db: AsyncSession = Depends(get_databas
         raise HTTPException(status_code=404, detail="Station not found")
     station.status = "idle"
     await add_log(db, event_id=station.event_id, station_id=station.id, action="unlock", details={"station_number": station.station_number})
+    record_runtime_event(db, event_id=station.event_id, event_type="srr.station_locked", entity_type="srr_station", entity_id=str(station.id), payload={"station_number": station.station_number, "locked": False})
     await db.commit()
-    await broadcast_srr("srr:station_locked", {"station_id": str(station.id), "station_number": station.station_number, "locked": False})
+    await broadcast_srr("srr:station_locked", {"event_id": str(station.event_id), "station_id": str(station.id), "station_number": station.station_number, "locked": False})
     return {"status": "success", "message": f"Station #{station.station_number} unlocked"}
 
 
 @router.post("/checkin")
-async def srr_speaker_checkin(req: CheckinRequest, db: AsyncSession = Depends(get_database)):
+async def srr_speaker_checkin(req: CheckinRequest, db: AsyncSession = Depends(get_database), actor: VenueUser | SRRStation = Depends(require_srr_operator_or_device)):
+    if isinstance(actor, SRRStation) and actor.device_role not in {"checkin_node", "checkin", "master", "srr_checkin", "srr_master"}:
+        raise HTTPException(status_code=403, detail="Only an enrolled SRR check-in node or master may assign speakers.")
+    if req.operation_id:
+        previous = (await db.execute(select(SRRCheckin).where(SRRCheckin.operation_id == req.operation_id))).scalar_one_or_none()
+        if previous:
+            actor_event_id = actor.event_id if isinstance(actor, SRRStation) else None
+            requested_event_id = as_uuid(req.event_id, "event_id") if req.event_id else actor_event_id
+            if requested_event_id and previous.event_id != requested_event_id:
+                raise HTTPException(status_code=403, detail="Operation is outside the requested event scope.")
+            station = await db.get(SRRStation, previous.station_id) if previous.station_id else None
+            speaker = await db.get(Speaker, previous.speaker_id)
+            return {"status": "success", "duplicate": True, "station_number": station.station_number if station else None, "station_id": str(previous.station_id) if previous.station_id else None, "speaker": speaker_payload(speaker)}
     speaker = await find_speaker(db, req)
     if not speaker:
         raise HTTPException(status_code=404, detail="Speaker not found for this venue event.")
+    if isinstance(actor, SRRStation) and actor.event_id != speaker.event_id:
+        raise HTTPException(status_code=403, detail="Station is outside the speaker event scope.")
     now = utcnow()
-    stmt = select(SRRStation).where(SRRStation.is_active.is_(True), SRRStation.status.in_(["idle", "completed"])).order_by(SRRStation.station_number.asc())
+    stmt = select(SRRStation).where(SRRStation.event_id == speaker.event_id, SRRStation.is_active.is_(True), SRRStation.status.in_(["idle", "completed"])).order_by(SRRStation.station_number.asc()).with_for_update(skip_locked=True)
     target_station = None
     if req.preferred_station:
         preferred = (await db.execute(stmt.where(SRRStation.station_number == req.preferred_station))).scalar_one_or_none()
@@ -505,21 +641,25 @@ async def srr_speaker_checkin(req: CheckinRequest, db: AsyncSession = Depends(ge
     target_station.status = "occupied"
     target_station.session_assigned_at = now
     speaker.checked_in_at = now
-    db.add(SRRCheckin(event_id=target_station.event_id, speaker_id=speaker.id, station_id=target_station.id, checkin_method=req.checkin_method or "qr_scan", checked_in_at=now))
+    db.add(SRRCheckin(event_id=target_station.event_id, speaker_id=speaker.id, station_id=target_station.id, checkin_method=req.checkin_method or "qr_scan", checked_in_at=now, operation_id=req.operation_id))
+    record_runtime_event(db, event_id=target_station.event_id, event_type="srr.speaker_assigned", entity_type="srr_station", entity_id=str(target_station.id), payload={"station_number": target_station.station_number, "speaker_id": str(speaker.id), "speaker_name": speaker.full_name, "operation_id": req.operation_id})
     await add_log(db, event_id=target_station.event_id, station_id=target_station.id, speaker_id=speaker.id, action="checkin", details={"station_number": target_station.station_number, "method": req.checkin_method, "speaker_name": speaker.full_name})
     await db.commit()
     sessions_data = await get_speaker_sessions_helper(db, speaker.id)
-    await broadcast_srr("srr:speaker_assigned", {"station_id": str(target_station.id), "station_number": target_station.station_number, "speaker_id": str(speaker.id), "speaker_name": speaker.full_name, "sessions_count": len(sessions_data)})
+    await broadcast_srr("srr:speaker_assigned", {"event_id": str(target_station.event_id), "station_id": str(target_station.id), "station_number": target_station.station_number, "speaker_id": str(speaker.id), "speaker_name": speaker.full_name, "sessions_count": len(sessions_data)})
     return {"status": "success", "station_number": target_station.station_number, "station_id": str(target_station.id), "speaker": speaker_payload(speaker), "sessions": sessions_data, "message": f"Welcome {speaker.full_name}. Please proceed to Workstation #{target_station.station_number}."}
 
 
 @router.get("/speakers/search")
-async def search_speakers(q: str = Query(min_length=1), limit: int = Query(default=20, le=50), db: AsyncSession = Depends(get_database), _: Any = Depends(require_operator)):
+async def search_speakers(q: str = Query(min_length=1), event_id: str | None = None, limit: int = Query(default=20, le=50), db: AsyncSession = Depends(get_database), _: Any = Depends(require_operator)):
     like = f"%{q.strip()}%"
+    event = await bound_event(db, event_id)
+    if not event:
+        return []
     rows = (
         await db.execute(
             select(Speaker)
-            .where(or_(Speaker.first_name.ilike(like), Speaker.last_name.ilike(like), Speaker.email.ilike(like), Speaker.affiliation.ilike(like)))
+            .where(Speaker.event_id == event.id, or_(Speaker.first_name.ilike(like), Speaker.last_name.ilike(like), Speaker.email.ilike(like), Speaker.affiliation.ilike(like)))
             .order_by(Speaker.last_name.asc(), Speaker.first_name.asc())
             .limit(limit)
         )
@@ -576,18 +716,51 @@ async def upload_presentation_file(
     session_speaker_id: str = Form(...),
     filename: str = Form(...),
     file_size_bytes: int = Form(...),
+    expected_version: int | None = Form(default=None),
+    operation_id: str = Form(default=""),
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_database),
-    _: Any = Depends(require_srr_operator_or_device),
+    actor: VenueUser | SRRStation = Depends(require_srr_operator_or_device),
 ):
     speaker_uuid = as_uuid(speaker_id, "speaker_id")
     session_speaker_uuid = as_uuid(session_speaker_id, "session_speaker_id")
     speaker = await db.get(Speaker, speaker_uuid)
     if not speaker:
         raise HTTPException(status_code=404, detail="Speaker not found")
-    ss = await db.get(SessionSpeaker, session_speaker_uuid)
+    if isinstance(actor, SRRStation):
+        if actor.event_id != speaker.event_id or actor.assigned_speaker_id != speaker_uuid:
+            raise HTTPException(status_code=403, detail="Station is not assigned to this speaker.")
+    if not isinstance(operation_id, str):
+        operation_id = ""
+    if operation_id.strip():
+        operation_id = operation_id.strip()
+        previous_upload = (await db.execute(select(PresentationFile).where(PresentationFile.upload_idempotency_key == operation_id))).scalar_one_or_none()
+        if previous_upload:
+            if previous_upload.speaker_id != speaker_uuid or previous_upload.session_speaker_id != session_speaker_uuid:
+                raise HTTPException(status_code=409, detail="Upload operation ID belongs to another presentation.")
+            return {"status": "success", "duplicate": True, "idempotent": True, "file": file_payload(previous_upload), "file_id": str(previous_upload.id), "version": previous_upload.version_number, "message": "Upload operation was already applied."}
+    # Lock the authority row in a real transaction so concurrent uploads
+    # cannot allocate the same next version. Keep direct service-level calls
+    # compatible with the lightweight test doubles used by the router suite.
+    if isinstance(db, AsyncSession):
+        ss = (await db.execute(
+            select(SessionSpeaker).where(SessionSpeaker.id == session_speaker_uuid).with_for_update()
+        )).scalar_one_or_none()
+    else:
+        ss = await db.get(SessionSpeaker, session_speaker_uuid)
     if not ss or ss.speaker_id != speaker_uuid:
         raise HTTPException(status_code=404, detail="Session assignment not found for this speaker")
+    # The speaker and the session assignment must belong to the same event.
+    # Without this guard, a malformed request could persist a presentation
+    # whose denormalized event link points at one event while its room/session
+    # routing points at another.
+    if isinstance(db, AsyncSession):
+        session_event_id = await db.scalar(select(Session.event_id).where(Session.id == ss.session_id))
+        if session_event_id != speaker.event_id:
+            raise HTTPException(status_code=409, detail="Speaker and session assignment belong to different events.")
+    session_room_id = await db.scalar(select(Session.room_id).where(Session.id == ss.session_id))
+    if not session_room_id:
+        raise HTTPException(status_code=409, detail="Session is not assigned to a room; presentation routing cannot be finalized.")
     existing_files = (
         await db.execute(
             select(PresentationFile)
@@ -595,22 +768,45 @@ async def upload_presentation_file(
             .order_by(PresentationFile.version_number.desc())
         )
     ).scalars().all()
+    current_version = existing_files[0].version_number if existing_files else 0
+    if not isinstance(expected_version, int):
+        expected_version = None
+    if expected_version is not None and expected_version != current_version:
+        raise HTTPException(status_code=409, detail=f"Presentation version changed on Venue Server; expected v{expected_version}, current v{current_version}.")
     for existing in existing_files:
         if existing.is_locked:
             raise HTTPException(status_code=409, detail="Current presentation file is locked")
-        existing.is_current_version = False
     version = (existing_files[0].version_number + 1) if existing_files else 1
     submitted_name = file.filename if file.filename else filename
     ext = submitted_name.rsplit(".", 1)[-1].lower() if "." in submitted_name else "pptx"
+    if ext not in SUPPORTED_PRESENTATION_EXTENSIONS:
+        raise HTTPException(status_code=415, detail=f"Presentation format '.{ext}' is not supported by the Venue Server.")
+    if file_size_bytes < 1 or file_size_bytes > settings.VENUE_MAX_PRESENTATION_BYTES:
+        raise HTTPException(status_code=413, detail=f"Presentation must be between 1 byte and {settings.VENUE_MAX_PRESENTATION_BYTES // (1024 * 1024)} MB.")
     stored_name = f"{uuid.uuid4()}.{ext}"
     relative_path = f"presentations/{speaker.event_id}/{speaker_uuid}/{stored_name}"
-    target, checksum, stored_size = await store_upload_file(file, await content_root(db), relative_path)
-    if file_size_bytes and stored_size != file_size_bytes:
-        logger.warning(f"SRR upload declared {file_size_bytes} bytes but stored {stored_size} bytes for {submitted_name}")
+    target, checksum, stored_size = await store_upload_file(file, await content_root(db), relative_path, settings.VENUE_MAX_PRESENTATION_BYTES)
+    if stored_size != file_size_bytes:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"Declared file size ({file_size_bytes}) does not match uploaded content ({stored_size}).")
+    duplicate = next(
+        (existing for existing in existing_files if existing.content_sha256 and existing.content_sha256.lower() == checksum.lower() and existing.file_size_bytes == stored_size),
+        None,
+    )
+    if duplicate:
+        try:
+            target.unlink(missing_ok=True)
+        except OSError:
+            logger.warning(f"Unable to remove duplicate staged upload {target}")
+        return {"status": "success", "duplicate": True, "file": file_payload(duplicate), "file_id": str(duplicate.id), "version": duplicate.version_number, "message": f"{submitted_name} is already stored as v{duplicate.version_number}"}
+    for existing in existing_files:
+        existing.is_current_version = False
     new_file = PresentationFile(
         id=uuid.uuid4(),
         speaker_id=speaker_uuid,
         session_speaker_id=session_speaker_uuid,
+        session_id=ss.session_id,
+        room_id=session_room_id,
         event_id=speaker.event_id,
         original_filename=submitted_name,
         stored_filename=stored_name,
@@ -619,6 +815,13 @@ async def upload_presentation_file(
         file_size_bytes=stored_size,
         mime_type=file.content_type or "application/octet-stream",
         file_format=ext,
+        upload_source="station" if isinstance(actor, SRRStation) else "api",
+        source_node=(
+            actor.device_name
+            if isinstance(actor, SRRStation)
+            else (f"operator:{actor.id}" if isinstance(actor, VenueUser) else None)
+        ),
+        upload_idempotency_key=operation_id.strip() or None,
         version_number=version,
         is_current_version=True,
         upload_status="valid",
@@ -627,18 +830,20 @@ async def upload_presentation_file(
         local_synced_at=utcnow(),
     )
     db.add(new_file)
+    record_runtime_event(db, event_id=speaker.event_id, event_type="presentation.file_uploaded", entity_type="presentation_file", entity_id=str(new_file.id), session_id=ss.session_id, payload={"file_id": str(new_file.id), "session_speaker_id": str(ss.id), "version": version, "sha256": checksum, "size_bytes": stored_size, "filename": submitted_name})
     await add_log(db, event_id=speaker.event_id, speaker_id=speaker_uuid, file_id=new_file.id, action="upload", details={"filename": submitted_name, "version": version, "size_bytes": file_size_bytes})
     await db.commit()
     await db.refresh(new_file)
-    await broadcast_srr("srr:file_updated", {"file_id": str(new_file.id), "filename": new_file.original_filename, "speaker_id": str(speaker_uuid), "session_speaker_id": session_speaker_id, "version": version})
+    await broadcast_srr("srr:file_updated", {"event_id": str(new_file.event_id), "file_id": str(new_file.id), "filename": new_file.original_filename, "speaker_id": str(speaker_uuid), "session_speaker_id": session_speaker_id, "version": version})
     return {"status": "success", "file": file_payload(new_file), "file_id": str(new_file.id), "version": version, "message": f"Uploaded {submitted_name} (v{version})"}
 
 
 @router.post("/files/{file_id}/finalize")
-async def finalize_presentation(file_id: str, req: FinalizeFileRequest, db: AsyncSession = Depends(get_database), _: Any = Depends(require_srr_operator_or_device)):
+async def finalize_presentation(file_id: str, req: FinalizeFileRequest, db: AsyncSession = Depends(get_database), actor: VenueUser | SRRStation = Depends(require_srr_operator_or_device)):
     pf = await db.get(PresentationFile, as_uuid(file_id, "file_id"))
     if not pf:
         raise HTTPException(status_code=404, detail="Presentation file not found")
+    assert_station_file_scope(actor, pf)
     if pf.is_locked:
         raise HTTPException(status_code=409, detail="Presentation file is locked")
     if not pf.local_cache_path or not Path(pf.local_cache_path).exists():
@@ -646,7 +851,9 @@ async def finalize_presentation(file_id: str, req: FinalizeFileRequest, db: Asyn
     pf.upload_status = "approved"
     pf.approved_at = utcnow()
     queue_entry, sync_job = await ensure_delivery_records(db, pf)
-    station = (await db.execute(select(SRRStation).where(SRRStation.assigned_speaker_id == pf.speaker_id))).scalar_one_or_none()
+    await create_asset_transfer_intents(db, pf, queue_entry.session_id if queue_entry else None)
+    record_runtime_event(db, event_id=pf.event_id, event_type="presentation.file_finalized", entity_type="presentation_file", entity_id=str(pf.id), session_id=queue_entry.session_id if queue_entry else None, payload={"file_id": str(pf.id), "version": pf.version_number, "sha256": pf.content_sha256, "filename": pf.original_filename})
+    station = (await db.execute(select(SRRStation).where(SRRStation.event_id == pf.event_id, SRRStation.assigned_speaker_id == pf.speaker_id))).scalar_one_or_none()
     if station:
         station.status = "completed"
         station.assigned_speaker_id = None
@@ -669,6 +876,7 @@ async def finalize_presentation(file_id: str, req: FinalizeFileRequest, db: Asyn
     await broadcast_srr(
         "srr:file_finalized",
         {
+            "event_id": str(pf.event_id),
             "file_id": str(pf.id),
             "filename": pf.original_filename,
             "speaker_id": str(pf.speaker_id),
@@ -687,16 +895,17 @@ async def finalize_presentation(file_id: str, req: FinalizeFileRequest, db: Asyn
 
 
 @router.get("/files/{file_id}/download")
-async def download_file(file_id: str, db: AsyncSession = Depends(get_database), _: Any = Depends(require_srr_operator_or_device)):
+async def download_file(file_id: str, db: AsyncSession = Depends(get_database), actor: VenueUser | SRRStation = Depends(require_srr_operator_or_device)):
     pf = await db.get(PresentationFile, as_uuid(file_id, "file_id"))
     if not pf:
         raise HTTPException(status_code=404, detail="Presentation file not found")
+    assert_station_file_scope(actor, pf)
     if not pf.local_cache_path:
         raise HTTPException(status_code=404, detail="Presentation file is not cached on this Venue Server.")
     path = Path(pf.local_cache_path).expanduser().resolve()
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="Presentation file is missing from local storage.")
-    return FileResponse(path, filename=pf.original_filename, media_type=pf.mime_type or "application/octet-stream")
+    return FileResponse(path, filename=pf.original_filename, media_type=pf.mime_type or "application/octet-stream", headers={"X-File-Id": str(pf.id), "X-File-Version": str(pf.version_number), "X-File-Sha256": pf.content_sha256 or ""})
 
 
 @router.post("/files/{file_id}/lock")
@@ -804,7 +1013,10 @@ async def enroll_device(req: EnrollDeviceRequest, db: AsyncSession = Depends(get
     event = await bound_event(db, req.event_id)
     if not event:
         raise HTTPException(status_code=400, detail="SRR device enrollment is not configured because no event is bound.")
-    station = (await db.execute(select(SRRStation).where(SRRStation.station_number == req.station_number))).scalar_one_or_none()
+    station = (await db.execute(select(SRRStation).where(
+        SRRStation.event_id == event.id,
+        SRRStation.station_number == req.station_number,
+    ))).scalar_one_or_none()
     if not station:
         station = SRRStation(id=uuid.uuid4(), event_id=event.id, station_number=req.station_number, device_name=req.device_name or f"SRR-WS-{req.station_number:02d}", device_role=req.role, mac_address=req.mac_address, ip_address=req.ip_address, status="idle", is_active=True)
         db.add(station)
@@ -823,6 +1035,16 @@ async def enroll_device(req: EnrollDeviceRequest, db: AsyncSession = Depends(get
     await add_log(db, event_id=event.id, station_id=station.id, action="enroll", details={"station_number": station.station_number, "role": req.role, "token_prefix": token[:14]})
     await db.commit()
     await db.refresh(station)
+    # A station may be enrolled after presentations were finalized. Backfill
+    # current authoritative versions so its first manifest is actionable.
+    current_files = list((await db.execute(select(PresentationFile).where(
+        PresentationFile.event_id == event.id,
+        PresentationFile.is_current_version.is_(True),
+    ))).scalars().all())
+    for presentation_file in current_files:
+        await create_asset_transfer_intents(db, presentation_file, presentation_file.session_id)
+    if current_files:
+        await db.commit()
     return {"status": "success", "device": station_payload(station), "enrollment_token": token, "token_prefix": token[:14], "secret_returned_once": True}
 
 
@@ -860,10 +1082,23 @@ def build_srr_replica(
         conn.executescript(
             """
             CREATE TABLE replica_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE srr_stations (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE rooms (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE sessions (id TEXT PRIMARY KEY, room_id TEXT, data TEXT NOT NULL);
+            CREATE TABLE session_speakers (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, speaker_id TEXT NOT NULL, data TEXT NOT NULL);
+            CREATE TABLE speakers (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE presentation_files (id TEXT PRIMARY KEY, session_speaker_id TEXT NOT NULL, version_number INTEGER NOT NULL, checksum TEXT, local_path TEXT, status TEXT NOT NULL, data TEXT NOT NULL);
+            CREATE TABLE srr_stations (id TEXT PRIMARY KEY, station_number INTEGER NOT NULL UNIQUE, status TEXT NOT NULL, data TEXT NOT NULL);
             CREATE TABLE srr_speakers (id TEXT PRIMARY KEY, data TEXT NOT NULL);
             CREATE TABLE srr_sessions (id TEXT PRIMARY KEY, speaker_id TEXT NOT NULL, data TEXT NOT NULL);
             CREATE TABLE srr_files (id TEXT PRIMARY KEY, speaker_id TEXT NOT NULL, session_speaker_id TEXT NOT NULL, data TEXT NOT NULL);
+            CREATE TABLE delivery_acknowledgements (transfer_id TEXT PRIMARY KEY, file_id TEXT NOT NULL, version_number INTEGER NOT NULL, checksum TEXT NOT NULL, acknowledged_at TEXT, status TEXT NOT NULL, error TEXT);
+            CREATE INDEX ix_replica_delivery_file_version ON delivery_acknowledgements(file_id, version_number, status);
+            CREATE TABLE incoming_server_events (sequence INTEGER PRIMARY KEY, event_id TEXT NOT NULL, event_type TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, received_at TEXT NOT NULL);
+            CREATE INDEX ix_replica_incoming_events_event ON incoming_server_events(event_id, sequence);
+            CREATE TABLE replica_conflicts (id TEXT PRIMARY KEY, operation_id TEXT, entity_id TEXT, reason TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL);
+            CREATE INDEX ix_replica_conflicts_operation ON replica_conflicts(operation_id, created_at);
+            CREATE TABLE node_outbox (operation_id TEXT PRIMARY KEY, action TEXT NOT NULL, payload TEXT NOT NULL, occurred_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', server_error TEXT);
+            PRAGMA user_version = 4;
             CREATE INDEX ix_srr_sessions_speaker_id ON srr_sessions(speaker_id);
             CREATE INDEX ix_srr_files_speaker_id ON srr_files(speaker_id);
             CREATE INDEX ix_srr_files_session_speaker_id ON srr_files(session_speaker_id);
@@ -874,17 +1109,25 @@ def build_srr_replica(
                 "INSERT INTO replica_meta(key,value) VALUES(?,?)",
                 [
                     ("replica_type", "srr_preview"),
-                    ("schema_version", "1"),
+                    ("schema_version", "4"),
+                    ("local_schema_version", "4"),
                     ("event_id", str(event.id)),
                     ("event_name", event.name),
                     ("generated_at", utcnow().isoformat()),
                 ],
             )
             for station in stations:
-                conn.execute("INSERT INTO srr_stations(id,data) VALUES(?,?)", (str(station.id), json_dumps(station_payload(station))))
+                conn.execute("INSERT INTO srr_stations(id,station_number,status,data) VALUES(?,?,?,?)", (str(station.id), station.station_number, station.status or "idle", json_dumps(station_payload(station))))
+            room_rows = {str(slot.session.room.id): slot.session.room for slot in sessions if slot.session and slot.session.room}
+            for room in room_rows.values():
+                conn.execute("INSERT INTO rooms(id,data) VALUES(?,?)", (str(room.id), json_dumps({"id": str(room.id), "name": room.name, "room_type": room.room_type, "capacity": room.capacity, "is_active": room.is_active})))
+            session_rows = {str(slot.session.id): slot.session for slot in sessions if slot.session}
+            for session in session_rows.values():
+                conn.execute("INSERT INTO sessions(id,room_id,data) VALUES(?,?,?)", (str(session.id), str(session.room_id) if session.room_id else None, json_dumps({"id": str(session.id), "room_id": str(session.room_id) if session.room_id else None, "session_code": session.session_code, "name": session.name, "session_type": session.session_type, "status": session.status, "start_time": iso(session.start_time), "end_time": iso(session.end_time)})))
             for speaker in speakers:
                 payload = speaker_payload(speaker) or {}
                 payload["event_id"] = str(speaker.event_id)
+                conn.execute("INSERT INTO speakers(id,data) VALUES(?,?)", (str(speaker.id), json_dumps(payload)))
                 conn.execute("INSERT INTO srr_speakers(id,data) VALUES(?,?)", (str(speaker.id), json_dumps(payload)))
             for slot in sessions:
                 sess = slot.session
@@ -898,8 +1141,11 @@ def build_srr_replica(
                     "end_time": iso(sess.end_time) if sess else None,
                     "talk_order": slot.talk_order,
                 }
+                conn.execute("INSERT INTO session_speakers(id,session_id,speaker_id,data) VALUES(?,?,?,?)", (str(slot.id), str(slot.session_id), str(slot.speaker_id), json_dumps(payload)))
                 conn.execute("INSERT INTO srr_sessions(id,speaker_id,data) VALUES(?,?,?)", (str(slot.id), str(slot.speaker_id), json_dumps(payload)))
             for file in files:
+                file_data = file_payload(file)
+                conn.execute("INSERT INTO presentation_files(id,session_speaker_id,version_number,checksum,local_path,status,data) VALUES(?,?,?,?,?,?,?)", (str(file.id), str(file.session_speaker_id), file.version_number, file.content_sha256, None, file.local_sync_status or "pending", json_dumps(file_data)))
                 conn.execute(
                     "INSERT INTO srr_files(id,speaker_id,session_speaker_id,data) VALUES(?,?,?,?)",
                     (str(file.id), str(file.speaker_id), str(file.session_speaker_id), json_dumps(file_payload(file))),
@@ -910,8 +1156,11 @@ def build_srr_replica(
 
 
 @router.get("/replica.sqlite")
-async def download_srr_replica(db: AsyncSession = Depends(get_database), _: Any = Depends(require_admin)):
-    event = await bound_event(db)
+async def download_srr_replica(
+    db: AsyncSession = Depends(get_database),
+    actor: VenueUser | SRRStation = Depends(require_srr_operator_or_device),
+):
+    event = await bound_event(db, str(actor.event_id) if isinstance(actor, SRRStation) else None)
     if not event:
         raise HTTPException(status_code=404, detail="SRR replica cannot be generated because no event is bound.")
     stations = (
@@ -944,4 +1193,10 @@ async def download_srr_replica(db: AsyncSession = Depends(get_database), _: Any 
     temp_dir = Path(tempfile.mkdtemp(prefix="eventos-srr-replica-"))
     target = temp_dir / f"srr-replica-{event.short_code or event.id}.sqlite"
     build_srr_replica(event=event, stations=list(stations), speakers=list(speakers), sessions=list(session_rows), files=list(files), target_path=target)
-    return FileResponse(target, filename=target.name, media_type="application/vnd.sqlite3")
+    replica_checksum = hashlib.sha256(target.read_bytes()).hexdigest()
+    return FileResponse(
+        target,
+        filename=target.name,
+        media_type="application/vnd.sqlite3",
+        headers={"X-Replica-Sha256": replica_checksum, "X-Replica-Event-Id": str(event.id)},
+    )

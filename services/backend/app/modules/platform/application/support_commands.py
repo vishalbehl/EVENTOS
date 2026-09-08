@@ -231,8 +231,8 @@ class SupportTicketCommandService:
             raise
 
         try:
-            from workers.tasks.file_tasks import scan_file_for_viruses
-            scan_file_for_viruses.delay(str(asset.id), str(organization_id))
+            from app.tasks.upload_jobs import scan_asset_for_viruses
+            scan_asset_for_viruses.delay(str(asset.id), str(organization_id))
         except Exception:
             # The durable pending scan remains retryable if the worker broker is unavailable.
             pass

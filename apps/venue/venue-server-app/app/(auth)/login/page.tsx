@@ -39,13 +39,17 @@ export default function LoginPage() {
   const [setupReason, setSetupReason] = useState("");
   const [setupValidation, setSetupValidation] = useState<SetupValidation | null>(null);
   const [postgresBusy, setPostgresBusy] = useState(false);
-  const [setupAdminUsername, setSetupAdminUsername] = useState("admin");
-  const [setupAdminPassword, setSetupAdminPassword] = useState("");
+  const [setupAdminUsername, setSetupAdminUsername] = useState("admin@eventos.com");
+  const [setupAdminPassword, setSetupAdminPassword] = useState("admin123");
   const [pgHost, setPgHost] = useState("127.0.0.1");
-  const [pgPort, setPgPort] = useState("5432");
-  const [pgDatabase, setPgDatabase] = useState(() => (typeof window !== "undefined" ? localStorage.getItem("eventos_venue_db_name") || "eventos_venue_server" : "eventos_venue_server"));
+  const [pgPort, setPgPort] = useState("5433");
+  const [pgDatabase, setPgDatabase] = useState(() => {
+    if (typeof window === "undefined") return "venue_db";
+    const stored = localStorage.getItem("eventos_venue_db_name");
+    return !stored || stored === "eventos_venue_server" ? "venue_db" : stored;
+  });
   const [pgUser, setPgUser] = useState("postgres");
-  const [pgPassword, setPgPassword] = useState("");
+  const [pgPassword, setPgPassword] = useState("venue_password");
   const [sharedPostgresIntent, setSharedPostgresIntent] = useState<"connect" | "create">("connect");
   const [dbModalOpen, setDbModalOpen] = useState(false);
   const [resettingDb, setResettingDb] = useState(false);
@@ -135,22 +139,15 @@ export default function LoginPage() {
             setSetupComplete(false);
             setSetupReason("Administrator setup required.");
           } else {
-            setSetupComplete(dbConfigured);
+            setSetupComplete(false);
+            setSetupReason("Venue database is unavailable or not initialized.");
           }
         } catch (err: any) {
-          try {
-            await apiClient.get("/auth/status");
-            setSetupComplete(true);
-          } catch (authErr: any) {
-            if (authErr?.status === 401 || authErr?.status === 403) {
-              setSetupComplete(true);
-            } else {
-              setSetupComplete(dbConfigured);
-              if (!dbConfigured) {
-                setSetupReason("Venue database is offline or not created.");
-              }
-            }
-          }
+          // A failed status probe is not proof that the database exists. Do
+          // not show the login form until the authoritative setup endpoint
+          // confirms both connectivity and an initialized administrator.
+          setSetupComplete(false);
+          setSetupReason(err?.message || "Venue database is offline or not created.");
         }
       } finally {
         setSetupChecking(false);
@@ -472,7 +469,7 @@ export default function LoginPage() {
                     <Input
                       value={pgPort}
                       onChange={(e) => setPgPort(e.target.value)}
-                      placeholder="Port (5432)"
+                      placeholder="Port (5433 for Venue Docker)"
                       inputMode="numeric"
                       className="h-10 bg-[var(--surf)] border-[var(--border)] text-xs font-bold text-[var(--text)] rounded-xl"
                       required

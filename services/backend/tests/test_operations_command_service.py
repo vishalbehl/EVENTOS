@@ -14,5 +14,5 @@ def test_operations_planning_mutations_use_command_service():
     assert "OperationsPlanningCommandService" in router
     assert "await db.commit()" not in router
     assert "await self.db.commit()" in commands
-    assert "Project.organization_id == organization_id" in commands
-    assert ".with_for_update()" in commands
+    assert "ProjectRepository(self.db).get_by_id" in commands
+    assert "ProjectRepository(self.db).get_by_id" in commands

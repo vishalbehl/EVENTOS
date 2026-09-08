@@ -64,7 +64,7 @@ export function IdleStandbyView({
 
           <div className="space-y-2">
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight text-[var(--text)]">
-              WORKSTATION #{stationNumber}
+              WORKSTATION #{stationNumber ?? "NOT CONFIGURED"}
             </h1>
             <p className="text-sm sm:text-base font-bold uppercase tracking-[0.3em] text-[var(--muted)]">
               SPEAKER READY ROOM (SRR) • LOCAL STAGING NODE

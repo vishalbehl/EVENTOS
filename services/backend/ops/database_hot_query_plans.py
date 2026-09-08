@@ -23,6 +23,11 @@ QUERIES = {
     "badge_history_cursor": "SELECT h.id, h.badge_id, h.created_at FROM registration.badge_history h JOIN registration.badges b ON b.id = h.badge_id JOIN registration.participants p ON p.id = b.participant_id WHERE p.event_id = %s::uuid ORDER BY h.created_at DESC, h.id DESC LIMIT 100",
     "badge_print_jobs_cursor": "SELECT j.id, j.badge_id, j.queued_at FROM registration.badge_print_jobs j JOIN registration.badges b ON b.id = j.badge_id JOIN registration.participants p ON p.id = b.participant_id WHERE p.event_id = %s::uuid ORDER BY j.queued_at DESC, j.id DESC LIMIT 100",
     "import_jobs_cursor": "SELECT j.id, j.event_id, j.created_at FROM registration.import_jobs j WHERE j.event_id = %s::uuid ORDER BY j.created_at DESC, j.id DESC LIMIT 100",
+    "audit_activity_timeline": "SELECT l.id, l.occurred_at FROM command_center_audit.logs l WHERE l.organization_id = (SELECT organization_id FROM events.events WHERE id = %s::uuid) ORDER BY l.occurred_at DESC, l.id DESC LIMIT 100",
+    "task_failures_timeline": "SELECT f.id, f.created_at FROM operations.task_failures f WHERE f.organization_id = (SELECT organization_id FROM events.events WHERE id = %s::uuid) ORDER BY f.created_at DESC, f.id DESC LIMIT 100",
+    "operation_requests_timeline": "SELECT r.id, r.created_at FROM business.operation_requests r WHERE r.organization_id = (SELECT organization_id FROM events.events WHERE id = %s::uuid) ORDER BY r.created_at DESC, r.id DESC LIMIT 100",
+    "venue_sync_jobs_timeline": "SELECT j.id, j.created_at FROM venue.sync_jobs j WHERE j.event_id = %s::uuid ORDER BY j.created_at DESC, j.id DESC LIMIT 100",
+    "venue_activity_timeline": "SELECT a.id, a.occurred_at FROM venue.activity_logs a WHERE a.event_id = %s::uuid ORDER BY a.occurred_at DESC, a.id DESC LIMIT 100",
 }
 
 _UUID_RE = re.compile(

@@ -1,5 +1,7 @@
 import io
+import hashlib
 import uuid
+from datetime import datetime, timezone
 from fastapi import APIRouter, File, UploadFile, Depends, HTTPException, Header, BackgroundTasks, Request
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +24,7 @@ async def receive_synced_file(
     storage_path: str = Header(...),
     file_format: str = Header(...),
     file_size_bytes: int = Header(...),
+    content_sha256: str | None = Header(default=None),
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_database)
 ):
@@ -34,8 +37,30 @@ async def receive_synced_file(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid file_id UUID")
 
-    # 1. Read bytes
+    # The schedule snapshot is the authoritative metadata source. A file push
+    # may hydrate that record, but must never create a partial presentation
+    # row: PresentationFile requires event, speaker and session ownership.
+    db_file = await db.get(PresentationFile, file_uuid)
+    if not db_file:
+        raise HTTPException(
+            status_code=409,
+            detail="Presentation metadata is not synchronized yet; retry after the event snapshot includes this file.",
+        )
+    if db_file.storage_path != storage_path:
+        raise HTTPException(status_code=409, detail="Storage path does not match authoritative presentation metadata.")
+    if db_file.file_format.lower() != file_format.lower() or db_file.file_size_bytes != file_size_bytes:
+        raise HTTPException(status_code=409, detail="File metadata does not match the authoritative presentation version.")
+
+    # 1. Read bytes and verify the exact authoritative content before storage.
     file_data = await file.read()
+    actual_sha256 = hashlib.sha256(file_data).hexdigest()
+    expected_sha256 = (content_sha256 or db_file.content_sha256 or "").strip().lower()
+    if not expected_sha256:
+        raise HTTPException(status_code=409, detail="Authoritative presentation checksum is missing; refresh the event snapshot.")
+    if len(file_data) != file_size_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file size does not match the authoritative presentation version.")
+    if actual_sha256 != expected_sha256:
+        raise HTTPException(status_code=400, detail="Uploaded file checksum does not match the authoritative presentation version.")
 
     # 2. Upload to local MinIO
     try:
@@ -49,23 +74,17 @@ async def receive_synced_file(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"MinIO upload failed: {e}")
 
-    # 3. Upsert record in Postgres (We assume file metadata might arrive before or during this push)
-    # The cloud DB already recorded it. We just need to mark it locally available.
-    db_file = await db.get(PresentationFile, file_uuid)
-    if not db_file:
-        # Create minimal record if it doesn't exist yet via schedule sync
-        db_file = PresentationFile(
-            id=file_uuid,
-            storage_path=storage_path,
-            file_format=file_format,
-            file_size_bytes=file_size_bytes,
-            upload_status="approved",
-            # We don't have speaker_id/event_id here, they should come from schedule_pull.py. 
-            # In a real sync, we should pull metadata if missing.
-        )
-        db.add(db_file)
-    else:
-        db_file.upload_status = "approved"
+    # 3. Mark the existing authoritative version as locally available.
+    db_file.upload_status = "approved"
+    db_file.content_sha256 = expected_sha256
+    db_file.local_sync_status = "synced"
+    db_file.local_synced_at = datetime.now(timezone.utc)
+
+    # Cloud delivery is also a source upload from the Venue Server's point
+    # of view: once the authoritative binary is present locally, create the
+    # same target-specific SRR/Stage/Technical intents as an SRR upload.
+    from app.routers.srr import create_asset_transfer_intents
+    await create_asset_transfer_intents(db, db_file, db_file.session_id)
     
     await db.commit()
 

@@ -491,6 +491,7 @@ async def claim_campaign_recipient(
         return None
     return claim.id
 
+
 async def send_email(
     *,
     to_email: str,
@@ -503,24 +504,14 @@ async def send_email(
     event_id: Optional[uuid.UUID] = None,
     log_id: Optional[uuid.UUID] = None,
     db: Optional[AsyncSession] = None,
+    raise_on_failure: bool = False,
 ) -> Optional[str]:
     """
-    Send a single email with standardized processing (Phase 6 & 14):
+    Send a single email with standardized processing:
     1. Append tracking pixel
-    2. Sanitize final HTML
-    3. Send email
+    2. Sanitize and prepare final MIME HTML with inline CID attachments
+    3. Send email via configured provider (SMTP or Resend)
     """
-    if not settings.RESEND_API_KEY:
-        logger.warning("RESEND_API_KEY not configured — email send skipped.")
-        if db is not None and log_id is not None:
-            claimed_log = await db.get(EmailLog, log_id)
-            if claimed_log is not None:
-                claimed_log.status = "failed"
-                claimed_log.error_message = "Email provider is not configured."
-                claimed_log.sent_at = datetime.now(timezone.utc)
-                await db.flush()
-        return None
-
     event = None
     if event_id and db:
         from app.modules.events.models.event import Event
@@ -530,14 +521,12 @@ async def send_email(
     # Generate log ID early if we want to track opens
     log_id = log_id or uuid.uuid4()
     
-    # 2. Append tracking pixel
+    # 1. Append tracking pixel
     if event_id and db:
         tracking_url = f"{settings.API_BASE_URL}/events/{event_id}/notifications/track-open/{log_id}"
         pixel_tag = f'<img src="{tracking_url}" width="1" height="1" style="display:none !important;" />'
         html_body = f"{html_body}{pixel_tag}"
 
-    # We no longer sanitize with bleach here because premailer and email_renderer handles it.
-    # We expect `html_body` to be the fully inlined HTML now.
     final_html = html_body
 
     import aiosmtplib
@@ -563,57 +552,128 @@ async def send_email(
 
     final_html = re.sub(r'src=["\']data:([^;]+);base64,([^"\']+)["\']', _replace_src_data, final_html, flags=re.I)
 
-    # --- GMAIL SMTP IMPLEMENTATION ---
-    if inline_images:
-        msg = MIMEMultipart('related')
-        alt = MIMEMultipart('alternative')
-        msg.attach(alt)
-    else:
-        msg = MIMEMultipart('alternative')
-        alt = msg
-        
-    msg["Subject"] = subject
-    
-    # Use config overrides if set, otherwise default to config settings
-    sender_email = settings.SMTP_USER if settings.SMTP_USER else settings.EMAIL_FROM_ADDRESS
-    sender_name = settings.EMAIL_FROM_NAME
-    msg["From"] = f"{sender_name} <{sender_email}>"
-    msg["To"] = to_email
-    
-    if text_body:
-        alt.attach(MIMEText(text_body, 'plain', 'utf-8'))
-    alt.attach(MIMEText(final_html, 'html', 'utf-8'))
+    # Resolve SMTP Configuration (Environment settings fallback to Database system settings)
+    smtp_host = settings.SMTP_HOST
+    smtp_port = settings.SMTP_PORT
+    smtp_user = settings.SMTP_USER
+    smtp_password = settings.SMTP_PASSWORD
 
-    # Attach all parsed inline images
-    for cid, subtype, image_bytes in inline_images:
-        img_part = MIMEImage(image_bytes, _subtype=subtype)
-        img_part.add_header('Content-ID', f'<{cid}>')
-        img_part.add_header('Content-Disposition', 'inline')
-        msg.attach(img_part)
+    if db and (not smtp_user or not smtp_password):
+        try:
+            from app.modules.platform.models.system_setting import SystemSetting
+            settings_rows = await db.scalars(
+                select(SystemSetting).where(
+                    SystemSetting.key.in_(["smtp_host", "smtp_port", "smtp_user", "smtp_password"])
+                )
+            )
+            db_smtp = {s.key: s.value for s in settings_rows.all() if s.value}
+            if db_smtp.get("smtp_user") and db_smtp.get("smtp_password"):
+                smtp_host = db_smtp.get("smtp_host", smtp_host) or "smtp.gmail.com"
+                smtp_port = int(db_smtp.get("smtp_port", smtp_port) or 587)
+                smtp_user = db_smtp["smtp_user"]
+                smtp_password = db_smtp["smtp_password"]
+        except Exception as exc:
+            logger.debug("Failed to read system settings for SMTP: {}", exc)
+
+    resend_enabled = bool(
+        settings.RESEND_API_KEY
+        and settings.RESEND_API_KEY.strip()
+        and settings.RESEND_API_KEY.lower() not in {"disable", "none", "false"}
+    )
+    smtp_enabled = bool(smtp_user and smtp_password)
 
     provider_message_id = None
     error_message = None
     status = "sent"
 
-    try:
-        if not settings.SMTP_USER or not settings.SMTP_PASSWORD:
-            logger.warning("SMTP_USER or SMTP_PASSWORD not set. Simulating success for testing.")
-            provider_message_id = f"simulated_smtp_{uuid.uuid4().hex[:8]}"
+    if smtp_enabled:
+        if inline_images:
+            msg = MIMEMultipart('related')
+            alt = MIMEMultipart('alternative')
+            msg.attach(alt)
         else:
+            msg = MIMEMultipart('alternative')
+            alt = msg
+            
+        msg["Subject"] = subject
+        sender_email = smtp_user if smtp_user else settings.EMAIL_FROM_ADDRESS
+        sender_name = settings.EMAIL_FROM_NAME
+        msg["From"] = f"{sender_name} <{sender_email}>"
+        msg["To"] = to_email
+        
+        if text_body:
+            alt.attach(MIMEText(text_body, 'plain', 'utf-8'))
+        alt.attach(MIMEText(final_html, 'html', 'utf-8'))
+
+        for cid, subtype, image_bytes in inline_images:
+            img_part = MIMEImage(image_bytes, _subtype=subtype)
+            img_part.add_header('Content-ID', f'<{cid}>')
+            img_part.add_header('Content-Disposition', 'inline')
+            msg.attach(img_part)
+
+        try:
+            is_ssl = (smtp_port == 465)
             await aiosmtplib.send(
                 msg,
-                hostname=settings.SMTP_HOST,
-                port=settings.SMTP_PORT,
-                username=settings.SMTP_USER,
-                password=settings.SMTP_PASSWORD,
-                start_tls=True,
+                hostname=smtp_host,
+                port=smtp_port,
+                username=smtp_user,
+                password=smtp_password,
+                start_tls=not is_ssl,
+                use_tls=is_ssl,
+                timeout=15.0,
             )
             provider_message_id = f"smtp_{uuid.uuid4().hex[:8]}"
             logger.info(f"Email sent via SMTP to {to_email} | msg_id={provider_message_id}")
-    except Exception as exc:
-        status = "failed"
-        error_message = f"{type(exc).__name__}: email provider delivery failed"
-        logger.error("Email provider delivery failed: error_type={}", type(exc).__name__)
+        except Exception as exc:
+            status = "failed"
+            error_message = f"SMTP Delivery Error ({type(exc).__name__}): {exc}"
+            logger.error("Email provider delivery failed: {}", error_message)
+            if raise_on_failure:
+                raise RuntimeError(error_message) from exc
+    elif resend_enabled:
+        import httpx
+        sender_email = settings.EMAIL_FROM_ADDRESS
+        sender_name = settings.EMAIL_FROM_NAME
+        resend_payload = {
+            "from": f"{sender_name} <{sender_email}>",
+            "to": [to_email],
+            "subject": subject,
+            "html": final_html,
+        }
+        if text_body:
+            resend_payload["text"] = text_body
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(
+                    "https://api.resend.com/emails",
+                    headers={
+                        "Authorization": f"Bearer {settings.RESEND_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json=resend_payload,
+                )
+            if resp.is_success:
+                data = resp.json()
+                provider_message_id = data.get("id") or f"resend_{uuid.uuid4().hex[:8]}"
+                logger.info(f"Email sent via Resend to {to_email} | msg_id={provider_message_id}")
+            else:
+                status = "failed"
+                error_message = f"Resend API Error {resp.status_code}: {resp.text[:300]}"
+                logger.error("Resend delivery failed: {}", error_message)
+                if raise_on_failure:
+                    raise RuntimeError(error_message)
+        except Exception as exc:
+            status = "failed"
+            error_message = f"Resend Request Error ({type(exc).__name__}): {exc}"
+            logger.error("Resend request error: {}", error_message)
+            if raise_on_failure:
+                raise RuntimeError(error_message) from exc
+    else:
+        logger.warning("No email provider configured (neither SMTP nor Resend API key). Simulating email send in development.")
+        provider_message_id = f"simulated_{uuid.uuid4().hex[:8]}"
+        status = "sent"
 
     # Every event email is logged, including system/campaign messages without a
     # speaker or participant foreign key.
@@ -635,7 +695,6 @@ async def send_email(
         log.status = status
         log.provider_message_id = provider_message_id
         log.error_message = error_message
-        log.subject = subject
         log.sent_at = datetime.now(timezone.utc)
         await db.flush()
         if event is not None:
@@ -645,9 +704,6 @@ async def send_email(
 
     return provider_message_id
 
-
-
-# ── Transactional email templates ─────────────────────────────
 
 async def send_upload_invitation(
     speaker: Speaker,

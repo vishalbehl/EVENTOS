@@ -51,7 +51,7 @@ from app.tasks.organization_console_rollout_tasks import (
 )
 from app.tasks.organization_console_tasks import expire_tenant_capability_controls_in_session
 from app.modules.platform.organization_console_router import _selected_organization_scope
-from tests.conftest import activate_event_for_test, auth_headers
+from tests.conftest import activate_event_for_test, auth_headers, make_access_token
 
 
 @pytest.mark.asyncio
@@ -245,7 +245,7 @@ async def test_organization_teams_are_versioned_tenant_scoped_and_assignable(
     updated = await client.patch(f"{base}/{team_id}", headers={**headers, "If-Match": "1"}, json={"name": "Event Delivery", "description": "Owns event delivery", "reason": "Rename the team to match its approved responsibility."})
     assert updated.status_code == 200 and updated.json()["version"] == 2
     stale = await client.patch(f"{base}/{team_id}", headers={**headers, "If-Match": "1"}, json={"name": "Stale Name", "reason": "Attempt a stale concurrent team update."})
-    assert stale.status_code == 409 and stale.json()["detail"] == "VERSION_CONFLICT"
+    assert stale.status_code == 409 and stale.json()["detail"]["code"] == "RESOURCE_VERSION_CONFLICT"
     archived = await client.request("DELETE", f"{base}/{team_id}", headers={**headers, "If-Match": "2"}, json={"reason": "Archive the team after its operational responsibility ended."})
     assert archived.status_code == 200 and archived.json()["version"] == 3
     row = await db.get(OrganizationTeam, uuid.UUID(team_id)); assert row and row.deleted_at is not None
@@ -856,18 +856,6 @@ async def test_location_creation_is_tenant_scoped_and_audited(
     await db.flush()
 
     url = f"/api/v1/platform/organizations/{organization.id}/console/locations"
-    rejected = await client.post(
-        url,
-        headers=auth_headers(super_admin),
-        json={
-            "name": "Restricted Office",
-            "location_type": "REGIONAL_OFFICE",
-            "timezone": "Asia/Kolkata",
-            "manager_user_id": str(outsider.id),
-        },
-    )
-    assert rejected.status_code == 404
-
     created = await client.post(
         url,
         headers=auth_headers(super_admin),
@@ -894,6 +882,21 @@ async def test_location_creation_is_tenant_scoped_and_audited(
         )
     )
     assert audit is not None
+
+    # Keep the intentionally rejected request last. The shared test session
+    # uses rollback-scoped fixture data, and this request exercises the route's
+    # failure rollback path by design.
+    rejected = await client.post(
+        url,
+        headers=auth_headers(super_admin),
+        json={
+            "name": "Restricted Office",
+            "location_type": "REGIONAL_OFFICE",
+            "timezone": "Asia/Kolkata",
+            "manager_user_id": str(outsider.id),
+        },
+    )
+    assert rejected.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -1308,6 +1311,7 @@ async def test_financial_adjustment_requires_independent_approval(
 ):
     approver = User(organization_id=organization.id, email=f"finance-approver-{uuid.uuid4().hex[:8]}@test.com", password_hash="not-used", first_name="Finance", last_name="Approver", role="super_admin", is_active=True)
     db.add(approver); await db.flush()
+    make_access_token(approver)
     base = f"/api/v1/platform/organizations/{organization.id}/console"
     created = await client.post(f"{base}/financial-adjustments", headers={**auth_headers(super_admin), "Idempotency-Key": f"financial-{uuid.uuid4()}"}, json={"adjustment_type": "CREDIT", "amount": 500, "currency": "INR", "reason": "Customer service credit approved by the account owner.", "case_reference": "SUP-3003", "details": {"source": "CREDIT_WALLET"}})
     assert created.status_code == 201, created.text

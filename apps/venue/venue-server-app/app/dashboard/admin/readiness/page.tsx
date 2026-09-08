@@ -20,17 +20,21 @@ export default function VenueReadinessChecklistPage() {
   });
 
   const steps = data?.steps || [];
-  const status = data?.status || "VENUE READY";
-  const passedProbes = data?.passed_probes || 10;
-  const totalProbes = data?.total_probes || 10;
+  const status = data?.status || "UNKNOWN";
+  const passedProbes = data?.passed_probes ?? null;
+  const totalProbes = data?.total_probes ?? null;
 
-  const handleRunHealthCheck = () => {
+  const handleRunHealthCheck = async () => {
     setRunningTest(true);
-    setTimeout(() => {
-      refetch();
+    try {
+      const result = await refetch();
+      const payload = result.data;
+      toast.success(payload ? `Readiness refreshed: ${payload.passed_probes ?? 0} of ${payload.total_probes ?? 0} probes passed.` : "Readiness evidence refreshed.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Readiness refresh failed.");
+    } finally {
       setRunningTest(false);
-      toast.success("All 10 Venue Health Check probes passed successfully!");
-    }, 1200);
+    }
   };
 
   return (
@@ -71,19 +75,19 @@ export default function VenueReadinessChecklistPage() {
       ) : (
         <>
           {/* Overall Ready Banner */}
-          <div className="rounded-2xl border border-emerald-500/40 bg-emerald-950/20 p-6 shadow-md">
+          <div className={cn("rounded-2xl border p-6 shadow-md", status === "VENUE READY" ? "border-emerald-500/40 bg-emerald-950/20" : "border-amber-500/40 bg-amber-950/20")}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <div className="flex size-12 items-center justify-center rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                  <CheckCircle2 className="size-7" />
+                <div className={cn("flex size-12 items-center justify-center rounded-2xl border", status === "VENUE READY" ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-amber-500/20 text-amber-400 border-amber-500/30")}>
+                  {status === "VENUE READY" ? <CheckCircle2 className="size-7" /> : <AlertTriangle className="size-7" />}
                 </div>
                 <div>
-                  <span className="font-mono text-[10px] font-black uppercase text-emerald-400">VENUE READINESS STATUS</span>
-                  <h2 className="text-xl font-black text-emerald-300">● {status}</h2>
-                  <p className="text-xs text-[var(--muted)]">Cloud, Venue Core, SRR, 18 Rooms, Registration, Signage, and Assets verified.</p>
+                  <span className="font-mono text-[10px] font-black uppercase text-[var(--muted)]">VENUE READINESS STATUS</span>
+                  <h2 className={cn("text-xl font-black", status === "VENUE READY" ? "text-emerald-300" : "text-amber-300")}>● {status}</h2>
+                  <p className="text-xs text-[var(--muted)]">Authoritative probe evidence from Venue Server. Unknown checks remain unverified.</p>
                 </div>
               </div>
-              <span className="font-mono text-sm font-black text-emerald-400">{passedProbes} / {totalProbes} PROBES PASSED</span>
+              <span className="font-mono text-sm font-black text-[var(--muted)]">{passedProbes === null ? "UNAVAILABLE" : `${passedProbes} / ${totalProbes} PROBES PASSED`}</span>
             </div>
           </div>
 
@@ -109,9 +113,9 @@ export default function VenueReadinessChecklistPage() {
                     </div>
                   </div>
 
-                  <span className="flex items-center gap-1.5 font-mono text-[11px] font-bold text-emerald-400">
-                    <CheckCircle2 className="size-4" />
-                    <span>PASSED</span>
+                  <span className={cn("flex items-center gap-1.5 font-mono text-[11px] font-bold", step.status === "passed" ? "text-emerald-400" : step.status === "degraded" ? "text-amber-400" : step.status === "unknown" || step.status === "not_configured" ? "text-[var(--muted)]" : "text-rose-400")}>
+                    {step.status === "passed" ? <CheckCircle2 className="size-4" /> : <AlertTriangle className="size-4" />}
+                    <span>{String(step.status || "unknown").replaceAll("_", " ").toUpperCase()}</span>
                   </span>
                 </div>
               ))}

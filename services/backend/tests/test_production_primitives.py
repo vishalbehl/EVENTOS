@@ -1,6 +1,7 @@
 import uuid
 import inspect
 import io
+from pathlib import Path
 from datetime import datetime, timezone
 
 import pytest
@@ -51,6 +52,20 @@ def test_concurrency_requires_positive_if_match():
     with pytest.raises(HTTPException) as error:
         require_if_match(None)
     assert error.value.status_code == 428
+
+
+def test_versioned_updates_scope_event_owned_models_to_their_organization():
+    source = (Path(__file__).resolve().parents[1] / "app/core/concurrency.py").read_text(encoding="utf-8")
+    assert "Event.organization_id == organization_id" in source
+    assert ".exists()" in source
+    assert "Cannot apply organization scope" in source
+
+
+def test_version_conflicts_read_the_authoritative_current_version():
+    source = (Path(__file__).resolve().parents[1] / "app/core/concurrency.py").read_text(encoding="utf-8")
+    assert "current_stmt = select(model.version)" in source
+    assert "current_version = await db.scalar(current_stmt)" in source
+    assert "raise_version_conflict(int(current_version or expected_version))" in source
 
 
 @pytest.mark.asyncio
@@ -309,6 +324,7 @@ async def test_cache_invalidation_matches_canonical_key_namespace(monkeypatch):
     await cache_module.invalidate_organization(uuid.UUID(int=1))
     assert seen == [
         "cache:v1:tenant:00000000-0000-0000-0000-000000000001:event:00000000-0000-0000-0000-000000000002:*",
+        "cache:v1:tenant:00000000-0000-0000-0000-000000000001:search-v1:*",
         "cache:v1:tenant:00000000-0000-0000-0000-000000000001:*",
     ]
 

@@ -4,7 +4,10 @@
 # =============================================================
 
 from app.tasks.tasks import run_excel_import
-from app.modules.notifications.tasks.email_tasks import process_email_campaign
+from app.modules.notifications.tasks.email_tasks import (
+    process_email_campaign,
+    recover_email_campaign_dispatches,
+)
 from app.modules.notifications.tasks.channel_delivery_tasks import (
     dispatch_communication_batch,
 )
@@ -15,7 +18,7 @@ from app.tasks.platform_commercial_tasks import (
     update_exchange_rates,
     calculate_forecasts,
 )
-from app.tasks.upload_jobs import process_durable_upload, process_import_upload
+from app.tasks.upload_jobs import process_durable_upload, process_import_upload, recover_import_dispatches, scan_asset_for_viruses
 from app.tasks.analytics_projection_tasks import refresh_event_registration_summary_task
 from app.tasks.attendance_projection_tasks import refresh_event_attendance_summary_task
 from app.tasks.payment_projection_tasks import refresh_event_payment_summary_task

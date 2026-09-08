@@ -26,6 +26,25 @@ def test_staging_compose_has_bounded_resources_and_log_rotation():
     assert "staging_prometheus_data" in compose
 
 
+def test_legacy_worker_is_registered_and_queue_isolated():
+    compose = (ROOT / "docker-compose.staging.yml").read_text(encoding="utf-8")
+    failure_checks = (ROOT / "ops" / "staging_failure_checks.ps1").read_text(encoding="utf-8")
+    release = (ROOT / "ops" / "staging_release_check.ps1").read_text(encoding="utf-8")
+    assert "workers-legacy:" in compose
+    assert "context: ." in compose
+    assert "workers.celery_app:app" in compose
+    assert "legacy-files,legacy-videos" in compose
+    assert "workers-legacy" in failure_checks
+    assert "workers-legacy" in release
+    assert "legacy task registry" in release
+
+
+def test_release_gate_requires_live_retry_replay_probe():
+    release = (ROOT / "ops" / "staging_release_check.ps1").read_text(encoding="utf-8")
+    assert "Check 'retry exhaustion and replay'" in release
+    assert "staging_retry_replay_probe.py" in release
+
+
 def test_backup_restore_are_explicitly_staged():
     backup = (ROOT / "ops" / "staging_backup.ps1").read_text(encoding="utf-8")
     restore = (ROOT / "ops" / "staging_restore.ps1").read_text(encoding="utf-8")
@@ -33,6 +52,12 @@ def test_backup_restore_are_explicitly_staged():
     assert "mirror --overwrite" in backup
     assert "Type RESTORE" in restore
     assert "--clean --if-exists" in restore
+
+
+def test_rollback_check_restores_owned_services_after_temporary_image():
+    rollback = (ROOT / "ops" / "staging_rollback_check.ps1").read_text(encoding="utf-8")
+    assert "rm -sf backend workers" in rollback
+    assert "rollback_restore=current-staging-image" in rollback
 
 
 def test_staging_load_wrapper_forwards_both_performance_budgets():
@@ -55,10 +80,17 @@ def test_staging_soak_artifact_and_command_exist():
 
 def test_worker_recovery_checks_celery_liveness_and_queue_topology():
     checks = (ROOT / "ops" / "staging_failure_checks.ps1").read_text(encoding="utf-8")
-    assert "inspect ping --timeout=10" in checks
+    release = (ROOT / "ops" / "staging_release_check.ps1").read_text(encoding="utf-8")
+    assert "inspect ping --destination" in checks
     assert "inspect active_queues" in checks
     assert "Celery worker ping or queue inspection failed after restart" in checks
     assert "workers-processing" in checks
+    assert 'expectedQueues' in release
+    assert 'active_queues --destination' in release
+    assert 'Sort-Object -Unique' in release
+    failure_checks = (ROOT / "ops" / "staging_failure_checks.ps1").read_text(encoding="utf-8")
+    assert 'active_queues --destination' in failure_checks
+    assert 'workerHost' in failure_checks
 
 
 def test_capacity_probe_allows_rate_limiting_but_fails_server_errors():
@@ -74,6 +106,34 @@ def test_capacity_probe_allows_rate_limiting_but_fails_server_errors():
     assert "pool_budget_passed" in probe
     assert "--pool-sample-seconds" in probe
     assert "--prometheus-url http://prometheus:9090" in staging
+
+
+def test_retry_replay_probe_is_operator_exposed_and_sanitized():
+    staging = (ROOT / "ops" / "staging.ps1").read_text(encoding="utf-8")
+    probe = ROOT / "ops" / "staging_retry_replay_probe.py"
+    assert probe.exists()
+    source = probe.read_text(encoding="utf-8")
+    assert "retry_exhaustion_and_replay_idempotency" in source
+    assert "synthetic_upload_removed" in source
+    assert "execution_state" in source
+    assert "idempotent" in source
+    assert "duplicate_delivery" in source
+    assert "messages_submitted" in source
+    assert "retry-replay-probe" in staging
+    assert "--timeout-seconds" not in staging or "staging_retry_replay_probe.py" in staging
+
+
+def test_import_progress_recovery_probe_is_operator_exposed():
+    staging = (ROOT / "ops" / "staging.ps1").read_text(encoding="utf-8")
+    wrapper = ROOT / "ops" / "staging_import_progress_recovery.ps1"
+    probe = ROOT / "ops" / "staging_import_progress_probe.py"
+    assert wrapper.exists()
+    assert probe.exists()
+    assert "'import-progress-recovery'" in staging
+    assert "staging_import_progress_probe.py" in wrapper.read_text(encoding="utf-8")
+    assert "workers-processing" in wrapper.read_text(encoding="utf-8")
+    assert "checkpoint_progress" in probe.read_text(encoding="utf-8")
+    assert "_cleanup(job_id)" in probe.read_text(encoding="utf-8")
 
 
 def test_queue_isolation_probe_artifact_and_split_worker_contract_exist():
@@ -120,6 +180,12 @@ def test_redis_topology_probe_checks_role_separation_and_lock_round_trip():
     assert "acquire_lock_status" in probe
     assert "release_lock" in probe
     assert "close_redis" in probe
+    assert "concurrent_cold_miss" in probe
+    assert "loader_calls == 1" in probe
+    assert "lock_contention" in probe
+    assert "oversized_value_rejected" in probe
+    assert "outage_fail_open" in probe
+    assert "sustained_capacity" in probe
 
 
 def test_redis_topology_is_operator_and_release_gate_integrated():
@@ -142,6 +208,39 @@ def test_worker_crash_probe_is_queue_isolated_and_release_gate_integrated():
     assert "kill -9" in script
     assert "inspect active --timeout=1" in script
     assert "task_recovered" in script
+
+
+def test_task_family_matrix_is_operator_and_release_gate_integrated():
+    matrix = ROOT / "ops" / "staging_task_family_matrix.py"
+    release = (ROOT / "ops" / "staging_release_check.ps1").read_text(encoding="utf-8")
+    assert matrix.exists()
+    source = matrix.read_text(encoding="utf-8")
+    for family in ("uploads", "imports", "analytics-projections", "notifications", "email-campaigns", "reconciliation-and-venue-ops"):
+        assert family in source
+    assert "task-family-matrix" in release
+    assert "Check 'task family matrix'" in release
+    assert "mixed_scope_workers" in source
+    assert "isolation_passed" in source
+
+
+def test_task_failure_matrix_is_operator_exposed():
+    staging = (ROOT / "ops" / "staging.ps1").read_text(encoding="utf-8")
+    probe = ROOT / "ops" / "staging_task_failure_matrix.py"
+    assert probe.exists()
+    assert "'task-failure-matrix'" in staging
+    assert "durable task-failure recorder" in probe.read_text(encoding="utf-8")
+
+
+def test_release_gate_starts_monitoring_and_waits_for_workers():
+    release = (ROOT / "ops" / "staging_release_check.ps1").read_text(encoding="utf-8")
+    assert "Check 'monitoring services started'" in release
+    assert "up -d prometheus alertmanager" in release
+    assert "Check 'worker services started'" in release
+    assert "up -d workers workers-processing" in release
+    assert "Check 'worker readiness'" in release
+    assert "Celery worker readiness timed out" in release
+    assert "inspect ping" in release
+    assert "Check 'service health'" in release
 
 
 def test_payment_event_plan_compare_is_disposable_and_operator_exposed():

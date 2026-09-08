@@ -119,6 +119,10 @@ class CommercialQuote(Base):
     internal_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     request_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    organiser_revision_idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    organiser_revision_request_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    organiser_decision_idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    organiser_decision_request_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False
     )

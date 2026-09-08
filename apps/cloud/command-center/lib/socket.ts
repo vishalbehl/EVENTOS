@@ -68,6 +68,11 @@ class SocketService {
     }
     this.currentToken = null;
   }
+
+  joinVenueOps(eventId: string) {
+    if (!this.socket) return;
+    this.socket.emit('join_venue_ops_room', { event_id: eventId });
+  }
 }
 
 export const socketService = new SocketService();

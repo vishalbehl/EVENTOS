@@ -166,21 +166,11 @@ export default function DistributionCenterPage() {
 
                   {/* Target Node Checks */}
                   <div className="mt-3 flex flex-wrap items-center gap-4 text-xs font-mono">
-                    <div className="flex items-center gap-1.5 text-emerald-400 font-bold">
-                      <CheckCircle2 className="size-3.5" />
-                      <span>SRR-01..05 (5/5 Synced)</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-emerald-400 font-bold">
-                      <CheckCircle2 className="size-3.5" />
-                      <span>Hall 4 Technical (Synced)</span>
-                    </div>
-                    <div className={cn(
-                      "flex items-center gap-1.5 font-bold",
-                      item.progress_pct === 100 ? "text-emerald-400" : "text-cyan-400 animate-pulse"
-                    )}>
-                      {item.progress_pct === 100 ? <CheckCircle2 className="size-3.5" /> : <RotateCw className="size-3.5 animate-spin" />}
-                      <span>Hall 4 Stage ({item.progress_pct === 100 ? "Synced" : "Transferring 94%"})</span>
-                    </div>
+                    {(item.targets || []).map((target: any) => <div key={`${target.node}-${target.type}`} className={cn("flex items-center gap-1.5 font-bold", target.status === "verified" ? "text-emerald-400" : target.status === "failed" ? "text-rose-400" : "text-cyan-400")}>
+                      {target.status === "verified" ? <CheckCircle2 className="size-3.5" /> : <AlertTriangle className="size-3.5" />}
+                      <span>{target.node} ({target.status}, {target.progress_pct ?? 0}%)</span>
+                    </div>)}
+                    {!item.targets?.length && <span className="text-[var(--muted)]">No delivery targets configured</span>}
                   </div>
                 </div>
               </div>

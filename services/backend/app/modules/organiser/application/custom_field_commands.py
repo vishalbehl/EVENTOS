@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.cache import invalidate_organization
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.platform.models.organization_console import OrganizationCustomField
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 
 
 class OrganizerCustomFieldCommandService:
@@ -55,8 +56,24 @@ class OrganizerCustomFieldCommandService:
             await self.db.rollback()
             raise
 
-    async def update(self, *, organization_id, field_id, actor, values: dict, if_match: int) -> OrganizationCustomField:
+    async def update(self, *, organization_id, field_id, actor, values: dict, if_match: int, idempotency_key: str | None = None) -> OrganizationCustomField:
         try:
+            idem = None
+            if idempotency_key:
+                idem = await begin_idempotent(
+                    self.db, organization_id=organization_id, actor_id=actor.id,
+                    operation="organiser.organization.custom_field.update", key=idempotency_key,
+                    payload={"field_id": str(field_id), "values": values, "if_match": if_match},
+                )
+                if replay_response(idem) is not None:
+                    row = await self.db.scalar(select(OrganizationCustomField).where(
+                        OrganizationCustomField.id == field_id,
+                        OrganizationCustomField.organization_id == organization_id,
+                    ).with_for_update())
+                    if row is None:
+                        raise RuntimeError("Completed custom-field idempotency resource is missing.")
+                    await self.db.commit()
+                    return row
             row = await self.db.scalar(select(OrganizationCustomField).where(
                 OrganizationCustomField.id == field_id,
                 OrganizationCustomField.organization_id == organization_id,
@@ -84,6 +101,11 @@ class OrganizerCustomFieldCommandService:
                 action_type="ORGANIZATION_CUSTOM_FIELD_UPDATED", old_state=old,
                 new_state=self._snapshot(row), is_sensitive=False,
             ))
+            if idem is not None:
+                await complete_idempotent(
+                    self.db, idem, response_status=200,
+                    response_body=self._snapshot(row), resource_id=row.id,
+                )
             await self.db.commit()
             await invalidate_organization(organization_id)
             await self.db.refresh(row)

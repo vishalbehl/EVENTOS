@@ -14,6 +14,7 @@ from app.modules.platform.models.organization_console import (
     OrganizationTeam,
 )
 from app.modules.rbac.models.organization_member import OrganizationMember
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 
 
 class OrganizerLocationCommandService:
@@ -54,8 +55,25 @@ class OrganizerLocationCommandService:
         ):
             raise HTTPException(status_code=422, detail={"code": "BRANCH_TEAM_NOT_ACTIVE"})
 
-    async def create(self, *, organization_id, actor: User, values: dict) -> dict:
+    async def create(self, *, organization_id, actor: User, values: dict, idempotency_key: str | None = None) -> dict:
         try:
+            idem = None
+            if idempotency_key:
+                idem = await begin_idempotent(
+                    self.db, organization_id=organization_id, actor_id=actor.id,
+                    operation="organiser.organization.location.create", key=idempotency_key,
+                    payload={"values": values},
+                )
+                replay = replay_response(idem)
+                if replay is not None:
+                    row = await self.db.scalar(select(OrganizationLocation).where(
+                        OrganizationLocation.id == idem.resource_id,
+                        OrganizationLocation.organization_id == organization_id,
+                    ).with_for_update())
+                    if row is None:
+                        raise RuntimeError("Completed location idempotency resource is missing.")
+                    await self.db.commit()
+                    return self._view(row)
             name = values["name"].strip()
             duplicate = await self.db.scalar(
                 select(OrganizationLocation.id).where(
@@ -87,15 +105,36 @@ class OrganizerLocationCommandService:
                 new_state=self._view(row),
                 is_sensitive=False,
             ))
+            response = self._view(row)
+            if idem is not None:
+                await complete_idempotent(
+                    self.db, idem, response_status=201, response_body=response, resource_id=row.id
+                )
             await self.db.commit()
             await invalidate_organization(organization_id)
-            return self._view(row)
+            return response
         except Exception:
             await self.db.rollback()
             raise
 
-    async def update(self, *, organization_id, location_id, actor: User, values: dict, if_match: int) -> dict:
+    async def update(self, *, organization_id, location_id, actor: User, values: dict, if_match: int, idempotency_key: str | None = None) -> dict:
         try:
+            idem = None
+            if idempotency_key:
+                idem = await begin_idempotent(
+                    self.db, organization_id=organization_id, actor_id=actor.id,
+                    operation="organiser.organization.location.update", key=idempotency_key,
+                    payload={"location_id": str(location_id), "values": values, "if_match": if_match},
+                )
+                if replay_response(idem) is not None:
+                    row = await self.db.scalar(select(OrganizationLocation).where(
+                        OrganizationLocation.id == location_id,
+                        OrganizationLocation.organization_id == organization_id,
+                    ).with_for_update())
+                    if row is None:
+                        raise RuntimeError("Completed location idempotency resource is missing.")
+                    await self.db.commit()
+                    return self._view(row)
             row = await self.db.scalar(
                 select(OrganizationLocation).where(
                     OrganizationLocation.id == location_id,
@@ -139,9 +178,14 @@ class OrganizerLocationCommandService:
                 new_state=self._view(row),
                 is_sensitive=False,
             ))
+            response = self._view(row)
+            if idem is not None:
+                await complete_idempotent(
+                    self.db, idem, response_status=200, response_body=response, resource_id=row.id
+                )
             await self.db.commit()
             await invalidate_organization(organization_id)
-            return self._view(row)
+            return response
         except Exception:
             await self.db.rollback()
             raise

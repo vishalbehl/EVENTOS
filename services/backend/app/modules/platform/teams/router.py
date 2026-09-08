@@ -185,11 +185,13 @@ async def add_team_member(
         user_id=payload.user_id
     )
     
-    # Load user details for response
-    from app.modules.identity.models.user import User
-    user = await service.db.get(User, payload.user_id)
-    user_name = f"{user.first_name} {user.last_name}" if user else ""
-    user_email = user.email if user else ""
+    user = await TeamQueryService(service.db).get_member_user(
+        organization_id=current_user.organization_id,
+        team_id=id,
+        user_id=payload.user_id,
+    )
+    user_name = f"{user['first_name']} {user['last_name']}" if user else ""
+    user_email = user["email"] if user else ""
     
     return TeamMemberResponse(
         id=member.id,

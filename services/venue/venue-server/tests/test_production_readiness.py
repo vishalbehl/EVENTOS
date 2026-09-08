@@ -39,6 +39,29 @@ def test_readiness_probe_surfaces_database_failure(test_client):
     assert response.json() == {"detail": "database unavailable"}
 
 
+def test_production_readiness_rejects_stopped_background_worker(test_client):
+    class CompletedTask:
+        def done(self):
+            return True
+
+    with patch("app.main.settings.DEPLOYMENT_PROFILE", "production"), \
+         patch("app.main.settings.VENUE_REQUIRED_SCHEMA_REVISION", "head"), \
+         patch("app.main.app_fastapi.state.delivery_worker", CompletedTask(), create=True), \
+         patch("app.main.app_fastapi.state.backup_worker", CompletedTask(), create=True):
+        session = AsyncMock()
+        revision_result = MagicMock()
+        revision_result.scalar_one_or_none.return_value = "head"
+        session.execute.side_effect = [MagicMock(), revision_result]
+        session_factory = MagicMock()
+        session_factory.return_value.__aenter__ = AsyncMock(return_value=session)
+        session_factory.return_value.__aexit__ = AsyncMock(return_value=None)
+        with patch("app.database.AsyncSessionLocal", session_factory):
+            response = test_client.get("/readyz")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["workers"] == {"delivery": "failed", "backup": "failed"}
+
+
 def test_windows_service_definitions_preserve_startup_order():
     packaging = Path(__file__).parents[1] / "packaging" / "windows"
     api = ElementTree.parse(packaging / "EventosVenueApi.xml").getroot()

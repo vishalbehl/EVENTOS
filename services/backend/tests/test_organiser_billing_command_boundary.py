@@ -21,3 +21,10 @@ def test_billing_command_is_locked_versioned_audited_and_fail_safe():
     assert "AuditLog" in source
     assert "invalidate_organization" in source
     assert "await self.db.rollback()" in source
+
+
+def test_billing_command_persists_durable_replay_result():
+    source = SERVICE.read_text(encoding="utf-8")
+    assert "begin_idempotent" in source
+    assert "complete_idempotent" in source
+    assert 'operation="organiser.organization.billing.update"' in source

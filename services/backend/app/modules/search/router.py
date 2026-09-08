@@ -23,6 +23,7 @@ from app.modules.search.models.search import SearchJob
 from app.modules.superadmin.dependencies import require_super_admin
 from app.modules.search.application.commands import SearchCommandService
 from app.modules.search.application.queries import SearchJobQueryService
+from app.schemas.cursor_pagination import CursorPage
 
 
 router = APIRouter(prefix="/search", tags=["search"])
@@ -55,6 +56,30 @@ class PaginatedSearchJobs(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+@router.get(
+    "/jobs/cursor",
+    response_model=CursorPage[SearchJobOut],
+    summary="Cursor-list search indexing jobs",
+)
+async def cursor_search_jobs(
+    organization_id: Optional[uuid.UUID] = Query(None, description="Filter by organization"),
+    cursor: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_super_admin),
+) -> CursorPage[SearchJobOut]:
+    page = await SearchJobQueryService(db).cursor_page(
+        organization_id=organization_id,
+        cursor=cursor,
+        limit=limit,
+    )
+    return CursorPage(
+        items=[SearchJobOut.model_validate(job) for job in page.items],
+        next_cursor=page.next_cursor,
+        has_next=page.has_next,
+    )
 
 
 class ReindexTriggerIn(BaseModel):

@@ -73,14 +73,14 @@ class OrganizationConsoleService:
         )
         counts = await OrganizationConsoleQueryService(self.db).counts(organization_id=organization_id)
         member_count = counts.member_count
-        team_count = int((await self.db.execute(text("SELECT COUNT(*) FROM command_center_access.teams WHERE organization_id = :org_id AND deleted_at IS NULL"), {"org_id": organization_id})).scalar() or 0)
+        team_count = counts.team_count
         event_count = counts.event_count
         active_event_count = counts.active_event_count
         active_user_count = counts.active_user_count
         mfa_user_count = counts.mfa_user_count
         location_count = counts.location_count
-        connection_count = int((await self.db.execute(text("SELECT COUNT(*) FROM integrations.connections WHERE organization_id = :org_id AND is_active = true"), {"org_id": organization_id})).scalar() or 0)
-        api_key_count = int((await self.db.execute(text("SELECT COUNT(*) FROM developer.developer_api_keys WHERE organization_id = :org_id AND is_active = true"), {"org_id": organization_id})).scalar() or 0)
+        connection_count = counts.connection_count
+        api_key_count = counts.api_key_count
         open_security_events = counts.open_security_events
         freshness = usage.last_calculated_at if usage else None
         storage_bytes = int(usage.storage_used_bytes if usage else 0)
@@ -124,12 +124,12 @@ class OrganizationConsoleService:
             "overview": DomainAvailability(available=True, configured=True, freshness_at=now),
             "members": DomainAvailability(available=True, configured=member_count > 0, freshness_at=now),
             "security": DomainAvailability(available=True, configured=active_user_count > 0, freshness_at=now),
-            "branding": DomainAvailability(available=True, configured=await self._exists(OrganizationBrandProfile, organization_id), freshness_at=now),
+            "branding": DomainAvailability(available=True, configured=counts.branding_profile_count > 0, freshness_at=now),
             "billing": DomainAvailability(available=True, configured=subscription is not None, freshness_at=now),
             "locations": DomainAvailability(available=True, configured=location_count > 0, freshness_at=now),
             "integrations": DomainAvailability(available=True, configured=connection_count > 0, freshness_at=now),
             "api-webhooks": DomainAvailability(available=True, configured=api_key_count > 0, freshness_at=now),
-            "notifications": DomainAvailability(available=True, configured=await self._exists(OrganizationNotificationChannelConfig, organization_id), freshness_at=now),
+            "notifications": DomainAvailability(available=True, configured=counts.notification_channel_count > 0, freshness_at=now),
             "storage": DomainAvailability(available=usage is not None, configured=usage is not None, reason=None if usage else "Usage aggregation has not produced an organization snapshot.", freshness_at=freshness),
             "audit": DomainAvailability(available=True, configured=True, freshness_at=now),
             "activity": DomainAvailability(available=True, configured=True, freshness_at=now),

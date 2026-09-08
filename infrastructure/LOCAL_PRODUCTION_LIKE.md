@@ -15,7 +15,7 @@ The command preserves Docker volumes. Use `.\ops\staging.ps1 backup` before main
 
 Local endpoints:
 
-- API: `https://localhost:8443` (Caddy development TLS) or `http://127.0.0.1:8001` (direct backend)
+- API: `https://localhost:8443` (Caddy development TLS) or `http://127.0.0.1:8000` (Docker backend)
 - Prometheus: `http://127.0.0.1:9090`
 - MinIO API: `http://<staging-host-ip>:9000`
 - MinIO console: `http://<staging-host-ip>:9001`

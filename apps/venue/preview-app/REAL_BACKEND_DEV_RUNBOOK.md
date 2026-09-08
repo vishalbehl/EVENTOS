@@ -15,9 +15,6 @@ $env:VENUE_AUTH_KEY="dev-venue-device-key-change-before-prod"
 .\.venv\Scripts\uvicorn.exe app.main:app_fastapi --host 127.0.0.1 --port 8001
 ```
 
-The seed prints the one-time SRR station key. Paste it into the Preview login
-screen Station Key field for workstation/scanning mode.
-
 ## 2. Start Electron Preview
 
 From the repo root:

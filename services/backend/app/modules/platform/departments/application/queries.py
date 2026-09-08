@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.platform.departments.models import Department, DepartmentMember
+from app.modules.identity.models.user import User
 from app.modules.platform.departments.repository import DepartmentRepository
 from app.modules.platform.teams.models import Team
 
@@ -19,6 +20,64 @@ class DepartmentQueryService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repository = DepartmentRepository(db)
+
+    async def get_with_counts(
+        self, *, organization_id: uuid.UUID, department_id: uuid.UUID
+    ) -> Optional[dict[str, object]]:
+        """Return one tenant-owned department projection with relationship counts."""
+        department = await self.repository.get_by_id(organization_id, department_id)
+        if department is None:
+            return None
+
+        member_count = int(
+            await self.db.scalar(
+                select(func.count(DepartmentMember.id)).where(
+                    DepartmentMember.department_id == department_id,
+                    DepartmentMember.deleted_at.is_(None),
+                )
+            )
+            or 0
+        )
+        team_count = int(
+            await self.db.scalar(
+                select(func.count(Team.id)).where(
+                    Team.department_id == department_id,
+                    Team.organization_id == organization_id,
+                    Team.deleted_at.is_(None),
+                )
+            )
+            or 0
+        )
+        return {
+            "id": department.id,
+            "organization_id": department.organization_id,
+            "name": department.name,
+            "code": department.code,
+            "description": department.description,
+            "created_at": department.created_at,
+            "updated_at": department.updated_at,
+            "members_count": member_count,
+            "teams_count": team_count,
+        }
+
+    async def get_member_user(
+        self, *, organization_id: uuid.UUID, department_id: uuid.UUID, user_id: uuid.UUID
+    ) -> Optional[dict[str, object]]:
+        """Return only the tenant-owned identity fields needed by a member response."""
+        row = (
+            await self.db.execute(
+                select(User.id, User.email, User.first_name, User.last_name)
+                .join(DepartmentMember, DepartmentMember.user_id == User.id)
+                .where(
+                    DepartmentMember.department_id == department_id,
+                    DepartmentMember.user_id == user_id,
+                    DepartmentMember.deleted_at.is_(None),
+                    User.organization_id == organization_id,
+                    User.deleted_at.is_(None),
+                )
+            )
+        ).mappings().one_or_none()
+        return dict(row) if row else None
 
     async def list_with_counts(
         self,

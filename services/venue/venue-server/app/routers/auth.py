@@ -19,6 +19,8 @@ from app.config import settings
 from app.database import get_database
 from app.models.venue_user import VenueUser
 from app.models.operational_control import VenueLoginLockout
+from app.models.room_device import RoomDevice
+from app.models.srr_station import SRRStation
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -27,7 +29,7 @@ BEARER = HTTPBearer(auto_error=False)
 TOKEN_ALGORITHM = "HS256"
 PASSWORD_ITERATIONS = 310_000
 PASSWORD_HASHER = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4, hash_len=32, salt_len=16)
-VALID_MODES = {"admin", "registration", "scanning", "self_checkin"}
+VALID_MODES = {"admin", "registration", "scanning", "self_checkin", "workstation", "srr", "stage", "technician"}
 
 
 def mode_allowed(user: VenueUser, mode: str) -> bool:
@@ -38,7 +40,21 @@ def mode_allowed(user: VenueUser, mode: str) -> bool:
     return mode in (user.allowed_modes or [])
 
 
-def verify_device(key: str = Depends(X_VENUE_KEY)) -> bool:
+async def verify_device(
+    key: str | None = Depends(X_VENUE_KEY),
+    device_token: str | None = Header(default=None, alias="X-Device-Token"),
+    device_id: uuid.UUID | None = Header(default=None, alias="X-Venue-Device-Id"),
+    db: AsyncSession = Depends(get_database),
+) -> bool:
+    if device_token and device_id:
+        device = await validate_room_device_credential(db, device_id, device_token)
+        if not device:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked device credential.")
+        return True
+    if settings.DEPLOYMENT_PROFILE != "local":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Device credential required outside local development.")
+    # Retain the installation key for local bootstrap and older development
+    # clients. Staging/production clients must use device credentials.
     if not key or not hmac.compare_digest(key, settings.VENUE_AUTH_KEY):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing Venue Key.")
     return True
@@ -56,7 +72,7 @@ class LoginRequest(BaseModel):
     email: Optional[str] = Field(default=None, max_length=320)
     username: Optional[str] = Field(default=None, max_length=320)
     password: str = Field(min_length=1, max_length=512)
-    mode: Literal["admin", "registration", "scanning", "self_checkin"] = "admin"
+    mode: Literal["admin", "registration", "scanning", "self_checkin", "workstation", "srr", "stage", "technician"] = "admin"
 
 
 class RefreshRequest(BaseModel):
@@ -82,6 +98,16 @@ class PreferenceUpdateRequest(BaseModel):
 
 class StepUpRequest(BaseModel):
     password: str = Field(min_length=1, max_length=512)
+
+
+class DeviceTokenRequest(BaseModel):
+    device_id: uuid.UUID
+    enrollment_token: str = Field(min_length=16, max_length=512)
+
+
+class SrrDeviceTokenRequest(BaseModel):
+    station_id: uuid.UUID
+    enrollment_token: str = Field(min_length=16, max_length=512)
 
 
 def _b64encode(value: bytes) -> str:
@@ -157,6 +183,91 @@ def decode_token(token: str, expected_type: str) -> dict[str, Any]:
         return payload
     except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired access token")
+
+
+def create_device_access_token(device: RoomDevice) -> str:
+    now = datetime.now(timezone.utc)
+    header = {"alg": TOKEN_ALGORITHM, "typ": "JWT"}
+    payload = {
+        "sub": str(device.id),
+        "event_id": str(device.event_id),
+        "room_id": str(device.room_id),
+        "device_type": device.device_type,
+        "type": "device_access",
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=settings.VENUE_ACCESS_TOKEN_MINUTES)).timestamp()),
+        "jti": secrets.token_urlsafe(16),
+    }
+    head = _b64encode(json.dumps(header, separators=(",", ":")).encode("utf-8"))
+    body = _b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    signature = _b64encode(hmac.new(_auth_secret(), f"{head}.{body}".encode("ascii"), hashlib.sha256).digest())
+    return f"{head}.{body}.{signature}"
+
+
+def create_srr_access_token(station: SRRStation) -> str:
+    now = datetime.now(timezone.utc)
+    header = {"alg": TOKEN_ALGORITHM, "typ": "JWT"}
+    payload = {
+        "sub": str(station.id),
+        "event_id": str(station.event_id),
+        "device_role": station.device_role,
+        "type": "srr_device_access",
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=settings.VENUE_ACCESS_TOKEN_MINUTES)).timestamp()),
+        "jti": secrets.token_urlsafe(16),
+    }
+    head = _b64encode(json.dumps(header, separators=(",", ":")).encode("utf-8"))
+    body = _b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    signature = _b64encode(hmac.new(_auth_secret(), f"{head}.{body}".encode("ascii"), hashlib.sha256).digest())
+    return f"{head}.{body}.{signature}"
+
+
+async def validate_room_device_credential(
+    db: AsyncSession,
+    device_id: uuid.UUID,
+    credential: str,
+    *,
+    allow_enrollment_token: bool = False,
+) -> RoomDevice | None:
+    device = await db.get(RoomDevice, device_id)
+    if not device or device.id != device_id or not device.enrollment_token_hash or device.enrollment_token_revoked_at:
+        return None
+    legacy_hash = hashlib.sha256(credential.encode("utf-8")).hexdigest()
+    if allow_enrollment_token and hmac.compare_digest(device.enrollment_token_hash, legacy_hash):
+        return device
+    try:
+        payload = decode_token(credential, "device_access")
+    except HTTPException:
+        return None
+    if payload.get("sub") != str(device.id) or payload.get("event_id") != str(device.event_id) or payload.get("room_id") != str(device.room_id):
+        return None
+    return device
+
+
+async def resolve_srr_device_credential(
+    db: AsyncSession,
+    credential: str,
+    *,
+    allow_enrollment_token: bool = False,
+) -> SRRStation | None:
+    station = None
+    try:
+        payload = decode_token(credential, "srr_device_access")
+        station = await db.get(SRRStation, uuid.UUID(str(payload.get("sub"))))
+        if station and station.event_id and payload.get("event_id") == str(station.event_id):
+            if station.enrollment_token_revoked_at is None and station.is_active:
+                return station
+        return None
+    except (HTTPException, ValueError, TypeError):
+        pass
+    if not allow_enrollment_token:
+        return None
+    station = (await db.execute(select(SRRStation).where(
+        SRRStation.enrollment_token_hash == hashlib.sha256(credential.encode("utf-8")).hexdigest(),
+        SRRStation.enrollment_token_revoked_at.is_(None),
+        SRRStation.is_active.is_(True),
+    ))).scalar_one_or_none()
+    return station
 
 
 def serialize_user(user: VenueUser) -> dict[str, Any]:
@@ -290,6 +401,43 @@ async def verify_connection():
 @router.get("/verify", response_model=AuthStatus)
 async def verify_device_connection(_: DeviceAuth):
     return AuthStatus(authenticated=True, message="Venue device credential accepted")
+
+
+@router.post("/device/token")
+async def issue_device_access_token(payload: DeviceTokenRequest, db: AsyncSession = Depends(get_database)) -> dict[str, Any]:
+    device = await validate_room_device_credential(db, payload.device_id, payload.enrollment_token, allow_enrollment_token=True)
+    if not device:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked device enrollment credential.")
+    token = create_device_access_token(device)
+    return {
+        "access_token": token,
+        "token_type": "Bearer",
+        "expires_in": settings.VENUE_ACCESS_TOKEN_MINUTES * 60,
+        "device_id": str(device.id),
+        "event_id": str(device.event_id),
+        "room_id": str(device.room_id),
+        "device_type": device.device_type,
+    }
+
+
+@router.post("/srr/token")
+async def issue_srr_access_token(payload: SrrDeviceTokenRequest, db: AsyncSession = Depends(get_database)) -> dict[str, Any]:
+    station = await db.get(SRRStation, payload.station_id)
+    if not station or not station.enrollment_token_hash or station.enrollment_token_revoked_at or not station.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked SRR enrollment credential.")
+    expected = hashlib.sha256(payload.enrollment_token.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(station.enrollment_token_hash, expected):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked SRR enrollment credential.")
+    token = create_srr_access_token(station)
+    return {
+        "access_token": token,
+        "token_type": "Bearer",
+        "expires_in": settings.VENUE_ACCESS_TOKEN_MINUTES * 60,
+        "station_id": str(station.id),
+        "event_id": str(station.event_id),
+        "station_number": station.station_number,
+        "device_role": station.device_role,
+    }
 
 
 @router.post("/login")

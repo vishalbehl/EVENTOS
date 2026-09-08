@@ -145,6 +145,7 @@ class RequestLoggingMiddleware:
                 "id": str(uuid.uuid4()),
                 "request_id": str(request_id),
                 "correlation_id": str(correlation_id) if correlation_id else None,
+                "organization_id": str(org_id) if org_id else None,
                 "method": method,
                 "path": path,
                 "status_code": status_code[0],
@@ -159,6 +160,7 @@ class RequestLoggingMiddleware:
                 "user_agent": user_agent,
                 "request_size_bytes": 0,
                 "response_size_bytes": 0,
+                "rate_limit_remaining": None,
                 "occurred_at": datetime.now(timezone.utc).isoformat()
             }
 

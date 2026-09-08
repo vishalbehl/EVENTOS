@@ -25,12 +25,12 @@ class RegistrationFormConfig(Base):
     )
     template_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("registration.form_templates.id", ondelete="SET NULL"),
+        ForeignKey("design.form_templates.id", ondelete="SET NULL"),
         nullable=True,
     )
     category_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("registration.form_categories.id", ondelete="SET NULL"),
+        ForeignKey("design.form_categories.id", ondelete="SET NULL"),
         nullable=True,
     )
     is_live: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -58,4 +58,3 @@ class RegistrationFormConfig(Base):
 
     def __repr__(self) -> str:
         return f"<RegistrationFormConfig id={self.id} event_id={self.event_id} is_live={self.is_live}>"
-

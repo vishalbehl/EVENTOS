@@ -16,6 +16,7 @@ class FormCategory(Base, SoftDeleteMixin):
     Custom categories can be created by organizers for their organization.
     """
     __tablename__ = "form_categories"
+    __table_args__ = {"schema": "design"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -33,6 +34,7 @@ class FormCategory(Base, SoftDeleteMixin):
     is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

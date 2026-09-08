@@ -61,13 +61,12 @@ const routeForMode = (mode: AppMode) => {
 
 export default function LoginPage() {
   const router = useRouter();
-  const { setMode, mode, setAuth, setDeviceKey } = useAuthStore();
+  const { setMode, mode, setAuth } = useAuthStore();
   const { theme, setTheme } = useTheme();
 
   const [loading, setLoading] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [deviceKeyInput, setDeviceKeyInput] = useState("");
   const [selectedMode, setSelectedMode] = useState<AppMode>("workstation");
 
   const [dbModalOpen, setDbModalOpen] = useState(false);
@@ -97,9 +96,6 @@ export default function LoginPage() {
   useEffect(() => {
     if (mode && (mode === "workstation" || mode === "scanning")) {
       setSelectedMode(mode);
-    }
-    if (typeof window !== "undefined") {
-      setDeviceKeyInput(localStorage.getItem("eventos_srr_device_key") || "");
     }
 
     if (typeof window !== "undefined" && (window as any).srrDesktop?.getLocalDatabaseStatus) {
@@ -136,12 +132,6 @@ export default function LoginPage() {
       });
       setMode(targetMode);
       setAuth(normalizeUser(response.user));
-      const trimmedDeviceKey = deviceKeyInput.trim();
-      setDeviceKey(trimmedDeviceKey || null);
-      if (typeof window !== "undefined") {
-        if (trimmedDeviceKey) localStorage.setItem("eventos_srr_device_key", trimmedDeviceKey);
-        else localStorage.removeItem("eventos_srr_device_key");
-      }
       const targetRoute = routeForMode(targetMode);
       toast.success(`Launching ${targetMode.toUpperCase()} Mode...`);
       router.push(targetRoute);
@@ -493,18 +483,6 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="h-11 bg-[var(--surf)] border-[var(--border)] text-xs font-bold text-[var(--text)] rounded-xl focus:ring-1 focus:ring-[var(--pri)]"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)]">
-                  Station Key
-                </label>
-                <Input
-                  type="password"
-                  value={deviceKeyInput}
-                  onChange={(e) => setDeviceKeyInput(e.target.value)}
-                  placeholder="Paste enrolled SRR station key"
                   className="h-11 bg-[var(--surf)] border-[var(--border)] text-xs font-bold text-[var(--text)] rounded-xl focus:ring-1 focus:ring-[var(--pri)]"
                 />
               </div>

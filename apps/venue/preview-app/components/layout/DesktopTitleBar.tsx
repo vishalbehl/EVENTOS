@@ -45,7 +45,7 @@ export function DesktopTitleBar() {
           EVENTOS • Speaker Ready Room
         </span>
         <span className="text-[10px] text-[var(--muted)] font-mono">
-          (Workstation #{stationNumber})
+          (Workstation #{stationNumber ?? "Not configured"})
         </span>
       </div>
 

@@ -10,14 +10,31 @@ from app.core.cache import invalidate_organization
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.platform.models.organization import Organization
 from app.modules.platform.models.organization_console import OrganizationBrandProfile
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 
 
 class OrganizerBrandingCommandService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def update(self, *, organization_id, actor, values: dict, if_match: int) -> dict:
+    async def update(self, *, organization_id, actor, values: dict, if_match: int, idempotency_key: str | None = None) -> dict:
         try:
+            idem = None
+            if idempotency_key:
+                idem = await begin_idempotent(
+                    self.db, organization_id=organization_id, actor_id=actor.id,
+                    operation="organiser.organization.branding.update", key=idempotency_key,
+                    payload={"values": values, "if_match": if_match},
+                )
+                if replay_response(idem) is not None:
+                    row = await self.db.scalar(select(OrganizationBrandProfile).where(
+                        OrganizationBrandProfile.organization_id == organization_id
+                    ).with_for_update())
+                    if row is None:
+                        raise RuntimeError("Completed branding idempotency resource is missing.")
+                    await self.db.commit()
+                    return {"status": row.status, "assets": row.assets, "tokens": row.tokens,
+                            "version": row.version, "published_version": row.published_version}
             organization = await self.db.scalar(select(Organization).where(
                 Organization.id == organization_id,
             ).with_for_update())
@@ -61,10 +78,15 @@ class OrganizerBrandingCommandService:
                 action_type="ORGANIZATION_BRAND_DRAFT_UPDATED", old_state=old,
                 new_state=new_state, is_sensitive=False,
             ))
+            response = {"status": row.status, "assets": row.assets, "tokens": row.tokens,
+                        "version": row.version, "published_version": row.published_version}
+            if idem is not None:
+                await complete_idempotent(
+                    self.db, idem, response_status=200, response_body=response, resource_id=row.id
+                )
             await self.db.commit()
             await invalidate_organization(organization_id)
-            return {"status": row.status, "assets": row.assets, "tokens": row.tokens,
-                    "version": row.version, "published_version": row.published_version}
+            return response
         except Exception:
             await self.db.rollback()
             raise

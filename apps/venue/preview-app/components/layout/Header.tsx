@@ -77,7 +77,7 @@ export function Header({
           </div>
           <p className="text-[10px] font-semibold text-[var(--muted)]">
             {mode === "workstation"
-              ? `Workstation #${stationNumber} (Local Edge Station)`
+              ? `Workstation #${stationNumber ?? "Not configured"} (Local Edge Station)`
               : mode === "scanning"
               ? "Entrance Intake & Allocation Kiosk"
               : "Technician Fleet Command Console"}

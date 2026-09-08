@@ -15,13 +15,14 @@ class FormTemplate(Base, SoftDeleteMixin):
     Organization custom templates (scope_type="ORGANIZATION") belong to an organization.
     """
     __tablename__ = "form_templates"
+    __table_args__ = {"schema": "design"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     category_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("registration.form_categories.id", ondelete="SET NULL"),
+        ForeignKey("design.form_categories.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

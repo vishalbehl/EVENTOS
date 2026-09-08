@@ -116,8 +116,12 @@ export default function AdminFleetDashboardPage() {
     if (!assignModalStation) return;
     const speaker = match.speaker || match;
     try {
+      const operationId = crypto.randomUUID();
       await apiClient.post(`/api/v1/srr/stations/${assignModalStation.id}/assign`, {
         speaker_id: speaker.id,
+        operation_id: operationId,
+      }, {
+        headers: { "Idempotency-Key": operationId },
       });
       toast.success(`Assigned ${speaker.full_name} to Station #${assignModalStation.station_number}`);
       setAssignModalStation(null);
@@ -135,6 +139,12 @@ export default function AdminFleetDashboardPage() {
     groups[key] = [...(groups[key] || []), station];
     return groups;
   }, {});
+
+  const formatAssignmentAge = (assignedAt?: string | null) => {
+    if (!assignedAt) return "Assignment time unavailable";
+    const elapsedMinutes = Math.max(0, Math.floor((Date.now() - new Date(assignedAt).getTime()) / 60000));
+    return `Seated for ${elapsedMinutes} min`;
+  };
 
   return (
     <div className="space-y-6">
@@ -189,8 +199,8 @@ export default function AdminFleetDashboardPage() {
             </span>
             <CheckCircle2 className="size-4 text-emerald-400" />
           </div>
-          <p className="text-2xl font-black text-emerald-400 mt-1">18 / 24</p>
-          <p className="text-[10px] text-[var(--muted)] mt-0.5">75% of today&apos;s keynotes validated</p>
+          <p className="text-2xl font-black text-emerald-400 mt-1">Unavailable</p>
+          <p className="text-[10px] text-[var(--muted)] mt-0.5">Venue Server delivery aggregate is unavailable from this endpoint.</p>
         </Card>
 
         <Card className="p-4 bg-[var(--card)] border-[var(--border)]">
@@ -200,8 +210,8 @@ export default function AdminFleetDashboardPage() {
             </span>
             <Server className="size-4 text-cyan-400" />
           </div>
-          <p className="text-2xl font-black text-cyan-400 mt-1">100%</p>
-          <p className="text-[10px] text-[var(--muted)] mt-0.5">All room presentation PCs online</p>
+          <p className="text-2xl font-black text-cyan-400 mt-1">Unavailable</p>
+          <p className="text-[10px] text-[var(--muted)] mt-0.5">Room-device readiness feed is not configured for this dashboard.</p>
         </Card>
 
         <Card className="p-4 bg-[var(--card)] border-[var(--border)]">
@@ -211,8 +221,8 @@ export default function AdminFleetDashboardPage() {
             </span>
             <Clock className="size-4 text-amber-400" />
           </div>
-          <p className="text-2xl font-black text-amber-400 mt-1">4.2 min</p>
-          <p className="text-[10px] text-[var(--muted)] mt-0.5">Optimal throughput achieved</p>
+          <p className="text-2xl font-black text-amber-400 mt-1">Unavailable</p>
+          <p className="text-[10px] text-[var(--muted)] mt-0.5">Check-in duration telemetry is not available from the current API.</p>
         </Card>
       </div>
 
@@ -270,7 +280,7 @@ export default function AdminFleetDashboardPage() {
                           {st.assigned_speaker.organization}
                         </p>
                         <p className="text-[9px] font-mono text-cyan-400">
-                          Seated for ~6 min
+                          {formatAssignmentAge(st.session_assigned_at)}
                         </p>
                       </div>
                     ) : (
@@ -284,7 +294,7 @@ export default function AdminFleetDashboardPage() {
                   {/* Device Info */}
                   <div className="text-[10px] font-mono text-[var(--muted)] space-y-0.5">
                     <p className="truncate">Host: {st.device_name}</p>
-                    <p>IP: {st.ip_address || "192.168.1.10" + st.station_number}</p>
+                    <p>IP: {st.ip_address || "Not reported"}</p>
                   </div>
                 </div>
 

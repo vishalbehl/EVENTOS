@@ -20,9 +20,17 @@ interface CreateSessionDialogProps {
   onClose: () => void;
   eventId: string;
   preloadedRooms?: any[];
+  initialValues?: {
+    name?: string;
+    session_code?: string;
+    room_id?: string;
+    start_time?: string;
+    end_time?: string;
+    category?: string;
+  } | null;
 }
 
-export function CreateSessionDialog({ isOpen, onClose, eventId, preloadedRooms }: CreateSessionDialogProps) {
+export function CreateSessionDialog({ isOpen, onClose, eventId, preloadedRooms, initialValues }: CreateSessionDialogProps) {
   const queryClient = useQueryClient();
   const { data: fetchedRooms } = useRooms(eventId);
   const rooms = (preloadedRooms && preloadedRooms.length > 0) ? preloadedRooms : (fetchedRooms || []);
@@ -71,14 +79,19 @@ export function CreateSessionDialog({ isOpen, onClose, eventId, preloadedRooms }
 
   useEffect(() => {
     if (isOpen) {
-      setFormData(prev => ({
-        ...prev,
-        start_time: defaultStartTime,
-        end_time: defaultEndTime,
-        room_id: rooms[0]?.id || "",
-      }));
+      setFormData({
+        name: initialValues?.name || "",
+        session_code: initialValues?.session_code || "",
+        room_id: initialValues?.room_id || rooms[0]?.id || "",
+        start_time: initialValues?.start_time?.slice(0, 16) || defaultStartTime,
+        end_time: initialValues?.end_time?.slice(0, 16) || defaultEndTime,
+        category: initialValues?.category || "CONTENT",
+        description: "",
+        track: "",
+        max_capacity: 100,
+      });
     }
-  }, [isOpen, defaultStartTime, defaultEndTime, rooms]);
+  }, [isOpen, defaultStartTime, defaultEndTime, initialValues, rooms]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -105,6 +118,7 @@ export function CreateSessionDialog({ isOpen, onClose, eventId, preloadedRooms }
       toast.success("Session created successfully");
       queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
       queryClient.invalidateQueries({ queryKey: ["builder-sessions", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", eventId] });
       onClose();
     } catch (err: any) {
       toast.error(formatApiError(err, "Failed to create session"));

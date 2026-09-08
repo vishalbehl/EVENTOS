@@ -2,7 +2,7 @@
 import hashlib, io, os, sys, time, zipfile
 import httpx
 
-BASE = os.getenv("STAGING_API_URL", "http://127.0.0.1:8001")
+BASE = os.getenv("STAGING_API_URL", "http://127.0.0.1:8000")
 EMAIL = os.getenv("STAGING_TEST_EMAIL")
 PASSWORD = os.getenv("STAGING_TEST_PASSWORD")
 EVENT_ID = os.getenv("STAGING_TEST_EVENT_ID")

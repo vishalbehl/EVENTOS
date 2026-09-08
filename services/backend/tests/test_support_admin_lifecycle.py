@@ -11,7 +11,7 @@ from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
 from app.modules.support.models.ticket import SupportTicket, TicketComment
 from app.modules.support.models.support_domain_tables import TicketAttachment
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, make_access_token
 
 
 SUPPORT_REASON = "Investigating approved customer support case SUP-2048"
@@ -62,8 +62,9 @@ async def test_support_lifecycle_is_versioned_step_up_audited_and_internal_notes
     organizer: User,
     organization: Organization,
 ):
+    organization_id = organization.id
     ticket = SupportTicket(
-        organization_id=organization.id,
+        organization_id=organization_id,
         creator_id=organizer.id,
         subject="Lifecycle ticket",
         description="Exercise support administration controls",
@@ -71,8 +72,11 @@ async def test_support_lifecycle_is_versioned_step_up_audited_and_internal_notes
         priority="MEDIUM",
     )
     db.add(ticket)
+    await db.flush()
+    ticket_id = ticket.id
+    make_access_token(organizer)
     await db.commit()
-    base = f"/api/v1/support/tickets/admin/{ticket.id}?organization_id={organization.id}"
+    base = f"/api/v1/support/tickets/admin/{ticket_id}?organization_id={organization_id}"
 
     updated = await client.patch(
         base,
@@ -98,28 +102,28 @@ async def test_support_lifecycle_is_versioned_step_up_audited_and_internal_notes
     assert stale.json()["detail"]["code"] == "VERSION_CONFLICT"
 
     note = await client.post(
-        f"/api/v1/support/tickets/admin/{ticket.id}/comments?organization_id={organization.id}",
+        f"/api/v1/support/tickets/admin/{ticket_id}/comments?organization_id={organization_id}",
         headers=support_headers(super_admin),
         json={"content": "Private investigation evidence", "is_internal": True},
     )
     assert note.status_code == 201, note.text
     reply = await client.post(
-        f"/api/v1/support/tickets/admin/{ticket.id}/comments?organization_id={organization.id}",
+        f"/api/v1/support/tickets/admin/{ticket_id}/comments?organization_id={organization_id}",
         headers=support_headers(super_admin),
         json={"content": "Customer-safe response", "is_internal": False},
     )
     assert reply.status_code == 201, reply.text
 
     customer_comments = await client.get(
-        f"/api/v1/support/tickets/{ticket.id}/comments",
+        f"/api/v1/support/tickets/{ticket_id}/comments",
         headers=auth_headers(organizer),
     )
     assert customer_comments.status_code == 200, customer_comments.text
     assert [comment["content"] for comment in customer_comments.json()] == ["Customer-safe response"]
 
     actions = set((await db.execute(select(AuditLog.action_type).where(
-        AuditLog.resource_id == ticket.id,
-        AuditLog.organization_id == organization.id,
+        AuditLog.resource_id == ticket_id,
+        AuditLog.organization_id == organization_id,
     ))).scalars().all())
     assert {"SUPPORT_TICKET_UPDATED", "SUPPORT_INTERNAL_NOTE_ADDED", "SUPPORT_REPLY_ADDED"}.issubset(actions)
 
@@ -134,7 +138,7 @@ async def test_support_attachments_are_idempotent_quarantined_and_tenant_scoped(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(
-        "app.modules.platform.support_router.create_presigned_upload",
+        "app.modules.platform.application.support_commands.create_presigned_upload",
         lambda **kwargs: {"url": "https://upload.example.test/object", "expires_in": 900, "storage_path": kwargs["storage_path"]},
     )
     monkeypatch.setattr(
@@ -142,7 +146,7 @@ async def test_support_attachments_are_idempotent_quarantined_and_tenant_scoped(
         lambda **kwargs: "https://download.example.test/object",
     )
     monkeypatch.setattr(
-        "app.modules.platform.support_router.get_object_metadata",
+        "app.modules.platform.application.support_commands.get_object_metadata",
         lambda **kwargs: {"size": 2048, "content_type": "application/pdf"},
     )
     ticket = SupportTicket(
@@ -154,10 +158,13 @@ async def test_support_attachments_are_idempotent_quarantined_and_tenant_scoped(
         priority="HIGH",
     )
     db.add(ticket)
+    organization_id = organization.id
+    await db.flush()
+    ticket_id = ticket.id
     await db.commit()
     key = f"support-attachment-{uuid.uuid4()}"
     headers = {**support_headers(super_admin), "Idempotency-Key": key}
-    url = f"/api/v1/support/tickets/admin/{ticket.id}/attachments/upload-request?organization_id={organization.id}"
+    url = f"/api/v1/support/tickets/admin/{ticket_id}/attachments/upload-request?organization_id={organization_id}"
     payload = {
         "file_name": "diagnostic.pdf",
         "mime_type": "application/pdf",
@@ -177,28 +184,28 @@ async def test_support_attachments_are_idempotent_quarantined_and_tenant_scoped(
     assert conflict.status_code == 409
     assert conflict.json()["detail"]["code"] == "IDEMPOTENCY_CONFLICT"
 
-    download_url = f"/api/v1/support/tickets/admin/{ticket.id}/attachments/{attachment['id']}/download?organization_id={organization.id}"
+    download_url = f"/api/v1/support/tickets/admin/{ticket_id}/attachments/{attachment['id']}/download?organization_id={organization_id}"
     blocked = await client.get(download_url, headers=support_headers(super_admin))
     assert blocked.status_code == 409
     assert blocked.json()["detail"]["code"] == "FILE_NOT_READY"
 
     monkeypatch.setattr(
-        "app.modules.platform.support_router.get_object_metadata",
+        "app.modules.platform.application.support_commands.get_object_metadata",
         lambda **kwargs: {"size": 4096, "content_type": "application/pdf"},
     )
     size_mismatch = await client.post(
-        f"/api/v1/support/tickets/admin/{ticket.id}/attachments/{attachment['id']}/complete?organization_id={organization.id}",
+        f"/api/v1/support/tickets/admin/{ticket_id}/attachments/{attachment['id']}/complete?organization_id={organization_id}",
         headers=support_headers(super_admin),
         json={"reason": "Confirming direct upload completion for malware scanning"},
     )
     assert size_mismatch.status_code == 409
     assert size_mismatch.json()["detail"]["code"] == "UPLOAD_SIZE_MISMATCH"
     monkeypatch.setattr(
-        "app.modules.platform.support_router.get_object_metadata",
+        "app.modules.platform.application.support_commands.get_object_metadata",
         lambda **kwargs: {"size": 2048, "content_type": "application/pdf"},
     )
     completed = await client.post(
-        f"/api/v1/support/tickets/admin/{ticket.id}/attachments/{attachment['id']}/complete?organization_id={organization.id}",
+        f"/api/v1/support/tickets/admin/{ticket_id}/attachments/{attachment['id']}/complete?organization_id={organization_id}",
         headers=support_headers(super_admin),
         json={"reason": "Confirming direct upload completion for malware scanning"},
     )
@@ -214,12 +221,14 @@ async def test_support_attachments_are_idempotent_quarantined_and_tenant_scoped(
 
     other_org = Organization(name="Attachment Other Tenant", slug=f"attachment-other-{uuid.uuid4().hex[:8]}", plan="pro")
     db.add(other_org)
+    await db.flush()
+    other_org_id = other_org.id
     await db.commit()
     concealed = await client.get(
-        f"/api/v1/support/tickets/admin/{ticket.id}/attachments?organization_id={other_org.id}",
+        f"/api/v1/support/tickets/admin/{ticket_id}/attachments?organization_id={other_org_id}",
         headers=support_headers(super_admin),
     )
     assert concealed.status_code == 404
-    actions = set((await db.scalars(select(AuditLog.action_type).where(AuditLog.resource_id == ticket.id))).all())
+    actions = set((await db.scalars(select(AuditLog.action_type).where(AuditLog.resource_id == ticket_id))).all())
     assert {"SUPPORT_ATTACHMENT_UPLOAD_REQUESTED", "SUPPORT_ATTACHMENT_QUARANTINED", "SUPPORT_ATTACHMENT_DOWNLOADED"}.issubset(actions)
     assert await db.scalar(select(TicketAttachment.id).where(TicketAttachment.id == uuid.UUID(attachment["id"]))) is not None

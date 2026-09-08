@@ -301,7 +301,9 @@ async def regenerate_qr(
     """
     Regenerate a QR token for a badge, invalidating the old QR token for offline validation.
     """
-    badge = await db.get(Badge, id)
+    badge = await BadgeQueryService(db).get_for_event(
+        organization_id=event.organization_id, event_id=event.id, badge_id=id
+    )
     participant = await db.get(Participant, badge.participant_id) if badge else None
     if not badge or not participant or participant.event_id != event.id:
         raise HTTPException(status_code=404, detail="Badge not found")
@@ -334,15 +336,12 @@ async def list_badge_history(
     """
     List badge history audit trail records.
     """
-    q = select(BadgeHistory).join(Badge).join(Participant).where(
-        Participant.event_id == event.id
+    return await BadgeQueryService(db).history_legacy(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        badge_id=badge_id,
+        limit=limit,
     )
-    if badge_id:
-        q = q.where(BadgeHistory.badge_id == badge_id)
-    q = q.order_by(BadgeHistory.created_at.desc(), BadgeHistory.id.desc()).limit(limit)
-
-    result = await db.execute(q)
-    return list(result.scalars().all())
 
 
 @router.get("/history/page", response_model=CursorPage[BadgeHistoryResponse])
@@ -373,7 +372,9 @@ async def print_badge_job(
     """
     Directly queue a print job for a badge.
     """
-    badge = await db.get(Badge, id)
+    badge = await BadgeQueryService(db).get_for_event(
+        organization_id=event.organization_id, event_id=event.id, badge_id=id
+    )
     participant = await db.get(Participant, badge.participant_id) if badge else None
     if not badge or not participant or participant.event_id != event.id:
         raise HTTPException(status_code=404, detail="Badge not found")
@@ -417,13 +418,11 @@ async def list_badge_print_jobs(
     """
     List print jobs queued or completed for this event.
     """
-    q = select(BadgePrintJob).join(Badge).join(Participant).where(
-        Participant.event_id == event.id,
-        Participant.deleted_at.is_(None),
-    ).order_by(BadgePrintJob.queued_at.desc(), BadgePrintJob.id.desc()).limit(limit)
-
-    result = await db.execute(q)
-    return list(result.scalars().all())
+    return await BadgeQueryService(db).print_jobs_legacy(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit=limit,
+    )
 
 
 @router.get("/print-jobs/page", response_model=CursorPage[BadgePrintJobResponse])
@@ -452,7 +451,9 @@ async def update_print_job_status(
     """
     Update status of a print job. Automatically marks completion time and updates badge status to printed if successful.
     """
-    job = await db.get(BadgePrintJob, job_id)
+    job = await BadgeQueryService(db).get_print_job_for_event(
+        organization_id=event.organization_id, event_id=event.id, job_id=job_id
+    )
     if not job:
         raise HTTPException(status_code=404, detail="Print job not found")
 
@@ -460,7 +461,9 @@ async def update_print_job_status(
     if status_update == "completed":
         job.printed_at = datetime.now(timezone.utc)
         # Update badge status to printed
-        badge = await db.get(Badge, job.badge_id)
+        badge = await BadgeQueryService(db).get_for_event(
+            organization_id=event.organization_id, event_id=event.id, badge_id=job.badge_id
+        )
         if badge:
             badge.status = "printed"
 
@@ -478,12 +481,11 @@ async def list_badges(
     """
     List all badges generated for this event.
     """
-    q = select(Badge).join(Participant).where(
-        Participant.event_id == event.id,
-        Participant.deleted_at.is_(None),
-    ).order_by(Badge.created_at.desc(), Badge.id.desc()).limit(limit)
-    result = await db.execute(q)
-    return list(result.scalars().all())
+    return await BadgeQueryService(db).list_legacy(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit=limit,
+    )
 
 
 @router.get("/page", response_model=CursorPage[BadgeResponse])

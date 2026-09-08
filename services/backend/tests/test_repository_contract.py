@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import DateTime, String, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from app.infrastructure.repositories import Repository
+from app.infrastructure.repositories import OrganizationRepository, Repository
 from app.infrastructure.contracts import OrganizationRepositoryContract
 from app.modules.platform.departments.repository import DepartmentRepository
 from app.modules.platform.roles.repository import RoleRepository
@@ -92,6 +92,30 @@ def test_list_page_is_bounded_and_rejects_oversized_requests():
         asyncio.run(repository.list_page(select(TenantRecord), limit=101))
 
 
+def test_generic_list_page_has_deterministic_default_ordering():
+    db = CaptureDb()
+    repository = Repository(db, TenantRecord)
+    import asyncio
+
+    asyncio.run(repository.list_page(select(TenantRecord), limit=20))
+    statement = str(db.statement.compile(compile_kwargs={"literal_binds": False}))
+    assert "tenant_records.created_at DESC" in statement
+    assert "tenant_records.id DESC" in statement
+
+
+def test_organization_list_page_has_deterministic_default_ordering():
+    db = CaptureDb()
+    repository = OrganizationRepository(db, TenantRecord)
+    import asyncio
+
+    asyncio.run(repository.list_page(uuid.uuid4(), limit=20))
+    ordering = str(
+        db.statement.compile(compile_kwargs={"literal_binds": False})
+    )
+    assert "tenant_records.created_at DESC" in ordering
+    assert "tenant_records.id DESC" in ordering
+
+
 def test_bulk_insert_is_bounded_before_staging_records():
     db = CaptureDb()
     repository = Repository(db, TenantRecord)
@@ -164,3 +188,67 @@ def test_organization_repositories_expose_stable_cursor_paging():
         hasattr(repository, "cursor_page")
         for repository in (TeamRepository, DepartmentRepository, RoleRepository)
     )
+
+
+def test_generic_organization_repository_exposes_stable_cursor_paging():
+    assert hasattr(OrganizationRepository, "cursor_page")
+    method = inspect.getsource(OrganizationRepository.cursor_page)
+    assert "created_at" in method
+    assert "organization_id" in method
+    assert "commit(" not in method
+
+
+def test_generic_organization_repository_cursor_page_is_tenant_scoped_and_bounded():
+    organization_id = uuid.uuid4()
+    rows = [
+        TenantRecord(
+            id=uuid.uuid4(),
+            organization_id=organization_id,
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            name="first",
+        ),
+        TenantRecord(
+            id=uuid.uuid4(),
+            organization_id=organization_id,
+            created_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            name="second",
+        ),
+    ]
+    db = CaptureDb(rows)
+    repository = OrganizationRepository(db, TenantRecord)
+    import asyncio
+
+    page = asyncio.run(repository.cursor_page(organization_id, limit=1))
+    assert len(page.items) == 1
+    assert page.has_more is True
+    assert page.next_cursor
+    assert db.statement._limit_clause.value == 2
+    assert "tenant_records.organization_id" in str(
+        db.statement.compile(compile_kwargs={"literal_binds": False})
+    )
+
+
+def test_organization_repository_rejects_unknown_update_fields():
+    repository = OrganizationRepository(CaptureDb(), TenantRecord)
+    record = TenantRecord(
+        id=uuid.uuid4(),
+        organization_id=uuid.uuid4(),
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        name="record",
+    )
+    with pytest.raises(ValueError, match="Unsupported repository update field"):
+        repository.update(record, {"not_a_column": "unexpected"})
+
+
+def test_organization_repository_updates_only_mapped_columns():
+    repository = OrganizationRepository(CaptureDb(), TenantRecord)
+    record = TenantRecord(
+        id=uuid.uuid4(),
+        organization_id=uuid.uuid4(),
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        name="record",
+    )
+    repository.update(record, {"name": "updated"})
+    assert record.name == "updated"
+    with pytest.raises(ValueError, match="Unsupported repository update field"):
+        repository.update(record, {"__repr__": "unexpected"})

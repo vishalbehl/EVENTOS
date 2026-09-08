@@ -89,24 +89,11 @@ async def list_speakers_page(
     cursor: Optional[str] = Query(None, max_length=512),
 ) -> CursorPage[SpeakerSummary]:
     """Cursor-paginated speaker summaries for large event workspaces."""
-    assigned_session_ids: set[uuid.UUID] = set()
-    assigned_room_ids: set[uuid.UUID] = set()
-    event_wide_access = current_user.role in {"super_admin", "admin", "organiser", "organizer"}
-
-    if not event_wide_access:
-        from app.modules.rbac.models.rbac import UserAccessNode
-        from app.modules.rbac.models.user_assignment import UserEventAssignment
-
-        nodes = (await db.execute(
-            select(UserAccessNode.node_id, UserAccessNode.node_type).where(UserAccessNode.user_id == current_user.id)
-        )).all()
-        assigned_event_ids = {row.node_id for row in nodes if row.node_type == "EVENT"}
-        assigned_room_ids = {row.node_id for row in nodes if row.node_type == "ROOM"}
-        assigned_session_ids = {row.node_id for row in nodes if row.node_type == "SESSION"}
-        legacy_event_ids = (await db.scalars(
-            select(UserEventAssignment.event_id).where(UserEventAssignment.user_id == current_user.id)
-        )).all()
-        event_wide_access = event.id in assigned_event_ids or event.id in set(legacy_event_ids)
+    event_wide_access, assigned_session_ids, assigned_room_ids = await SpeakerQueryService(db).resolve_access_scope(
+        user_id=current_user.id,
+        event_id=event.id,
+        user_role=current_user.role,
+    )
 
     page = await SpeakerQueryService(db).list_page(
         organization_id=event.organization_id,
@@ -160,141 +147,28 @@ async def list_speakers(
     page: int = Query(1, ge=1),
     page_size: int = Query(200, ge=1, le=1000),
 ) -> List[SpeakerSummary]:
-    # 1. Base query for speakers with basic fields
-    q = select(Speaker).where(Speaker.event_id == event.id, Speaker.deleted_at.is_(None))
-
-    assigned_event_ids = set()
-    assigned_room_ids = set()
-    assigned_session_ids = set()
-
-    # Apply restricted access filtering for non-admin roles
-    if current_user.role not in ["super_admin", "admin", "organiser", "organizer"]:
-        from app.modules.rbac.models.rbac import UserAccessNode
-        from app.modules.rbac.models.user_assignment import UserEventAssignment
-
-        # Get assigned node IDs for this user
-        nodes_result = await db.execute(
-            select(UserAccessNode.node_id, UserAccessNode.node_type)
-            .where(UserAccessNode.user_id == current_user.id)
-        )
-        nodes = nodes_result.all()
-        
-        assigned_event_ids = {n.node_id for n in nodes if n.node_type == 'EVENT'}
-        assigned_room_ids = {n.node_id for n in nodes if n.node_type == 'ROOM'}
-        assigned_session_ids = {n.node_id for n in nodes if n.node_type == 'SESSION'}
-        
-        # Also check legacy assignments (only if they are event-wide)
-        legacy_result = await db.execute(
-            select(UserEventAssignment.event_id).where(
-                UserEventAssignment.user_id == current_user.id,
-                or_(
-                    ~UserEventAssignment.permissions.has_key('node_type'),
-                    UserEventAssignment.permissions['node_type'].astext == 'event'
-                )
-            )
-        )
-        assigned_event_ids.update(legacy_result.scalars().all())
-
-        # Filter speakers: they must be linked to an assigned event, room, or session
-        if event.id not in assigned_event_ids:
-            # Otherwise, filter by specific rooms/sessions
-            q = q.where(
-                or_(
-                    Speaker.id.in_(
-                        select(SessionSpeaker.speaker_id)
-                        .join(Session, Session.id == SessionSpeaker.session_id)
-                        .where(
-                            or_(
-                                Session.id.in_(assigned_session_ids),
-                                Session.room_id.in_(assigned_room_ids)
-                            )
-                        )
-                    ),
-                    Speaker.id.in_(
-                        select(Poster.speaker_id)
-                        .where(
-                            or_(
-                                Poster.session_id.in_(assigned_session_ids),
-                                # Posters are also linked to sessions, which are linked to rooms
-                                Poster.session_id.in_(
-                                    select(Session.id).where(Session.room_id.in_(assigned_room_ids))
-                                )
-                            )
-                        )
-                    )
-                )
-            )
-
-    # 2. Apply filters
-    if upload_status:
-        q = q.where(Speaker.upload_status == upload_status)
-    
-    if search:
-        search_term = f"%{search}%"
-        # Use || for Postgres-compatible concatenation
-        q = q.where(
-            or_(
-                (Speaker.first_name + " " + Speaker.last_name).ilike(search_term),
-                Speaker.email.ilike(search_term),
-                Speaker.phone.ilike(search_term)
-            )
-        )
-
-    # Filter by room: only speakers who have a talk OR a poster in that room
-    if room_id:
-        room_session_ids = select(Session.id).where(Session.room_id == room_id)
-        q = q.where(
-            or_(
-                Speaker.id.in_(
-                    select(SessionSpeaker.speaker_id).where(
-                        SessionSpeaker.session_id.in_(room_session_ids)
-                    )
-                ),
-                Speaker.id.in_(
-                    select(Poster.speaker_id).where(
-                        Poster.session_id.in_(room_session_ids)
-                    )
-                )
-            )
-        )
-
-    # Filter by specific session
-    if session_id:
-        q = q.where(
-            or_(
-                Speaker.id.in_(
-                    select(SessionSpeaker.speaker_id).where(
-                        SessionSpeaker.session_id == session_id
-                    )
-                ),
-                Speaker.id.in_(
-                    select(Poster.speaker_id).where(
-                        Poster.session_id == session_id
-                    )
-                )
-            )
-        )
-
-    # 3. Eager load files, posters, track, and participant
-    q = q.options(
-        selectinload(Speaker.presentation_files),
-        selectinload(Speaker.posters),
-        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session),
-        selectinload(Speaker.profile),
-        selectinload(Speaker.track),
-        selectinload(Speaker.participant),
+    event_wide_access, assigned_session_ids, assigned_room_ids = await SpeakerQueryService(db).resolve_access_scope(
+        user_id=current_user.id,
+        event_id=event.id,
+        user_role=current_user.role,
     )
-    
-    # 4. Sorting and Pagination
-    q = q.order_by(Speaker.last_name, Speaker.first_name)
-    q = q.offset((page - 1) * page_size).limit(page_size)
-
-    result = await db.execute(q)
-    speakers = result.scalars().all()
+    speakers = await SpeakerQueryService(db).list_legacy(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        page=page,
+        page_size=page_size,
+        upload_status=upload_status,
+        search=search,
+        room_id=room_id,
+        session_id=session_id,
+        assigned_session_ids=assigned_session_ids,
+        assigned_room_ids=assigned_room_ids,
+        event_wide_access=event_wide_access,
+    )
 
     # 5. Build summaries with derived status
     summaries = []
-    is_admin = current_user.role in ["super_admin", "admin", "organiser"] or event.id in assigned_event_ids
+    is_admin = event_wide_access
 
     for speaker in speakers:
         # Filter related talks based on user access

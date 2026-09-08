@@ -52,7 +52,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
     fetchCountryStates().then(setCountryStates).catch(console.error);
 
     // Fetch global timezone
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001";
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8002";
     fetch(`${apiBase}/api/v1/global-settings`, {
       headers: {
         'Authorization': `Bearer ${localStorage.getItem("accessToken") || ""}`

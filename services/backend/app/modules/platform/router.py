@@ -17,6 +17,8 @@ from app.modules.identity.models.user import User
 from app.modules.identity.models.refresh_token import RefreshToken
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.audit.models.audit_domain_tables import ImpersonationLog
+from app.modules.audit.application.queries import AuditQueryService
+from app.schemas.cursor_pagination import CursorPage, bounded_page_size, decode_cursor, encode_cursor
 from app.modules.platform.models.organization import Organization
 from app.modules.platform.models.feature import FeatureCatalog
 from app.modules.platform.models.health import OrganizationHealth
@@ -46,9 +48,14 @@ from app.modules.presentations.services import upload_service as presentation_up
 from app.modules.platform.application.governed_mutation_commands import commit_transaction
 from app.modules.platform.application.queries import (
     OrganizationConsoleQueryService,
+    PlatformUserQueryService,
     PlatformCommercialCatalogQueryService,
     PlatformCoreDashboardQueryService,
+    PlatformOperationsQueryService,
+    PlatformFinancialQueryService,
 )
+from app.modules.audit.application.queries import AuditQueryService
+from app.modules.platform.application.security_queries import PlatformSecurityEventQueryService
 from app.modules.platform.application.identity_commands import IdentityAdminCommandService
 from app.modules.platform.application.organization_commands import OrganizationCommandService
 
@@ -221,7 +228,8 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
     now_dt = datetime.now(timezone.utc)
     month_start = now_dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     current_period = now_dt.strftime("%Y-%m")
-    core = await PlatformCoreDashboardQueryService(db).metrics(
+    dashboard_queries = PlatformCoreDashboardQueryService(db)
+    core = await dashboard_queries.metrics(
         current_period=current_period,
         month_start=month_start,
         thirty_days_ago=now_dt - timedelta(days=30),
@@ -249,113 +257,34 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
         active_last_month = active_orgs or 1
     churn_rate = round((cancelled_this_month / active_last_month) * 100.0, 2)
 
-    # open_tickets (handle missing table gracefully)
-    try:
-        open_tickets = await db.scalar(
-            text("SELECT COUNT(*) FROM support.support_tickets WHERE status NOT IN ('RESOLVED','CLOSED')")
-        ) or 0
-    except Exception:
-        await db.rollback()
-        open_tickets = 0
-
     # Sparkline data: trends (last 7 days)
     today = date.today()
     seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
 
-    # orgs_trend
-    orgs_trend_res = await db.execute(
-        select(func.date(Organization.created_at).label("day"), func.count(Organization.id).label("cnt"))
-        .where(Organization.created_at >= seven_days_ago)
-        .group_by(func.date(Organization.created_at))
-    )
-    orgs_trend_map = {row.day: row.cnt for row in orgs_trend_res}
-    orgs_trend = [orgs_trend_map.get(today - timedelta(days=i), 0) for i in range(6, -1, -1)]
+    open_tickets = await dashboard_queries.open_support_ticket_count()
+    trend_maps = await dashboard_queries.seven_day_trends(since=seven_days_ago)
+    orgs_trend_map = trend_maps["orgs"]
+    orgs_trend = [int(orgs_trend_map.get(today - timedelta(days=i), 0)) for i in range(6, -1, -1)]
 
-    # users_trend
-    users_trend_res = await db.execute(
-        select(func.date(User.created_at).label("day"), func.count(User.id).label("cnt"))
-        .where(User.created_at >= seven_days_ago)
-        .group_by(func.date(User.created_at))
-    )
-    users_trend_map = {row.day: row.cnt for row in users_trend_res}
-    users_trend = [users_trend_map.get(today - timedelta(days=i), 0) for i in range(6, -1, -1)]
+    users_trend_map = trend_maps["users"]
+    users_trend = [int(users_trend_map.get(today - timedelta(days=i), 0)) for i in range(6, -1, -1)]
 
-    # events_trend
-    events_trend_res = await db.execute(
-        select(func.date(Event.created_at).label("day"), func.count(Event.id).label("cnt"))
-        .where(Event.created_at >= seven_days_ago)
-        .group_by(func.date(Event.created_at))
-    )
-    events_trend_map = {row.day: row.cnt for row in events_trend_res}
-    events_trend = [events_trend_map.get(today - timedelta(days=i), 0) for i in range(6, -1, -1)]
+    events_trend_map = trend_maps["events"]
+    events_trend = [int(events_trend_map.get(today - timedelta(days=i), 0)) for i in range(6, -1, -1)]
 
-    # mrr_trend
-    mrr_trend_res = await db.execute(
-        select(func.date(RevenueMetric.created_at).label("day"), func.sum(RevenueMetric.mrr).label("mrr_sum"))
-        .where(RevenueMetric.created_at >= seven_days_ago)
-        .group_by(func.date(RevenueMetric.created_at))
-    )
-    mrr_trend_map = {row.day: float(row.mrr_sum) for row in mrr_trend_res if row.mrr_sum is not None}
+    mrr_trend_map = trend_maps["mrr"]
     mrr_trend = [mrr_trend_map.get(today - timedelta(days=i), 0.0) for i in range(6, -1, -1)]
 
-    # revenue_trend — daily payment_transactions sums for last 7 days
-    try:
-        revenue_trend_res = await db.execute(text("""
-            WITH days AS (
-                SELECT generate_series(
-                    CURRENT_DATE - INTERVAL '6 days',
-                    CURRENT_DATE,
-                    INTERVAL '1 day'
-                )::date AS day
-            )
-            SELECT d.day, COALESCE(SUM(pt.amount), 0) as rev
-            FROM days d
-            LEFT JOIN registration.payment_transactions pt
-              ON DATE(pt.created_at) = d.day AND LOWER(pt.status) = 'completed'
-            GROUP BY d.day ORDER BY d.day
-        """))
-        revenue_trend = [float(r.rev) for r in revenue_trend_res]
-        # Ensure always 7 elements
-        while len(revenue_trend) < 7:
-            revenue_trend.insert(0, 0.0)
-    except Exception:
-        await db.rollback()
-        revenue_trend = [0.0] * 7
+    revenue_by_day = await dashboard_queries.daily_payment_revenue(since=seven_days_ago)
+    revenue_trend = [float(revenue_by_day.get(today - timedelta(days=i), 0.0)) for i in range(6, -1, -1)]
 
-    # top_orgs_by_mrr — top 5 orgs by MRR this period
-    try:
-        top_orgs_res = await db.execute(text("""
-            SELECT rm.organization_id, o.name as org_name,
-                   SUM(rm.mrr) as mrr, sp.name as plan_name
-            FROM commerce.revenue_metrics rm
-            JOIN platform.organizations o ON o.id = rm.organization_id
-            JOIN commerce.organization_subscriptions os
-              ON os.organization_id = rm.organization_id
-            JOIN commerce.subscription_plans sp ON sp.id = os.plan_id
-            WHERE rm.period = TO_CHAR(NOW(), 'YYYY-MM')
-            GROUP BY rm.organization_id, o.name, sp.name
-            ORDER BY mrr DESC LIMIT 5
-        """))
-        top_orgs_by_mrr = [
-            {
-                "org_id": str(r.organization_id),
-                "org_name": r.org_name,
-                "mrr": float(r.mrr or 0),
-                "plan_name": r.plan_name,
-            }
-            for r in top_orgs_res
-        ]
-    except Exception:
-        await db.rollback()
-        top_orgs_by_mrr = []
+    top_orgs_by_mrr = await dashboard_queries.top_organizations_by_mrr(
+        period=current_period,
+        limit=5,
+    )
 
     # subscription health matrix
-    sub_counts = await db.execute(
-        select(OrganizationSubscription.status, func.count())
-        .group_by(OrganizationSubscription.status)
-    )
-    sub_map = {row[0].upper() if row[0] else "": row[1] for row in sub_counts}
-    
+    sub_map = await dashboard_queries.subscription_status_counts()
     subscriptions_active = sub_map.get("ACTIVE", 0)
     subscriptions_trial = sub_map.get("TRIAL", 0)
     subscriptions_grace = sub_map.get("GRACE_PERIOD", 0)
@@ -363,66 +292,12 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
     subscriptions_expired = sub_map.get("EXPIRED", 0)
     subscriptions_cancelled = sub_map.get("CANCELLED", 0)
 
-    # recent billing activity (last 10 events)
-    activity_q = await db.execute(
-        select(
-            ActivityTimeline.action_type,
-            ActivityTimeline.metadata_data,
-            ActivityTimeline.timestamp,
-            Organization.name.label("org_name"),
-            Organization.id.label("org_id")
-        )
-        .join(Organization, Organization.id == ActivityTimeline.organization_id)
-        .order_by(ActivityTimeline.timestamp.desc())
-        .limit(10)
-    )
-    
-    def safe_float(val):
-        if val is None:
-            return None
-        try:
-            return float(val)
-        except (ValueError, TypeError):
-            return None
+    recent_activity = await dashboard_queries.recent_billing_activity(limit=10)
 
-    recent_activity = [
-        {
-            "org_id": str(r.org_id),
-            "org_name": r.org_name,
-            "action": r.action_type,
-            "amount": safe_float(r.metadata_data.get("amount")) if isinstance(r.metadata_data, dict) else None,
-            "occurred_at": r.timestamp.isoformat()
-        }
-        for r in activity_q
-    ]
-
-    # trials expiring in 14 days
-    trials_q = await db.execute(
-        select(
-            OrganizationSubscription.organization_id,
-            Organization.name.label("org_name"),
-            SubscriptionPlan.name.label("plan_name"),
-            OrganizationSubscription.trial_ends_at
-        )
-        .select_from(OrganizationSubscription)
-        .join(Organization, Organization.id == OrganizationSubscription.organization_id)
-        .join(SubscriptionPlan, SubscriptionPlan.id == OrganizationSubscription.plan_id)
-        .where(
-            OrganizationSubscription.status == 'TRIAL',
-            OrganizationSubscription.trial_ends_at <= datetime.now(timezone.utc) + timedelta(days=14)
-        )
-        .order_by(OrganizationSubscription.trial_ends_at.asc())
+    trials_expiring = await dashboard_queries.trials_expiring(
+        before=now_dt + timedelta(days=14),
+        limit=100,
     )
-    trials_expiring = [
-        {
-            "org_id": str(r.organization_id),
-            "org_name": r.org_name,
-            "plan_name": r.plan_name,
-            "trial_ends_at": r.trial_ends_at.isoformat(),
-            "days_remaining": max(0, (r.trial_ends_at.date() - datetime.now(timezone.utc).date()).days)
-        }
-        for r in trials_q
-    ]
 
     # Platform status checks
     pg_status = "healthy"
@@ -592,6 +467,50 @@ async def get_organization_timeline(org_id: uuid.UUID, db: AsyncSession = Depend
         organization_id=org_id,
         limit=limit,
     )
+
+
+@router.get("/organizations/{org_id}/timeline/page", response_model=CursorPage[dict])
+async def get_organization_timeline_cursor(
+    org_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_platform_admin),
+    page_size: int = Query(50, ge=1, le=100),
+    cursor: Optional[str] = Query(None, max_length=512),
+) -> CursorPage[dict]:
+    """Bounded cursor-paginated audit timeline for platform operations."""
+    del current_user
+    position = decode_cursor(cursor) if cursor else None
+    rows, has_next = await AuditQueryService(db).list_organization_cursor(
+        organization_id=org_id,
+        cursor_time=position.occurred_at if position else None,
+        cursor_id=position.record_id if position else None,
+        limit=bounded_page_size(page_size, maximum=100),
+    )
+    items = [
+        {
+            "id": str(row.id),
+            "request_id": str(row.request_id) if row.request_id else None,
+            "correlation_id": str(row.correlation_id) if row.correlation_id else None,
+            "organization_id": str(row.organization_id) if row.organization_id else None,
+            "actor_user_id": str(row.actor_user_id) if row.actor_user_id else None,
+            "impersonated_by": str(row.impersonated_by) if row.impersonated_by else None,
+            "actor_role": row.actor_role,
+            "resource_type": row.resource_type,
+            "resource_id": str(row.resource_id) if row.resource_id else None,
+            "action_type": row.action_type,
+            "old_state": row.old_state,
+            "new_state": row.new_state,
+            "change_diff": row.change_diff,
+            "actor_ip": row.actor_ip,
+            "is_sensitive": row.is_sensitive,
+            "occurred_at": row.occurred_at.isoformat() if row.occurred_at else None,
+            "row_hash": row.row_hash,
+            "hash_version": row.hash_version,
+        }
+        for row in rows
+    ]
+    next_cursor = encode_cursor(rows[-1].occurred_at, rows[-1].id) if has_next and rows else None
+    return CursorPage(items=items, next_cursor=next_cursor, has_next=has_next)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -871,75 +790,8 @@ async def list_platform_addons(
     current_user: User = Depends(require_platform_admin)
 ):
     """List all platform add-ons."""
-    stmt = select(Addon).order_by(Addon.name.asc())
-    addons = (await db.execute(stmt)).scalars().all()
-    
-    addon_list = []
-    for a in addons:
-        feature_rows = (await db.execute(
-            select(AddonFeature, FeatureCatalog)
-            .join(FeatureCatalog, FeatureCatalog.id == AddonFeature.feature_id)
-            .where(AddonFeature.addon_id == a.id)
-            .order_by(FeatureCatalog.category_order, FeatureCatalog.feature_order)
-        )).all()
-        feature_ids = [mapping.feature_id for mapping, _feature in feature_rows]
-        feature_assignments = []
-        for mapping, feature in feature_rows:
-            raw_value = mapping.entitlement_value
-            value = raw_value.get("value") if isinstance(raw_value, dict) else raw_value
-            if value is None and (mapping.value_type or feature.value_type) == "BOOLEAN":
-                value = True
-            feature_assignments.append({
-                "feature_key": feature.key,
-                "name": feature.name,
-                "value_type": mapping.value_type or feature.value_type or "BOOLEAN",
-                "value": value,
-                "scope_type": mapping.scope_type or feature.scope_type,
-                "operation": mapping.operation or "UNLOCK",
-                "validity_days": mapping.validity_days,
-                "stackable": mapping.stackable,
-                "max_quantity": mapping.max_quantity,
-                "allowed_values": feature.allowed_values or [],
-                "unit": feature.unit,
-                "period": feature.period,
-            })
-        addon_list.append({
-            "id": a.id,
-            "key": a.key,
-            "name": a.name,
-            "description": a.description,
-            "addon_type": a.addon_type,
-            "short_description": a.short_description,
-            "image_url": a.image_url,
-            "price_inr": float(a.price_inr) if a.price_inr is not None else None,
-            "min_price_inr": float(a.min_price_inr) if a.min_price_inr is not None else None,
-            "max_price_inr": float(a.max_price_inr) if a.max_price_inr is not None else None,
-            "billing_unit": a.billing_unit,
-            "price_unit": a.price_unit,
-            "scope_type": a.scope_type,
-            "consumption_model": a.consumption_model,
-            "unit_type": a.unit_type,
-            "final_price": float(a.final_price) if a.final_price is not None else None,
-            "available_for_plans": a.available_for_plans or [],
-            "is_optional_for_plan": a.is_optional_for_plan,
-            "included_in_plan": a.included_in_plan,
-            "is_active": a.is_active,
-            "version": a.version,
-            "lifecycle_status": a.lifecycle_status,
-            "effective_at": a.effective_at,
-            "retired_at": a.retired_at,
-            "created_at": a.created_at,
-            "feature_ids": [str(fid) for fid in feature_ids],
-            "feature_assignments": feature_assignments,
-            "features_spec": a.features_spec or [],
-            "hardware_spec": a.hardware_spec or [],
-            "staff_spec": a.staff_spec or [],
-            "inclusions": a.inclusions or [],
-            "exclusions": a.exclusions or [],
-            "consumables_cost": float(a.consumables_cost or 0)
-            ,"template_types": a.template_types or []
-        })
-    return addon_list
+    del current_user
+    return await PlatformCommercialCatalogQueryService(db).list_addons()
 
 
 @router.post("/subscription-plans", status_code=201)
@@ -1063,16 +915,8 @@ async def list_features_catalog(
     current_user: User = Depends(require_platform_admin)
 ):
     """List all feature catalog items."""
-    result = await db.execute(
-        select(FeatureCatalog).order_by(
-            FeatureCatalog.category_order.asc(),
-            FeatureCatalog.category.asc(),
-            FeatureCatalog.feature_order.asc(),
-            FeatureCatalog.name.asc(),
-        )
-    )
-    catalog = result.scalars().all()
-    return [_serialize_feature_catalog_item(feature) for feature in catalog]
+    del current_user
+    return await PlatformCommercialCatalogQueryService(db).list_features()
 
 
 class FeatureCatalogIn(BaseModel):
@@ -1388,6 +1232,8 @@ async def get_plan_features(
     current_user: User = Depends(require_platform_admin)
 ):
     """Get the features enabled for a subscription plan."""
+    return await PlatformCommercialCatalogQueryService(db).plan_feature_keys(plan_id=plan_id)
+
     stmt = select(FeatureCatalog.key).join(PlanFeature).where(
         and_(PlanFeature.plan_id == plan_id, PlanFeature.enabled == True)
     )
@@ -1457,89 +1303,15 @@ async def list_all_subscriptions(
     limit: int = Query(20),
 ):
     """List all organization subscriptions across platform (Super Admin)."""
-    q = text("""
-      SELECT
-        os.id, os.organization_id, o.name as org_name, o.slug as org_slug,
-        os.plan_id, sp.name as plan_name, sp.color_hex as plan_color_hex,
-        os.status, os.trial_ends_at, os.current_period_end,
-        os.stripe_customer_id, os.stripe_subscription_id,
-        COALESCE(rm.mrr, 0) as mrr_inr,
-        CASE WHEN os.trial_ends_at IS NOT NULL
-          THEN EXTRACT(DAY FROM os.trial_ends_at - NOW())::int
-          ELSE NULL END as days_until_trial_end,
-        COUNT(*) OVER() as total_count
-      FROM commerce.organization_subscriptions os
-      JOIN platform.organizations o ON o.id = os.organization_id
-      JOIN commerce.subscription_plans sp ON sp.id = os.plan_id
-      LEFT JOIN commerce.revenue_metrics rm ON rm.organization_id = os.organization_id
-        AND rm.period = TO_CHAR(NOW(), 'YYYY-MM')
-      WHERE (CAST(:status AS varchar) IS NULL OR os.status = CAST(:status AS varchar))
-        AND (CAST(:plan_id AS uuid) IS NULL OR os.plan_id = CAST(:plan_id AS uuid))
-        AND (CAST(:search AS varchar) IS NULL OR o.name ILIKE CAST(:search_pct AS varchar))
-        AND (CAST(:expiring_days AS integer) IS NULL OR (
-          os.status = 'TRIAL' AND
-          os.trial_ends_at <= NOW() + (CAST(:expiring_days AS integer) * INTERVAL '1 day')
-        ))
-      ORDER BY os.created_at DESC
-      OFFSET :skip LIMIT :limit
-    """)
-    
-    params = {
-        "status": status,
-        "plan_id": plan_id,
-        "search": search,
-        "search_pct": f"%{search}%" if search else None,
-        "expiring_days": expiring_days,
-        "skip": skip,
-        "limit": limit
-    }
-    
-    rows_res = await db.execute(q, params)
-    rows = rows_res.all()
-    
-    items = []
-    total = 0
-    for r in rows:
-        total = r.total_count
-        items.append({
-            "id": str(r.id),
-            "organization_id": str(r.organization_id),
-            "org_name": r.org_name,
-            "org_slug": r.org_slug,
-            "plan_id": str(r.plan_id),
-            "plan_name": r.plan_name,
-            "plan_color_hex": r.plan_color_hex or "#cccccc",
-            "status": r.status,
-            "trial_ends_at": r.trial_ends_at.isoformat() if r.trial_ends_at else None,
-            "current_period_end": r.current_period_end.isoformat() if r.current_period_end else None,
-            "stripe_customer_id": r.stripe_customer_id,
-            "stripe_subscription_id": r.stripe_subscription_id,
-            "mrr_inr": float(r.mrr_inr),
-            "days_until_trial_end": r.days_until_trial_end
-        })
-        
-    summary_q = text("""
-        SELECT
-            COALESCE(SUM(rm.mrr), 0) as total_mrr_inr,
-            COUNT(*) FILTER (WHERE os.status = 'ACTIVE') as active_count,
-            COUNT(*) FILTER (WHERE os.status = 'TRIAL') as trial_count,
-            COUNT(*) FILTER (WHERE os.status IN ('GRACE_PERIOD', 'SUSPENDED')) as at_risk_count
-        FROM commerce.organization_subscriptions os
-        LEFT JOIN commerce.revenue_metrics rm ON rm.organization_id = os.organization_id
-            AND rm.period = TO_CHAR(NOW(), 'YYYY-MM')
-    """)
-    summary_res = await db.execute(summary_q)
-    s = summary_res.fetchone()
-    
-    summary = {
-        "total_mrr_inr": float(s.total_mrr_inr or 0),
-        "total_arr_inr": float(s.total_mrr_inr or 0) * 12.0,
-        "active_count": s.active_count or 0,
-        "trial_count": s.trial_count or 0,
-        "at_risk_count": s.at_risk_count or 0
-    }
-    
-    return {"items": items, "total": total, "summary": summary}
+    del current_user
+    return await PlatformCommercialCatalogQueryService(db).list_subscriptions(
+        status=status,
+        plan_id=plan_id,
+        search=search,
+        expiring_days=expiring_days,
+        skip=skip,
+        limit=limit,
+    )
 
 
 @router.get("/invoices", response_model=InvoiceListResponse)
@@ -1553,118 +1325,14 @@ async def list_all_invoices(
     limit: int = Query(20),
 ):
     """List all invoices across platform (Super Admin)."""
-    
-    try:
-        q_str = """
-        FROM commerce.invoices i
-        JOIN platform.organizations o ON o.id = i.organization_id
-        LEFT JOIN commerce.organization_subscriptions os ON os.organization_id = i.organization_id
-        LEFT JOIN commerce.subscription_plans sp ON sp.id = os.plan_id
-        WHERE (:status IS NULL OR i.status = :status)
-          AND (:search IS NULL OR o.name ILIKE :search_pattern)
-          AND (:org_id IS NULL OR i.organization_id = :org_id)
-        """
-        
-        count_q = text("SELECT COUNT(*) " + q_str)
-        total = await db.scalar(count_q, {
-            "status": status,
-            "search": search,
-            "search_pattern": f"%{search}%" if search else None,
-            "org_id": org_id
-        }) or 0
-        
-        q = text("""
-        SELECT i.id, i.organization_id, o.name as org_name, 
-               sp.name as plan_name, i.amount, i.currency,
-               i.status, i.due_date, i.paid_at, i.stripe_invoice_id,
-               i.created_at, i.gst_amount, i.total_amount_inr,
-               i.invoice_number, i.event_id
-        """ + q_str + """
-        ORDER BY i.created_at DESC
-        OFFSET :skip LIMIT :limit
-        """)
-        rows = await db.execute(q, {
-            "status": status, 
-            "search": search,
-            "search_pattern": f"%{search}%" if search else None,
-            "org_id": org_id,
-            "skip": skip, "limit": limit
-        })
-        items = []
-        for r in rows:
-            mapped_row = dict(r._mapping)
-            amount = float(mapped_row["amount"])
-            gst = float(mapped_row["gst_amount"] or 0)
-            if gst == 0:
-                gst = amount * 0.18
-            total_amt = float(mapped_row["total_amount_inr"] or 0)
-            if total_amt == 0:
-                total_amt = amount + gst
-                
-            inv_num = mapped_row["invoice_number"]
-            if not inv_num:
-                inv_num = f"INV-{str(mapped_row['id'])[:8].upper()}"
-                
-            items.append({
-                "id": str(mapped_row["id"]),
-                "invoice_number": inv_num,
-                "organization_id": str(mapped_row["organization_id"]),
-                "org_name": mapped_row["org_name"],
-                "plan_name": mapped_row["plan_name"] or "None",
-                "amount_inr": amount,
-                "gst_amount": gst,
-                "total_amount_inr": total_amt,
-                "currency": mapped_row["currency"] or "USD",
-                "status": mapped_row["status"],
-                "due_date": mapped_row["due_date"].isoformat() if mapped_row["due_date"] else None,
-                "paid_at": mapped_row["paid_at"].isoformat() if mapped_row["paid_at"] else None,
-                "event_id": str(mapped_row["event_id"]) if mapped_row["event_id"] else None,
-                "created_at": mapped_row["created_at"].isoformat() if mapped_row["created_at"] else None,
-            })
-        
-        # Summary
-        summary_q = text("""
-        SELECT 
-            SUM(amount) as total_value_inr,
-            SUM(CASE WHEN status='PAID' THEN amount ELSE 0 END) as paid_inr,
-            SUM(CASE WHEN status='PENDING' THEN amount ELSE 0 END) as pending_inr,
-            SUM(CASE WHEN status='OVERDUE' THEN amount ELSE 0 END) as overdue_inr,
-            COUNT(*) as total_count,
-            COUNT(*) FILTER (WHERE status='PAID') as paid_count,
-            COUNT(*) FILTER (WHERE status='OVERDUE') as overdue_count,
-            AVG(EXTRACT(EPOCH FROM (paid_at - created_at)) / 86400.0) as avg_collection_days
-        FROM commerce.invoices
-        WHERE (:org_id IS NULL OR organization_id = :org_id)
-        """)
-        summary_res = await db.execute(summary_q, {"org_id": org_id})
-        s = summary_res.fetchone()
-        
-        summary = {
-            "total_value_inr": float(s.total_value_inr or 0),
-            "paid_inr": float(s.paid_inr or 0),
-            "pending_inr": float(s.pending_inr or 0),
-            "overdue_inr": float(s.overdue_inr or 0),
-            "total_count": s.total_count or 0,
-            "paid_count": s.paid_count or 0,
-            "overdue_count": s.overdue_count or 0,
-            "avg_collection_days": float(s.avg_collection_days or 0)
-        }
-        return {"items": items, "total": total, "summary": summary}
-    except Exception as e:
-        return {
-            "items": [], 
-            "total": 0, 
-            "summary": {
-                "total_value_inr": 0,
-                "paid_inr": 0,
-                "pending_inr": 0,
-                "overdue_inr": 0,
-                "total_count": 0,
-                "paid_count": 0,
-                "overdue_count": 0,
-                "avg_collection_days": 0
-            }
-        }
+    del current_user
+    return await PlatformCommercialCatalogQueryService(db).list_invoices(
+        status=status,
+        organization_id=org_id,
+        search=search,
+        skip=skip,
+        limit=limit,
+    )
 
 
 # ── Revenue Metrics ────────────────────────────────────────────
@@ -1676,27 +1344,7 @@ async def get_revenue_metrics(
     months: int = Query(12, ge=1, le=24),
 ):
     """Aggregated MRR/ARR per month for revenue analytics chart."""
-    result = await db.execute(
-        select(
-            RevenueMetric.period,
-            func.sum(RevenueMetric.mrr).label("total_mrr"),
-            func.sum(RevenueMetric.arr).label("total_arr"),
-            func.sum(RevenueMetric.add_on_revenue).label("total_addon"),
-        )
-        .group_by(RevenueMetric.period)
-        .order_by(RevenueMetric.period.desc())
-        .limit(months)
-    )
-    rows = result.all()
-    return [
-        {
-            "period": r.period,
-            "mrr": float(r.total_mrr or 0),
-            "arr": float(r.total_arr or 0),
-            "addon_revenue": float(r.total_addon or 0),
-        }
-        for r in reversed(rows)
-    ]
+    return await PlatformCoreDashboardQueryService(db).revenue_metrics(months=months)
 
 
 # ── Global Users ───────────────────────────────────────────────
@@ -1715,109 +1363,39 @@ async def get_platform_users(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_platform_admin)
 ):
-    q = select(User).where(User.deleted_at == None)
-    
-    if search:
-        q = q.where(or_(
-            User.email.ilike(f"%{search}%"),
-            User.first_name.ilike(f"%{search}%"),
-            User.last_name.ilike(f"%{search}%")
-        ))
-    if role:
-        q = q.where(or_(User.role == role, User.platform_role == role))
-    if org_id:
-        q = q.where(User.organization_id == org_id)
-    if two_fa_enabled is not None:
-        q = q.where(User.is_2fa_enabled == two_fa_enabled)
-    if is_active is not None:
-        q = q.where(User.is_active == is_active)
-    
-    total = await db.scalar(select(func.count()).select_from(q.subquery()))
-    users = await db.execute(q.order_by(User.created_at.desc()).offset(skip).limit(limit))
-    
-    # Get active session counts per user from refresh tokens
-    user_list = users.scalars().all()
-    user_ids = [u.id for u in user_list]
-    
-    session_counts = {}
-    if user_ids:
-        sc = await db.execute(
-            select(RefreshToken.user_id, func.count().label("cnt"))
-            .where(
-                RefreshToken.user_id.in_(user_ids),
-                RefreshToken.is_revoked == False,
-                RefreshToken.expires_at > datetime.now(timezone.utc)
-            )
-            .group_by(RefreshToken.user_id)
-        )
-        session_counts = {r.user_id: r.cnt for r in sc}
-    
-    # Risk scores from security events (count recent suspicious events)
-    risk_scores = {}
-    if user_ids:
-        rs = await db.execute(
-            text("""
-            SELECT user_id, 
-                   SUM(CASE risk_level WHEN 'CRITICAL' THEN 40 WHEN 'HIGH' THEN 20 
-                       WHEN 'MEDIUM' THEN 10 ELSE 2 END) as risk_score
-            FROM identity.security_events
-            WHERE user_id = ANY(:user_ids) AND occurred_at >= NOW() - INTERVAL '30 days'
-            GROUP BY user_id
-            """),
-            {"user_ids": [str(uid) for uid in user_ids]}
-        )
-        risk_scores = {uuid.UUID(r.user_id): min(int(r.risk_score), 100) for r in rs}
-    
-    # Org names
-    org_ids = list({u.organization_id for u in user_list if u.organization_id})
-    org_names = {}
-    if org_ids:
-        orgs = await db.execute(
-            select(Organization.id, Organization.name).where(Organization.id.in_(org_ids))
-        )
-        org_names = {r.id: r.name for r in orgs}
-    
-    results = [
-        {
-            "id": str(u.id),
-            "first_name": u.first_name,
-            "last_name": u.last_name,
-            "email": u.email,
-            "role": u.role,
-            "platform_role": u.platform_role,
-            "organization_id": str(u.organization_id) if u.organization_id else None,
-            "organization_name": org_names.get(u.organization_id, "—"),
-            "is_active": u.is_active,
-            "is_2fa_enabled": u.is_2fa_enabled,
-            "last_login": u.last_login_at.isoformat() if u.last_login_at else None,
-            "created_at": u.created_at.isoformat(),
-            "active_sessions": session_counts.get(u.id, 0),
-            "risk_score": risk_scores.get(u.id, 0),
-        }
-        for u in user_list
-    ]
-    
-    # Summary stats
-    total_2fa = await db.scalar(select(func.count()).select_from(User).where(User.is_2fa_enabled == True))
-    total_admins = await db.scalar(
-        select(func.count()).select_from(User)
-        .where(User.platform_role.in_(["SUPER_ADMIN","FINANCE_ADMIN","SUPPORT_ADMIN"]))
+    return await PlatformUserQueryService(db).offset_page(
+        skip=skip,
+        limit=limit,
+        search=search,
+        role=role,
+        organization_id=org_id,
+        two_fa_enabled=two_fa_enabled,
+        is_active=is_active,
     )
-    active_impersonations = await db.scalar(
-        text("SELECT COUNT(*) FROM audit.impersonation_logs WHERE terminated_at IS NULL")
-    ) or 0
-    
-    return {
-        "items": results,
-        "total": total,
-        "summary": {
-            "total_users": total,
-            "active_users": await db.scalar(select(func.count()).select_from(User).where(User.is_active == True)),
-            "two_fa_enabled": total_2fa,
-            "total_admins": total_admins,
-            "active_impersonations": active_impersonations,
-        }
-    }
+
+@router.get("/global-users/cursor")
+@router.get("/users/cursor")
+async def get_platform_users_cursor(
+    search: Optional[str] = Query(None, max_length=120),
+    role: Optional[str] = Query(None, max_length=80),
+    org_id: Optional[uuid.UUID] = None,
+    two_fa_enabled: Optional[bool] = None,
+    is_active: Optional[bool] = None,
+    cursor: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_platform_admin),
+):
+    """Cursor replacement for large platform-user reads; offset remains compatible."""
+    return await PlatformUserQueryService(db).cursor_page(
+        cursor=cursor,
+        limit=limit,
+        search=search,
+        role=role,
+        organization_id=org_id,
+        two_fa_enabled=two_fa_enabled,
+        is_active=is_active,
+    )
 
 
 # C2: Force logout (revoke all sessions)
@@ -1877,9 +1455,20 @@ async def get_audit_logs(
     _: User = Depends(require_platform_admin)
 ):
     parsed_cursor = None
+    parsed_cursor_id = None
     if cursor:
         normalized = cursor
-        if " " in cursor:
+        if "|" in cursor:
+            normalized, cursor_id_raw = cursor.rsplit("|", 1)
+            if " " in normalized:
+                parts = normalized.rsplit(" ", 1)
+                if len(parts) == 2 and ":" in parts[1]:
+                    normalized = "+".join(parts)
+            try:
+                parsed_cursor_id = uuid.UUID(cursor_id_raw)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid cursor format")
+        elif " " in cursor:
             parts = cursor.rsplit(" ", 1)
             if len(parts) == 2 and ":" in parts[1]:
                 normalized = "+".join(parts)
@@ -1887,84 +1476,30 @@ async def get_audit_logs(
             parsed_cursor = datetime.fromisoformat(normalized)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid cursor format")
-
-    q = text("""
-    SELECT 
-        al.id, al.organization_id, o.name as org_name,
-        al.actor_user_id, 
-        u.first_name || ' ' || u.last_name as actor_name,
-        u.email as actor_email,
-        al.action_type, al.resource_type, al.resource_id,
-        al.change_diff, al.request_id, al.correlation_id,
-        al.actor_ip, al.actor_user_agent,
-        al.is_sensitive, al.row_hash, al.occurred_at,
-        al.actor_role,
-        """ + ("al.old_state, al.new_state," if include_state else "") + """
-        COUNT(*) OVER() as total_count
-    FROM command_center_audit.logs al
-    LEFT JOIN platform.organizations o ON o.id = al.organization_id
-    LEFT JOIN identity.users u ON u.id = al.actor_user_id
-    WHERE 1=1
-      AND (CAST(:action_type AS varchar) IS NULL OR al.action_type = :action_type)
-      AND (CAST(:resource_type AS varchar) IS NULL OR al.resource_type = :resource_type)
-      AND (CAST(:actor_user_id AS uuid) IS NULL OR al.actor_user_id = CAST(:actor_user_id AS uuid))
-      AND (CAST(:organization_id AS uuid) IS NULL OR al.organization_id = CAST(:organization_id AS uuid))
-      AND (CAST(:is_sensitive AS boolean) IS NULL OR al.is_sensitive = :is_sensitive)
-      AND (CAST(:date_from AS timestamptz) IS NULL OR al.occurred_at >= CAST(:date_from AS timestamptz))
-      AND (CAST(:date_to AS timestamptz) IS NULL OR al.occurred_at <= CAST(:date_to AS timestamptz))
-      AND (CAST(:cursor AS timestamptz) IS NULL OR al.occurred_at < CAST(:cursor AS timestamptz))
-    ORDER BY al.occurred_at DESC
-    OFFSET :skip LIMIT :limit
-    """)
-    
-    rows = await db.execute(q, {
-        "action_type": action_type, "resource_type": resource_type,
-        "actor_user_id": str(actor_user_id) if actor_user_id else None,
-        "organization_id": str(organization_id) if organization_id else None,
-        "is_sensitive": is_sensitive, "date_from": date_from, "date_to": date_to,
-        "cursor": parsed_cursor,
-        "skip": skip, "limit": limit
-    })
-    
-    results = []
-    total = 0
-    for row in rows:
-        total = row.total_count
-        item = {
-            "id": str(row.id),
-            "org_name": row.org_name,
-            "organization_id": str(row.organization_id) if row.organization_id else None,
-            "actor_name": row.actor_name or "System",
-            "actor_email": row.actor_email,
-            "actor_role": row.actor_role,
-            "actor_ip": row.actor_ip,
-            "actor_user_agent": row.actor_user_agent,
-            "action_type": row.action_type,
-            "resource_type": row.resource_type,
-            "resource_id": str(row.resource_id),
-            "is_sensitive": row.is_sensitive,
-            "row_hash": row.row_hash,
-            "occurred_at": row.occurred_at.isoformat(),
-            "correlation_id": str(row.correlation_id) if row.correlation_id else None,
-        }
-        if include_state:
-            item["old_state"] = row.old_state
-            item["new_state"] = row.new_state
-            item["change_diff"] = row.change_diff
-        results.append(item)
-    
-    # Action type counts for quick filters sidebar
-    counts = await db.execute(text("""
-    SELECT action_type, COUNT(*) as cnt 
-    FROM command_center_audit.logs 
-    GROUP BY action_type 
-    ORDER BY cnt DESC
-    """))
-    action_counts = {r.action_type: r.cnt for r in counts}
-    
-    has_next = (skip + limit) < total
-    next_cursor = results[-1]["occurred_at"] if has_next and results else None
-    return {"items": results, "total": total, "action_counts": action_counts, "has_next": has_next, "next_cursor": next_cursor}
+    results, total, action_counts, has_next = await AuditQueryService(db).list_platform_audit(
+        action_type=action_type,
+        resource_type=resource_type,
+        actor_user_id=actor_user_id,
+        organization_id=organization_id,
+        is_sensitive=is_sensitive,
+        date_from=date_from,
+        date_to=date_to,
+        cursor_time=parsed_cursor,
+        cursor_id=parsed_cursor_id,
+        skip=skip,
+        limit=limit,
+        include_state=include_state,
+    )
+    next_cursor = None
+    if has_next and results:
+        next_cursor = f"{results[-1]['occurred_at']}|{results[-1]['id']}"
+    return {
+        "items": results,
+        "total": total,
+        "action_counts": action_counts,
+        "has_next": has_next,
+        "next_cursor": next_cursor,
+    }
 
 
 # C5: Security events (real data from identity.security_events)
@@ -1977,89 +1512,12 @@ async def get_security_events(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_platform_admin)
 ):
-    limit = min(max(limit, 1), 200)
-    skip = max(skip, 0)
-
-    # Summary and trend remain global when the feed is filtered.
-    severity_counts = await db.execute(text("""
-    SELECT risk_level, COUNT(*) as cnt
-    FROM identity.security_events
-    WHERE occurred_at >= NOW() - INTERVAL '24 hours'
-    GROUP BY risk_level
-    """))
-    sev_map = {r.risk_level: r.cnt for r in severity_counts}
-    
-    # 7-day trend by severity
-    trend_data = await db.execute(text("""
-    SELECT DATE(occurred_at) as day, risk_level, COUNT(*) as cnt
-    FROM identity.security_events
-    WHERE occurred_at >= NOW() - INTERVAL '7 days'
-    GROUP BY DATE(occurred_at), risk_level
-    ORDER BY day
-    """))
-    
-    total = await db.scalar(
-        text("""
-        SELECT COUNT(*)
-        FROM identity.security_events
-        WHERE (CAST(:severity AS VARCHAR) IS NULL OR risk_level = CAST(:severity AS VARCHAR))
-          AND (CAST(:event_type AS VARCHAR) IS NULL OR event_type = CAST(:event_type AS VARCHAR))
-        """),
-        {"severity": severity, "event_type": event_type},
-    ) or 0
-
-    q = text("""
-    SELECT se.id, se.event_type, se.risk_level, se.severity_score,
-           se.user_id, u.email as user_email,
-           se.ip_address, se.geo_metadata, se.action_taken,
-           se.correlation_id, se.occurred_at
-    FROM identity.security_events se
-    LEFT JOIN identity.users u ON u.id = se.user_id
-    WHERE (CAST(:severity AS VARCHAR) IS NULL OR se.risk_level = CAST(:severity AS VARCHAR))
-      AND (CAST(:event_type AS VARCHAR) IS NULL OR se.event_type = CAST(:event_type AS VARCHAR))
-    ORDER BY se.occurred_at DESC
-    OFFSET :skip LIMIT :limit
-    """)
-    rows = await db.execute(q, {"severity": severity, "event_type": event_type, "skip": skip, "limit": limit})
-
-    trend_by_day: Dict[str, Dict[str, Any]] = {}
-    for row in trend_data:
-        day = str(row.day)
-        bucket = trend_by_day.setdefault(
-            day,
-            {"day": day, "low": 0, "medium": 0, "high": 0, "critical": 0},
-        )
-        level = str(row.risk_level or "").lower()
-        if level in {"low", "medium", "high", "critical"}:
-            bucket[level] = int(row.cnt or 0)
-
-    return {
-        "severity_summary": {
-            "CRITICAL": sev_map.get("CRITICAL", 0),
-            "HIGH": sev_map.get("HIGH", 0),
-            "MEDIUM": sev_map.get("MEDIUM", 0),
-            "LOW": sev_map.get("LOW", 0),
-            "total_24h": sum(sev_map.values()),
-        },
-        "trend": sorted(trend_by_day.values(), key=lambda item: item["day"]),
-        "items": [
-            {
-                "id": str(r.id),
-                "event_type": r.event_type,
-                "risk_level": r.risk_level,
-                "severity_score": r.severity_score,
-                "user_email": r.user_email,
-                "ip_address": r.ip_address,
-                "geo_metadata": r.geo_metadata,
-                "action_taken": r.action_taken,
-                "correlation_id": str(r.correlation_id) if r.correlation_id else None,
-                "occurred_at": r.occurred_at.isoformat(),
-            }
-            for r in rows
-        ],
-        "total": int(total),
-        "has_next": skip + limit < int(total),
-    }
+    return await PlatformSecurityEventQueryService(db).dashboard_feed(
+        severity=severity,
+        event_type=event_type,
+        skip=skip,
+        limit=limit,
+    )
 
 
 # C6: Impersonation logs (real data)
@@ -2069,47 +1527,14 @@ async def get_impersonation_logs(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_platform_admin)
 ):
-    rows = await db.execute(text("""
-    SELECT 
-        il.id, il.started_at, il.terminated_at as ended_at, il.ip_address, il.reason,
-        imp.email as impersonator_email, 
-        imp.first_name || ' ' || imp.last_name as impersonator_name,
-        tgt.email as target_email,
-        tgt.first_name || ' ' || tgt.last_name as target_name,
-        o.name as org_name,
-        EXTRACT(EPOCH FROM (COALESCE(il.terminated_at, NOW()) - il.started_at)) as duration_seconds,
-        CASE WHEN il.terminated_at IS NULL THEN 'ACTIVE' ELSE 'ENDED' END as status
-        FROM command_center_audit.impersonation_logs il
-    JOIN identity.users imp ON imp.id = il.super_admin_id
-    JOIN identity.users tgt ON tgt.id = il.target_user_id
-    LEFT JOIN platform.organizations o ON o.id = tgt.organization_id
-    ORDER BY il.started_at DESC
-    OFFSET :skip LIMIT :limit
-    """), {"skip": skip, "limit": limit})
-    
-    summary = await db.execute(text("""
-    SELECT 
-        COUNT(*) FILTER (WHERE terminated_at IS NULL) as active_sessions,
-        COUNT(*) as total_sessions,
-        AVG(EXTRACT(EPOCH FROM (COALESCE(terminated_at, NOW()) - started_at))) as avg_duration,
-        MAX(EXTRACT(EPOCH FROM (COALESCE(terminated_at, NOW()) - started_at))) as max_duration,
-        COUNT(DISTINCT super_admin_id) as unique_impersonators
-        FROM command_center_audit.impersonation_logs
-    WHERE started_at >= NOW() - INTERVAL '30 days'
-    """), {"skip": skip, "limit": limit})
-    s = summary.fetchone()
-    total = await db.scalar(select(func.count(ImpersonationLog.id))) or 0
-    
+    rows, total, summary = await AuditQueryService(db).list_impersonation_logs(
+        skip=skip,
+        limit=limit,
+    )
     return {
-        "items": [dict(r._mapping) for r in rows],
+        "items": rows,
         "total": total,
-        "summary": {
-            "active_sessions": s.active_sessions or 0,
-            "total_sessions_30d": s.total_sessions or 0,
-            "avg_duration_seconds": float(s.avg_duration or 0),
-            "max_duration_seconds": float(s.max_duration or 0),
-            "unique_impersonators": s.unique_impersonators or 0,
-        }
+        "summary": summary,
     }
 
 
@@ -2145,123 +1570,12 @@ async def get_organization_dossier(
     current_user: User = Depends(require_platform_admin),
 ):
     """Return a coherent, point-in-time command-center view of one tenant."""
-    org = await db.get(Organization, org_id)
-    if not org:
+    dossier = await OrganizationConsoleQueryService(db).organization_dossier(
+        organization_id=org_id
+    )
+    if dossier is None:
         raise HTTPException(status_code=404, detail="Organization not found")
-
-    now = datetime.now(timezone.utc)
-    subscriptions = (await db.execute(
-        select(OrganizationSubscription)
-        .where(OrganizationSubscription.organization_id == org_id)
-        .options(selectinload(OrganizationSubscription.plan))
-        .order_by(OrganizationSubscription.created_at.desc())
-    )).scalars().all()
-    current_sub = next((s for s in subscriptions if s.status in {"ACTIVE", "TRIAL", "GRACE_PERIOD"}), subscriptions[0] if subscriptions else None)
-
-    grants = (await db.execute(
-        select(EntitlementGrant).where(EntitlementGrant.organization_id == org_id).order_by(EntitlementGrant.created_at.desc())
-    )).scalars().all()
-    event_grants = [g for g in grants if g.unit_type == "EVENT" and g.status == "ACTIVE"]
-    purchased = sum(int(g.quantity_total or 0) for g in event_grants)
-    consumed = sum(int(g.quantity_consumed or 0) for g in event_grants)
-    reserved = sum(int(g.quantity_reserved or 0) for g in event_grants)
-
-    actual_events = int(await db.scalar(select(func.count(Event.id)).where(Event.organization_id == org_id)) or 0)
-    activation_rows = (await db.execute(
-        select(EventActivation.status, func.count(EventActivation.id))
-        .where(EventActivation.organization_id == org_id)
-        .group_by(EventActivation.status)
-    )).all()
-    activation_counts = {str(status).upper(): int(count) for status, count in activation_rows}
-
-    plan_feature_ids = set()
-    if current_sub:
-        plan_feature_ids = set((await db.execute(
-            select(PlanFeature.feature_id).where(PlanFeature.plan_id == current_sub.plan_id, PlanFeature.enabled == True)
-        )).scalars().all())
-    overrides = (await db.execute(
-        select(OrganizationFeature).where(OrganizationFeature.organization_id == org_id)
-    )).scalars().all()
-    override_map = {item.feature_id: item for item in overrides}
-    addon_rows = (await db.execute(
-        select(OrganizationAddon, Addon).join(Addon, Addon.id == OrganizationAddon.addon_id)
-        .where(OrganizationAddon.organization_id == org_id)
-        .order_by(OrganizationAddon.purchased_at.desc())
-    )).all()
-    addon_ids = [row[1].id for row in addon_rows if row[0].status == "ACTIVE" and (not row[0].expires_at or row[0].expires_at > now)]
-    addon_feature_ids = set()
-    if addon_ids:
-        addon_feature_ids = set((await db.execute(
-            select(AddonFeature.feature_id).where(AddonFeature.addon_id.in_(addon_ids))
-        )).scalars().all())
-    catalog = (await db.execute(select(FeatureCatalog).order_by(FeatureCatalog.category, FeatureCatalog.name))).scalars().all()
-    capabilities = []
-    for feature in catalog:
-        override = override_map.get(feature.id)
-        override_active = bool(override and (not override.expires_at or override.expires_at > now))
-        plan_enabled = feature.id in plan_feature_ids
-        addon_enabled = feature.id in addon_feature_ids
-        enabled = override.is_enabled if override_active else (plan_enabled or addon_enabled)
-        source = "override" if override_active else "addon" if addon_enabled else "plan" if plan_enabled else "none"
-        capabilities.append({
-            "id": str(feature.id), "key": feature.key, "name": feature.name,
-            "category": feature.category, "description": feature.description,
-            "enabled": enabled, "source": source,
-            "extended": bool(override_active and override.is_enabled),
-            "expires_at": override.expires_at if override_active else None,
-            "reason": override.reason if override_active else None,
-        })
-
-    usage = await db.get(OrganizationUsage, org_id)
-    health = await db.scalar(select(OrganizationHealth).where(OrganizationHealth.organization_id == org_id))
-    member_count = int(await db.scalar(select(func.count(OrganizationMember.id)).where(OrganizationMember.organization_id == org_id)) or 0)
-    owner = await db.scalar(select(User).where(User.organization_id == org_id).order_by(User.created_at.asc()).limit(1))
-    # Use the stable legacy invoice columns here. Some deployments predate the
-    # richer invoice projection and ORM-selecting the whole model would make an
-    # otherwise healthy dossier fail on optional columns.
-    invoice_summary = (await db.execute(text("""
-        SELECT COUNT(*) AS invoice_count, COALESCE(SUM(amount), 0) AS invoiced_total
-        FROM commerce.invoices WHERE organization_id = :org_id
-    """), {"org_id": org_id})).one()
-
-    def subscription_payload(sub):
-        return {
-            "id": str(sub.id), "plan_id": str(sub.plan_id), "plan_name": sub.plan.name if sub.plan else "Unknown",
-            "status": sub.status, "billing_model": sub.plan.billing_model if sub.plan else None,
-            "currency": sub.plan.currency if sub.plan else org.currency[:3],
-            "price_per_event": float(sub.plan.price_per_event) if sub.plan and sub.plan.price_per_event is not None else None,
-            "trial_ends_at": sub.trial_ends_at, "current_period_end": sub.current_period_end,
-            "cancel_at_period_end": sub.cancel_at_period_end, "created_at": sub.created_at,
-        }
-
-    return {
-        "generated_at": now,
-        "profile": {
-            "id": str(org.id), "name": org.name, "slug": org.slug, "logo_url": org.logo_url,
-            "is_active": org.is_active, "is_platform_org": org.is_platform_org,
-            "billing_email": org.billing_email, "custom_domain": org.custom_domain,
-            "country": org.country, "timezone": org.timezone, "currency": org.currency,
-            "language": org.language, "portal_name": org.portal_name, "date_format": org.date_format,
-            "time_format": org.time_format, "organization_type": org.organization_type,
-            "industry": org.industry, "expected_events_per_year": org.expected_events_per_year,
-            "average_attendees_per_event": org.average_attendees_per_event, "primary_goal": org.primary_goal,
-            "enabled_modules": org.enabled_modules or [], "onboarding_completed": org.onboarding_completed,
-            "onboarding_step": org.onboarding_step, "created_at": org.created_at, "updated_at": org.updated_at,
-            "suspended_at": org.suspended_at, "suspension_reason": org.suspension_reason,
-        },
-        "owner": {"id": str(owner.id), "name": f"{owner.first_name or ''} {owner.last_name or ''}".strip(), "email": owner.email} if owner else None,
-        "health": {"score": health.health_score if health else None, "status": health.status if health else "NOT_MEASURED", "warnings": health.warnings if health else []},
-        "subscription": subscription_payload(current_sub) if current_sub else None,
-        "subscription_history": [subscription_payload(item) for item in subscriptions],
-        "event_entitlement": {"purchased": purchased, "reserved": reserved, "consumed": consumed, "remaining": max(0, purchased - consumed - reserved), "actual_events": actual_events, "activations": activation_counts},
-        "grants": [{"id": str(g.id), "type": g.grant_type, "source": g.source_type, "status": g.status, "total": g.quantity_total, "consumed": g.quantity_consumed, "reserved": g.quantity_reserved, "valid_until": g.valid_until} for g in grants],
-        "capabilities": capabilities,
-        "addons": [{"id": str(oa.id), "catalog_id": str(addon.id), "name": addon.name, "key": addon.key, "type": addon.addon_type, "status": oa.status, "scope": "activation" if oa.activation_id else "event" if oa.event_id else "organization", "quantity": oa.quantity, "unit_price": float(oa.unit_price_snapshot) if oa.unit_price_snapshot is not None else float(addon.final_price or 0), "currency": oa.currency, "purchased_at": oa.purchased_at, "expires_at": oa.expires_at, "event_id": str(oa.event_id) if oa.event_id else None, "activation_id": str(oa.activation_id) if oa.activation_id else None} for oa, addon in addon_rows],
-        "usage": {"active_events": usage.active_events_count if usage else 0, "active_users": usage.active_users_count if usage else 0, "registrations": usage.total_registrations_count if usage else 0, "storage_bytes": usage.storage_used_bytes if usage else 0, "calculated_at": usage.last_calculated_at if usage else None},
-        "people": {"members": member_count},
-        "billing": {"invoice_count": int(invoice_summary.invoice_count), "invoiced_total": float(invoice_summary.invoiced_total), "currency": current_sub.plan.currency if current_sub and current_sub.plan else "INR"},
-        "availability": {"profile": True, "subscriptions": True, "entitlements": True, "capabilities": True, "addons": True, "events": True, "people": True, "billing": True},
-    }
+    return dossier
 
 @router.delete("/organizations/{org_id}")
 async def delete_organization(
@@ -2368,50 +1682,12 @@ async def list_impersonation_logs(
     skip: int = 0,
     limit: int = 50,
 ):
-    """List all impersonation audit events from the impersonation_logs table."""
-    from sqlalchemy.orm import aliased
-    Impersonator = aliased(User)
-    TargetUser = aliased(User)
-
-    stmt = (
-        select(ImpersonationLog, Impersonator, TargetUser, Organization)
-        .join(Impersonator, ImpersonationLog.super_admin_id == Impersonator.id)
-        .outerjoin(TargetUser, ImpersonationLog.target_user_id == TargetUser.id)
-        .join(Organization, ImpersonationLog.target_organization_id == Organization.id)
-        .order_by(ImpersonationLog.started_at.desc())
-        .offset(skip)
-        .limit(limit)
+    """Compatibility response backed by the shared impersonation query service."""
+    rows, total, _summary = await AuditQueryService(db).list_impersonation_logs(
+        skip=skip,
+        limit=limit,
     )
-    
-    result = await db.execute(stmt)
-    rows = result.all()
-
-    total = await db.scalar(select(func.count(ImpersonationLog.id))) or 0
-
-    items = []
-    for log, imp, target, org in rows:
-        items.append({
-            "id": log.id,
-            "impersonator_id": log.super_admin_id,
-            "impersonator_email": imp.email,
-            "impersonator_name": f"{imp.first_name} {imp.last_name}".strip(),
-            "target_user_id": log.target_user_id,
-            "target_user_email": target.email if target else None,
-            "target_user_name": f"{target.first_name} {target.last_name}".strip() if target else None,
-            "target_organization_id": log.target_organization_id,
-            "target_organization_name": org.name,
-            "reason": log.reason,
-            "started_at": log.started_at,
-            "session_expires_at": log.session_expires_at,
-            "ended_at": log.terminated_at,
-            "ip_address": log.ip_address,
-            "user_agent": log.user_agent,
-        })
-
-    return {
-        "total": total,
-        "items": items
-    }
+    return {"total": total, "items": rows}
 
 
 @router.post("/impersonation/{session_id}/end")
@@ -2452,6 +1728,26 @@ async def get_platform_audit(
     Super Admin endpoint to query the global audit trail.
     Uses cursor-based pagination and supports state-masking by default.
     """
+    cursor_time = None
+    cursor_id = None
+    if cursor:
+        try:
+            decoded = json.loads(base64.urlsafe_b64decode(cursor.encode("utf-8")).decode("utf-8"))
+            cursor_time = datetime.fromisoformat(decoded["occurred_at"])
+            cursor_id = uuid.UUID(decoded["id"])
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid pagination cursor") from exc
+    results, total, action_counts, has_next = await AuditQueryService(db).list_platform_audit(
+        action_type=action_type, resource_type=resource_type,
+        actor_user_id=actor_user_id, organization_id=organization_id,
+        date_from=date_from, date_to=date_to, is_sensitive=is_sensitive,
+        cursor_time=cursor_time, cursor_id=cursor_id, skip=0, limit=limit,
+        include_state=include_state,
+    )
+    next_cursor = f"{results[-1]['occurred_at']}|{results[-1]['id']}" if has_next and results else None
+    return {"items": results, "next_cursor": next_cursor, "has_next": has_next,
+            "total": total, "action_counts": action_counts}
+
     import base64
     import json
     from app.modules.audit.models.audit_log import AuditLog
@@ -2588,8 +1884,11 @@ async def get_platform_health(
 # TASK 10: Celery queue depths from Redis
 @router.get("/operations/queues")
 async def get_queue_stats(
-    _: User = Depends(require_platform_admin)
+    _: User = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
 ):
+    return await PlatformOperationsQueryService(db).queue_stats()
+
     import redis.asyncio as aioredis
     r = aioredis.from_url(settings.REDIS_URL)
     queues = ['default', 'files', 'sync', 'notifications',
@@ -2625,6 +1924,8 @@ async def get_database_stats(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_platform_admin)
 ):
+    return await PlatformOperationsQueryService(db).database_stats()
+
     # Connection stats
     conn_stats = await db.execute(text("""
     SELECT count(*) as total,
@@ -2721,6 +2022,11 @@ async def get_background_jobs(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_platform_admin)
 ):
+    return await PlatformOperationsQueryService(db).background_jobs(
+        status=status, queue=queue, organization_id=organization_id,
+        event_id=event_id, source=source, skip=skip, limit=limit,
+    )
+
     async def table_exists(regclass_name: str) -> bool:
         return bool(await db.scalar(text("SELECT to_regclass(:table_name)"), {"table_name": regclass_name}))
 
@@ -2961,48 +2267,9 @@ async def get_org_feature_overrides(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_platform_admin)
 ):
-    # Get org's current plan features
-    sub = await _get_current_subscription(db, org_id)
-    
-    # Get all features from catalog
-    all_features = await db.execute(select(FeatureCatalog).order_by(FeatureCatalog.category))
-    
-    # Get plan's default features
-    plan_features = {}
-    if sub:
-        pf = await db.execute(
-            select(PlanFeature)
-            .where(PlanFeature.plan_id == sub.plan_id)
-        )
-        plan_features = {str(r.feature_id): r.enabled for r in pf.scalars()}
-    
-    # Get org-specific overrides
-    org_overrides = await db.execute(
-        select(OrganizationFeature)
-        .where(OrganizationFeature.organization_id == org_id)
+    return await OrganizationConsoleQueryService(db).organization_feature_overrides(
+        organization_id=org_id
     )
-    override_map = {}
-    for r in org_overrides.scalars():
-        override_map[str(r.feature_id)] = r.is_enabled
-    
-    result = []
-    for feature in all_features.scalars():
-        fid = str(feature.id)
-        plan_default = plan_features.get(fid, False)
-        override = override_map.get(fid)  # None = no override
-        
-        result.append({
-            "feature_id": fid,
-            "feature_key": feature.key,
-            "feature_name": feature.name,
-            "category": feature.category,
-            "description": feature.description,
-            "plan_default": plan_default,
-            "override": override,  # None | True | False
-            "effective_value": override if override is not None else plan_default,
-        })
-    
-    return result
 
 
 # E2: Save feature overrides (bulk)
@@ -3084,15 +2351,8 @@ async def get_subscriptions_health_summary(
     current_user: User = Depends(require_platform_admin)
 ):
     """Get count metrics per subscription status."""
-    stmt = select(
-        OrganizationSubscription.status, 
-        func.count(OrganizationSubscription.id)
-    ).group_by(OrganizationSubscription.status)
-    res = await db.execute(stmt)
-    counts = {r[0]: r[1] for r in res.all()}
-    
-    statuses = ["ACTIVE", "TRIAL", "GRACE_PERIOD", "SUSPENDED", "EXPIRED", "CANCELLED"]
-    return {s: counts.get(s, 0) for s in statuses}
+    del current_user
+    return await PlatformCommercialCatalogQueryService(db).subscription_health_summary()
 
 
 # ── Change Organization Plan ──────────────────────────────────
@@ -3340,9 +2600,10 @@ async def get_organization_limits(
     current_user: User = Depends(require_platform_admin)
 ):
     """Fetch customized limits overrides for a tenant."""
-    stmt = select(TenantLimit).where(TenantLimit.organization_id == org_id)
-    limits = (await db.execute(stmt)).scalars().all()
-    return {l.limit_key: l.limit_value for l in limits}
+    del current_user
+    return await OrganizationConsoleQueryService(db).organization_limits(
+        organization_id=org_id
+    )
 
 @router.put("/organizations/{org_id}/limits")
 async def update_organization_limits(
@@ -3425,19 +2686,13 @@ async def get_public_organization_branding(
         normalized_host = host.strip().lower().split(":", 1)[0].rstrip(".")
         if not re.fullmatch(r"[a-z0-9.-]+", normalized_host):
             raise HTTPException(status_code=422, detail={"code": "INVALID_HOST"})
-        organization = await db.scalar(
-            select(Organization).where(
-                func.lower(Organization.custom_domain) == normalized_host,
-                Organization.is_active.is_(True),
-            )
+        organization, profile = await OrganizationConsoleQueryService(db).public_branding_sources(
+            host=normalized_host
         )
     else:
         normalized_slug = (slug or "").strip().lower()
-        organization = await db.scalar(
-            select(Organization).where(
-                Organization.slug == normalized_slug,
-                Organization.is_active.is_(True),
-            )
+        organization, profile = await OrganizationConsoleQueryService(db).public_branding_sources(
+            slug=normalized_slug
         )
     if organization is None:
         raise HTTPException(status_code=404, detail="Organization brand not found")
@@ -3454,14 +2709,6 @@ async def get_public_organization_branding(
             detail={"code": "RESOLUTION_UNAVAILABLE"},
         ) from exc
 
-    profile = await db.scalar(
-        select(OrganizationBrandProfile).where(
-            OrganizationBrandProfile.organization_id == organization.id,
-            OrganizationBrandProfile.status == "PUBLISHED",
-            OrganizationBrandProfile.published_version
-            == OrganizationBrandProfile.version,
-        )
-    )
     templates = dict(profile.templates or {}) if profile else {}
     white_capability = capabilities["features"].get("FEAT_WHITE_LABEL", {})
     login_capability = capabilities["features"].get("FEAT_CUSTOM_LOGIN_PAGE", {})
@@ -3533,16 +2780,10 @@ async def get_organization_domains(
     current_user: User = Depends(require_platform_admin)
 ):
     """List domains associated with an organization."""
-    stmt = select(OrganizationDomain).where(OrganizationDomain.organization_id == org_id)
-    domains = (await db.execute(stmt)).scalars().all()
-    return [
-        {
-            "id": d.id,
-            "domain": d.domain,
-            "is_verified": d.is_verified,
-            "created_at": d.created_at
-        } for d in domains
-    ]
+    del current_user
+    return await OrganizationConsoleQueryService(db).organization_domains(
+        organization_id=org_id
+    )
 
 @router.post("/organizations/{org_id}/domains")
 async def add_organization_domain(
@@ -3763,30 +3004,12 @@ class PlanFeaturesBulkUpdate(BaseModel):
 @router.get("/plans/{plan_id}/feature-assignments")
 @router.get("/subscription-plans/{plan_id}/feature-assignments")
 async def get_typed_plan_feature_assignments(plan_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin)):
-    if not await db.get(SubscriptionPlan, plan_id):
+    assignments = await PlatformCommercialCatalogQueryService(db).plan_feature_assignments(
+        plan_id=plan_id
+    )
+    if assignments is None:
         raise HTTPException(status_code=404, detail="Plan not found")
-    rows = (await db.execute(select(PlanFeature, FeatureCatalog).join(FeatureCatalog, FeatureCatalog.id == PlanFeature.feature_id).where(PlanFeature.plan_id == plan_id).order_by(FeatureCatalog.category_order, FeatureCatalog.feature_order))).all()
-    items = []
-    for mapping, feature in rows:
-        v_type = feature.value_type or mapping.value_type or "BOOLEAN"
-        if isinstance(mapping.entitlement_value, dict) and "value" in mapping.entitlement_value:
-            val = mapping.entitlement_value["value"]
-        else:
-            val = None if v_type == "LIMIT" else mapping.enabled
-        ceiling = mapping.hard_ceiling.get("value") if isinstance(mapping.hard_ceiling, dict) else mapping.hard_ceiling
-        items.append({
-            "feature_key": feature.key,
-            "name": feature.name,
-            "value_type": v_type,
-            "value": val,
-            "scope_type": mapping.scope_type or feature.scope_type,
-            "enforcement_mode": mapping.enforcement_mode or feature.enforcement_mode,
-            "hard_ceiling": ceiling,
-            "allowed_values": feature.allowed_values,
-            "unit": feature.unit,
-            "period": feature.period
-        })
-    return {"items": items}
+    return assignments
 
 
 @router.get("/subscription-plans/{plan_id}/versions")
@@ -3798,46 +3021,17 @@ async def list_plan_template_versions(
     current_user: User = Depends(require_platform_admin),
 ):
     del current_user
-    if not await db.get(SubscriptionPlan, plan_id):
+    try:
+        versions = await PlatformCommercialCatalogQueryService(db).plan_template_versions(
+            plan_id=plan_id,
+            cursor=cursor,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": str(exc)}) from exc
+    if versions is None:
         raise HTTPException(status_code=404, detail="Plan not found")
-    stmt = select(CommercialTemplateVersion).where(
-        CommercialTemplateVersion.resource_type == "PLAN",
-        CommercialTemplateVersion.resource_id == plan_id,
-    )
-    if cursor:
-        try:
-            decoded = base64.urlsafe_b64decode(cursor.encode()).decode()
-            created_raw, version_raw = decoded.split("|", 1)
-            created_before = datetime.fromisoformat(created_raw)
-            version_before = int(version_raw)
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise HTTPException(status_code=422, detail={"code": "INVALID_CURSOR"}) from exc
-        stmt = stmt.where(or_(
-            CommercialTemplateVersion.created_at < created_before,
-            and_(
-                CommercialTemplateVersion.created_at == created_before,
-                CommercialTemplateVersion.version < version_before,
-            ),
-        ))
-    rows = (await db.scalars(stmt.order_by(
-        CommercialTemplateVersion.created_at.desc(),
-        CommercialTemplateVersion.version.desc(),
-    ).limit(limit + 1))).all()
-    page = rows[:limit]
-    next_cursor = None
-    if len(rows) > limit and page:
-        last = page[-1]
-        next_cursor = base64.urlsafe_b64encode(f"{last.created_at.isoformat()}|{last.version}".encode()).decode()
-    return {
-        "items": [{
-            "id": str(row.id), "version": row.version,
-            "lifecycle_status": row.lifecycle_status, "change_type": row.change_type,
-            "snapshot": row.snapshot_json, "reason": row.reason,
-            "actor_user_id": str(row.actor_user_id) if row.actor_user_id else None,
-            "created_at": row.created_at,
-        } for row in page],
-        "next_cursor": next_cursor,
-    }
+    return versions
 
 @router.put("/plans/{plan_id}/features")
 @router.put("/subscription-plans/{plan_id}/features")
@@ -4204,46 +3398,17 @@ async def list_addon_template_versions(
     current_user: User = Depends(require_platform_admin),
 ):
     del current_user
-    if not await db.get(Addon, addon_id):
+    try:
+        versions = await PlatformCommercialCatalogQueryService(db).addon_template_versions(
+            addon_id=addon_id,
+            cursor=cursor,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": str(exc)}) from exc
+    if versions is None:
         raise HTTPException(status_code=404, detail="Add-on not found")
-    stmt = select(CommercialTemplateVersion).where(
-        CommercialTemplateVersion.resource_type == "ADDON",
-        CommercialTemplateVersion.resource_id == addon_id,
-    )
-    if cursor:
-        try:
-            decoded = base64.urlsafe_b64decode(cursor.encode()).decode()
-            created_raw, version_raw = decoded.split("|", 1)
-            created_before = datetime.fromisoformat(created_raw)
-            version_before = int(version_raw)
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise HTTPException(status_code=422, detail={"code": "INVALID_CURSOR"}) from exc
-        stmt = stmt.where(or_(
-            CommercialTemplateVersion.created_at < created_before,
-            and_(
-                CommercialTemplateVersion.created_at == created_before,
-                CommercialTemplateVersion.version < version_before,
-            ),
-        ))
-    rows = (await db.scalars(stmt.order_by(
-        CommercialTemplateVersion.created_at.desc(),
-        CommercialTemplateVersion.version.desc(),
-    ).limit(limit + 1))).all()
-    page = rows[:limit]
-    next_cursor = None
-    if len(rows) > limit and page:
-        last = page[-1]
-        next_cursor = base64.urlsafe_b64encode(f"{last.created_at.isoformat()}|{last.version}".encode()).decode()
-    return {
-        "items": [{
-            "id": str(row.id), "version": row.version,
-            "lifecycle_status": row.lifecycle_status, "change_type": row.change_type,
-            "snapshot": row.snapshot_json, "reason": row.reason,
-            "actor_user_id": str(row.actor_user_id) if row.actor_user_id else None,
-            "created_at": row.created_at,
-        } for row in page],
-        "next_cursor": next_cursor,
-    }
+    return versions
 
 @router.post("/addons", status_code=201)
 async def create_platform_addon(
@@ -4650,17 +3815,10 @@ async def get_invoice_items(
     current_user: User = Depends(require_platform_admin)
 ):
     """Retrieve invoice items list (Super Admin)."""
-    stmt = select(InvoiceItem).where(InvoiceItem.invoice_id == invoice_id)
-    items = (await db.execute(stmt)).scalars().all()
-    return [
-        {
-            "id": str(item.id),
-            "description": item.description,
-            "amount": float(item.amount),
-            "quantity": getattr(item, "quantity", 1),
-        }
-        for item in items
-    ]
+    del current_user
+    return await PlatformCommercialCatalogQueryService(db).invoice_items(
+        invoice_id=invoice_id
+    )
 
 
 @router.post("/invoices/{invoice_id}/mark-paid")
@@ -4817,6 +3975,16 @@ async def void_invoice(
 
 @router.get("/revenue/analytics")
 async def get_revenue_analytics(
+    breakdown: str = Query("plan"),
+    period: str = Query("12m"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_platform_admin)
+):
+    """Return the bounded revenue projection for the platform dashboard."""
+    return await PlatformCoreDashboardQueryService(db).revenue_analytics(period=period)
+
+
+async def _legacy_revenue_analytics(
     breakdown: str = Query("plan"),
     period: str = Query("12m"),
     db: AsyncSession = Depends(get_db),
@@ -5075,105 +4243,14 @@ async def get_financial_gateways(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_platform_admin)
 ):
-    try:
-        res = await db.execute(select(PaymentGateway))
-        gateways = res.scalars().all()
-        result = []
-        for g in gateways:
-            result.append({
-                "id": str(g.id),
-                "name": g.gateway_name,
-                "provider": g.provider,
-                "mode": g.mode,
-                "is_active": g.is_active,
-                "success_rate": float(g.success_rate_30d) if g.success_rate_30d is not None else 100.0,
-                "transactions_count": g.transactions_mtd,
-                "volume_mtd_inr": float(g.volume_mtd_inr) if g.volume_mtd_inr is not None else 0.0,
-                "last_checked_at": g.last_health_check.isoformat() if g.last_health_check else None,
-                "health_status": g.health_status
-            })
-        
-        # Calculate success rate trend for the last 30 days dynamically from transactions
-        trend_res = await db.execute(text("""
-            SELECT
-                TO_CHAR(created_at, 'YYYY-MM-DD') as day,
-                gateway_name,
-                COUNT(*) FILTER (WHERE status = 'COMPLETED')::float / COUNT(*) * 100 as success_rate
-            FROM registration.payment_transactions
-            WHERE created_at >= NOW() - INTERVAL '30 days'
-            GROUP BY TO_CHAR(created_at, 'YYYY-MM-DD'), gateway_name
-            ORDER BY day
-        """))
-        trend_data = {}
-        for r in trend_res.fetchall():
-            d = r.day
-            gw = (r.gateway_name or "unknown").lower()
-            val = float(r.success_rate or 0.0)
-            if d not in trend_data:
-                trend_data[d] = {"day": d}
-            trend_data[d][gw] = val
-        trend_list = sorted(trend_data.values(), key=lambda x: x["day"])
-
-        return {
-            "items": result,
-            "trend": trend_list
-        }
-    except Exception as e:
-        # Return empty lists when table doesn't exist or error occurs (real DB state fallback)
-        return {
-            "items": [],
-            "trend": []
-        }
+    return await PlatformCoreDashboardQueryService(db).payment_gateway_health()
 
 @router.get("/financial/tax-config")
 async def get_financial_tax_config(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_platform_admin)
 ):
-    tax_rules = []
-    pricing_rules = []
-    try:
-        res = await db.execute(text("SELECT id, name, tax_type, rate, state_region, is_active FROM pricing.tax_rules"))
-        tax_rules = [{
-            "id": str(r.id),
-            "name": r.name,
-            "tax_type": r.tax_type,
-            "rate": float(r.rate),
-            "state_region": r.state_region,
-            "is_active": r.is_active
-        } for r in res.fetchall()]
-    except Exception:
-        pass
-        
-    try:
-        res = await db.execute(text("SELECT id, name, value, is_active FROM pricing.pricing_rules"))
-        pricing_rules = [{
-            "id": str(r.id),
-            "name": r.name,
-            "value": float(r.value),
-            "is_active": r.is_active
-        } for r in res.fetchall()]
-    except Exception:
-        pass
-        
-    tax_summary_distribution = []
-    try:
-        tax_dist_res = await db.execute(text("""
-            SELECT
-                COALESCE(tax_type, 'GST') as type,
-                COALESCE(SUM(gst_amount), 0) as val
-            FROM commerce.invoices
-            GROUP BY tax_type
-        """))
-        tax_summary_distribution = [{"type": r[0], "value": float(r[1])} for r in tax_dist_res.fetchall()]
-    except Exception:
-        pass
-    
-    return {
-        "tax_rules": tax_rules,
-        "pricing_rules": pricing_rules,
-        "tax_summary_distribution": tax_summary_distribution
-    }
+    return await PlatformFinancialQueryService(db).tax_configuration()
 
 @router.get("/financial/transactions")
 async def get_financial_transactions(
@@ -5183,51 +4260,11 @@ async def get_financial_transactions(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_platform_admin)
 ):
-    transactions = []
-    total_count = 0
-    try:
-        query_str = """
-            SELECT t.id, t.organization_id, o.name as org_name, t.amount, t.gateway_name, t.status, t.created_at
-            FROM registration.payment_transactions t
-            LEFT JOIN platform.organizations o ON t.organization_id = o.id
-        """
-        if status:
-            query_str += " WHERE t.status = :status"
-        query_str += " ORDER BY t.created_at DESC LIMIT :limit OFFSET :offset"
-        
-        params = {"limit": limit, "offset": skip}
-        if status:
-            params["status"] = status
-            
-        res = await db.execute(text(query_str), params)
-        transactions = [{
-            "id": str(r.id),
-            "organization_id": str(r.organization_id),
-            "org_name": r.org_name or "Unknown Org",
-            "amount_inr": float(r.amount),
-            "gateway": r.gateway_name or "RAZORPAY",
-            "status": r.status.upper(),
-            "created_at": r.created_at.isoformat()
-        } for r in res.fetchall()]
-        
-        count_query = "SELECT count(*) FROM registration.payment_transactions"
-        if status:
-            count_query += " WHERE status = :status"
-        total_res = await db.execute(text(count_query), {"status": status} if status else {})
-        total_count = total_res.scalar() or 0
-    except Exception:
-        pass
-        
-    return {
-        "items": transactions,
-        "total": total_count,
-        "summary": {
-            "total_count": total_count,
-            "completed_count": len([t for t in transactions if t["status"] == "COMPLETED"]),
-            "failed_count": len([t for t in transactions if t["status"] == "FAILED"]),
-            "refunded_count": len([t for t in transactions if t["status"] == "REFUNDED"])
-        }
-    }
+    return await PlatformFinancialQueryService(db).payment_transactions(
+        skip=skip,
+        limit=limit,
+        status=status,
+    )
 
 @router.get("/financial/audit-trail")
 async def get_financial_audit_trail(
@@ -5238,51 +4275,12 @@ async def get_financial_audit_trail(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_platform_admin)
 ):
-    items = []
-    total_count = 0
-    try:
-        query_str = """
-            SELECT a.id, a.organization_id, o.name as org_name, u.email as performed_by_name, a.activity_type, a.amount, a.occurred_at
-            FROM commerce.financial_audit_trail a
-            LEFT JOIN platform.organizations o ON a.organization_id = o.id
-            LEFT JOIN identity.users u ON a.performed_by = u.id
-        """
-        where_clauses = []
-        params = {"limit": limit, "offset": skip}
-        if org_id:
-            where_clauses.append("a.organization_id = :org_id")
-            params["org_id"] = org_id
-        if activity_type:
-            where_clauses.append("a.activity_type = :activity_type")
-            params["activity_type"] = activity_type
-            
-        if where_clauses:
-            query_str += " WHERE " + " AND ".join(where_clauses)
-            
-        query_str += " ORDER BY a.occurred_at DESC LIMIT :limit OFFSET :offset"
-        res = await db.execute(text(query_str), params)
-        items = [{
-            "id": str(r.id),
-            "organization_id": str(r.organization_id) if r.organization_id else None,
-            "org_name": r.org_name or "Platform Wide",
-            "performed_by_name": r.performed_by_name or "System",
-            "activity_type": r.activity_type,
-            "amount": float(r.amount) if r.amount is not None else None,
-            "occurred_at": r.occurred_at.isoformat()
-        } for r in res.fetchall()]
-        
-        count_query = "SELECT count(*) FROM commerce.financial_audit_trail"
-        if where_clauses:
-            count_query += " WHERE " + " AND ".join(where_clauses)
-        total_res = await db.execute(text(count_query), {k: v for k, v in params.items() if k not in ("limit", "offset")})
-        total_count = total_res.scalar() or 0
-    except Exception:
-        pass
-        
-    return {
-        "items": items,
-        "total": total_count
-    }
+    return await PlatformFinancialQueryService(db).financial_audit_trail(
+        skip=skip,
+        limit=limit,
+        organization_id=org_id,
+        activity_type=activity_type,
+    )
 
 @router.get("/impersonation-logs")
 async def get_impersonation_logs_route(
@@ -5291,49 +4289,25 @@ async def get_impersonation_logs_route(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_platform_admin)
 ):
-    logs = []
-    total_count = 0
-    try:
-        res = await db.execute(text("""
-            SELECT
-                l.id,
-                l.ip_address,
-                l.started_at,
-                l.ended_at,
-                COALESCE(u1.first_name || ' ' || u1.last_name, 'Super Admin') as impersonator_name,
-                COALESCE(u1.email, 'superadmin@Event.com') as impersonator_email,
-                COALESCE(u2.first_name || ' ' || u2.last_name, 'Organizer') as target_user_name,
-                COALESCE(u2.email, 'organizer@Eventos.com') as target_user_email,
-                COALESCE(o.name, 'Platform') as org_name
-            FROM auth.impersonation_logs l
-            LEFT JOIN identity.users u1 ON l.impersonator_id = u1.id
-            LEFT JOIN identity.users u2 ON l.target_user_id = u2.id
-            LEFT JOIN platform.organizations o ON l.organization_id = o.id
-            ORDER BY l.started_at DESC LIMIT :limit OFFSET :offset
-        """), {"limit": limit, "offset": skip})
-        
-        logs = [{
-            "id": str(r.id),
-            "impersonator_name": r.impersonator_name,
-            "impersonator_email": r.impersonator_email,
-            "target_user_name": r.target_user_name,
-            "target_user_email": r.target_user_email,
-            "org_name": r.org_name,
-            "target_organization_name": r.org_name,
-            "ip_address": r.ip_address,
-            "duration_seconds": int((r.ended_at - r.started_at).total_seconds()) if (r.ended_at and r.started_at) else 0,
-            "started_at": r.started_at.isoformat(),
-            "ended_at": r.ended_at.isoformat() if r.ended_at else None
-        } for r in res.fetchall()]
-        
-        total_res = await db.execute(text("SELECT count(*) FROM auth.impersonation_logs"))
-        total_count = total_res.scalar() or 0
-    except Exception:
-        pass
-        
+    rows, total_count, _summary = await AuditQueryService(db).list_impersonation_logs(
+        skip=skip,
+        limit=limit,
+    )
     return {
-        "items": logs,
-        "total": total_count
+        "items": [{
+            "id": row["id"],
+            "impersonator_name": row["impersonator_name"] or "Super Admin",
+            "impersonator_email": row["impersonator_email"] or "superadmin@Event.com",
+            "target_user_name": row["target_name"] or "Organizer",
+            "target_user_email": row["target_email"] or "organizer@Eventos.com",
+            "org_name": row["org_name"] or "Platform",
+            "target_organization_name": row["org_name"] or "Platform",
+            "ip_address": row["ip_address"],
+            "duration_seconds": int(row["duration_seconds"] or 0),
+            "started_at": row["started_at"].isoformat(),
+            "ended_at": row["ended_at"].isoformat() if row["ended_at"] else None,
+        } for row in rows],
+        "total": total_count,
     }
 
 @router.get("/ai/dashboard")

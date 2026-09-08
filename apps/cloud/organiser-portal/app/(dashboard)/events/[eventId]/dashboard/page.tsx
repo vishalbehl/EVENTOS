@@ -35,6 +35,10 @@ const inr = new Intl.NumberFormat("en-IN", {
   maximumFractionDigits: 0,
 });
 
+const eventPortalOrigin = (
+  process.env.NEXT_PUBLIC_REGISTRATION_URL || "http://localhost:3003"
+).replace(/\/$/, "");
+
 export default function EventOverviewPage() {
   const params = useParams();
   const eventId = params?.eventId as string;
@@ -114,7 +118,7 @@ export default function EventOverviewPage() {
                 </Link>
                 <span className="text-[var(--border-subtle)]">•</span>
                 <a
-                  href={`http://localhost:3000/${eventId}`}
+                  href={`${eventPortalOrigin}/${eventId}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition"

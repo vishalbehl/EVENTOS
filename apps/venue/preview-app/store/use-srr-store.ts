@@ -146,12 +146,17 @@ export const useSRRStore = create<SRRState>((set, get) => ({
     const sessions = [...get().sessions];
     if (sessions[sessionIndex]) {
       const presList = sessions[sessionIndex].presentations;
+      // Presentation rows are authoritative server data. Never manufacture a
+      // placeholder file when an upload response is incomplete or unavailable.
+      if (!newFile.id || !newFile.original_filename) {
+        return;
+      }
       if (presList.length > 0) {
         presList[0] = { ...presList[0], ...newFile } as PresentationItem;
       } else {
         presList.push({
-          id: newFile.id || "",
-          original_filename: newFile.original_filename || "Presentation.pptx",
+          id: newFile.id,
+          original_filename: newFile.original_filename,
           file_format: newFile.file_format || "",
           file_size_bytes: newFile.file_size_bytes || 0,
           file_size_mb: newFile.file_size_mb || 0,

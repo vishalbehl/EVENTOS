@@ -8,6 +8,7 @@ from typing import Any, Optional
 from sqlalchemy import and_, asc, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.identity.models.user import User
 from app.modules.platform.departments.models import Department
 from app.modules.platform.teams.models import Team, TeamMember
 
@@ -24,6 +25,25 @@ class TeamQueryService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def get_member_user(
+        self, *, organization_id: uuid.UUID, team_id: uuid.UUID, user_id: uuid.UUID
+    ) -> Optional[dict[str, object]]:
+        """Return only the tenant-owned identity fields needed by a member response."""
+        row = (
+            await self.db.execute(
+                select(User.id, User.email, User.first_name, User.last_name)
+                .join(TeamMember, TeamMember.user_id == User.id)
+                .where(
+                    TeamMember.team_id == team_id,
+                    TeamMember.user_id == user_id,
+                    TeamMember.deleted_at.is_(None),
+                    User.organization_id == organization_id,
+                    User.deleted_at.is_(None),
+                )
+            )
+        ).mappings().one_or_none()
+        return dict(row) if row else None
 
     @staticmethod
     def _filters(

@@ -1,6 +1,7 @@
 import uuid
 import httpx
 from loguru import logger
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert
 
@@ -360,12 +361,26 @@ async def _upsert_schedule_data(db: AsyncSession, data: dict):
         if not ss_id:
             # Fallback to deterministic session-speaker link if needed
             ss_id = uuid.uuid5(uuid.NAMESPACE_DNS, f"ss-{sp_id}")
+
+        # Resolve routing from the authoritative session-speaker relation.
+        # Do not accept room/session values supplied only by a client payload.
+        routing = (await db.execute(
+            select(SessionSpeaker.session_id, Session.room_id)
+            .join(Session, Session.id == SessionSpeaker.session_id)
+            .where(SessionSpeaker.id == ss_id)
+        )).one_or_none()
+        if not routing or not routing.room_id:
+            logger.warning(f"Skipping presentation {pf_id}: session-speaker has no room routing")
+            continue
+        routed_session_id, routed_room_id = routing
         
         pf_stmt = insert(PresentationFile).values(
             id=pf_id,
             event_id=uuid.UUID(event_id) if isinstance(event_id, str) else event_id,
             speaker_id=sp_id,
             session_speaker_id=ss_id,
+            session_id=routed_session_id,
+            room_id=routed_room_id,
             original_filename=pf_data.get("original_filename", "presentation.pptx"),
             stored_filename=pf_data.get("stored_filename", "file.pptx"),
             storage_path=pf_data["storage_path"],
@@ -385,6 +400,8 @@ async def _upsert_schedule_data(db: AsyncSession, data: dict):
                 "file_size_bytes": pf_data.get("file_size_bytes", 1024),
                 "mime_type": pf_data.get("mime_type", "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
                 "file_format": pf_data.get("file_format", "pptx"),
+                "session_id": routed_session_id,
+                "room_id": routed_room_id,
                 "version_number": pf_data.get("version_number", 1),
                 "is_current_version": pf_data.get("is_current_version", True),
                 "upload_status": pf_data.get("upload_status", "approved"),

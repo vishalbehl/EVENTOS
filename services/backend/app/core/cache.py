@@ -17,6 +17,11 @@ from app.redis import cache_client
 from app.redis import get_lock_redis
 from app.config import settings
 from app.core.prometheus_metrics import observe_cache
+from app.core.cache_keys import TenantCacheKey
+from app.core.cache_invalidation_matrix import (
+    cache_domains_for_mutation,
+    get_cache_invalidation_rule,
+)
 
 # Backward-compatible name for older cache tests/callers. Coordination and
 # rate-limit code must import from ``app.redis`` explicitly; this alias always
@@ -161,6 +166,7 @@ async def delete(key: str) -> bool:
 
 async def delete_pattern(pattern: str, *, max_keys: int = 1000) -> int:
     """Delete a bounded namespaced key set; failures are fail-open."""
+    started = asyncio.get_running_loop().time()
     try:
         # Keep older callers functional while all newly-created keys use v1.
         if pattern.startswith("tenant:"):
@@ -177,11 +183,16 @@ async def delete_pattern(pattern: str, *, max_keys: int = 1000) -> int:
             _collect_keys(), timeout=settings.REDIS_OPERATION_TIMEOUT_SECONDS
         )
         if not keys:
+            _observe_cache("delete_pattern", "empty", started)
             return 0
-        return int(await asyncio.wait_for(cache_client.delete(*keys), timeout=settings.REDIS_OPERATION_TIMEOUT_SECONDS))
+        deleted = int(await asyncio.wait_for(cache_client.delete(*keys), timeout=settings.REDIS_OPERATION_TIMEOUT_SECONDS))
+        _observe_cache("delete_pattern", "success", started)
+        return deleted
     except Exception as exc:
         cache_failures.set(cache_failures.get() + 1)
+        _record_global("delete_pattern_failures")
         logger.debug("cache_pattern_delete_failed pattern_prefix={} error_type={}", pattern.split(":")[:3], type(exc).__name__)
+        _observe_cache("delete_pattern", "failure", started)
         return 0
 
 
@@ -232,31 +243,79 @@ async def distributed_lock(name: str, *, ttl_seconds: int | None = None):
     client = await get_lock_redis()
     token = uuid.uuid4().hex
     acquired = False
+    started = asyncio.get_running_loop().time()
     try:
         acquired = bool(await asyncio.wait_for(client.set(name, token, nx=True, ex=ttl_seconds or settings.REDIS_LOCK_TTL_SECONDS), timeout=settings.REDIS_OPERATION_TIMEOUT_SECONDS))
         if not acquired:
             cache_lock_contention.set(cache_lock_contention.get() + 1)
             _record_global("lock_contention")
+            _observe_cache("lock_acquire", "contended", started)
+        else:
+            _observe_cache("lock_acquire", "success", started)
     except Exception:
         _record_global("lock_failures")
+        _observe_cache("lock_acquire", "failure", started)
         pass
     try:
         yield acquired
     finally:
         if acquired:
+            release_started = asyncio.get_running_loop().time()
             try:
                 await client.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end", 1, name, token)
+                _observe_cache("lock_release", "success", release_started)
             except Exception:
+                _record_global("lock_release_failures")
+                _observe_cache("lock_release", "failure", release_started)
                 pass
 
 
 async def invalidate_event(organization_id, event_id) -> int:
-    # New keys use the versioned TenantCacheKey namespace.
-    return await delete_pattern(f"cache:v1:tenant:{organization_id}:event:{event_id}:*")
+    deleted = await delete_pattern(TenantCacheKey.event_pattern(event_id, organization_id))
+    # Organization-console search spans events, so any event mutation can
+    # change its suggestions/results. Keep this targeted to search keys rather
+    # than evicting unrelated organization caches.
+    deleted += await delete_pattern(
+        TenantCacheKey.organization_domain_pattern(organization_id, "search-v1")
+    )
+    return deleted
 
 
 async def invalidate_organization(organization_id) -> int:
-    return await delete_pattern(f"cache:v1:tenant:{organization_id}:*")
+    return await delete_pattern(TenantCacheKey.organization_pattern(organization_id))
+
+
+async def invalidate_cache_domain(
+    read_domain: str, organization_id, event_id=None
+) -> int:
+    """Invalidate one matrix-defined read domain using verified tenant scope."""
+    rule = get_cache_invalidation_rule(read_domain)
+    if rule.scope == "event":
+        if event_id is None:
+            raise ValueError(f"Event id is required for cache domain {read_domain}")
+        return await invalidate_event(organization_id, event_id)
+    if rule.scope == "organization_event":
+        if event_id is None:
+            return await invalidate_organization(organization_id)
+        return await invalidate_event(organization_id, event_id)
+    if read_domain == "search_suggestions":
+        return await delete_pattern(
+            TenantCacheKey.organization_domain_pattern(organization_id, "search-v1")
+        )
+    return await invalidate_organization(organization_id)
+
+
+async def invalidate_mutation(
+    mutation_domain: str, organization_id, event_id=None
+) -> int:
+    """Invalidate the minimal tenant scope for a matrix-defined mutation."""
+    read_domains = cache_domains_for_mutation(mutation_domain)
+    if not read_domains:
+        raise ValueError(f"Unknown cache mutation domain {mutation_domain}")
+    scopes = {get_cache_invalidation_rule(domain).scope for domain in read_domains}
+    if event_id is not None and ("event" in scopes or "organization_event" in scopes):
+        return await invalidate_event(organization_id, event_id)
+    return await invalidate_organization(organization_id)
 
 
 async def acquire_lock(name: str, *, ttl_seconds: int | None = None) -> str | None:
@@ -271,6 +330,7 @@ async def acquire_lock_status(
     """Return ``(token, backend_available)`` for bounded stampede handling."""
     client = await get_lock_redis()
     token = uuid.uuid4().hex
+    started = asyncio.get_running_loop().time()
     try:
         acquired = await asyncio.wait_for(
             client.set(name, token, nx=True, ex=ttl_seconds or settings.REDIS_LOCK_TTL_SECONDS),
@@ -279,15 +339,20 @@ async def acquire_lock_status(
         if not acquired:
             cache_lock_contention.set(cache_lock_contention.get() + 1)
             _record_global("lock_contention")
+            _observe_cache("lock_acquire", "contended", started)
+        else:
+            _observe_cache("lock_acquire", "success", started)
         return (token if acquired else None), True
     except Exception:
         cache_failures.set(cache_failures.get() + 1)
         _record_global("lock_failures")
+        _observe_cache("lock_acquire", "failure", started)
         return None, False
 
 
 async def release_lock(name: str, token: str) -> bool:
     """Release only if the caller still owns the lock."""
+    started = asyncio.get_running_loop().time()
     try:
         client = await get_lock_redis()
         result = await asyncio.wait_for(
@@ -299,10 +364,13 @@ async def release_lock(name: str, token: str) -> bool:
             ),
             timeout=settings.REDIS_OPERATION_TIMEOUT_SECONDS,
         )
-        return bool(result)
+        released = bool(result)
+        _observe_cache("lock_release", "success" if released else "not_owner", started)
+        return released
     except Exception:
         cache_failures.set(cache_failures.get() + 1)
         _record_global("lock_release_failures")
+        _observe_cache("lock_release", "failure", started)
         return False
 
 
@@ -334,8 +402,14 @@ class CacheService:
     async def invalidate_event(self, organization_id, event_id) -> int:
         return await invalidate_event(organization_id, event_id)
 
+    async def invalidate_domain(self, read_domain: str, organization_id, event_id=None) -> int:
+        return await invalidate_cache_domain(read_domain, organization_id, event_id)
+
     async def invalidate_organization(self, organization_id) -> int:
         return await invalidate_organization(organization_id)
+
+    async def invalidate_mutation(self, mutation_domain: str, organization_id, event_id=None) -> int:
+        return await invalidate_mutation(mutation_domain, organization_id, event_id)
 
     async def acquire_lock(self, name: str, *, ttl_seconds: int | None = None) -> str | None:
         return await acquire_lock(name, ttl_seconds=ttl_seconds)
@@ -350,7 +424,17 @@ class CacheService:
 
     def metrics(self) -> dict[str, int | float]:
         """Return request-scoped cache counters for middleware/operations."""
-        return {**get_global_cache_metrics(), **get_cache_metrics(), "latency_ms": get_cache_latency_ms(), "lock_contention": get_cache_lock_contention()}
+        process = get_global_cache_metrics()
+        request = get_cache_metrics()
+        # Keep the established request keys for compatibility, while exposing
+        # process totals under explicit names so multi-worker trends are not
+        # silently hidden by ContextVar values.
+        return {
+            **request,
+            "latency_ms": get_cache_latency_ms(),
+            "lock_contention": get_cache_lock_contention(),
+            **{f"process_{name}": value for name, value in process.items()},
+        }
 
     @asynccontextmanager
     async def lock(self, name: str, *, ttl_seconds: int | None = None):

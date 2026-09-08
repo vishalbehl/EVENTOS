@@ -15,13 +15,11 @@ interface AuthState {
   isAuthenticated: boolean;
   user: User | null;
   mode: AppMode;
-  stationNumber: number;
+  stationNumber: number | null;
   accessToken: string | null;
-  deviceKey: string | null;
   setAuth: (user: User, token?: string | null) => void;
-  setDeviceKey: (key: string | null) => void;
   setMode: (mode: AppMode) => void;
-  setStationNumber: (num: number) => void;
+  setStationNumber: (num: number | null) => void;
   logout: () => void;
 }
 
@@ -31,11 +29,9 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
       user: null,
       mode: "workstation",
-      stationNumber: 1,
+      stationNumber: null,
       accessToken: null,
-      deviceKey: null,
       setAuth: (user, token = null) => set({ isAuthenticated: true, user, accessToken: token }),
-      setDeviceKey: (deviceKey) => set({ deviceKey }),
       setMode: (mode) => set({ mode }),
       setStationNumber: (stationNumber) => set({ stationNumber }),
       logout: () => set({ isAuthenticated: false, user: null, accessToken: null }),

@@ -262,12 +262,26 @@ async def test_quote_approval_rejects_stale_quote_submission(
 async def test_approved_quote_converts_to_immutable_proposal_and_durable_document(
     client: AsyncClient,
     super_admin: User,
+    organizer: User,
     organization: Organization,
     event: Event,
     db: AsyncSession,
     monkeypatch,
 ):
-    payload = {**quote_payload(organization.id, event.id), "internal_notes": "Never expose this internal note"}
+    request_response = await client.post(
+        f"/service-requests?event_id={event.id}",
+        json={
+            "title": "Venue Ops quotation brief",
+            "description": "Approved operational scope",
+            "priority": "HIGH",
+            "request_type": "VENUE_OPS",
+            "items": [],
+            "requirements": [],
+        },
+        headers=auth_headers(super_admin),
+    )
+    assert request_response.status_code == 200, request_response.text
+    payload = {**quote_payload(organization.id, event.id), "service_request_id": request_response.json()["id"], "internal_notes": "Never expose this internal note"}
     created = (await client.post(
         "/service-requests/quotes",
         json=payload,
@@ -299,6 +313,50 @@ async def test_approved_quote_converts_to_immutable_proposal_and_durable_documen
     snapshot = proposal["versions"][0]["snapshot_json"]
     assert snapshot["total_amount"] == created["total_amount"]
     assert "internal_notes" not in snapshot
+
+    send_key = f"proposal-send-{uuid.uuid4()}"
+    sent = await client.post(
+        f"/service-requests/proposals/{proposal['id']}/send?organization_id={organization.id}",
+        json={"expected_version": 1, "reason": "Send approved Venue Ops proposal to organiser"},
+        headers={**auth_headers(super_admin), "Idempotency-Key": send_key},
+    )
+    assert sent.status_code == 200, sent.text
+    assert sent.json()["status"] == "SENT"
+    sent_replay = await client.post(
+        f"/service-requests/proposals/{proposal['id']}/send?organization_id={organization.id}",
+        json={"expected_version": 1, "reason": "Send approved Venue Ops proposal to organiser"},
+        headers={**auth_headers(super_admin), "Idempotency-Key": send_key},
+    )
+    assert sent_replay.status_code == 200
+    assert sent_replay.json()["id"] == proposal["id"]
+
+    organiser_quotes = await client.get(
+        f"/service-requests/events/{event.id}/venue-ops/quotes",
+        headers=auth_headers(organizer),
+    )
+    assert organiser_quotes.status_code == 200, organiser_quotes.text
+    assert organiser_quotes.json()[0]["id"] == created["id"]
+    organiser_review = await client.get(
+        f"/service-requests/quotes/{created['id']}/organiser-review",
+        headers=auth_headers(organizer),
+    )
+    assert organiser_review.status_code == 200, organiser_review.text
+    assert organiser_review.json()["status"] == "SENT"
+    assert "internal_notes" not in organiser_review.json()
+    decision_key = f"venue-ops-organiser-decision-{uuid.uuid4()}"
+    organiser_decision = await client.post(
+        f"/service-requests/quotes/{created['id']}/organiser-decision",
+        json={"expected_version": 2, "action": "APPROVE", "reason": "Organiser approved the Venue Ops scope and pricing"},
+        headers={**auth_headers(organizer), "Idempotency-Key": decision_key},
+    )
+    assert organiser_decision.status_code == 200, organiser_decision.text
+    assert organiser_decision.json()["status"] == "ORGANISER_APPROVED"
+    handoff = await client.get(
+        f"/service-requests/events/{event.id}/venue-ops/fulfilment",
+        headers=auth_headers(organizer),
+    )
+    assert handoff.status_code == 200, handoff.text
+    assert handoff.json()[0]["quote_id"] == created["id"]
 
     replay = await client.post(
         f"/service-requests/quotes/{created['id']}/proposal?organization_id={organization.id}",

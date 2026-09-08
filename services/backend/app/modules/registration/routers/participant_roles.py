@@ -16,8 +16,7 @@ from app.modules.registration.models.participant_role import ParticipantRole
 from app.schemas.common import MessageResponse
 from app.core.dependencies.feature_gate import enforce_event_operation, require_event_operation
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
-from app.core.cache import delete, delete_pattern
-from app.core.cache_keys import TenantCacheKey
+from app.core.cache import invalidate_event
 from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 from app.modules.registration.application.role_commands import ParticipantRoleCommandService
 from app.modules.registration.application.queries import ParticipantRoleQueryService
@@ -26,10 +25,9 @@ router = APIRouter(prefix="/events/{event_id}/registration/roles", tags=["partic
 
 
 async def _invalidate_role_cache(event: CurrentEvent) -> None:
-    await delete(TenantCacheKey.event_roles(event.id, event.organization_id))
     # All event caches share the canonical versioned namespace. This also
     # invalidates form/pricing/dashboard projections after a role mutation.
-    await delete_pattern(f"cache:v1:tenant:{event.organization_id}:event:{event.id}:*")
+    await invalidate_event(event.organization_id, event.id)
 
 
 # ── All roles with their categories ──────────────────────────────────────────

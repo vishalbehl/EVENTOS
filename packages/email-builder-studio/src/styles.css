@@ -3905,3 +3905,225 @@
   opacity: 0.9;
 }
 
+/* ── EMAIL THEME PRESETS & ADVANCED COLOR CONTROLS ───────────────────── */
+
+.ebs-brand-section {
+  margin-bottom: 20px;
+}
+
+.ebs-brand-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ebs-muted);
+  margin-bottom: 10px;
+}
+
+.ebs-preset-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.ebs-preset-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--ebs-inset, #18181b);
+  border: 1px solid var(--ebs-border, #27272a);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  width: 100%;
+}
+
+.ebs-preset-card:hover {
+  border-color: var(--ebs-focus, #6366f1);
+  background: var(--ebs-panel, #1f1f23);
+  transform: translateY(-1px);
+}
+
+.ebs-preset-card.is-active {
+  border-color: var(--ebs-focus, #6366f1);
+  background: color-mix(in srgb, var(--ebs-focus, #6366f1) 12%, var(--ebs-panel, #18181b));
+  box-shadow: 0 0 0 1px var(--ebs-focus, #6366f1);
+}
+
+.ebs-preset-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ebs-preset-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ebs-text, #fff);
+}
+
+.ebs-preset-chips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ebs-preset-chip {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.ebs-preset-desc {
+  font-size: 11px;
+  color: var(--ebs-muted, #a1a1aa);
+  line-height: 1.35;
+  margin: 0;
+}
+
+.ebs-preset-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--ebs-focus, #6366f1);
+  color: #ffffff;
+}
+
+.ebs-theme-apply-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--ebs-focus, #4f46e5);
+  color: #ffffff;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-top: 4px;
+  margin-bottom: 16px;
+}
+
+.ebs-theme-apply-btn:hover {
+  opacity: 0.92;
+  filter: brightness(1.08);
+}
+
+/* Color Picker Input Component */
+.ebs-color-picker-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.ebs-color-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ebs-text, #e4e4e7);
+}
+
+.ebs-color-hex-badge {
+  font-family: monospace;
+  font-size: 10px;
+  color: var(--ebs-muted, #a1a1aa);
+  background: var(--ebs-inset, #18181b);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--ebs-border, #27272a);
+}
+
+.ebs-color-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ebs-color-swatch-picker {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  width: 34px;
+  height: 32px;
+  border: 1px solid var(--ebs-border, #3f3f46);
+  border-radius: 6px;
+  padding: 0;
+  cursor: pointer;
+  background: transparent;
+}
+
+.ebs-color-swatch-picker::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.ebs-color-swatch-picker::-webkit-color-swatch {
+  border: none;
+  border-radius: 5px;
+}
+
+.ebs-color-text-input {
+  flex: 1;
+  height: 32px;
+  padding: 0 10px;
+  background: var(--ebs-inset, #18181b);
+  border: 1px solid var(--ebs-border, #27272a);
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--ebs-text, #ffffff);
+}
+
+.ebs-color-text-input:focus {
+  outline: none;
+  border-color: var(--ebs-focus, #6366f1);
+}
+
+.ebs-swatches-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding-top: 2px;
+}
+
+.ebs-swatch-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.ebs-swatch-dot:hover {
+  transform: scale(1.2);
+  z-index: 2;
+  box-shadow: 0 0 0 1px #fff;
+}
+
+.ebs-swatch-dot.is-active {
+  box-shadow: 0 0 0 2px var(--ebs-focus, #6366f1), 0 0 0 3px #fff;
+  transform: scale(1.15);
+}
+
+

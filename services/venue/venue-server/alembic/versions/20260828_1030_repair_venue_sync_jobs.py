@@ -2,7 +2,7 @@
 
 from typing import Sequence, Union
 
-from alembic import op
+from alembic import op, context
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
@@ -13,6 +13,33 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Offline SQL generation has no live bind to inspect. The table is created
+    # by the generated script, and production online upgrades retain the
+    # idempotent existence check below.
+    if context.is_offline_mode():
+        op.create_table(
+            "venue_sync_jobs",
+            sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+            sa.Column("event_id", postgresql.UUID(as_uuid=True), nullable=False),
+            sa.Column("file_id", postgresql.UUID(as_uuid=True), nullable=False),
+            sa.Column("sync_type", sa.String(length=30), nullable=False),
+            sa.Column("priority", sa.Integer(), nullable=False),
+            sa.Column("status", sa.String(length=30), nullable=False),
+            sa.Column("retry_count", sa.Integer(), nullable=False),
+            sa.Column("error_message", sa.Text(), nullable=True),
+            sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.ForeignKeyConstraint(["event_id"], ["events.events.id"], ondelete="CASCADE"),
+            sa.ForeignKeyConstraint(["file_id"], ["presentations.presentation_files.id"], ondelete="CASCADE"),
+            sa.PrimaryKeyConstraint("id"),
+            schema="venue",
+        )
+        op.create_index("ix_venue_venue_sync_jobs_created_at", "venue_sync_jobs", ["created_at"], schema="venue")
+        op.create_index("ix_venue_venue_sync_jobs_event_id", "venue_sync_jobs", ["event_id"], schema="venue")
+        op.create_index("ix_venue_venue_sync_jobs_file_id", "venue_sync_jobs", ["file_id"], schema="venue")
+        op.create_index("ix_venue_venue_sync_jobs_status", "venue_sync_jobs", ["status"], schema="venue")
+        return
     bind = op.get_bind()
     exists = bind.execute(
         sa.text(

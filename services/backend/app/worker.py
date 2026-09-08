@@ -46,6 +46,9 @@ celery_app.conf.update(
         "critical": {}, "default": {}, "files": {}, "videos": {},
         "imports": {}, "search": {}, "notifications": {},
         "reports": {}, "reconciliation": {},
+        "legacy-default": {}, "legacy-files": {}, "legacy-videos": {},
+        "legacy-imports": {}, "legacy-search": {}, "legacy-notifications": {},
+        "legacy-reports": {}, "legacy-reconciliation": {},
     },
     task_time_limit=3600,  # 1 hour
     beat_schedule={
@@ -68,38 +71,49 @@ celery_app.conf.update(
             "task": "app.tasks.organization_console_rollout_tasks.fanout_shadow_comparisons",
             "schedule": crontab(hour=3, minute=15),
         },
+        "recover-email-campaign-dispatches": {
+            "task": "app.tasks.recover_email_campaign_dispatches",
+            "schedule": 300.0,
+        },
+        "recover-import-dispatches": {
+            "task": "app.tasks.recover_import_dispatches",
+            "schedule": 300.0,
+        },
     },
-    # The API publishes standalone processing tasks by name. Route those task
-    # families away from the backend-only `celery` queue so the processing
-    # worker that imports workers.tasks consumes them.
+    # The API still publishes compatibility tasks by their legacy names. Keep
+    # those messages in a separate namespace so the backend application
+    # workers cannot consume and discard tasks they do not register.
     task_routes={
         # Timeout values are defined on the task itself. Keeping route entries
         # limited to delivery concerns avoids Celery publishing the same
         # execution option twice when task annotations are applied.
         "app.tasks.process_durable_upload": {"queue": "files"},
         "app.tasks.process_import_upload": {"queue": "imports"},
+        "app.tasks.recover_import_dispatches": {"queue": "imports"},
+        "app.tasks.scan_asset_for_viruses": {"queue": "files"},
         "app.tasks.analytics_projection_tasks.refresh_event_registration_summary": {"queue": "reports"},
         "app.tasks.attendance_projection_tasks.refresh_event_attendance_summary": {"queue": "reports"},
         "app.tasks.payment_projection_tasks.refresh_event_payment_summary": {"queue": "reports"},
         "app.tasks.speaker_projection_tasks.refresh_event_speaker_summary": {"queue": "reports"},
         "app.tasks.idempotency_tasks.purge_expired": {"queue": "reconciliation"},
-        "app.tasks.run_excel_import": {"queue": "imports", "soft_time_limit": 1800, "time_limit": 1860},
+        "app.tasks.run_excel_import": {"queue": "imports"},
         "app.tasks.operations.*": {"queue": "reconciliation"},
         "app.tasks.platform_commercial.*": {"queue": "reports"},
         "app.tasks.workflow_jobs.*": {"queue": "notifications"},
         "app.tasks.organization_console_tasks.reconcile_organization_usage": {"queue": "reconciliation"},
         "app.tasks.organization_console_tasks.execute_lifecycle_job": {"queue": "reconciliation"},
         "app.tasks.organization_console_rollout_tasks.*": {"queue": "reconciliation"},
-        "app.tasks.validate_presentation": {"queue": "files", "soft_time_limit": 600, "time_limit": 660},
-        "app.tasks.validate_poster": {"queue": "files", "soft_time_limit": 600, "time_limit": 660},
-        "app.tasks.process_email_campaign": {"queue": "notifications", "soft_time_limit": 120, "time_limit": 150},
-        "workers.tasks.file_tasks.*": {"queue": _FILES_POLICY.queue, "soft_time_limit": _FILES_POLICY.soft_timeout_seconds, "time_limit": _FILES_POLICY.hard_timeout_seconds},
-        "workers.tasks.video_tasks.*": {"queue": _VIDEOS_POLICY.queue, "soft_time_limit": _VIDEOS_POLICY.soft_timeout_seconds, "time_limit": _VIDEOS_POLICY.hard_timeout_seconds},
-        "workers.tasks.import_tasks.*": {"queue": _IMPORTS_POLICY.queue, "soft_time_limit": _IMPORTS_POLICY.soft_timeout_seconds, "time_limit": _IMPORTS_POLICY.hard_timeout_seconds},
-        "workers.tasks.report_tasks.*": {"queue": _REPORTS_POLICY.queue, "soft_time_limit": _REPORTS_POLICY.soft_timeout_seconds, "time_limit": _REPORTS_POLICY.hard_timeout_seconds},
-        "workers.tasks.notification_tasks.*": {"queue": _NOTIFICATIONS_POLICY.queue, "soft_time_limit": _NOTIFICATIONS_POLICY.soft_timeout_seconds, "time_limit": _NOTIFICATIONS_POLICY.hard_timeout_seconds},
-        "workers.tasks.sync_tasks.*": {"queue": _DEFAULT_POLICY.queue, "soft_time_limit": _DEFAULT_POLICY.soft_timeout_seconds, "time_limit": _DEFAULT_POLICY.hard_timeout_seconds},
-        "workers.tasks.search_tasks.*": {"queue": _SEARCH_POLICY.queue, "soft_time_limit": _SEARCH_POLICY.soft_timeout_seconds, "time_limit": _SEARCH_POLICY.hard_timeout_seconds},
+        "app.tasks.validate_presentation": {"queue": "files"},
+        "app.tasks.validate_poster": {"queue": "files"},
+        "app.tasks.process_email_campaign": {"queue": "notifications"},
+        "app.tasks.recover_email_campaign_dispatches": {"queue": "notifications"},
+        "workers.tasks.file_tasks.*": {"queue": "legacy-files"},
+        "workers.tasks.video_tasks.*": {"queue": "legacy-videos"},
+        "workers.tasks.import_tasks.*": {"queue": "legacy-imports"},
+        "workers.tasks.report_tasks.*": {"queue": "legacy-reports"},
+        "workers.tasks.notification_tasks.*": {"queue": "legacy-notifications"},
+        "workers.tasks.sync_tasks.*": {"queue": "legacy-default"},
+        "workers.tasks.search_tasks.*": {"queue": "legacy-search"},
     },
 )
 
@@ -108,9 +122,16 @@ celery_app.autodiscover_tasks(["app.tasks"])
 celery_app.conf.imports = tuple(celery_app.conf.imports or ()) + (
     "app.tasks.organization_console_tasks",
     "app.tasks.organization_console_rollout_tasks",
+    "app.tasks.workflow_jobs",
+    "app.tasks.operations_jobs",
     "app.tasks.analytics_projection_tasks",
     "app.tasks.queue_probe",
+    "app.tasks.venue_ops_events",
+    "app.modules.notifications.tasks.email_tasks",
 )
+# Import the compatibility re-export package after the Celery instance exists
+# so task decorators register both legacy and canonical names at startup.
+import app.tasks  # noqa: E402,F401
 
 # ── Celery Worker Multi-Tenancy Signal Handlers ─────────────────
 import uuid

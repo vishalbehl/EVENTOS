@@ -27,6 +27,7 @@ from app.modules.platform.support_access import (
     execute_platform_support_cursor_read,
 )
 from app.modules.platform.application.support_commands import SupportTicketCommandService
+from app.modules.platform.application.support_queries import SupportTicketQueryService
 from app.modules.support.models.ticket import SupportTicket, TicketComment
 from app.modules.support.models.support_domain_tables import TicketAttachment
 from app.modules.presentations.services.upload_service import create_presigned_download, get_object_metadata
@@ -297,13 +298,18 @@ async def list_admin_tickets(
     cursor: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
 ):
-    statement = select(SupportTicket).where(SupportTicket.organization_id == support_scope.organization_id)
-    if ticket_status:
-        statement = statement.where(SupportTicket.status == _normalize(ticket_status, TICKET_STATUSES, "status"))
-    if priority:
-        statement = statement.where(SupportTicket.priority == _normalize(priority, TICKET_PRIORITIES, "priority"))
-    if assigned_to:
-        statement = statement.where(SupportTicket.assigned_to == assigned_to)
+    statement = SupportTicketQueryService(db).admin_list_statement(
+        organization_id=support_scope.organization_id,
+        ticket_status=(
+            _normalize(ticket_status, TICKET_STATUSES, "status")
+            if ticket_status else None
+        ),
+        priority=(
+            _normalize(priority, TICKET_PRIORITIES, "priority")
+            if priority else None
+        ),
+        assigned_to=assigned_to,
+    )
     page = await execute_platform_support_cursor_read(
         db,
         support_scope,
@@ -339,15 +345,10 @@ async def list_admin_ticket_attachments(
 ):
     await _admin_ticket(db, support_scope, ticket_id)
     async with TenantContextGuard.scoped(db, support_scope.organization_id):
-        rows = (await db.execute(
-            select(TicketAttachment, Asset)
-            .outerjoin(Asset, TicketAttachment.asset_id == Asset.id)
-            .where(
-                TicketAttachment.organization_id == support_scope.organization_id,
-                TicketAttachment.ticket_id == ticket_id,
-            )
-            .order_by(TicketAttachment.created_at.desc())
-        )).all()
+        rows = await SupportTicketQueryService(db).list_attachments(
+            organization_id=support_scope.organization_id,
+            ticket_id=ticket_id,
+        )
     return [_attachment_out(attachment, asset) for attachment, asset in rows]
 
 
@@ -468,14 +469,11 @@ async def get_admin_ticket_comments(
 ):
     await _admin_ticket(db, support_scope, ticket_id)
     async with TenantContextGuard.scoped(db, support_scope.organization_id):
-        rows = (
-            await db.execute(
-                select(TicketComment, User.email, User.first_name, User.last_name)
-                .join(User, TicketComment.author_id == User.id)
-                .where(TicketComment.ticket_id == ticket_id)
-                .order_by(TicketComment.created_at.asc())
-            )
-        ).all()
+        rows = await SupportTicketQueryService(db).list_comments(
+            organization_id=support_scope.organization_id,
+            ticket_id=ticket_id,
+            include_internal=True,
+        )
     return [TicketCommentResponse(
         id=comment.id,
         ticket_id=comment.ticket_id,
@@ -512,8 +510,9 @@ async def list_tickets(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    statement = select(SupportTicket).where(SupportTicket.organization_id == current_user.organization_id).order_by(SupportTicket.updated_at.desc())
-    rows = (await db.execute(statement)).scalars().all()
+    rows = await SupportTicketQueryService(db).list_for_organization(
+        organization_id=current_user.organization_id,
+    )
     return [_ticket_response(ticket).model_dump() for ticket in rows]
 
 
@@ -523,17 +522,16 @@ async def get_ticket_comments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    ticket = await db.scalar(select(SupportTicket).where(SupportTicket.id == ticket_id, SupportTicket.organization_id == current_user.organization_id))
+    ticket = await SupportTicketQueryService(db).get_for_organization(
+        organization_id=current_user.organization_id, ticket_id=ticket_id
+    )
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
-    rows = (
-        await db.execute(
-            select(TicketComment, User.email, User.first_name, User.last_name)
-            .join(User, TicketComment.author_id == User.id)
-            .where(TicketComment.ticket_id == ticket_id, TicketComment.is_internal.is_(False))
-            .order_by(TicketComment.created_at.asc())
-        )
-    ).all()
+    rows = await SupportTicketQueryService(db).list_comments(
+        organization_id=current_user.organization_id,
+        ticket_id=ticket_id,
+        include_internal=False,
+    )
     return [TicketCommentResponse(
         id=comment.id,
         ticket_id=comment.ticket_id,

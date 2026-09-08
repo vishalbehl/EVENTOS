@@ -89,6 +89,9 @@ def test_import_retry_exhaustion_has_a_durable_terminal_state(monkeypatch):
             self.index += 1
             return upload if self.index == 1 else job
 
+        async def flush(self):
+            return None
+
         async def commit(self):
             return None
 
@@ -105,3 +108,14 @@ def test_import_retry_exhaustion_has_a_durable_terminal_state(monkeypatch):
     assert upload.task_id == "task-2"
     assert job.status == "failed"
     assert job.error_summary == [{"row": 0, "error": "Import processing failed after retries."}]
+
+
+def test_excel_import_keeps_storage_outages_retryable_until_exhaustion():
+    import inspect
+    from app.tasks import tasks
+
+    source = inspect.getsource(tasks._run_excel_import_async)
+    task_source = inspect.getsource(tasks.run_excel_import.run)
+    assert "raise" in source
+    assert "_mark_excel_import_failed" in task_source
+    assert "attempt >= policy.max_retries" in task_source

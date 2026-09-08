@@ -13,6 +13,7 @@ import {
   Box,
   Building2,
   Calendar,
+  ClipboardList,
   CheckCircle2,
   CheckSquare,
   ChevronDown,
@@ -29,6 +30,7 @@ import {
   Grid2X2,
   Home,
   Inbox,
+  History,
   Image as ImageIcon,
   Layers,
   Layout,
@@ -46,6 +48,7 @@ import {
   Receipt,
   Send,
   Settings,
+  Sparkles,
   ShieldCheck,
   SlidersHorizontal,
   Tag,
@@ -198,7 +201,7 @@ export function Sidebar() {
           items: [
             { label: "Program Overview", href: `/events/${id}/program/dashboard`, icon: Home },
             { label: "Master Agenda", href: `/events/${id}/program/agenda`, icon: Calendar },
-            { label: "Session Builder", href: `/events/${id}/program/builder`, icon: Layers },
+            { label: "Session Builder", href: `/events/${id}/sessions/builder`, icon: Layers },
           ],
         },
         {
@@ -448,15 +451,16 @@ export function Sidebar() {
       label: "Venue Ops",
       icon: Building2,
       defaultHref: (id) => `/events/${id}/venue-ops`,
-      permission: PERMISSIONS.ROOMS_MANAGE,
+      permission: PERMISSIONS.TECHNOLOGY_REQUEST_VIEW,
       sections: (id) => [
         {
           title: "WORKSPACE",
           items: [
-            { label: "Operations Hub", href: `/events/${id}/venue-ops`, icon: LayoutDashboard },
-            { label: "Room Management", href: `/events/${id}/sessions/rooms`, icon: Building2 },
-            { label: "Schedule Grid", href: `/events/${id}/sessions/agenda`, icon: Calendar },
-            { label: "Ready Room Desks", href: `/events/${id}/speakers/files`, icon: FolderOpen },
+            { label: "Overview", href: `/events/${id}/venue-ops`, icon: LayoutDashboard },
+            { label: "Recommendations", href: `/events/${id}/venue-ops/recommendations`, icon: Sparkles },
+            { label: "Requirements", href: `/events/${id}/venue-ops/requirements`, icon: ClipboardList },
+            { label: "Quotes & proposals", href: `/events/${id}/venue-ops/quotes`, icon: FileText },
+            { label: "Activity", href: `/events/${id}/venue-ops/activity`, icon: History },
           ],
         },
         {

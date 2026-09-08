@@ -173,8 +173,18 @@ electron_1.ipcMain.handle("venue:get-setup-status", async () => {
     };
 });
 electron_1.ipcMain.handle("venue:setup-databases", async (_event, setup) => {
+    // Electron runs on Windows, outside the Compose network. Translate the
+    // Docker-only service hostname to the published host port before invoking
+    // the provisioning script.
+    const requestedHost = String(setup?.host || "127.0.0.1").trim();
+    const requestedPort = Number(setup?.port || 5433);
+    const normalizedSetup = {
+        ...setup,
+        host: requestedHost === "venue-db" ? "127.0.0.1" : requestedHost,
+        port: requestedHost === "venue-db" && requestedPort === 5432 ? 5433 : requestedPort,
+    };
     const setupPayloadPath = path_1.default.join(electron_1.app.getPath("userData"), `venue-setup-${Date.now()}.json`);
-    fs_1.default.writeFileSync(setupPayloadPath, JSON.stringify(setup), "utf-8");
+    fs_1.default.writeFileSync(setupPayloadPath, JSON.stringify(normalizedSetup), "utf-8");
     try {
         const scriptPath = path_1.default.join(repoRoot(), "services", "venue", "venue-server", "scripts", "node", "setup_venue_databases.py");
         if (fs_1.default.existsSync(scriptPath)) {
@@ -187,8 +197,8 @@ electron_1.ipcMain.handle("venue:setup-databases", async (_event, setup) => {
         const envDir = path_1.default.join(repoRoot(), "services", "venue", "venue-server");
         fs_1.default.mkdirSync(envDir, { recursive: true });
         const envPath = path_1.default.join(envDir, ".env");
-        const dbName = String(setup.database || "eventos_venue_server").trim();
-        const dbUrl = `postgresql+asyncpg://${setup.user || "postgres"}:${setup.password || ""}@${setup.host || "127.0.0.1"}:${setup.port || 5432}/${dbName}`;
+        const dbName = String(normalizedSetup.database || "venue_db").trim();
+        const dbUrl = `postgresql+asyncpg://${normalizedSetup.user || "postgres"}:${normalizedSetup.password || ""}@${normalizedSetup.host || "127.0.0.1"}:${normalizedSetup.port || 5433}/${dbName}`;
         let envContent = fs_1.default.existsSync(envPath) ? fs_1.default.readFileSync(envPath, "utf-8") : "";
         if (envContent.includes("DATABASE_URL=")) {
             envContent = envContent.replace(/DATABASE_URL=.*/, `DATABASE_URL=${dbUrl}`);
@@ -198,19 +208,37 @@ electron_1.ipcMain.handle("venue:setup-databases", async (_event, setup) => {
         }
         fs_1.default.writeFileSync(envPath, envContent.trim() + "\n", "utf-8");
         try {
-            const mainPy = path_1.default.join(envDir, "app", "main.py");
-            if (fs_1.default.existsSync(mainPy)) {
-                const now = new Date();
-                fs_1.default.utimesSync(mainPy, now, now);
+            const reloadHeaders = { "Content-Type": "application/json", "X-Venue-Bootstrap": "local-desktop" };
+            const reloadUrls = [
+                // Host-run development backend.
+                { url: "http://127.0.0.1:8001/api/v1/venue/admin/reload-database", database_url: dbUrl },
+                // Docker backend: venue-db is resolvable only inside the Compose network.
+                { url: "http://127.0.0.1:8001/api/v1/venue/admin/reload-database", database_url: `postgresql+asyncpg://${normalizedSetup.user || "postgres"}:${normalizedSetup.password || "venue_password"}@venue-db:5432/${dbName}` },
+            ];
+            let lastError = "unknown reload error";
+            let reloaded = false;
+            for (const candidate of reloadUrls) {
+                try {
+                    const response = await fetch(candidate.url, {
+                        method: "POST",
+                        headers: reloadHeaders,
+                        body: JSON.stringify({ database_url: candidate.database_url }),
+                    });
+                    if (response.ok) {
+                        reloaded = true;
+                        break;
+                    }
+                    lastError = await response.text();
+                }
+                catch (error) {
+                    lastError = error instanceof Error ? error.message : String(error);
+                }
             }
-            await fetch("http://127.0.0.1:8001/api/v1/venue/admin/reload-database", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ database_url: dbUrl }),
-            });
+            if (!reloaded)
+                throw new Error(lastError);
         }
-        catch {
-            // ignore
+        catch (error) {
+            throw new Error(`Venue Server database reload failed: ${error instanceof Error ? error.message : String(error)}`);
         }
         return { success: true };
     }

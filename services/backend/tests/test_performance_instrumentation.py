@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import uuid
 
 import pytest
@@ -15,6 +16,14 @@ from app.database import (
     reset_db_request_metrics,
 )
 from app.core.cache import get_cache_metrics, reset_cache_metrics, restore_cache_metrics
+
+
+def test_async_request_log_payload_preserves_tenant_and_cache_telemetry():
+    from app.middleware.request_logging import RequestLoggingMiddleware
+
+    source = inspect.getsource(RequestLoggingMiddleware.__call__)
+    assert '"organization_id": str(org_id) if org_id else None' in source
+    assert '"cache_hit": bool(cache_data["hits"] > 0)' in source
 
 
 def test_slow_query_logging_shape_never_contains_sql_values():

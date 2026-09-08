@@ -1,11 +1,18 @@
 {
-  "name": "technician-dashboard",
+  "name": "@conf-platform/technician-dashboard",
   "private": true,
   "version": "1.0.0",
+  "author": "Eventos",
+  "description": "Eventos room Technical App",
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --port 5174",
+    "type-check": "tsc --noEmit",
     "build": "tsc && vite build",
+    "desktop:dev": "concurrently \"npm run dev\" \"wait-on http://127.0.0.1:5174 && electron .\"",
+    "electron:dev": "npm run desktop:dev",
+    "electron:build": "npm run build && electron-builder",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },
@@ -23,14 +30,27 @@
     "sonner": "^1.7.0",
     "date-fns": "^4.1.0"
   },
+  "build": {
+    "appId": "com.eventos.venue.technician",
+    "productName": "Eventos Technical App",
+    "artifactName": "Eventos-Technical-App-${version}-${arch}.${ext}",
+    "directories": { "output": "dist" },
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "msi", "arch": ["x64"] }], "publisherName": "Eventos", "icon": "../venue-server-app/public/logo/logo-icon.png" },
+    "nsis": { "oneClick": true, "runAfterFinish": false },
+    "msi": { "oneClick": false, "perMachine": true, "runAfterFinish": false, "createDesktopShortcut": true, "createStartMenuShortcut": true, "shortcutName": "Eventos Technical App" }
+  },
   "devDependencies": {
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.0",
+    "electron": "33.4.11",
+    "electron-builder": "^25.1.8",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.16",
     "typescript": "^5.7.2",
-    "vite": "^6.0.3"
+    "vite": "^6.0.3",
+    "wait-on": "^8.0.1"
   }
 }

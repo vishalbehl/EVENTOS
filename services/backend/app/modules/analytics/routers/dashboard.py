@@ -24,9 +24,27 @@ from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.models.payment_transaction import PaymentTransaction
 from app.modules.venue.models.room_device import RoomDevice
 from app.modules.analytics.application.queries import AnalyticsDashboardQueryService
+from app.core.cache import cache_service
+from app.core.cache_keys import TenantCacheKey
+from app.core.cache_policy import CacheTTL, ttl
 from app.modules.agenda.models import Room
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard_analytics"])
+
+
+async def _cached_event_read(
+    *,
+    event: Event,
+    segment: str,
+    loader,
+):
+    key = TenantCacheKey.event(
+        event.id,
+        "dashboard",
+        segment,
+        organization_id=event.organization_id,
+    )
+    return await cache_service.get_or_set(key, loader, ttl(CacheTTL.DASHBOARD))
 
 
 async def _get_accessible_event(
@@ -56,7 +74,11 @@ async def get_dashboard_summary(
 ):
     """Calculates all 5 pre-event readiness scorecards and dynamic overview stats."""
     event = await _get_accessible_event(db, current_user, event_id)
-    return await AnalyticsDashboardQueryService(db).summary(event=event)
+    return await _cached_event_read(
+        event=event,
+        segment="summary",
+        loader=lambda: AnalyticsDashboardQueryService(db).summary(event=event),
+    )
 
 
 @router.get("/registrations/timeline")
@@ -67,7 +89,11 @@ async def get_registrations_timeline(
 ):
     """Daily cumulative registrations for the last 30 days plus linear projection to start date."""
     event = await _get_accessible_event(db, current_user, event_id)
-    return await AnalyticsDashboardQueryService(db).registrations_timeline(event=event)
+    return await _cached_event_read(
+        event=event,
+        segment="registrations-timeline",
+        loader=lambda: AnalyticsDashboardQueryService(db).registrations_timeline(event=event),
+    )
 
 
 @router.get("/roles-breakdown")
@@ -77,8 +103,12 @@ async def get_roles_breakdown(
     db: AsyncSession = Depends(get_db),
 ):
     """Role distribution count for DonutChart."""
-    await _get_accessible_event(db, current_user, event_id)
-    return await AnalyticsDashboardQueryService(db).roles_breakdown(event_id=event_id)
+    event = await _get_accessible_event(db, current_user, event_id)
+    return await _cached_event_read(
+        event=event,
+        segment="roles-breakdown",
+        loader=lambda: AnalyticsDashboardQueryService(db).roles_breakdown(event_id=event_id),
+    )
 
 
 @router.get("/pending-actions")
@@ -89,7 +119,11 @@ async def get_pending_actions(
 ):
     """Auto-generates critical organizer tasks."""
     event = await _get_accessible_event(db, current_user, event_id)
-    return await AnalyticsDashboardQueryService(db).pending_actions(event=event)
+    return await _cached_event_read(
+        event=event,
+        segment="pending-actions",
+        loader=lambda: AnalyticsDashboardQueryService(db).pending_actions(event=event),
+    )
 
 
 @router.get("/recent-activity")
@@ -99,8 +133,12 @@ async def get_recent_activity(
     db: AsyncSession = Depends(get_db),
 ):
     """Activity counts grouped by hour for the last 24h."""
-    await _get_accessible_event(db, current_user, event_id)
-    return await AnalyticsDashboardQueryService(db).recent_activity(event_id=event_id)
+    event = await _get_accessible_event(db, current_user, event_id)
+    return await _cached_event_read(
+        event=event,
+        segment="recent-activity",
+        loader=lambda: AnalyticsDashboardQueryService(db).recent_activity(event_id=event_id),
+    )
 
 
 @router.get("/deadlines")
@@ -111,7 +149,11 @@ async def get_upcoming_deadlines(
 ):
     """Upcoming upload and custom deadlines."""
     event = await _get_accessible_event(db, current_user, event_id)
-    return await AnalyticsDashboardQueryService(db).upcoming_deadlines(event=event)
+    return await _cached_event_read(
+        event=event,
+        segment="deadlines",
+        loader=lambda: AnalyticsDashboardQueryService(db).upcoming_deadlines(event=event),
+    )
 
 
 # =============================================================

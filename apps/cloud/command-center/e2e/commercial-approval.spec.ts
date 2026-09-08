@@ -10,6 +10,7 @@ const PROPOSAL_ID = "10000000-0000-4000-8000-000000000004";
 test("approves a version-bound quote and converts it to a persisted proposal", async ({ authenticatedPage: page }) => {
   let approved = false;
   let conversionRequest: Record<string, unknown> | undefined;
+  let sent = false;
 
   const quote = () => ({
     id: QUOTE_ID,
@@ -68,9 +69,20 @@ test("approves a version-bound quote and converts it to a persisted proposal", a
           organization_id: E2E_ORGANIZATION_ID,
           quote_id: QUOTE_ID,
           proposal_number: "PR-E2E-001",
-          status: "DRAFT",
+          status: sent ? "SENT" : "DRAFT",
           current_version: 1,
-          versions: [],
+          versions: [{
+            id: "10000000-0000-4000-8000-000000000006",
+            organization_id: E2E_ORGANIZATION_ID,
+            proposal_id: PROPOSAL_ID,
+            version: 1,
+            source_quote_id: QUOTE_ID,
+            source_quote_version: 3,
+            snapshot_json: { currency: "INR", subtotal: "100000.00", discount_amount: "0.00", tax_amount: "18000.00", total_amount: "118000.00", quote_number: "QT-E2E-001", line_items: [] },
+            reason: "Create client proposal from approved terms",
+            created_by: "00000000-0000-4000-8000-000000000001",
+            created_at: "2026-07-16T08:10:00Z",
+          }],
         }),
       });
       return;
@@ -85,6 +97,41 @@ test("approves a version-bound quote and converts it to a persisted proposal", a
     }
     await route.continue();
   });
+
+  await page.route(`**/service-requests/proposals/${PROPOSAL_ID}**`, async route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname.endsWith(`/proposals/${PROPOSAL_ID}/send`) && request.method() === "POST") {
+      const body = request.postDataJSON();
+      expect(body).toMatchObject({ expected_version: 1, reason: "Send approved Venue Ops proposal" });
+      expect(request.headers()["idempotency-key"]).toBeTruthy();
+      sent = true;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...proposalResponse(), status: "SENT" }) });
+      return;
+    }
+    if (url.pathname.endsWith(`/proposals/${PROPOSAL_ID}`) && request.method() === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(proposalResponse()) });
+      return;
+    }
+    await route.continue();
+  });
+
+  function proposalResponse() {
+    return {
+      id: PROPOSAL_ID,
+      organization_id: E2E_ORGANIZATION_ID,
+      event_id: "10000000-0000-4000-8000-000000000005",
+      quote_id: QUOTE_ID,
+      proposal_number: "PR-E2E-001",
+      title: "Enterprise Conference Delivery",
+      status: sent ? "SENT" : "DRAFT",
+      current_version: 1,
+      created_by: "00000000-0000-4000-8000-000000000001",
+      created_at: "2026-07-16T08:10:00Z",
+      updated_at: "2026-07-16T08:10:00Z",
+      versions: [{ id: "10000000-0000-4000-8000-000000000006", organization_id: E2E_ORGANIZATION_ID, proposal_id: PROPOSAL_ID, version: 1, source_quote_id: QUOTE_ID, source_quote_version: 3, snapshot_json: { currency: "INR", subtotal: "100000.00", discount_amount: "0.00", tax_amount: "18000.00", total_amount: "118000.00", quote_number: "QT-E2E-001", line_items: [] }, reason: "Create client proposal from approved terms", created_by: "00000000-0000-4000-8000-000000000001", created_at: "2026-07-16T08:10:00Z" }],
+    };
+  }
 
   await page.goto(`/business/sales/quotes/${QUOTE_ID}/approval?organization_id=${E2E_ORGANIZATION_ID}`);
   await expect(page.getByRole("heading", { name: "Quote approval" })).toBeVisible();
@@ -105,4 +152,8 @@ test("approves a version-bound quote and converts it to a persisted proposal", a
     expected_quote_version: 3,
     reason: "Create client proposal from approved terms",
   });
+  await expect(page.getByRole("heading", { name: "Send to organiser portal" })).toBeVisible();
+  await page.getByLabel("Send reason").fill("Send approved Venue Ops proposal");
+  await page.getByRole("button", { name: "Send proposal" }).click();
+  await expect(page.getByRole("button", { name: "Send proposal" })).toBeDisabled();
 });

@@ -1,340 +1,251 @@
 "use client";
 
-import { useMemo, useState, useRef, useEffect } from "react";
+import { useMemo } from "react";
 import { useParams } from "next/navigation";
-import { format, parseISO } from "date-fns";
+import { addDays, differenceInCalendarDays, format, parseISO } from "date-fns";
 import {
-  LayoutGrid,
-  LayoutList,
-  GanttChart,
-  CalendarDays,
-  Undo2,
-  Redo2,
   AlertTriangle,
+  CalendarDays,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Columns3,
+  GanttChart,
+  LayoutList,
   Loader2,
+  Minus,
+  Plus,
+  Redo2,
   Send,
-  Calendar as CalendarIcon,
-  Clock,
-  ChevronDown,
-  Sparkles,
+  Undo2,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { useSessionBuilderStore, ViewMode } from "@/store/useSessionBuilderStore";
-import { usePublishSchedule } from "@/hooks/useSessionBuilder";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { useSessionBuilderStore, type ViewMode } from "@/store/useSessionBuilderStore";
+import { usePublishSchedule } from "@/hooks/useSessionBuilder";
 
 interface BuilderToolbarProps {
   onNewSession?: () => void;
 }
 
+function dateOnly(value?: string | null) {
+  return value?.split("T")[0]?.split(" ")[0] || null;
+}
+
 export function BuilderToolbar({ onNewSession }: BuilderToolbarProps = {}) {
   const { eventId } = useParams();
   const eventIdStr = eventId as string;
-
-  const viewMode = useSessionBuilderStore((s) => s.viewMode);
-  const setViewMode = useSessionBuilderStore((s) => s.setViewMode);
-
-  const selectedDate = useSessionBuilderStore((s) => s.selectedDate);
-  const setSelectedDate = useSessionBuilderStore((s) => s.setSelectedDate);
-
-  const isDirty = useSessionBuilderStore((s) => s.isDirty);
-  const isSaving = useSessionBuilderStore((s) => s.isSaving);
-
-  const conflicts = useSessionBuilderStore((s) => s.conflicts);
-  const toggleConflictPanel = useSessionBuilderStore((s) => s.toggleConflictPanel);
-
-  const history = useSessionBuilderStore((s) => s.history);
-  const future = useSessionBuilderStore((s) => s.future);
-  const undo = useSessionBuilderStore((s) => s.undo);
-  const redo = useSessionBuilderStore((s) => s.redo);
-  const zoomLevel = useSessionBuilderStore((s) => s.zoomLevel);
-  const setZoomLevel = useSessionBuilderStore((s) => s.setZoomLevel);
-
-  const sessions = useSessionBuilderStore((s) => s.sessions);
+  const viewMode = useSessionBuilderStore((state) => state.viewMode);
+  const setViewMode = useSessionBuilderStore((state) => state.setViewMode);
+  const selectedDate = useSessionBuilderStore((state) => state.selectedDate);
+  const setSelectedDate = useSessionBuilderStore((state) => state.setSelectedDate);
+  const sessions = useSessionBuilderStore((state) => state.sessions);
+  const rooms = useSessionBuilderStore((state) => state.rooms);
+  const eventTimezone = useSessionBuilderStore((state) => state.eventTimezone);
+  const eventStartDate = useSessionBuilderStore((state) => state.eventStartDate);
+  const eventEndDate = useSessionBuilderStore((state) => state.eventEndDate);
+  const conflicts = useSessionBuilderStore((state) => state.conflicts);
+  const toggleConflictPanel = useSessionBuilderStore((state) => state.toggleConflictPanel);
+  const isDirty = useSessionBuilderStore((state) => state.isDirty);
+  const isSaving = useSessionBuilderStore((state) => state.isSaving);
+  const history = useSessionBuilderStore((state) => state.history);
+  const future = useSessionBuilderStore((state) => state.future);
+  const undo = useSessionBuilderStore((state) => state.undo);
+  const redo = useSessionBuilderStore((state) => state.redo);
+  const zoomLevel = useSessionBuilderStore((state) => state.zoomLevel);
+  const setZoomLevel = useSessionBuilderStore((state) => state.setZoomLevel);
   const publishMutation = usePublishSchedule(eventIdStr);
 
-  // Custom Dropdown Open States
-  const [dateDropdownOpen, setDateDropdownOpen] = useState(false);
-  const [zoomDropdownOpen, setZoomDropdownOpen] = useState(false);
-  const dateDropdownRef = useRef<HTMLDivElement>(null);
-  const zoomDropdownRef = useRef<HTMLDivElement>(null);
-
-  // Close dropdowns on outside click
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (dateDropdownRef.current && !dateDropdownRef.current.contains(event.target as Node)) {
-        setDateDropdownOpen(false);
-      }
-      if (zoomDropdownRef.current && !zoomDropdownRef.current.contains(event.target as Node)) {
-        setZoomDropdownOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  // Extract unique dates with metadata from sessions
   const availableDates = useMemo(() => {
-    const map = new Map<string, number>();
-    sessions.forEach((s) => {
-      if (s.start_time) {
-        const datePart = s.start_time.split("T")[0];
-        map.set(datePart, (map.get(datePart) || 0) + 1);
-      }
+    const sessionCounts = new Map<string, number>();
+    sessions.forEach((session) => {
+      const day = dateOnly(session.start_time);
+      if (day) sessionCounts.set(day, (sessionCounts.get(day) || 0) + 1);
     });
 
-    return Array.from(map.entries())
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([dateStr, count], index) => {
-        let label = dateStr;
-        try {
-          const parsed = parseISO(dateStr);
-          label = format(parsed, "EEE, dd MMM yyyy");
-        } catch (e) {}
-        return {
-          dateStr,
-          label,
-          dayNumber: index + 1,
-          count,
-        };
-      });
-  }, [sessions]);
+    const start = dateOnly(eventStartDate);
+    const end = dateOnly(eventEndDate);
+    const dates = new Set(sessionCounts.keys());
+    if (start) {
+      const startDate = parseISO(start);
+      const numberOfDays = end
+        ? Math.min(31, Math.max(0, differenceInCalendarDays(parseISO(end), startDate)))
+        : 0;
+      for (let index = 0; index <= numberOfDays; index += 1) {
+        dates.add(format(addDays(startDate, index), "yyyy-MM-dd"));
+      }
+    }
 
-  // Count draft vs published sessions
-  const draftCount = useMemo(() => {
-    return sessions.filter((s) => !s.is_published).length;
-  }, [sessions]);
+    return Array.from(dates)
+      .sort()
+      .map((date, index) => ({
+        date,
+        day: index + 1,
+        count: sessionCounts.get(date) || 0,
+        label: format(parseISO(date), "EEE, d MMM"),
+      }));
+  }, [eventEndDate, eventStartDate, sessions]);
 
-  const selectedDateObj = availableDates.find((d) => d.dateStr === selectedDate);
+  const selectedDayIndex = Math.max(0, availableDates.findIndex((item) => item.date === selectedDate));
+  const scheduledCount = sessions.filter((session) => session.room_id).length;
+  const draftCount = sessions.filter((session) => !session.is_published).length;
+  const blockingConflicts = conflicts.filter((conflict) => conflict.severity === "error").length;
+
+  const moveDay = (offset: number) => {
+    const target = availableDates[selectedDayIndex + offset];
+    if (target) setSelectedDate(target.date);
+  };
 
   const handlePublish = () => {
-    if (conflicts.length > 0) {
-      const proceed = confirm(
-        `There are ${conflicts.length} scheduling conflict(s) detected. Are you sure you want to publish the schedule to live attendees and venue screens?`
+    if (blockingConflicts > 0) {
+      const proceed = window.confirm(
+        `${blockingConflicts} blocking schedule conflict${blockingConflicts === 1 ? "" : "s"} remain. Publish anyway?`,
       );
       if (!proceed) return;
     }
     publishMutation.mutate(undefined);
   };
 
-  const VIEW_MODES: { mode: ViewMode; icon: any; label: string }[] = [
-    { mode: "kanban", icon: LayoutGrid, label: "Kanban" },
-    { mode: "timeline", icon: GanttChart, label: "Timeline" },
-    { mode: "list", icon: LayoutList, label: "List" },
-    { mode: "calendar", icon: CalendarDays, label: "Calendar" },
+  const views: Array<{ mode: ViewMode; label: string; icon: typeof GanttChart }> = [
+    { mode: "timeline", label: "Schedule", icon: GanttChart },
+    { mode: "kanban", label: "Rooms", icon: Columns3 },
+    { mode: "list", label: "List", icon: LayoutList },
+    { mode: "calendar", label: "Calendar", icon: CalendarDays },
   ];
 
   return (
-    <div className="flex flex-col md:flex-row items-center justify-between gap-3 px-4 py-2.5 border-b border-[var(--border-default)] bg-[var(--card)] sticky top-0 z-30 shadow-xs">
-      {/* Left Group: View Mode Switcher + Themed Date Picker + Zoom Selector */}
-      <div className="flex items-center gap-2.5 w-full md:w-auto flex-wrap">
-        {/* View Switcher */}
-        <div className="flex items-center bg-[var(--surface-subtle)] rounded-lg p-0.5 border border-[var(--border-default)]">
-          {VIEW_MODES.map(({ mode, icon: Icon, label }) => (
-            <button
-              key={mode}
-              onClick={() => setViewMode(mode)}
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all",
-                viewMode === mode
-                  ? "bg-[var(--pri)] text-black font-semibold shadow-xs"
-                  : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--card)]"
-              )}
-            >
-              <Icon className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">{label}</span>
-            </button>
-          ))}
+    <header className="relative z-40 border-b border-[var(--border-default)] bg-[var(--card)] shadow-[0_1px_0_rgba(15,23,42,0.04)]">
+      <div className="flex min-h-[62px] items-center justify-between gap-4 px-4 py-2.5 sm:px-5">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="size-2 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.12)]" />
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">Programme control</p>
+          </div>
+          <div className="mt-1 flex items-baseline gap-3">
+            <h1 className="truncate text-lg font-bold tracking-[-0.025em] text-[var(--text-primary)]">Schedule builder</h1>
+            <p className="hidden text-xs text-[var(--text-secondary)] xl:block">
+              {scheduledCount} placed · {sessions.length - scheduledCount} waiting · {rooms.length} rooms
+            </p>
+          </div>
         </div>
 
-        {/* Themed Date Picker Dropdown */}
-        {availableDates.length > 0 && (
-          <div className="relative" ref={dateDropdownRef}>
-            <button
-              type="button"
-              onClick={() => setDateDropdownOpen(!dateDropdownOpen)}
-              className={cn(
-                "flex items-center gap-2 bg-[var(--surface-subtle)] hover:bg-[var(--surface-subtle)]/80 rounded-lg px-2.5 py-1 border transition-all text-xs font-medium",
-                dateDropdownOpen
-                  ? "border-[var(--pri)] ring-1 ring-[var(--pri)]/40 text-[var(--text-primary)]"
-                  : "border-[var(--border-default)] text-[var(--text-primary)]"
-              )}
-            >
-              <CalendarIcon className="h-3.5 w-3.5 text-[var(--pri)] flex-shrink-0" />
-              <span className="font-semibold text-xs">
-                {selectedDateObj ? `Day ${selectedDateObj.dayNumber} • ${selectedDateObj.label}` : "Select Date"}
-              </span>
-              <ChevronDown className={cn("h-3 w-3 text-[var(--text-secondary)] transition-transform", dateDropdownOpen && "rotate-180")} />
-            </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="hidden items-center gap-1 border-r border-[var(--border-subtle)] pr-2 lg:flex">
+            <Button variant="ghost" size="icon" onClick={undo} disabled={history.length === 0} className="size-8" title="Undo last schedule change">
+              <Undo2 className="size-3.5" />
+            </Button>
+            <Button variant="ghost" size="icon" onClick={redo} disabled={future.length === 0} className="size-8" title="Redo schedule change">
+              <Redo2 className="size-3.5" />
+            </Button>
+          </div>
 
-            {dateDropdownOpen && (
-              <div className="absolute left-0 mt-1.5 w-64 bg-[var(--card)] border border-[var(--border-default)] rounded-lg shadow-lg p-1.5 z-50 flex flex-col gap-1">
-                <div className="px-2 py-1 text-[10px] font-semibold text-[var(--text-secondary)] uppercase tracking-wider border-b border-[var(--border-subtle)]">
-                  Event Schedule Days
-                </div>
-                {availableDates.map((item) => {
-                  const isSelected = item.dateStr === selectedDate;
-                  return (
-                    <button
-                      key={item.dateStr}
-                      type="button"
-                      onClick={() => {
-                        setSelectedDate(item.dateStr);
-                        setDateDropdownOpen(false);
-                      }}
-                      className={cn(
-                        "flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors text-left",
-                        isSelected
-                          ? "bg-[var(--pri)]/10 text-[var(--pri)] font-semibold border border-[var(--pri)]/30"
-                          : "text-[var(--text-primary)] hover:bg-[var(--surface-subtle)]"
-                      )}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className={cn(
-                          "text-[10px] font-bold px-1.5 py-0.5 rounded",
-                          isSelected ? "bg-[var(--pri)] text-black" : "bg-[var(--surface-subtle)] text-[var(--text-secondary)]"
-                        )}>
-                          Day {item.dayNumber}
-                        </span>
-                        <span className="truncate">{item.label}</span>
-                      </div>
-                      <span className="text-[10px] text-[var(--text-secondary)] font-normal ml-2">
-                        {item.count} sessions
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+          <button
+            type="button"
+            onClick={toggleConflictPanel}
+            className={cn(
+              "inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--pri)]",
+              conflicts.length
+                ? "border-rose-500/30 bg-rose-500/8 text-rose-600 hover:bg-rose-500/12 dark:text-rose-400"
+                : "border-[var(--border-default)] bg-[var(--surface-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]",
+            )}
+          >
+            <AlertTriangle className="size-3.5" />
+            <span>{conflicts.length ? `${conflicts.length} ${conflicts.length === 1 ? "check" : "checks"}` : "No conflicts"}</span>
+          </button>
+
+          <div className="hidden min-w-[92px] items-center justify-center text-[11px] font-semibold text-[var(--text-secondary)] sm:flex">
+            {isSaving ? (
+              <span className="inline-flex items-center gap-1.5 text-[var(--pri)]"><Loader2 className="size-3 animate-spin" /> Saving</span>
+            ) : isDirty ? (
+              <span className="inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400"><span className="size-1.5 rounded-full bg-current" /> Queued</span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400"><CheckCircle2 className="size-3.5" /> Saved</span>
             )}
           </div>
-        )}
 
-        {/* Themed Time Scale Selector for Timeline */}
-        {viewMode === "timeline" && (
-          <div className="relative" ref={zoomDropdownRef}>
+          <Button onClick={onNewSession} variant="outline" className="hidden h-9 gap-2 px-3 text-xs font-semibold md:inline-flex">
+            <Plus className="size-3.5" /> New session
+          </Button>
+          <Button
+            onClick={handlePublish}
+            disabled={publishMutation.isPending || sessions.length === 0}
+            className="h-9 gap-2 bg-[var(--pri)] px-4 text-xs font-bold text-[var(--primary-contrast)] shadow-sm hover:opacity-90"
+          >
+            {publishMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+            Publish
+            {draftCount > 0 ? <span className="rounded bg-black/15 px-1.5 py-0.5 text-[10px]">{draftCount}</span> : null}
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex min-h-[48px] items-center justify-between gap-4 border-t border-[var(--border-subtle)] px-4 sm:px-5">
+        <nav className="flex h-12 items-center gap-1" aria-label="Builder views">
+          {views.map(({ mode, label, icon: Icon }) => (
             <button
+              key={mode}
               type="button"
-              onClick={() => setZoomDropdownOpen(!zoomDropdownOpen)}
+              onClick={() => setViewMode(mode)}
               className={cn(
-                "flex items-center gap-1.5 bg-[var(--surface-subtle)] hover:bg-[var(--surface-subtle)]/80 rounded-lg px-2.5 py-1 border transition-all text-xs font-medium",
-                zoomDropdownOpen
-                  ? "border-[var(--pri)] ring-1 ring-[var(--pri)]/40 text-[var(--text-primary)]"
-                  : "border-[var(--border-default)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                "relative inline-flex h-full items-center gap-2 px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--pri)]",
+                viewMode === mode ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]",
               )}
             >
-              <Clock className="h-3.5 w-3.5 text-[var(--pri)]" />
-              <span>{zoomLevel >= 1.8 ? "15m Grid" : zoomLevel >= 0.9 ? "30m Grid" : "60m Grid"}</span>
-              <ChevronDown className={cn("h-3 w-3 text-[var(--text-secondary)] transition-transform", zoomDropdownOpen && "rotate-180")} />
+              <Icon className="size-3.5" />
+              <span className="hidden sm:inline">{label}</span>
+              {viewMode === mode ? <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-[var(--pri)]" /> : null}
             </button>
+          ))}
+        </nav>
 
-            {zoomDropdownOpen && (
-              <div className="absolute left-0 mt-1.5 w-36 bg-[var(--card)] border border-[var(--border-default)] rounded-lg shadow-lg p-1 z-50 flex flex-col gap-0.5">
-                {[
-                  { value: 2, label: "15 min zoom" },
-                  { value: 1, label: "30 min zoom" },
-                  { value: 0.5, label: "60 min zoom" },
-                ].map((scale) => (
+        <div className="flex min-w-0 items-center gap-2">
+          {viewMode === "timeline" ? (
+            <div className="hidden items-center rounded-lg border border-[var(--border-default)] bg-[var(--surface-subtle)] p-0.5 lg:flex">
+              <button type="button" onClick={() => setZoomLevel(Math.max(0.5, zoomLevel - 0.25))} className="flex size-7 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--card)] hover:text-[var(--text-primary)]" aria-label="Zoom out">
+                <Minus className="size-3" />
+              </button>
+              <span className="w-12 text-center text-[10px] font-bold tabular-nums text-[var(--text-secondary)]">{Math.round(zoomLevel * 100)}%</span>
+              <button type="button" onClick={() => setZoomLevel(Math.min(2, zoomLevel + 0.25))} className="flex size-7 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--card)] hover:text-[var(--text-primary)]" aria-label="Zoom in">
+                <Plus className="size-3" />
+              </button>
+            </div>
+          ) : null}
+
+          {availableDates.length > 0 ? (
+            <div className="flex min-w-0 items-center gap-1">
+              <button type="button" onClick={() => moveDay(-1)} disabled={selectedDayIndex <= 0} className="flex size-8 shrink-0 items-center justify-center rounded-lg text-[var(--text-secondary)] hover:bg-[var(--surface-subtle)] disabled:opacity-30" aria-label="Previous event day">
+                <ChevronLeft className="size-4" />
+              </button>
+              <div className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none]">
+                {availableDates.map((item) => (
                   <button
-                    key={scale.value}
+                    key={item.date}
                     type="button"
-                    onClick={() => {
-                      setZoomLevel(scale.value);
-                      setZoomDropdownOpen(false);
-                    }}
+                    onClick={() => setSelectedDate(item.date)}
                     className={cn(
-                      "w-full text-left px-2.5 py-1.5 rounded-md text-xs transition-colors",
-                      zoomLevel === scale.value
-                        ? "bg-[var(--pri)]/10 text-[var(--pri)] font-semibold"
-                        : "text-[var(--text-primary)] hover:bg-[var(--surface-subtle)]"
+                      "h-8 shrink-0 rounded-lg px-3 text-left text-[11px] font-semibold transition-colors",
+                      selectedDate === item.date
+                        ? "bg-[var(--text-primary)] text-[var(--card)] shadow-sm"
+                        : "text-[var(--text-secondary)] hover:bg-[var(--surface-subtle)] hover:text-[var(--text-primary)]",
                     )}
+                    title={`${item.count} scheduled session${item.count === 1 ? "" : "s"}`}
                   >
-                    {scale.label}
+                    <span className="mr-1.5 opacity-65">D{item.day}</span>{item.label}
                   </button>
                 ))}
               </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Right Group: Undo/Redo + Conflicts + Draft Auto-Save Status + Publish Schedule */}
-      <div className="flex items-center gap-2.5 w-full md:w-auto justify-end flex-wrap">
-        {/* Undo / Redo */}
-        <div className="flex items-center gap-1 border-r border-[var(--border-subtle)] pr-2.5">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={undo}
-            disabled={history.length === 0}
-            className="h-7 w-7 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-30"
-            title="Undo (Ctrl+Z)"
-          >
-            <Undo2 className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={redo}
-            disabled={future.length === 0}
-            className="h-7 w-7 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-30"
-            title="Redo (Ctrl+Shift+Z)"
-          >
-            <Redo2 className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-
-        {/* Conflicts Badge */}
-        <button
-          onClick={toggleConflictPanel}
-          className={cn(
-            "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition-all",
-            conflicts.length > 0
-              ? "border-rose-500/40 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20"
-              : "border-[var(--border-default)] bg-[var(--surface-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-          )}
-        >
-          <AlertTriangle className="h-3.5 w-3.5 text-rose-400" />
-          <span>{conflicts.length} Conflicts</span>
-        </button>
-
-        {/* Draft Auto-Save Status */}
-        <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-secondary)] px-1">
-          {isSaving ? (
-            <span className="flex items-center gap-1.5 text-[var(--pri)]">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Draft Saving
-            </span>
-          ) : isDirty ? (
-            <span className="text-amber-400 font-medium flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" /> Draft Staging
-            </span>
+              <button type="button" onClick={() => moveDay(1)} disabled={selectedDayIndex >= availableDates.length - 1} className="flex size-8 shrink-0 items-center justify-center rounded-lg text-[var(--text-secondary)] hover:bg-[var(--surface-subtle)] disabled:opacity-30" aria-label="Next event day">
+                <ChevronRight className="size-4" />
+              </button>
+            </div>
           ) : (
-            <span className="flex items-center gap-1 text-emerald-400">
-              <CheckCircle2 className="h-3.5 w-3.5" /> Draft Saved
-            </span>
+            <span className="text-xs font-medium text-[var(--text-tertiary)]">Dates come from event details</span>
           )}
-        </div>
 
-        {/* Publish Schedule CTA */}
-        <Button
-          disabled={publishMutation.isPending}
-          onClick={handlePublish}
-          className="h-8 px-3.5 bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-black font-semibold text-xs tracking-wide rounded-md shadow-xs flex items-center gap-1.5 border-0"
-          title="Publish and finalize sessions for attendee agenda, public website, and venue displays"
-        >
-          {publishMutation.isPending ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
-          ) : (
-            <Send className="h-3.5 w-3.5" />
-          )}
-          <span>Publish Schedule</span>
-          {draftCount > 0 && (
-            <span className="ml-1 px-1.5 py-0.2 bg-black/20 text-black font-bold text-[10px] rounded-full">
-              {draftCount}
-            </span>
-          )}
-        </Button>
+          <span className="hidden max-w-[150px] truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-tertiary)] xl:block" title={eventTimezone}>
+            {eventTimezone}
+          </span>
+        </div>
       </div>
-    </div>
+    </header>
   );
 }

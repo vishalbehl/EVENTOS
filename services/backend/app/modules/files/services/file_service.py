@@ -134,10 +134,10 @@ class FileService:
 
         # Trigger virus scan Celery task. The asset remains quarantined if queuing fails.
         try:
-            from workers.tasks.file_tasks import scan_file_for_viruses
-            scan_file_for_viruses.delay(str(asset_id), str(org_id))
+            from app.tasks.upload_jobs import scan_asset_for_viruses
+            scan_asset_for_viruses.delay(str(asset_id), str(org_id))
         except Exception as exc:
-            logger.exception(f"Failed to queue virus scan for asset {asset_id}: {exc}")
+            logger.error("Failed to queue virus scan for asset {}: {}", asset_id, type(exc).__name__)
             
         return asset
 

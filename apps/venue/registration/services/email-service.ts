@@ -183,7 +183,7 @@ export const getEmailLogs = async (
 
 export const downloadLogs = async (eventId: string) => {
   const response = await fetch(
-    `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001"}/api/v1/events/${eventId}/notifications/logs/download?event_id=${eventId}`,
+    `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8002"}/api/v1/events/${eventId}/notifications/logs/download?event_id=${eventId}`,
     {
       method: "GET",
     }

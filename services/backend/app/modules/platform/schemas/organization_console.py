@@ -408,6 +408,7 @@ class OverrideRequestCreate(StrictWriteModel):
 class ApprovalDecision(StrictWriteModel):
     decision: Literal["APPROVED", "REJECTED"]
     reason: str = Field(min_length=12, max_length=2000)
+    case_reference: str | None = Field(default=None, min_length=2, max_length=160)
 
 
 class CommercialAccessDecision(StrictWriteModel):

@@ -83,7 +83,7 @@ export default function SignageHubPage() {
                       "rounded px-1.5 py-0.5 font-mono text-[9px] font-black uppercase",
                       isReconnect ? "bg-amber-500/20 text-amber-400 animate-pulse" : "bg-emerald-500/20 text-emerald-400"
                     )}>
-                      ● {screen.status?.toUpperCase() || "ONLINE"}
+                      ● {screen.status?.toUpperCase() || "UNKNOWN"}
                     </span>
                   </div>
 

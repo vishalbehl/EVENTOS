@@ -1,8 +1,6 @@
 import uuid
 
 from fastapi import APIRouter, Header, HTTPException, Query, status
-from sqlalchemy import select
-
 from app.core.tenant_context import TenantContextGuard
 from app.dependencies import DB, StepUpAuth
 from app.modules.audit.services.audit_service import AuditContext, AuditService
@@ -37,7 +35,7 @@ from app.modules.crm.schemas.crm_schemas import (
     TaskUpdate,
 )
 from app.modules.crm.services.lifecycle_service import CrmLifecycleService
-from app.modules.crm.application.queries import CrmAccountWorkspaceQueryService, CrmCatalogQueryService
+from app.modules.crm.application.queries import CrmAccountWorkspaceQueryService, CrmCatalogQueryService, CrmListQueryService
 from app.modules.platform.support_access import (
     PlatformSupportScopeDependency,
     execute_platform_support_cursor_read,
@@ -63,11 +61,10 @@ async def list_accounts(
     include_archived: bool = Query(False),
 ) -> CursorPage[AccountResponse]:
     """Retrieve accounts for one explicitly selected support tenant."""
-    stmt = select(Account).where(
-        Account.organization_id == support_scope.organization_id
+    stmt = CrmListQueryService(db).statement(
+        model=Account, organization_id=support_scope.organization_id,
+        include_archived=include_archived,
     )
-    if not include_archived:
-        stmt = stmt.where(Account.archived_at.is_(None))
     return await execute_platform_support_cursor_read(
         db, support_scope, stmt,
         timestamp_column=Account.created_at, id_column=Account.id,
@@ -82,11 +79,10 @@ async def list_contacts(
     limit: int = Query(50, ge=1, le=200),
     include_archived: bool = Query(False),
 ) -> CursorPage[ContactResponse]:
-    stmt = select(Contact).where(
-        Contact.organization_id == support_scope.organization_id
+    stmt = CrmListQueryService(db).statement(
+        model=Contact, organization_id=support_scope.organization_id,
+        include_archived=include_archived,
     )
-    if not include_archived:
-        stmt = stmt.where(Contact.archived_at.is_(None))
     return await execute_platform_support_cursor_read(
         db, support_scope, stmt,
         timestamp_column=Contact.created_at, id_column=Contact.id,
@@ -101,11 +97,10 @@ async def list_leads(
     limit: int = Query(50, ge=1, le=200),
     include_archived: bool = Query(False),
 ) -> CursorPage[LeadResponse]:
-    stmt = select(Lead).where(
-        Lead.organization_id == support_scope.organization_id
+    stmt = CrmListQueryService(db).statement(
+        model=Lead, organization_id=support_scope.organization_id,
+        include_archived=include_archived,
     )
-    if not include_archived:
-        stmt = stmt.where(Lead.archived_at.is_(None))
     return await execute_platform_support_cursor_read(
         db, support_scope, stmt,
         timestamp_column=Lead.created_at, id_column=Lead.id,
@@ -120,11 +115,10 @@ async def list_opportunities(
     limit: int = Query(50, ge=1, le=200),
     include_archived: bool = Query(False),
 ) -> CursorPage[OpportunityResponse]:
-    stmt = select(Opportunity).where(
-        Opportunity.organization_id == support_scope.organization_id
+    stmt = CrmListQueryService(db).statement(
+        model=Opportunity, organization_id=support_scope.organization_id,
+        include_archived=include_archived,
     )
-    if not include_archived:
-        stmt = stmt.where(Opportunity.archived_at.is_(None))
     return await execute_platform_support_cursor_read(
         db, support_scope, stmt,
         timestamp_column=Opportunity.created_at, id_column=Opportunity.id,
@@ -143,13 +137,11 @@ async def _list_engagements(
     entity_type: str | None,
     entity_id: uuid.UUID | None,
 ):
-    stmt = select(model).where(model.organization_id == support_scope.organization_id)
-    if not include_archived:
-        stmt = stmt.where(model.archived_at.is_(None))
-    if entity_type:
-        stmt = stmt.where(model.entity_type == entity_type)
-    if entity_id:
-        stmt = stmt.where(model.entity_id == entity_id)
+    stmt = CrmListQueryService(db).statement(
+        model=model, organization_id=support_scope.organization_id,
+        include_archived=include_archived, entity_type=entity_type,
+        entity_id=entity_id,
+    )
     return await execute_platform_support_cursor_read(
         db, support_scope, stmt,
         timestamp_column=model.created_at, id_column=model.id,

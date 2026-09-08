@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+import hashlib
 from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from sqlalchemy import delete, func, or_, select
@@ -56,12 +57,30 @@ class PricingCommandService:
         *,
         event: Event,
         tiers: list[str],
+        actor=None,
+        if_match: str | None = None,
+        idempotency_key: str | None = None,
     ) -> list[str]:
         try:
+            operation = None
+            if idempotency_key and actor is not None:
+                operation = await begin_idempotent(db, organization_id=event.organization_id, actor_id=actor.id,
+                    operation="registration.pricing.tiers.save", key=idempotency_key,
+                    payload={"event_id": str(event.id), "tiers": tiers, "if_match": if_match})
+                replay = replay_response(operation)
+                if replay:
+                    await db.rollback()
+                    return replay[1].get("tiers", [])
+            if if_match is not None and int(event.version or 1) != require_if_match(if_match):
+                raise_version_conflict(int(event.version or 1))
             cleaned = await TicketPricingService.set_tiers(db, event, tiers)
+            event.version = int(event.version or 1) + 1
             await db.commit()
             await db.refresh(event)
-            await cache_service.invalidate_event(event.organization_id, event.id)
+            await cache_service.invalidate_domain("registration_pricing", event.organization_id, event.id)
+            if operation is not None:
+                await complete_idempotent(db, operation, response_status=200, response_body={"tiers": cleaned}, resource_id=event.id)
+                await db.commit()
             return cleaned
         except Exception:
             await db.rollback()
@@ -74,17 +93,35 @@ class PricingCommandService:
         event: Event,
         pricing_data: dict,
         tier_schedules: dict | None = None,
+        actor=None,
+        if_match: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict:
         try:
+            operation = None
+            if idempotency_key and actor is not None:
+                operation = await begin_idempotent(db, organization_id=event.organization_id, actor_id=actor.id,
+                    operation="registration.pricing.matrix.save", key=idempotency_key,
+                    payload={"event_id": str(event.id), "pricing_data": pricing_data, "tier_schedules": tier_schedules, "if_match": if_match})
+                replay = replay_response(operation)
+                if replay:
+                    await db.rollback()
+                    return replay[1].get("pricing_data", {})
+            if if_match is not None and int(event.version or 1) != require_if_match(if_match):
+                raise_version_conflict(int(event.version or 1))
             result = await TicketPricingService.replace_matrix(
                 db,
                 event,
                 pricing_data,
                 tier_schedules,
             )
+            event.version = int(event.version or 1) + 1
             await db.commit()
             await db.refresh(event)
-            await cache_service.invalidate_event(event.organization_id, event.id)
+            await cache_service.invalidate_domain("registration_pricing", event.organization_id, event.id)
+            if operation is not None:
+                await complete_idempotent(db, operation, response_status=200, response_body={"pricing_data": result}, resource_id=event.id)
+                await db.commit()
             return result
         except Exception:
             await db.rollback()
@@ -538,10 +575,27 @@ class PaymentCommandService:
         payload,
         actor=None,
         idempotency_key: str | None = None,
-    ) -> None:
+        expected_version: int | None = None,
+    ) -> int:
         try:
+            locked_event = await db.scalar(
+                select(Event)
+                .where(Event.id == event.id, Event.organization_id == event.organization_id)
+                .with_for_update(of=Event)
+            )
+            if locked_event is None:
+                raise HTTPException(status_code=404, detail="Event not found.")
+            event = locked_event
             idem = None
             if actor is not None and idempotency_key:
+                request_payload = payload.model_dump(mode="json")
+                for field_name in ("stripe_credentials", "razorpay_credentials"):
+                    credentials = request_payload.get(field_name)
+                    if credentials:
+                        for secret_name in ("secret_key", "key_secret"):
+                            raw_secret = credentials.get(secret_name)
+                            if raw_secret:
+                                credentials[secret_name] = hashlib.sha256(str(raw_secret).encode("utf-8")).hexdigest()
                 idem = await begin_idempotent(
                     db,
                     organization_id=event.organization_id,
@@ -549,12 +603,14 @@ class PaymentCommandService:
                     operation="registration.payment_config.update",
                     key=idempotency_key,
                     # The request hash is persisted, never the credential values.
-                    payload={"event_id": str(event.id), "payload": payload.model_dump(mode="json")},
+                    payload={"event_id": str(event.id), "expected_version": expected_version, "payload": request_payload},
                     ttl_seconds=30 * 24 * 60 * 60,
                 )
                 if replay_response(idem) is not None:
                     await db.commit()
-                    return
+                    return int(event.version or 1)
+            if expected_version is not None and int(event.version or 1) != expected_version:
+                raise_version_conflict(int(event.version or 1))
             settings = dict(event.registration_settings or {})
 
             if payload.payment_enabled is not None:
@@ -594,6 +650,9 @@ class PaymentCommandService:
                 settings["auto_approve_paid"] = payload.auto_approve_paid
 
             event.registration_settings = settings
+            event.version = int(event.version or 1) + 1
+            if actor is not None:
+                event.updated_by = actor.id
             if idem is not None:
                 await complete_idempotent(
                     db,
@@ -604,6 +663,7 @@ class PaymentCommandService:
             await db.commit()
             await db.refresh(event)
             await cache_service.invalidate_event(event.organization_id, event.id)
+            return int(event.version or 1)
         except Exception:
             await db.rollback()
             raise
@@ -645,11 +705,11 @@ class PromoCodeCommandService:
             raise
 
     @staticmethod
-    async def update(db: AsyncSession, *, event: Event, promo_id: uuid.UUID, payload, actor, idempotency_key: str | None = None) -> PromoCode:
+    async def update(db: AsyncSession, *, event: Event, promo_id: uuid.UUID, payload, actor, idempotency_key: str | None = None, if_match: str | None = None) -> PromoCode:
         try:
             idem = None
             if idempotency_key:
-                idem = await begin_idempotent(db, organization_id=event.organization_id, actor_id=actor.id, operation="registration.promo.update", key=idempotency_key, payload={"event_id": str(event.id), "promo_id": str(promo_id), "payload": payload.model_dump(mode="json")})
+                idem = await begin_idempotent(db, organization_id=event.organization_id, actor_id=actor.id, operation="registration.promo.update", key=idempotency_key, payload={"event_id": str(event.id), "promo_id": str(promo_id), "if_match": if_match, "payload": payload.model_dump(mode="json")})
                 replay = replay_response(idem)
                 if replay is not None:
                     promo = await db.scalar(select(PromoCode).where(PromoCode.id == idem.resource_id, PromoCode.event_id == event.id))
@@ -657,13 +717,17 @@ class PromoCodeCommandService:
                         raise RuntimeError("Completed promo idempotency resource is missing.")
                     await db.commit()
                     return promo
-            promo = await db.scalar(select(PromoCode).where(PromoCode.id == promo_id, PromoCode.event_id == event.id))
+            promo = await db.scalar(select(PromoCode).where(PromoCode.id == promo_id, PromoCode.event_id == event.id).with_for_update())
             if promo is None:
                 raise HTTPException(status_code=404, detail="Promo code not found.")
+            expected_version = require_if_match(if_match) if if_match is not None else None
+            if expected_version is not None and int(promo.version or 1) != expected_version:
+                raise_version_conflict(int(promo.version or 1))
             for field in ("is_active", "max_uses", "expiry_date"):
                 value = getattr(payload, field)
                 if value is not None:
                     setattr(promo, field, value)
+            promo.version = int(promo.version or 1) + 1
             await db.flush()
             if idem is not None:
                 await complete_idempotent(db, idem, response_status=200, response_body={"id": str(promo.id)}, resource_id=promo.id)
@@ -676,17 +740,20 @@ class PromoCodeCommandService:
             raise
 
     @staticmethod
-    async def delete(db: AsyncSession, *, event: Event, promo_id: uuid.UUID, actor, idempotency_key: str | None = None) -> None:
+    async def delete(db: AsyncSession, *, event: Event, promo_id: uuid.UUID, actor, idempotency_key: str | None = None, if_match: str | None = None) -> None:
         try:
             idem = None
             if idempotency_key:
-                idem = await begin_idempotent(db, organization_id=event.organization_id, actor_id=actor.id, operation="registration.promo.delete", key=idempotency_key, payload={"event_id": str(event.id), "promo_id": str(promo_id)})
+                idem = await begin_idempotent(db, organization_id=event.organization_id, actor_id=actor.id, operation="registration.promo.delete", key=idempotency_key, payload={"event_id": str(event.id), "promo_id": str(promo_id), "if_match": if_match})
                 if replay_response(idem) is not None:
                     await db.commit()
                     return
-            promo = await db.scalar(select(PromoCode).where(PromoCode.id == promo_id, PromoCode.event_id == event.id))
+            promo = await db.scalar(select(PromoCode).where(PromoCode.id == promo_id, PromoCode.event_id == event.id).with_for_update())
             if promo is None:
                 raise HTTPException(status_code=404, detail="Promo code not found.")
+            expected_version = require_if_match(if_match) if if_match is not None else None
+            if expected_version is not None and int(promo.version or 1) != expected_version:
+                raise_version_conflict(int(promo.version or 1))
             await db.delete(promo)
             await db.flush()
             if idem is not None:
@@ -766,6 +833,92 @@ class FormCategoryCommandService:
             await db.commit()
             await db.refresh(category)
             return category
+        except Exception:
+            await db.rollback()
+            raise
+
+    @staticmethod
+    async def update(db: AsyncSession, *, category_id: uuid.UUID, payload: FormCategoryUpdate,
+                     actor, if_match: str | None = None, idempotency_key: str | None = None) -> FormCategory:
+        organization_id = getattr(actor, "organization_id", None)
+        try:
+            idem = None
+            if idempotency_key and organization_id is not None:
+                idem = await begin_idempotent(
+                    db, organization_id=organization_id, actor_id=actor.id,
+                    operation="registration.form_category.update", key=idempotency_key,
+                    payload={"category_id": str(category_id), "payload": payload.model_dump(mode="json"), "if_match": if_match},
+                )
+                replay = replay_response(idem)
+                if replay is not None:
+                    category = await db.scalar(select(FormCategory).where(FormCategory.id == idem.resource_id))
+                    if category is None:
+                        raise RuntimeError("Completed category idempotency resource is missing.")
+                    await db.commit()
+                    return category
+            category = await db.scalar(
+                select(FormCategory)
+                .where(FormCategory.id == category_id)
+                .with_for_update()
+            )
+            if category is None or (category.organization_id not in {None, organization_id}):
+                raise HTTPException(status_code=404, detail="Form category not found")
+            if category.is_system and not FormCategoryCommandService._is_platform_admin(actor):
+                raise HTTPException(status_code=403, detail="System categories are protected")
+            expected = require_if_match(if_match) if if_match is not None else None
+            if expected is not None and int(category.version or 1) != expected:
+                raise_version_conflict(int(category.version or 1))
+            for field, value in payload.model_dump(exclude_unset=True).items():
+                setattr(category, field, value)
+            category.version = int(category.version or 1) + 1
+            if idem is not None:
+                await complete_idempotent(
+                    db, idem, response_status=200,
+                    response_body=FormCategoryResponse.model_validate(category).model_dump(mode="json"),
+                    resource_id=category.id,
+                )
+            await db.commit()
+            await db.refresh(category)
+            return category
+        except Exception:
+            await db.rollback()
+            raise
+
+    @staticmethod
+    async def delete(db: AsyncSession, *, category_id: uuid.UUID, actor,
+                     if_match: str | None = None, idempotency_key: str | None = None) -> None:
+        organization_id = getattr(actor, "organization_id", None)
+        try:
+            idem = None
+            if idempotency_key and organization_id is not None:
+                idem = await begin_idempotent(
+                    db, organization_id=organization_id, actor_id=actor.id,
+                    operation="registration.form_category.delete", key=idempotency_key,
+                    payload={"category_id": str(category_id), "if_match": if_match},
+                )
+                replay = replay_response(idem)
+                if replay is not None:
+                    await db.commit()
+                    return None
+            category = await db.scalar(
+                select(FormCategory)
+                .where(FormCategory.id == category_id)
+                .with_for_update()
+            )
+            if category is None or category.organization_id != organization_id:
+                raise HTTPException(status_code=404, detail="Form category not found")
+            if category.is_system:
+                raise HTTPException(status_code=403, detail="System categories are protected")
+            expected = require_if_match(if_match) if if_match is not None else None
+            if expected is not None and int(category.version or 1) != expected:
+                raise_version_conflict(int(category.version or 1))
+            category.deleted_at = datetime.now(timezone.utc)
+            category.version = int(category.version or 1) + 1
+            if idem is not None:
+                await complete_idempotent(
+                    db, idem, response_status=204, response_body={}, resource_id=category.id
+                )
+            await db.commit()
         except Exception:
             await db.rollback()
             raise
@@ -851,13 +1004,13 @@ class FormTemplateCommandService:
             raise
 
     @staticmethod
-    async def update(db: AsyncSession, *, template_id: uuid.UUID, payload: FormTemplateUpdate, actor, idempotency_key: str | None = None) -> FormTemplate:
+    async def update(db: AsyncSession, *, template_id: uuid.UUID, payload: FormTemplateUpdate, actor, if_match: str | None = None, idempotency_key: str | None = None) -> FormTemplate:
         is_admin = FormTemplateCommandService._is_platform_admin(actor)
         organization_id = getattr(actor, "organization_id", None)
         try:
             idem = None
             if idempotency_key and organization_id is not None:
-                idem = await begin_idempotent(db, organization_id=organization_id, actor_id=actor.id, operation="registration.form_template.update", key=idempotency_key, payload={"template_id": str(template_id), "payload": payload.model_dump(mode="json")})
+                idem = await begin_idempotent(db, organization_id=organization_id, actor_id=actor.id, operation="registration.form_template.update", key=idempotency_key, payload={"template_id": str(template_id), "payload": payload.model_dump(mode="json"), "if_match": if_match})
                 replay = replay_response(idem)
                 if replay is not None:
                     template = await db.scalar(select(FormTemplate).where(FormTemplate.id == idem.resource_id).options(selectinload(FormTemplate.category)))
@@ -868,13 +1021,23 @@ class FormTemplateCommandService:
             visibility = [FormTemplate.id == template_id, FormTemplate.deleted_at.is_(None)]
             if not is_admin:
                 visibility.append(or_(FormTemplate.scope_type == "GLOBAL", FormTemplate.organization_id == organization_id))
-            template = await db.scalar(select(FormTemplate).where(*visibility).options(selectinload(FormTemplate.category)))
+            template = await db.scalar(
+                select(FormTemplate)
+                .where(*visibility)
+                .options(selectinload(FormTemplate.category))
+                .with_for_update()
+            )
             if template is None:
                 raise HTTPException(status_code=404, detail="Form template not found")
             if template.is_system and not is_admin:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="System blueprints cannot be overwritten. Duplicate the template to customize it for your organization.")
             if not is_admin and template.organization_id != organization_id:
                 raise HTTPException(status_code=403, detail="Not authorized to edit this template")
+            if if_match is not None:
+                expected_version = require_if_match(if_match)
+                current_version = int(template.version or 1)
+                if current_version != expected_version:
+                    raise_version_conflict(current_version)
             for field in ("name", "description", "category_id", "category_key", "is_active"):
                 value = getattr(payload, field)
                 if value is not None:
@@ -929,22 +1092,36 @@ class FormTemplateCommandService:
             raise
 
     @staticmethod
-    async def delete(db: AsyncSession, *, template_id: uuid.UUID, actor, idempotency_key: str | None = None) -> None:
+    async def delete(db: AsyncSession, *, template_id: uuid.UUID, actor, if_match: str | None = None, idempotency_key: str | None = None) -> None:
         organization_id = getattr(actor, "organization_id", None)
         try:
             idem = None
             if idempotency_key and organization_id is not None:
-                idem = await begin_idempotent(db, organization_id=organization_id, actor_id=actor.id, operation="registration.form_template.delete", key=idempotency_key, payload={"template_id": str(template_id)})
+                idem = await begin_idempotent(db, organization_id=organization_id, actor_id=actor.id, operation="registration.form_template.delete", key=idempotency_key, payload={"template_id": str(template_id), "if_match": if_match})
                 if replay_response(idem) is not None:
                     await db.commit()
                     return
-            template = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id, FormTemplate.organization_id == organization_id, FormTemplate.deleted_at.is_(None)))
+            template = await db.scalar(
+                select(FormTemplate)
+                .where(
+                    FormTemplate.id == template_id,
+                    FormTemplate.organization_id == organization_id,
+                    FormTemplate.deleted_at.is_(None),
+                )
+                .with_for_update()
+            )
             if template is None:
                 raise HTTPException(status_code=404, detail="Form template not found")
             if template.is_system:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="System templates cannot be deleted by organizers.")
+            if if_match is not None:
+                expected_version = require_if_match(if_match)
+                current_version = int(template.version or 1)
+                if current_version != expected_version:
+                    raise_version_conflict(current_version)
             template.deleted_at = datetime.now(timezone.utc)
             template.deleted_by = actor.id
+            template.version = int(template.version or 1) + 1
             await db.flush()
             if idem is not None:
                 await complete_idempotent(db, idem, response_status=204, response_body={})
@@ -1131,7 +1308,7 @@ class RegistrationFormCommandService:
                 )
             await db.commit()
             await db.refresh(config)
-            await cache_service.invalidate_event(event.organization_id, event.id)
+            await cache_service.invalidate_domain("registration_form", event.organization_id, event.id)
             return config
         except Exception:
             await db.rollback()
@@ -1146,9 +1323,9 @@ class RegistrationFormCommandService:
         if_match: str | None = None,
     ) -> RegistrationFormConfig:
         result = await db.execute(
-            select(RegistrationFormConfig).where(
-                RegistrationFormConfig.event_id == event.id
-            )
+            select(RegistrationFormConfig)
+            .where(RegistrationFormConfig.event_id == event.id)
+            .with_for_update()
         )
         config = result.scalar_one_or_none()
 
@@ -1287,6 +1464,7 @@ class ParticipantCommandService:
         actor_user_id: uuid.UUID,
         idempotency_key: str,
         source: str,
+        expected_version: int | None = None,
     ) -> tuple[Participant, bool, str]:
         try:
             idem = await begin_idempotent(
@@ -1510,6 +1688,7 @@ class ParticipantCommandService:
         actor_user_id: uuid.UUID,
         idempotency_key: str,
         source: str,
+        expected_version: int | None = None,
     ) -> tuple[Participant, bool]:
         """Restore a participant and make the replay outcome durable."""
         try:
@@ -1519,7 +1698,7 @@ class ParticipantCommandService:
                 actor_id=actor_user_id,
                 operation="registration.participant.restore",
                 key=idempotency_key,
-                payload={"event_id": str(event.id), "participant_id": str(participant_id), "source": source},
+                payload={"event_id": str(event.id), "participant_id": str(participant_id), "source": source, "expected_version": expected_version},
             )
             replay = replay_response(idem)
             if replay is not None:
@@ -1540,6 +1719,7 @@ class ParticipantCommandService:
                 actor_user_id=actor_user_id,
                 idempotency_key=idempotency_key,
                 source=source,
+                expected_version=expected_version,
             )
             payment_enabled = bool((event.registration_settings or {}).get("payment_enabled", False))
             is_free = True

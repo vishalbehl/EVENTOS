@@ -23,3 +23,9 @@ def test_custom_field_command_is_tenant_locked_versioned_audited_and_fail_safe()
     assert "VERSION_CONFLICT" in source and "field_key" in source
     assert "AuditLog" in source and "invalidate_organization" in source
     assert "await self.db.rollback()" in source
+
+
+def test_custom_field_update_persists_durable_replay_result():
+    source = SERVICE.read_text(encoding="utf-8")
+    assert "begin_idempotent" in source
+    assert "complete_idempotent" in source

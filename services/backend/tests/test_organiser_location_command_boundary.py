@@ -26,3 +26,9 @@ def test_location_commands_validate_references_and_are_versioned_audited_and_fai
     assert "BRANCH_TEAM_NOT_ACTIVE" in source
     assert "AuditLog" in source and "invalidate_organization" in source
     assert "await self.db.rollback()" in source
+
+
+def test_location_commands_persist_durable_replay_results():
+    source = SERVICE.read_text(encoding="utf-8")
+    assert source.count("begin_idempotent") >= 2
+    assert source.count("complete_idempotent") >= 2

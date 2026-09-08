@@ -1,12 +1,11 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { useParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { Loader2 } from 'lucide-react';
 import type { WebsiteAsset, WebsiteProjectData, EventDataSnapshot, WebsiteBuilderStudioProps, WebsitePublishOptions } from '@eventos/website-builder-studio/studio';
-import { eventWebsiteBuilder, type WebsiteDeploymentRecord, type WebsiteDomainRecord, type WebsiteDraftRecord, type WebsiteEditorSessionRecord, type WebsiteRevisionSummary } from '@/services/website-builder-service';
+import { eventWebsiteBuilder, type WebsiteDeploymentRecord, type WebsiteDraftRecord, type WebsiteEditorSessionRecord, type WebsiteRevisionSummary } from '@/services/website-builder-service';
 
 // Dynamically import WebsiteBuilderStudio with SSR disabled for GrapesJS DOM compatibility
 const WebsiteBuilderStudio = dynamic<WebsiteBuilderStudioProps>(
@@ -31,9 +30,7 @@ export default function OrganiserWebsiteBuilderPage() {
   const [draft, setDraft] = useState<WebsiteDraftRecord | null>(null);
   const [deployment, setDeployment] = useState<WebsiteDeploymentRecord | null>(null);
   const [revisions, setRevisions] = useState<WebsiteRevisionSummary[]>([]);
-  const [domains, setDomains] = useState<WebsiteDomainRecord[]>([]);
   const [editorSession, setEditorSession] = useState<WebsiteEditorSessionRecord | null>(null);
-  const [domainInput, setDomainInput] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [initialData, setInitialData] = useState<WebsiteProjectData | undefined>(undefined);
   const [portalReady, setPortalReady] = useState(false);
@@ -112,12 +109,6 @@ export default function OrganiserWebsiteBuilderPage() {
           if (mounted) setRevisions(history);
         } catch {
           if (mounted) setRevisions([]);
-        }
-        try {
-          const domainRows = await eventWebsiteBuilder.listDomains(eventId);
-          if (mounted) setDomains(domainRows);
-        } catch {
-          if (mounted) setDomains([]);
         }
       } catch (error) {
         if (!mounted) return;
@@ -200,7 +191,6 @@ export default function OrganiserWebsiteBuilderPage() {
     const publishedDeployment = await eventWebsiteBuilder.publish(eventId, options);
     setDeployment(publishedDeployment);
     setRevisions(await eventWebsiteBuilder.listRevisions(eventId));
-    setDomains(await eventWebsiteBuilder.listDomains(eventId));
     alert(`Website published as deployment ${publishedDeployment.deployment_id}.`);
   };
 
@@ -267,24 +257,6 @@ export default function OrganiserWebsiteBuilderPage() {
     alert(`Website rolled back to revision ${revisionId}.`);
   };
 
-  const handleAddDomain = async () => {
-    const value = domainInput.trim();
-    if (!value) return;
-    const created = await eventWebsiteBuilder.createDomain(eventId, value);
-    setDomains((current) => [created, ...current.filter((item) => item.id !== created.id)]);
-    setDomainInput('');
-  };
-
-  const handleRefreshDomain = async (domainId: string) => {
-    const updated = await eventWebsiteBuilder.refreshDomain(eventId, domainId);
-    setDomains((current) => current.map((item) => item.id === updated.id ? updated : item));
-  };
-
-  const handleDeleteDomain = async (domainId: string) => {
-    await eventWebsiteBuilder.deleteDomain(eventId, domainId);
-    setDomains((current) => current.filter((item) => item.id !== domainId));
-  };
-
   const handleBack = () => {
     router.back();
   };
@@ -300,10 +272,10 @@ export default function OrganiserWebsiteBuilderPage() {
 
   if (!portalReady) return null;
 
-  // The dashboard content pane establishes a containing block for fixed
-  // children. Portal the editor so its canvas and toolbars use the viewport.
-  return createPortal(
-    <div className="flex-1 flex flex-col h-[calc(100vh-70px)] w-full overflow-hidden bg-[#080912]">
+  // Keep the studio inside the dashboard content card so its rounded frame,
+  // scroll boundary, and available height remain owned by the organiser shell.
+  return (
+    <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-[#080912]">
       {loadError ? (
         <div className="border-b border-amber-400/30 bg-amber-400/10 px-4 py-2 text-sm font-medium text-amber-100">
           {loadError}
@@ -349,29 +321,6 @@ export default function OrganiserWebsiteBuilderPage() {
           ) : null}
         </div>
       ) : null}
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-700/70 bg-slate-950 px-4 py-2 text-xs text-slate-200">
-        <span className="font-semibold uppercase tracking-wide text-slate-400">Domains</span>
-        <input
-          value={domainInput}
-          onChange={(event) => setDomainInput(event.target.value)}
-          onKeyDown={(event) => { if (event.key === 'Enter') handleAddDomain(); }}
-          placeholder="www.example.com"
-          className="h-7 min-w-48 rounded border border-slate-700 bg-[#080912] px-2 text-xs text-white outline-none focus:border-indigo-400"
-        />
-        <button type="button" onClick={handleAddDomain} className="h-7 rounded border border-slate-600 px-2 font-semibold text-slate-100 hover:bg-slate-800">
-          Add domain
-        </button>
-        {domains.map((domain) => (
-          <span key={domain.id} className="inline-flex flex-wrap items-center gap-2 rounded border border-slate-700 px-2 py-1" title={`Add TXT ${domain.verification_record_name} = ${domain.verification_record_value}`}>
-            <span>{domain.domain}</span>
-            <span className="text-slate-400">DNS {domain.dns_state}</span>
-            <span className="text-slate-400">TLS {domain.tls_state}</span>
-            {domain.dns_state !== 'VERIFIED' ? <code className="max-w-80 truncate text-[10px] text-amber-200">TXT {domain.verification_record_name}</code> : null}
-            <button type="button" onClick={() => handleRefreshDomain(domain.id)} className="text-indigo-300 hover:text-indigo-100">Refresh</button>
-            <button type="button" onClick={() => handleDeleteDomain(domain.id)} className="text-rose-300 hover:text-rose-100">Remove</button>
-          </span>
-        ))}
-      </div>
       <WebsiteBuilderStudio
         mode="ORGANIZER_TENANT"
         initialData={initialData}
@@ -387,7 +336,6 @@ export default function OrganiserWebsiteBuilderPage() {
         onBack={handleBack}
         readOnly={!editorSession || editorSession.mode !== 'EDITOR'}
       />
-    </div>,
-    document.body,
+    </div>
   );
 }

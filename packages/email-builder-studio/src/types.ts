@@ -30,7 +30,12 @@ export type StudioDraft = {
   expectedVersion: number;
 };
 
-export type StudioVariable = { key: string; label: string; required?: boolean };
+export type StudioVariable = {
+  key: string;
+  label: string;
+  required?: boolean;
+  sampleValue?: string;
+};
 
 export type StudioFragment = {
   id: string;
@@ -86,6 +91,8 @@ export type EmailBuilderStudioProps = {
   templates: StudioTemplate[];
   activeTemplateId?: string | null;
   variables: StudioVariable[];
+  sampleValues?: Record<string, string>;
+  sampleCollections?: Record<string, Array<Record<string, string>>>;
   fragments?: StudioFragment[];
   assets?: StudioAsset[];
   brandingPolicy?: StudioBrandingPolicy;

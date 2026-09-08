@@ -62,8 +62,17 @@ export function LoginPageForm({ onToggleFlip }: { onToggleFlip?: (flip: boolean)
       toast.success("Security handshake complete. Verifying environment...");
       setStep(2);
       setTimeout(() => {
-        router.push("/onboarding");
-      }, 2000);
+        const u = useAuthStore.getState().user;
+        const isDefaultOrg =
+          u?.is_platform_admin ||
+          (u as any)?.organization_slug?.toLowerCase() === "eventos" ||
+          (u as any)?.organization_slug?.toLowerCase() === "default-org";
+        if (u?.onboarding_completed || isDefaultOrg) {
+          router.push("/dashboard");
+        } else {
+          router.push("/onboarding");
+        }
+      }, 1000);
     } catch (error: any) {
       toast.error(error.message || "Authentication rejected by terminal.");
     } finally {

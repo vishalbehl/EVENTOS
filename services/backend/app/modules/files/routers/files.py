@@ -21,6 +21,8 @@ from app.config import settings
 from app.core.job_status import JobStatus
 from app.core.job_status_service import JobStatusService
 from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
+from app.modules.files.infrastructure.repositories import DurableUploadRepository
+from app.core.concurrency import require_if_match, raise_version_conflict
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -133,6 +135,7 @@ async def complete_upload(
     current_user: ActiveUser,
     db: DB,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    if_match: str | None = Header(None, alias="If-Match"),
 ) -> JobStatus:
     """Confirm storage upload and enqueue one tenant-bound verification task."""
     organization_id = current_user.organization_id
@@ -146,19 +149,20 @@ async def complete_upload(
             actor_id=current_user.id,
             operation="file_upload.complete",
             key=idempotency_key,
-            payload={"upload_id": str(upload_id)},
+            payload={"upload_id": str(upload_id), "version": if_match},
         )
         replay = replay_response(idem)
         if replay is not None:
             return JobStatus.model_validate(replay[1])
-    row = await db.scalar(
-        select(DurableUpload).where(
-            DurableUpload.id == upload_id,
-            DurableUpload.organization_id == organization_id,
-        ).with_for_update()
+    row = await DurableUploadRepository(db).get_by_id(
+        upload_id=upload_id,
+        organization_id=organization_id,
+        for_update=True,
     )
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found.")
+    if if_match is not None and row.version != require_if_match(if_match):
+        raise_version_conflict(row.version)
     if row.status == "uploading":
         await UploadService.transition(db, upload_id, "uploaded", organization_id=organization_id)
     elif row.status not in {"uploaded", "verifying", "scanning", "processing", "ready"}:

@@ -21,8 +21,9 @@ export default function EventClosurePage() {
   const closureMutation = useMutation({
     mutationFn: () => apiClient.post("/venue/admin/control/closure/final-sync"),
     onSuccess: (data: any) => {
-      setClosed(true);
-      toast.success("Event closed & final sync completed successfully!");
+      setClosed(Boolean(data?.closure_verified));
+      if (data?.closure_verified) toast.success("Event closed and final sync verified.");
+      else toast.warning(`Closure remains incomplete: ${data?.synced_files ?? 0} of ${data?.total_current_files ?? 0} files verified.`);
     },
     onError: (err: any) => {
       toast.error(`Closure failed: ${err.message || "Error"}`);
@@ -33,7 +34,7 @@ export default function EventClosurePage() {
   const eventName = overview?.event?.name || "Live Event Core";
   const pendingSync = overview?.sync?.pending ?? 0;
   const totalSynced = (overview?.content?.synced ?? 0) + (overview?.content?.verified ?? 0);
-  const totalAuditEvents = 1842;
+  const totalAuditEvents = overview?.audit_events?.total ?? null;
 
   return (
     <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 pb-12">
@@ -71,7 +72,7 @@ export default function EventClosurePage() {
 
         <div className="rounded-2xl border border-blue-500/30 bg-blue-950/15 p-5 space-y-1">
           <span className="font-mono text-[10px] font-black uppercase text-blue-400">AUDIT TRAIL LOGS</span>
-          <div className="text-2xl font-black text-blue-300">{totalAuditEvents} Records</div>
+          <div className="text-2xl font-black text-blue-300">{totalAuditEvents === null ? "Unavailable" : `${totalAuditEvents} Records`}</div>
           <p className="text-xs text-[var(--muted)]">Tamper-evident operational log</p>
         </div>
       </div>

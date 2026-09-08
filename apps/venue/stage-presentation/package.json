@@ -1,14 +1,18 @@
 {
-  "name": "room-presentation",
+  "name": "@conf-platform/stage-presentation",
   "private": true,
   "version": "1.0.0",
-  "type": "module",
+  "author": "Eventos",
+  "description": "Eventos room Stage presentation application",
+  "type": "commonjs",
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
+    "type-check": "tsc --noEmit",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "desktop:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:dev": "npm run desktop:dev",
     "electron:build": "npm run build && electron-builder"
   },
   "dependencies": {
@@ -22,13 +26,22 @@
     "tailwind-merge": "^2.5.4",
     "date-fns": "^4.1.0"
   },
+  "build": {
+    "appId": "com.eventos.venue.stage",
+    "productName": "Eventos Stage App",
+    "artifactName": "Eventos-Stage-App-${version}-${arch}.${ext}",
+    "directories": { "output": "dist" },
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "msi", "arch": ["x64"] }], "publisherName": "Eventos", "icon": "../venue-server-app/public/logo/logo-icon.png" },
+    "nsis": { "oneClick": true, "runAfterFinish": false },
+    "msi": { "oneClick": false, "perMachine": true, "runAfterFinish": false, "createDesktopShortcut": true, "createStartMenuShortcut": true, "shortcutName": "Eventos Stage App" }
+  },
   "devDependencies": {
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
     "concurrently": "^9.1.0",
-    "electron": "^33.2.1",
+    "electron": "33.4.11",
     "electron-builder": "^25.1.8",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.16",

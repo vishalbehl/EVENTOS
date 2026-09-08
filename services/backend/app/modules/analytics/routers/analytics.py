@@ -34,6 +34,7 @@ from app.worker import celery_app
 from app.core.dependencies.feature_gate import enforce_event_operation
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
 from app.modules.analytics.application.queries import (
+    AnalyticsDashboardQueryService,
     EventRegistrationSummaryProjection,
     EventRegistrationSummaryQueryService,
     EventAttendanceSummaryProjection,
@@ -78,10 +79,15 @@ async def dashboard(
     db: AsyncSession = Depends(get_db),
 ) -> DashboardStats:
     """Top-level KPI snapshot for the organizer dashboard."""
-    snapshot = await build_analytics_snapshot(db, event.id)
-    overview = snapshot.get("overview", {})
-    funnel = snapshot.get("upload_funnel", {})
-    srr = snapshot.get("srr", {})
+    analytics = AnalyticsDashboardQueryService(db)
+    overview = await analytics.overview(event_id=event.id)
+    funnel = await analytics.upload_funnel(event_id=event.id)
+    room_rows = await analytics.room_readiness(event_id=event.id)
+    snapshot = {
+        "daily_uploads": await analytics.daily_upload_history(event_id=event.id),
+        "room_heatmap": await analytics.room_heatmap(event_id=event.id),
+    }
+    srr = await analytics.srr_stats(event_id=event.id)
     return DashboardStats(
         event_id=event.id,
         total_speakers=overview.get("total_speakers", 0),
@@ -106,7 +112,7 @@ async def dashboard(
                 speaker_count=r["speaker_slots"],
                 files_approved=r["files_ready"],
                 readiness_pct=r["readiness_pct"]
-            ) for r in snapshot.get("room_readiness", [])
+            ) for r in room_rows
         ],
         room_heatmap=snapshot.get("room_heatmap", [])
     )
@@ -208,8 +214,7 @@ async def upload_funnel(
     db: AsyncSession = Depends(get_db),
 ) -> UploadFunnelStats:
     """Speaker upload completion funnel."""
-    snapshot = await build_analytics_snapshot(db, event.id)
-    f = snapshot.get("upload_funnel", {})
+    f = await AnalyticsDashboardQueryService(db).upload_funnel(event_id=event.id)
     return UploadFunnelStats(
         invited=f.get("invited", 0),
         uploaded=f.get("uploaded", 0),
@@ -228,8 +233,8 @@ async def session_readiness(
     db: AsyncSession = Depends(get_db),
 ) -> List[SessionReadinessRow]:
     """Per-session readiness — % of speakers with approved files."""
-    snapshot = await build_analytics_snapshot(db, event.id)
-    rows = snapshot.get("session_coverage", {}).get("sessions", [])
+    coverage = await AnalyticsDashboardQueryService(db).session_coverage(event_id=event.id)
+    rows = coverage.get("sessions", [])
     
     allowed = await get_allowed_sessions(current_user, event.id, db)
     if allowed is not None:
@@ -258,7 +263,7 @@ async def room_breakdown(
     db: AsyncSession = Depends(get_db),
 ) -> List[RoomBreakdownRow]:
     """Per-room session and file readiness breakdown."""
-    rows = await get_room_readiness(db, event.id)
+    rows = await AnalyticsDashboardQueryService(db).room_readiness(event_id=event.id)
     
     allowed = await get_allowed_sessions(current_user, event.id, db)
     if allowed is not None:
@@ -289,7 +294,7 @@ async def recent_activity(
     limit: int = Query(50, ge=1, le=200),
 ) -> List[ActivityItem]:
     """Recent activity feed — delegated to snapshot srr/file events."""
-    snapshot = await build_analytics_snapshot(db, event.id)
+    snapshot = await build_analytics_snapshot(db, event.id, organization_id=event.organization_id)
     # Activity feed is returned as-is from the snapshot if available
     return snapshot.get("recent_activity", [])
 
@@ -516,7 +521,7 @@ async def global_summary(
     
     for eid in event_ids:
         try:
-            snap = await build_analytics_snapshot(db, eid)
+            snap = await build_analytics_snapshot(db, eid, organization_id=current_user.organization_id)
             ov = snap.get("overview", {})
             total_stats["total_speakers"] += ov.get("total_speakers", 0)
             total_stats["total_sessions"] += ov.get("total_sessions", 0)

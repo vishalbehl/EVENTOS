@@ -8,6 +8,8 @@ const srrDesktop = {
     getSystemInfo: () => electron_1.ipcRenderer.invoke("srr-desktop:get-system-info"),
     // Database Operations
     getLocalDatabaseStatus: () => electron_1.ipcRenderer.invoke("srr-desktop:get-local-database-status"),
+    getCacheStatus: () => electron_1.ipcRenderer.invoke("srr-desktop:get-cache-status"),
+    getOfflineUploadStatus: () => electron_1.ipcRenderer.invoke("srr-desktop:get-offline-upload-status"),
     initializeLocalDatabase: () => electron_1.ipcRenderer.invoke("srr-desktop:initialize-local-database"),
     syncLocalDatabaseFromServer: () => electron_1.ipcRenderer.invoke("srr-desktop:sync-local-database"),
     importLocalDatabase: () => electron_1.ipcRenderer.invoke("srr-desktop:import-local-database"),

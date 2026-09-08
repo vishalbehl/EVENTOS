@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import Integer, cast, func, select
+from sqlalchemy import Integer, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -20,7 +20,7 @@ from app.modules.platform.services.metering_service import MeteringService
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.schemas.participant import ParticipantCreate, ParticipantUpdate
-from app.modules.registration.services.portal_service import phone_numbers_match
+from app.modules.registration.services.portal_service import normalize_phone, phone_numbers_match
 from app.modules.registration.services.pricing_service import (
     get_active_prices_for_event,
 )
@@ -42,6 +42,7 @@ class EventParticipantMutationService:
         actor_user_id: uuid.UUID,
         idempotency_key: str,
         source: str,
+        expected_version: int | None = None,
     ) -> tuple[Participant, bool, str]:
         await enforce_event_operation(
             db,
@@ -56,29 +57,23 @@ class EventParticipantMutationService:
             select(Event.id).where(Event.id == event.id).with_for_update()
         )
 
-        active = list(
-            (
-                await db.scalars(
-                    select(Participant)
-                    .options(selectinload(Participant.role_rel))
-                    .where(
-                        Participant.event_id == event.id,
-                        Participant.deleted_at.is_(None),
-                    )
-                )
-            ).all()
-        )
         normalized_email = EventParticipantMutationService._normalize_email(
             payload.email
         )
-        if normalized_email and EventParticipantMutationService._email_owner(
-            active, normalized_email
+        if normalized_email and await EventParticipantMutationService._email_exists(
+            db, event.id, normalized_email
         ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="This email address is already registered.",
             )
 
+        active = await EventParticipantMutationService._profile_candidates(
+            db,
+            event.id,
+            payload.name,
+            payload.phone,
+        )
         profile_match = EventParticipantMutationService._profile_match(
             active, payload.name or "", payload.phone
         )
@@ -216,19 +211,11 @@ class EventParticipantMutationService:
                 changes["email"]
             )
             if changes["email"]:
-                active = list(
-                    (
-                        await db.scalars(
-                            select(Participant).where(
-                                Participant.event_id == event.id,
-                                Participant.id != participant.id,
-                                Participant.deleted_at.is_(None),
-                            )
-                        )
-                    ).all()
-                )
-                if EventParticipantMutationService._email_owner(
-                    active, changes["email"]
+                if await EventParticipantMutationService._email_exists(
+                    db,
+                    event.id,
+                    changes["email"],
+                    exclude_id=participant.id,
                 ):
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
@@ -311,6 +298,8 @@ class EventParticipantMutationService:
         participant = await EventParticipantMutationService._participant(
             db, event.id, participant_id, include_archived=True, lock=True
         )
+        if expected_version is not None and participant.version != expected_version:
+            raise_version_conflict(participant.version)
         if participant.deleted_at is not None:
             return participant, "ALREADY_ARCHIVED"
         participant.deleted_at = datetime.now(timezone.utc)
@@ -342,6 +331,7 @@ class EventParticipantMutationService:
         actor_user_id: uuid.UUID,
         idempotency_key: str,
         source: str,
+        expected_version: int | None = None,
     ) -> tuple[Participant, str]:
         await enforce_event_operation(
             db,
@@ -353,24 +343,17 @@ class EventParticipantMutationService:
         participant = await EventParticipantMutationService._participant(
             db, event.id, participant_id, include_archived=True, lock=True
         )
+        if expected_version is not None and participant.version != expected_version:
+            raise_version_conflict(participant.version)
         if participant.deleted_at is None:
             return participant, "ALREADY_ACTIVE"
         normalized_email = EventParticipantMutationService._normalize_email(
             participant.email
         )
         if normalized_email:
-            active = list(
-                (
-                    await db.scalars(
-                        select(Participant).where(
-                            Participant.event_id == event.id,
-                            Participant.id != participant.id,
-                            Participant.deleted_at.is_(None),
-                        )
-                    )
-                ).all()
-            )
-            if EventParticipantMutationService._email_owner(active, normalized_email):
+            if await EventParticipantMutationService._email_exists(
+                db, event.id, normalized_email, exclude_id=participant.id
+            ):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="An active participant now uses this archived email.",
@@ -423,6 +406,78 @@ class EventParticipantMutationService:
         if participant is None:
             raise HTTPException(status_code=404, detail="Participant not found.")
         return participant
+
+    @staticmethod
+    async def _email_exists(
+        db: AsyncSession,
+        event_id: uuid.UUID,
+        normalized_email: str,
+        *,
+        exclude_id: uuid.UUID | None = None,
+    ) -> bool:
+        """Check primary and additional emails without loading an event list."""
+        conditions = [
+            Participant.event_id == event_id,
+            Participant.deleted_at.is_(None),
+            or_(
+                func.lower(Participant.email) == normalized_email,
+                Participant.custom_fields["additional_emails"].contains(
+                    [normalized_email]
+                ),
+            ),
+        ]
+        if exclude_id is not None:
+            conditions.append(Participant.id != exclude_id)
+        return (await db.scalar(select(Participant.id).where(*conditions).limit(1))) is not None
+
+    @staticmethod
+    async def _profile_candidates(
+        db: AsyncSession,
+        event_id: uuid.UUID,
+        name: str | None,
+        phone: str | None,
+    ) -> list[Participant]:
+        """Prefilter merge candidates while retaining a portable fallback."""
+        if not name or not phone:
+            return []
+        normalized_name = " ".join(str(name).strip().lower().split())
+        phone_digits = normalize_phone(phone)
+        if not normalized_name or not phone_digits:
+            return []
+        bind = db.get_bind()
+        statement = select(Participant).where(
+            Participant.event_id == event_id,
+            Participant.deleted_at.is_(None),
+        )
+        if bind.dialect.name == "postgresql":
+            suffix = phone_digits[-min(7, len(phone_digits)):]
+            statement = statement.where(
+                func.lower(
+                    func.regexp_replace(
+                        func.trim(func.coalesce(Participant.name, "")),
+                        r"\s+",
+                        " ",
+                        "g",
+                    )
+                )
+                == normalized_name,
+                func.right(
+                    func.regexp_replace(
+                        func.coalesce(Participant.phone, ""), r"\D", "", "g"
+                    ),
+                    len(suffix),
+                )
+                == suffix,
+            )
+        else:
+            # SQLite test/dev databases do not provide PostgreSQL regexp functions.
+            # Keep the historical matching behavior in that environment.
+            return list(
+                (
+                    await db.scalars(statement.options(selectinload(Participant.role_rel)))
+                ).all()
+            )
+        return list((await db.scalars(statement.options(selectinload(Participant.role_rel)))).all())
 
     @staticmethod
     async def _pricing(

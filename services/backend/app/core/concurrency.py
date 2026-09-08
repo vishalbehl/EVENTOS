@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from fastapi import HTTPException, status
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.modules.events.models.event import Event
 
 
 def require_if_match(value: str | int | None) -> int:
@@ -36,11 +38,40 @@ async def update_with_version(
     next_values = dict(values)
     next_values["version"] = expected_version + 1
     stmt = update(model).where(model.id == record_id, model.version == expected_version)
-    if organization_id is not None and hasattr(model, "organization_id"):
-        stmt = stmt.where(model.organization_id == organization_id)
+    if organization_id is not None:
+        if hasattr(model, "organization_id"):
+            stmt = stmt.where(model.organization_id == organization_id)
+        elif hasattr(model, "event_id"):
+            stmt = stmt.where(
+                select(Event.id)
+                .where(
+                    Event.id == model.event_id,
+                    Event.organization_id == organization_id,
+                )
+                .exists()
+            )
+        else:
+            raise ValueError(
+                f"Cannot apply organization scope to {model.__name__}; "
+                "provide a tenant-aware model."
+            )
     result = await db.execute(stmt.values(**next_values))
     if result.rowcount != 1:
-        raise_version_conflict(expected_version)
+        current_stmt = select(model.version).where(model.id == record_id)
+        if organization_id is not None:
+            if hasattr(model, "organization_id"):
+                current_stmt = current_stmt.where(model.organization_id == organization_id)
+            elif hasattr(model, "event_id"):
+                current_stmt = current_stmt.where(
+                    select(Event.id)
+                    .where(
+                        Event.id == model.event_id,
+                        Event.organization_id == organization_id,
+                    )
+                    .exists()
+                )
+        current_version = await db.scalar(current_stmt)
+        raise_version_conflict(int(current_version or expected_version))
     return expected_version + 1
 
 
