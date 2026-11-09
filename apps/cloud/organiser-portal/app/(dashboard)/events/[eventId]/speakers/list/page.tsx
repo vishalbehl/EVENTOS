@@ -39,6 +39,8 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useFloatingToolbarStore } from "@/store/useFloatingToolbarStore";
 import { useOperationAccess } from "@/lib/capabilities";
+import { TablePagination } from "@/components/organizer/common/TablePagination";
+import { useTablePagination } from "@/hooks/useTablePagination";
 
 export default function SpeakersPage() {
   const params = useParams();
@@ -52,6 +54,49 @@ export default function SpeakersPage() {
   const [sessionFilter, setSessionFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [showIncompleteOnly, setShowIncompleteOnly] = useState(false);
+  const [savedViews, setSavedViews] = useState<Record<string, { search: string; room: string; session: string; status: string; incomplete: boolean }>>({});
+  const [viewName, setViewName] = useState("");
+  const [activeView, setActiveView] = useState("");
+  const [visibleColumns, setVisibleColumns] = useState({ fileQa: true, programme: true });
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(`speaker-roster-views:${eventIdStr}`);
+      if (stored) setSavedViews(JSON.parse(stored));
+      const storedColumns = window.localStorage.getItem(`speaker-roster-columns:${eventIdStr}`);
+      if (storedColumns) setVisibleColumns({ fileQa: true, programme: true, ...JSON.parse(storedColumns) });
+    } catch {
+      // A private browsing context may not provide storage; filters still work.
+    }
+  }, [eventIdStr]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(`speaker-roster-columns:${eventIdStr}`, JSON.stringify(visibleColumns)); } catch { /* best effort */ }
+  }, [eventIdStr, visibleColumns]);
+
+  const saveCurrentView = () => {
+    const name = viewName.trim();
+    if (!name) return;
+    const next = {
+      ...savedViews,
+      [name]: { search: searchQuery, room: roomFilter, session: sessionFilter, status: statusFilter, incomplete: showIncompleteOnly },
+    };
+    setSavedViews(next);
+    setActiveView(name);
+    setViewName("");
+    try { window.localStorage.setItem(`speaker-roster-views:${eventIdStr}`, JSON.stringify(next)); } catch { /* best effort */ }
+  };
+
+  const applySavedView = (name: string) => {
+    setActiveView(name);
+    const view = savedViews[name];
+    if (!view) return;
+    setSearchQuery(view.search);
+    setRoomFilter(view.room);
+    setSessionFilter(view.session);
+    setStatusFilter(view.status);
+    setShowIncompleteOnly(view.incomplete);
+  };
 
   // Selection & Email state
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -129,6 +174,14 @@ export default function SpeakersPage() {
     });
   }, [speakers, showIncompleteOnly]);
 
+  const {
+    currentPage,
+    setCurrentPage,
+    pageSize,
+    setPageSize,
+    paginatedItems: paginatedSpeakers,
+  } = useTablePagination(uniqueSpeakers, 10);
+
   useEffect(() => {
     if (selectedIds.length > 0) {
       setToolbarActions([
@@ -144,6 +197,12 @@ export default function SpeakersPage() {
             setEmailDialogOpen(true);
           },
           color: "bg-[var(--pri)] text-[var(--primary-contrast)]",
+        },
+        {
+          label: "Clear Selection",
+          icon: X,
+          onClick: () => setSelectedIds([]),
+          color: "bg-white/5",
         },
       ]);
     } else {
@@ -185,11 +244,16 @@ export default function SpeakersPage() {
   ]);
 
   const toggleSelectAll = () => {
-    if (selectedIds.length === uniqueSpeakers.length) {
-      setSelectedIds([]);
-    } else {
-      setSelectedIds(uniqueSpeakers.map((s) => s.id));
-    }
+    const pageIds = paginatedSpeakers.map((s) => s.id);
+    const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
+    setSelectedIds((prev) => {
+      if (allPageSelected) {
+        return prev.filter((id) => !pageIds.includes(id));
+      } else {
+        const set = new Set([...prev, ...pageIds]);
+        return Array.from(set);
+      }
+    });
   };
 
   const toggleSelect = (id: string) => {
@@ -311,6 +375,30 @@ export default function SpeakersPage() {
 
         <div className="flex flex-wrap items-center gap-2.5">
           <select
+            aria-label="Saved speaker views"
+            value={activeView}
+            onChange={(event) => applySavedView(event.target.value)}
+            className="h-9 rounded-lg border border-[var(--pri)]/30 bg-[var(--pri)]/5 px-3 text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none shadow-sm cursor-pointer"
+          >
+            <option value="">Saved views</option>
+            {Object.keys(savedViews).sort().map((name) => <option key={name} value={name}>{name}</option>)}
+          </select>
+          <input
+            aria-label="Saved view name"
+            value={viewName}
+            onChange={(event) => setViewName(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Enter") saveCurrentView(); }}
+            placeholder="Name this view"
+            className="h-9 w-32 rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-3 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:border-[var(--pri)] focus:outline-none shadow-sm"
+          />
+          <button type="button" onClick={saveCurrentView} disabled={!viewName.trim()} className="h-9 rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-3 text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-40">Save view</button>
+          <details className="relative">
+            <summary className="flex h-9 cursor-pointer list-none items-center rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-3 text-xs font-semibold text-[var(--text-secondary)] shadow-sm">Columns</summary>
+            <div className="absolute right-0 z-20 mt-2 w-44 rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-3 shadow-xl">
+              {([['fileQa', 'File QA'], ['programme', 'Programme']] as const).map(([key, label]) => <label key={key} className="flex items-center gap-2 py-1.5 text-xs text-[var(--text-primary)]"><input type="checkbox" checked={visibleColumns[key]} onChange={(event) => setVisibleColumns((current) => ({ ...current, [key]: event.target.checked }))} />{label}</label>)}
+            </div>
+          </details>
+          <select
             value={roomFilter}
             onChange={(e) => setRoomFilter(e.target.value)}
             className="h-9 rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-3 text-xs font-medium text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none shadow-sm cursor-pointer"
@@ -427,7 +515,7 @@ export default function SpeakersPage() {
                     className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer"
                     title="Select all"
                   >
-                    {uniqueSpeakers.length > 0 && selectedIds.length === uniqueSpeakers.length ? (
+                    {paginatedSpeakers.length > 0 && paginatedSpeakers.every((s) => selectedIds.includes(s.id)) ? (
                       <CheckSquare className="size-4 text-[var(--pri)]" />
                     ) : (
                       <Square className="size-4" />
@@ -435,30 +523,30 @@ export default function SpeakersPage() {
                   </button>
                 </th>
                 <th className="px-4 py-3 truncate">Speaker</th>
-                <th className="px-4 py-3 truncate">Access Code</th>
                 <th className="px-4 py-3 text-center truncate">Sessions</th>
                 <th className="px-4 py-3 truncate">Profile Status</th>
-                <th className="px-4 py-3 truncate">File QA Status</th>
+                {visibleColumns.fileQa && <th className="px-4 py-3 truncate">File QA Status</th>}
+                {visibleColumns.programme && <th className="px-4 py-3 truncate">Programme</th>}
                 <th className="px-4 py-3 text-right truncate">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-subtle)]">
               {isLoading ? (
                 <tr>
-                  <td colSpan={7} className="py-16 text-center text-xs text-[var(--text-secondary)]">
+                  <td colSpan={5 + Number(visibleColumns.fileQa) + Number(visibleColumns.programme)} className="py-16 text-center text-xs text-[var(--text-secondary)]">
                     <RefreshCw className="size-5 text-[var(--pri)] animate-spin mx-auto mb-2" />
                     Loading speakers roster...
                   </td>
                 </tr>
               ) : uniqueSpeakers.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-16 text-center text-xs text-[var(--text-secondary)]">
+                  <td colSpan={5 + Number(visibleColumns.fileQa) + Number(visibleColumns.programme)} className="py-16 text-center text-xs text-[var(--text-secondary)]">
                     <Users className="size-6 text-[var(--text-tertiary)] mx-auto mb-2" />
-                    No speakers found matching your search filters.
+                    No speakers matched filters criteria.
                   </td>
                 </tr>
               ) : (
-                uniqueSpeakers.map((s) => {
+                paginatedSpeakers.map((s) => {
                   const isSelected = selectedIds.includes(s.id);
                   const completeness = s.profile_completeness ?? 0;
                   return (
@@ -501,19 +589,13 @@ export default function SpeakersPage() {
                         </div>
                       </td>
 
-                      <td className="px-4 py-3">
-                        <span className="font-mono text-xs font-bold text-[var(--pri)]">
-                          {s.speaker_code || "---"}
-                        </span>
-                      </td>
-
                       <td className="px-4 py-3 text-center">
                         <span className="inline-flex items-center rounded-full border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-2.5 py-0.5 text-[10px] font-semibold text-[var(--text-primary)]">
                           {s.talks_count || 0} Talk{s.talks_count === 1 ? "" : "s"}
                         </span>
                       </td>
 
-                      <td className="px-4 py-3">
+                      {visibleColumns.fileQa && <td className="px-4 py-3">
                         <div className="flex flex-col gap-1 w-24">
                           <div className="flex items-center justify-between text-[10px] font-bold">
                             <span
@@ -543,9 +625,9 @@ export default function SpeakersPage() {
                             />
                           </div>
                         </div>
-                      </td>
+                      </td>}
 
-                      <td className="px-4 py-3">
+                      {visibleColumns.programme && <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5 text-[10px]">
                           {(s.files_approved || 0) > 0 ? (
                             <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-bold">
@@ -561,6 +643,14 @@ export default function SpeakersPage() {
                             </span>
                           )}
                         </div>
+                      </td>}
+
+                      <td className="px-4 py-3">
+                        {(() => {
+                          const readiness = s.programme_readiness ?? Math.round(((completeness + ((s.files_approved || 0) > 0 ? 100 : (s.files_uploaded || 0) > 0 ? 60 : 0)) / 2));
+                          const label = readiness >= 80 ? "Ready" : readiness >= 50 ? "Needs action" : "Not ready";
+                          return <div className="min-w-24"><div className="flex items-center justify-between text-[10px] font-bold"><span className={readiness >= 80 ? "text-emerald-600" : readiness >= 50 ? "text-amber-600" : "text-rose-600"}>{label}</span><span className="text-[var(--text-tertiary)]">{readiness}%</span></div><div className="mt-1 h-1 rounded-full bg-[var(--bg-surface-2)]"><div className={cn("h-full rounded-full", readiness >= 80 ? "bg-emerald-500" : readiness >= 50 ? "bg-amber-500" : "bg-rose-500")} style={{ width: `${readiness}%` }} /></div></div>;
+                        })()}
                       </td>
 
                       <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
@@ -583,6 +673,14 @@ export default function SpeakersPage() {
             </tbody>
           </table>
         </div>
+        <TablePagination
+          currentPage={currentPage}
+          totalItems={uniqueSpeakers.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+          itemLabel="speakers"
+        />
       </div>
 
       {/* ── Slide-Over Speaker Details Drawer ── */}

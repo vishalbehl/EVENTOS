@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1200" viewBox="0 0 1920 1200" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="150" y1="20" x2="1770" y2="1180" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#040810"/><stop offset=".32" stop-color="#071322"/><stop offset=".68" stop-color="#0B1E34"/><stop offset="1" stop-color="#05101E"/>
+    </linearGradient>
+    <linearGradient id="glacierWaveA" x1="960" y1="440" x2="960" y2="1080" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#12273F"/><stop offset="1" stop-color="#0A1828"/>
+    </linearGradient>
+    <linearGradient id="glacierWaveB" x1="960" y1="600" x2="960" y2="1200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0E2136"/><stop offset="1" stop-color="#05101C"/>
+    </linearGradient>
+    <filter id="softGlow"><feGaussianBlur stdDeviation="55"/></filter>
+    <pattern id="frostGrid" width="136" height="136" patternUnits="userSpaceOnUse">
+      <path d="M136 0H0V136" stroke="#0EA5E9" stroke-opacity=".05"/>
+    </pattern>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#sky)"/>
+  <ellipse cx="560" cy="230" rx="520" ry="240" fill="#0284C7" fill-opacity=".2" filter="url(#softGlow)"/>
+  <ellipse cx="1440" cy="260" rx="460" ry="250" fill="#06B6D4" fill-opacity=".18" filter="url(#softGlow)"/>
+  <circle cx="980" cy="200" r="260" fill="#38BDF8" fill-opacity=".15" filter="url(#softGlow)"/>
+  <path d="M0 660C180 580 320 630 490 560C670 480 820 570 1000 490C1180 420 1330 500 1510 440C1680 380 1800 420 1920 370V1200H0V660Z" fill="url(#glacierWaveA)" fill-opacity=".9"/>
+  <path d="M0 820C170 740 330 790 520 710C710 630 870 720 1060 640C1250 560 1420 650 1610 580C1750 530 1850 560 1920 520V1200H0V820Z" fill="#0E2136" fill-opacity=".88"/>
+  <path d="M0 960C200 880 380 930 570 850C760 770 930 860 1120 780C1320 700 1490 790 1690 710C1810 660 1880 680 1920 650V1200H0V960Z" fill="url(#glacierWaveB)" fill-opacity=".98"/>
+  <rect width="1920" height="1200" fill="url(#frostGrid)"/>
+</svg>
+

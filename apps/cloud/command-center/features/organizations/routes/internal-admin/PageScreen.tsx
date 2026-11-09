@@ -17,13 +17,17 @@ import {
   useOrganizerRollout,
   useCapabilityDiagnostics,
   useUpdateOrganizerRollout,
+  destructiveLifecycleUnavailable,
+  destructiveLifecycleUnavailableReason,
 } from "@/features/organizations/api/organization-console-api";
 import { toast } from "sonner";
+import { ApiError } from "@/lib/api-client";
 import {
   OrgPageHeader, OrgCard, OrgTabBar, OrgDataTable, OrgStatusBadge,
   OrgSectionTitle, OrgMetricCard, LoadingPage,
 } from "@/features/organizations/components/OrgPageShared";
 import { GovernedActionButton } from "@/features/organizations/components/GovernedActionButton";
+import { FoundationRecoveryPanel } from "@/features/organizations/components/FoundationRecoveryPanel";
 
 export default function InternalAdminPageScreen() {
   const params = useParams<{ orgId: string }>();
@@ -31,10 +35,8 @@ export default function InternalAdminPageScreen() {
   const router = useRouter();
 
   const [activeTab, setActiveTab] = useState("org-controls");
-  const [deleteReason, setDeleteReason] = useState("");
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
-  const { data: summary, isLoading, refetch } = useOrganizationConsoleSummary(orgId);
+  const { data: summary, isLoading, isError: summaryError, isFetching: summaryFetching, refetch } = useOrganizationConsoleSummary(orgId);
   const createJob = useCreateLifecycleJob(orgId);
   const lifecycleJobs = useLifecycleJobs(orgId);
   const decideJob = useDecideLifecycleJob(orgId);
@@ -45,41 +47,28 @@ export default function InternalAdminPageScreen() {
   const diagnostics = useCapabilityDiagnostics(orgId);
   const updateRollout = useUpdateOrganizerRollout(orgId);
   const [handoff, setHandoff] = useState({ target_user_id: "", case_reference: "", reason: "" });
+  const [lifecycleReview, setLifecycleReview] = useState(false);
 
   if (isLoading) return <LoadingPage />;
 
-  const org = summary?.organization;
+  const org = summaryError ? undefined : summary?.organization;
 
-  const handleSuspend = async () => {
+  const requestLifecycle = async (jobType: "ARCHIVE" | "RESTORE", reason: string) => {
+    if (!org || summaryError || summaryFetching || lifecycleReview) throw new Error("Reload and review the organisation before requesting a lifecycle change.");
     try {
       await createJob.mutateAsync({
         idempotencyKey: crypto.randomUUID(),
-        payload: { job_type: "ARCHIVE", reason: "Super admin suspension" },
+        organizationVersion: org.profile_version,
+        payload: { job_type: jobType, reason },
       });
-      toast.success("Tenant suspended");
+      toast.success(`${jobType === "ARCHIVE" ? "Archive" : "Restore"} job requested. Check the lifecycle ledger for completion.`);
       refetch();
     } catch (e: any) {
-      toast.error("Suspension request failed");
+      if (e instanceof ApiError && e.status === 412) { setLifecycleReview(true); await refetch(); }
+      throw e;
     }
   };
 
-  const handleDelete = async () => {
-    if (deleteReason.length < 12) {
-      toast.error("Please enter an audit reason of at least 12 characters.");
-      return;
-    }
-    try {
-      await createJob.mutateAsync({
-        idempotencyKey: crypto.randomUUID(),
-        payload: { job_type: "PURGE", reason: deleteReason },
-      });
-      toast.success("Deletion job scheduled");
-      setShowDeleteModal(false);
-      refetch();
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to schedule deletion");
-    }
-  };
 
   const tabs = [
     { key: "org-controls", label: "Organization Controls" },
@@ -95,7 +84,7 @@ export default function InternalAdminPageScreen() {
       <OrgPageHeader
         icon={ShieldAlert}
         title="Internal Admin Workspace"
-        description="Command Center Exclusive: absolute operational authority over tenant, subscriptions & platform diagnostics."
+        description="Permission-scoped organisation operations and platform diagnostics. Commercial changes use separate approval workflows."
       />
 
       <div className="flex items-center gap-3 rounded-xl border border-[var(--status-danger)]/20 bg-[var(--status-danger)]/5 px-4 py-3">
@@ -107,27 +96,30 @@ export default function InternalAdminPageScreen() {
 
       {/* Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <OrgMetricCard label="Tenant Status" value={org?.is_active ? "ACTIVE" : "SUSPENDED"} />
+        <OrgMetricCard label="Tenant Status" value={org?.lifecycle_state ?? "UNAVAILABLE"} />
         <OrgMetricCard label="Sandbox Mode" value={org?.is_sandbox ? "Sandbox" : "Production"} />
         <OrgMetricCard label="Privileged handoff" value="Single-use / 15 min" />
         <OrgMetricCard label="Health Score" value={summary?.health_score != null ? `${summary.health_score}%` : "—"} />
       </div>
 
       <OrgTabBar tabs={tabs} active={activeTab} onChange={setActiveTab} />
+      {activeTab === "org-controls" ? <FoundationRecoveryPanel key={orgId} organizationId={orgId} /> : null}
 
       <OrgCard>
         <OrgSectionTitle>Lifecycle job ledger</OrgSectionTitle>
-        <p className="mb-3 text-xs text-[var(--text-tertiary)]">Manifests are generated before execution. Purge and merge remain blocked until an independent super admin approves the exact manifest version.</p>
+        <p className="mb-3 text-xs text-[var(--text-tertiary)]">{destructiveLifecycleUnavailableReason} Earlier requests remain visible for audit; approval does not enable these operations.</p>
         {lifecycleJobs.isError ? <p className="text-xs text-[var(--status-danger)]">Lifecycle records are unavailable. No empty-state substitution has been applied.</p> : null}
         <div className="space-y-2">
-          {(lifecycleJobs.data ?? []).map((job) => (
+          {(lifecycleJobs.isError ? [] : lifecycleJobs.data ?? []).map((job) => (
             <div key={job.id} className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface-3)] p-3">
               <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-bold">{job.job_type} <span className="font-mono text-[var(--text-tertiary)]">{job.id.slice(0, 8)}</span></p><OrgStatusBadge status={job.status} /></div>
-              <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">{job.reason} · attempt {job.attempt_count} · manifest {job.manifest_checksum.slice(0, 12)}</p>
+              <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">{job.reason} · execution attempts {job.attempt_count} · delivery attempts {job.dispatch_attempts} · manifest {job.manifest_checksum.slice(0, 12)}</p>
+              {job.status === "PENDING" || job.status === "RETRY_PENDING" ? <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">Queued, not completed. {job.next_dispatch_at ? `Delivery retry after ${new Date(job.next_dispatch_at).toLocaleString()}.` : "Awaiting delivery."}</p> : null}
+              {job.job_type === "CLONE" ? <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">Copies portable colour settings to a new draft only. No assets, locations, contacts, templates or published state are transferred.</p> : null}
               <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-black/20 p-2 text-[10px]">{JSON.stringify(job.dry_run_manifest, null, 2)}</pre>
               {job.failure_reason ? <p className="mt-2 text-[11px] text-[var(--status-danger)]">{job.failure_reason}</p> : null}
-              {job.status === "AWAITING_APPROVAL" ? <div className="mt-2 flex gap-2"><button className="rounded-lg bg-[var(--status-success)] px-3 py-1.5 text-xs font-bold text-white" onClick={() => decideJob.mutate({ jobId: job.id, decision: "APPROVED", reason: "Independently reviewed and approved lifecycle manifest.", version: job.version })}>Approve manifest</button><button className="rounded-lg border border-[var(--status-danger)] px-3 py-1.5 text-xs font-bold text-[var(--status-danger)]" onClick={() => decideJob.mutate({ jobId: job.id, decision: "REJECTED", reason: "Lifecycle manifest rejected after independent review.", version: job.version })}>Reject</button></div> : null}
-              {job.status === "FAILED" ? <button className="mt-2 rounded-lg border border-[var(--border-default)] px-3 py-1.5 text-xs font-bold" onClick={() => retryJob.mutate({ jobId: job.id, reason: "Retry approved after reviewing the recorded failure.", version: job.version })}>Retry failed job</button> : null}
+              {job.status === "AWAITING_APPROVAL" ? <div className="mt-2 flex gap-2">{(["APPROVED", "REJECTED"] as const).map(decision => <GovernedActionButton key={`${job.id}:${job.version}:${decision}`} label={decision === "APPROVED" ? "Approve manifest" : "Reject"} title={decision === "APPROVED" ? "Review and approve this lifecycle manifest" : "Reject this lifecycle manifest"} requireCaseReference={false} disabled={(decision === "APPROVED" && destructiveLifecycleUnavailable(job.job_type)) || decideJob.isPending || lifecycleJobs.isFetching} onConfirm={({ reason }) => decideJob.mutateAsync({ jobId: job.id, decision, reason, version: job.version }).then(() => undefined)} />)}</div> : null}
+              {job.status === "FAILED" ? <GovernedActionButton key={`${job.id}:${job.version}:retry`} label="Retry failed job" title="Review failure and request a retry" requireCaseReference={false} disabled={destructiveLifecycleUnavailable(job.job_type) || retryJob.isPending || lifecycleJobs.isFetching} onConfirm={({ reason }) => retryJob.mutateAsync({ jobId: job.id, reason, version: job.version }).then(() => undefined)} /> : null}
             </div>
           ))}
           {!lifecycleJobs.isLoading && !lifecycleJobs.isError && lifecycleJobs.data?.length === 0 ? <p className="text-xs text-[var(--text-tertiary)]">No lifecycle jobs have been requested.</p> : null}
@@ -234,16 +226,25 @@ export default function InternalAdminPageScreen() {
             <div className="space-y-3">
               <div className="flex items-center justify-between p-3 rounded-xl bg-[var(--bg-surface-3)]">
                 <div>
-                  <p className="text-xs font-bold text-[var(--text-primary)]">Suspend Tenant</p>
-                  <p className="text-[10px] text-[var(--text-tertiary)]">Disable organizer access & revoke active sessions</p>
+                  <p className="text-xs font-bold text-[var(--text-primary)]">Request organisation archive</p>
+                  <p className="text-[10px] text-[var(--text-tertiary)]">Queues an archive job; completion is recorded in the lifecycle ledger</p>
                 </div>
-                <button
-                  onClick={handleSuspend}
-                  className="px-3 py-1.5 rounded-lg border border-[var(--status-warning)] text-[var(--status-warning)] text-xs font-bold hover:bg-[var(--status-warning)]/10"
-                >
-                  Suspend
-                </button>
+                <GovernedActionButton
+                  key={`${orgId}:archive`}
+                  label="Request archive" title="Archive organisation without deleting data"
+                  requireCaseReference={false}
+                  onConfirm={({ reason }) => requestLifecycle("ARCHIVE", reason)}
+                  disabled={createJob.isPending || summaryError || summaryFetching || lifecycleReview || org?.lifecycle_state !== "ACTIVE" || !Number.isInteger(org?.profile_version)}
+                  className="px-3 py-1.5 rounded-lg border border-[var(--status-warning)] text-[var(--status-warning)] text-xs font-bold hover:bg-[var(--status-warning)]/10 disabled:opacity-40"
+                />
               </div>
+              {org?.lifecycle_state === "ARCHIVED" ? <div className="flex items-center justify-between p-3 rounded-xl bg-[var(--bg-surface-3)]">
+                <div><p className="text-xs font-bold">Restore archived organisation</p><p className="text-[10px] text-[var(--text-tertiary)]">Preserves contracts and does not approve suspended relationships</p></div>
+                <GovernedActionButton key={`${orgId}:restore`} label="Request restore" title="Restore archived organisation" requireCaseReference={false}
+                  disabled={createJob.isPending || summaryError || summaryFetching || lifecycleReview || !Number.isInteger(org?.profile_version)}
+                  onConfirm={({ reason }) => requestLifecycle("RESTORE", reason)} className="px-3 py-1.5 rounded-lg border border-[var(--border-default)] text-xs font-bold disabled:opacity-40" />
+              </div> : null}
+              {lifecycleReview ? <p role="alert" className="text-xs text-[var(--status-warning)]">The organisation changed. Review its current state before trying again. <button type="button" disabled={summaryFetching || summaryError} onClick={() => setLifecycleReview(false)} className="underline disabled:opacity-40">I have reviewed the updated organisation</button></p> : null}
             </div>
           </OrgCard>
         </div>
@@ -445,46 +446,19 @@ export default function InternalAdminPageScreen() {
             <div>
               <p className="text-sm font-bold text-[var(--text-primary)] mb-1">Delete Organization</p>
               <p className="text-xs text-[var(--text-tertiary)] leading-relaxed max-w-2xl">
-                Request a retention-aware permanent purge. The dry-run manifest must pass legal-hold checks and receive independent approval before any worker may execute it.
+                {destructiveLifecycleUnavailableReason}
               </p>
             </div>
             <button
-              onClick={() => setShowDeleteModal(true)}
-              className="shrink-0 px-4 py-2.5 rounded-xl bg-[var(--status-danger)] text-white text-xs font-bold shadow-lg"
+              disabled
+              className="shrink-0 px-4 py-2.5 rounded-xl bg-[var(--status-danger)] text-white text-xs font-bold opacity-40"
             >
-              Delete Organization
+              Purge unavailable
             </button>
           </div>
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
-      {showDeleteModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-2xl p-6 w-full max-w-md shadow-2xl">
-            <h3 className="text-lg font-black text-[var(--text-primary)] mb-2">Confirm Tenant Deletion</h3>
-            <p className="text-xs text-[var(--text-secondary)] mb-4">
-              Schedule deletion for tenant <span className="font-mono text-[var(--text-primary)] font-bold">{orgId}</span>.
-            </p>
-            <input
-              placeholder="Reason for purge (min 12 chars)..."
-              value={deleteReason}
-              onChange={(e) => setDeleteReason(e.target.value)}
-              className="w-full rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface-3)] px-3 py-2 text-xs text-[var(--text-primary)] mb-4"
-            />
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setShowDeleteModal(false)} className="px-3 py-2 text-xs text-[var(--text-secondary)]">Cancel</button>
-              <button
-                onClick={handleDelete}
-                disabled={deleteReason.length < 12 || createJob.isPending}
-                className="px-4 py-2 bg-[var(--status-danger)] text-white text-xs font-bold rounded-xl disabled:opacity-50"
-              >
-                Request Purge
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

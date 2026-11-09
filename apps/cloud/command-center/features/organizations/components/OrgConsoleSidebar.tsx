@@ -85,9 +85,9 @@ export function OrgConsoleSidebar() {
               {org?.slug || "—"}
             </p>
             <div className="mt-2 flex items-center justify-between">
-              {summary?.subscription && (
+              {summary?.contract && (
                 <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-md bg-[var(--brand-primary)]/10 text-[var(--brand-primary)]">
-                  {summary.subscription.plan_name}
+                  {summary.contract.offer_name}
                 </span>
               )}
               <div className="flex items-center gap-1">

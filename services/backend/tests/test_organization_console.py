@@ -647,7 +647,6 @@ async def test_capability_diagnostics_are_redacted_and_tenant_scoped(
     other = Organization(
         name="Other Diagnostics Tenant",
         slug=f"other-diagnostics-{uuid.uuid4().hex[:8]}",
-        plan="pro",
     )
     db.add(other)
     await db.flush()
@@ -1155,12 +1154,13 @@ async def test_capability_restriction_restore_requires_independent_approval(
     super_admin: User,
 ):
     approver = User(
-        organization_id=organization.id,
+        organization_id=super_admin.organization_id,
         email=f"restriction-approver-{uuid.uuid4().hex[:8]}@test.com",
         password_hash="not-used",
         first_name="Restriction",
         last_name="Approver",
         role="super_admin",
+        platform_role="SUPER_ADMIN",
         is_active=True,
     )
     db.add(approver)
@@ -1445,7 +1445,7 @@ async def test_event_domain_workspaces_mask_contacts_and_never_expose_secrets(
     event: Event,
     super_admin: User,
 ):
-    speaker = Speaker(event_id=event.id, first_name="Grace", last_name="Hopper", email="grace@example.com", phone="+15551234567", upload_token=f"token-{uuid.uuid4()}", speaker_code=uuid.uuid4().hex[:10], upload_status="pending")
+    speaker = Speaker(event_id=event.id, first_name="Grace", last_name="Hopper", email="grace@example.com", phone="+15551234567", upload_token=f"token-{uuid.uuid4()}", upload_status="pending")
     webhook = Webhook(event_id=event.id, url="https://example.com/event-hook", description="Event delivery", subscribed_events=["speaker.created"], secret_hash="a" * 64, status="active")
     db.add_all([speaker, webhook]); await db.flush()
     base = f"/api/v1/platform/organizations/{organization.id}/console/events/{event.id}/workspace"
@@ -1454,7 +1454,7 @@ async def test_event_domain_workspaces_mask_contacts_and_never_expose_secrets(
     item = speakers.json()["data"]["items"][0]
     assert item["first_name"] == "G***"
     assert item["email"] == "g***@example.com"
-    assert "upload_token" not in item and "speaker_code" not in item
+    assert "upload_token" not in item
     integrations = await client.get(f"{base}/integrations", headers=auth_headers(super_admin))
     assert integrations.status_code == 200
     hook = integrations.json()["data"]["webhooks"][0]
@@ -1822,7 +1822,6 @@ async def test_event_campaigns_share_cross_portal_recipient_validation_and_lifec
         last_name="Speaker",
         email=f"local-{uuid.uuid4().hex[:6]}@example.com",
         upload_token=f"token-{uuid.uuid4()}",
-        speaker_code=uuid.uuid4().hex[:10],
         upload_status="pending",
     )
     foreign_speaker = Speaker(
@@ -1831,7 +1830,6 @@ async def test_event_campaigns_share_cross_portal_recipient_validation_and_lifec
         last_name="Speaker",
         email=f"foreign-{uuid.uuid4().hex[:6]}@example.com",
         upload_token=f"token-{uuid.uuid4()}",
-        speaker_code=uuid.uuid4().hex[:10],
         upload_status="pending",
     )
     template = EmailTemplate(
@@ -1946,7 +1944,7 @@ async def test_event_workspace_mutation_is_audited_soft_deleted_and_restorable(
     super_admin: User,
 ):
     await activate_event_for_test(db, event)
-    speaker = Speaker(event_id=event.id, first_name="Katherine", last_name="Johnson", email="katherine@example.com", upload_token=f"token-{uuid.uuid4()}", speaker_code=uuid.uuid4().hex[:10], upload_status="pending")
+    speaker = Speaker(event_id=event.id, first_name="Katherine", last_name="Johnson", email="katherine@example.com", upload_token=f"token-{uuid.uuid4()}", upload_status="pending")
     db.add(speaker); await db.flush()
     base = f"/api/v1/platform/organizations/{organization.id}/console/events/{event.id}/workspace/speakers/{speaker.id}"
     updated = await client.patch(base, headers=auth_headers(super_admin), json={"data": {"designation": "Lead Mathematician"}, "reason": "Correct the speaker designation from the support case.", "case_reference": "SUP-5005"})
@@ -2198,7 +2196,7 @@ async def test_metering_is_idempotent_reset_preserves_history_and_reconciles(
     event: Event,
     super_admin: User,
 ):
-    first = Speaker(event_id=event.id, first_name="Meter", last_name="One", email=f"meter-{uuid.uuid4()}@example.com", upload_token=f"token-{uuid.uuid4()}", speaker_code=uuid.uuid4().hex[:10], upload_status="pending")
+    first = Speaker(event_id=event.id, first_name="Meter", last_name="One", email=f"meter-{uuid.uuid4()}@example.com", upload_token=f"token-{uuid.uuid4()}", upload_status="pending")
     db.add(first)
     await db.flush()
     entry, created = await MeteringService.record(db, organization_id=organization.id, event_id=event.id, metric_key="speakers", quantity=1, unit="count", source="test.speaker", idempotency_key="meter-speaker-one", actor_user_id=super_admin.id)
@@ -2218,7 +2216,7 @@ async def test_metering_is_idempotent_reset_preserves_history_and_reconciles(
     assert active_epoch.baseline_value == 1
     assert await UsageService.get_effective_event_metric(db, event.id, "max_speakers") == 0
 
-    second = Speaker(event_id=event.id, first_name="Meter", last_name="Two", email=f"meter-{uuid.uuid4()}@example.com", upload_token=f"token-{uuid.uuid4()}", speaker_code=uuid.uuid4().hex[:10], upload_status="pending")
+    second = Speaker(event_id=event.id, first_name="Meter", last_name="Two", email=f"meter-{uuid.uuid4()}@example.com", upload_token=f"token-{uuid.uuid4()}", upload_status="pending")
     db.add(second)
     await db.flush()
     assert await UsageService.get_effective_event_metric(db, event.id, "max_speakers") == 1
@@ -2264,7 +2262,7 @@ async def test_event_communications_and_templates_are_mutable_recoverable_and_au
     monkeypatch: pytest.MonkeyPatch,
 ):
     await activate_event_for_test(db, event)
-    db.add(Speaker(event_id=event.id, first_name="Recipient", last_name="Speaker", email="recipient@example.com", upload_token=f"token-{uuid.uuid4()}", speaker_code=uuid.uuid4().hex[:10], upload_status="pending"))
+    db.add(Speaker(event_id=event.id, first_name="Recipient", last_name="Speaker", email="recipient@example.com", upload_token=f"token-{uuid.uuid4()}", upload_status="pending"))
     await db.flush()
     dispatched: list[tuple[str, str, str | None]] = []
     monkeypatch.setattr("app.modules.notifications.tasks.email_tasks.process_email_campaign.delay", lambda campaign_id, org_id, reservation_id=None: dispatched.append((campaign_id, org_id, reservation_id)))
@@ -2649,7 +2647,6 @@ async def test_event_jobs_expose_truthful_capabilities_and_lineage_preserving_re
         last_name="Speaker",
         email=f"sync-{uuid.uuid4().hex[:6]}@example.com",
         upload_token=f"token-{uuid.uuid4()}",
-        speaker_code=uuid.uuid4().hex[:10],
         upload_status="uploaded",
     )
     session = Session(
@@ -2828,14 +2825,14 @@ async def test_cross_domain_search_is_masked_cursor_paginated_and_tenant_scoped(
     super_admin: User,
 ):
     from datetime import date
-    local = Speaker(event_id=event.id, first_name="Searchable", last_name="Person", email="searchable@tenant-a.test", upload_token=f"token-{uuid.uuid4()}", speaker_code=uuid.uuid4().hex[:10], upload_status="pending")
+    local = Speaker(event_id=event.id, first_name="Searchable", last_name="Person", email="searchable@tenant-a.test", upload_token=f"token-{uuid.uuid4()}", upload_status="pending")
     other_org = Organization(name="Search Other", slug=f"search-other-{uuid.uuid4().hex[:8]}")
     db.add(other_org); await db.flush()
     other_user = User(organization_id=other_org.id, email=f"owner-{uuid.uuid4().hex[:8]}@other.test", password_hash="not-used", first_name="Other", last_name="Owner", role="organizer", is_active=True)
     db.add(other_user); await db.flush()
     other_event = Event(organization_id=other_org.id, created_by=other_user.id, name="Other Event", short_code=f"OE{uuid.uuid4().hex[:4]}", start_date=date(2026, 10, 1), end_date=date(2026, 10, 2), timezone="UTC", status="draft")
     db.add(other_event); await db.flush()
-    leaked = Speaker(event_id=other_event.id, first_name="Searchable", last_name="Leak", email="searchable@tenant-b.test", upload_token=f"token-{uuid.uuid4()}", speaker_code=uuid.uuid4().hex[:10], upload_status="pending")
+    leaked = Speaker(event_id=other_event.id, first_name="Searchable", last_name="Leak", email="searchable@tenant-b.test", upload_token=f"token-{uuid.uuid4()}", upload_status="pending")
     db.add_all([local, leaked]); await db.flush()
 
     base = f"/api/v1/platform/organizations/{organization.id}/console/search"

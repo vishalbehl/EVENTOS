@@ -304,75 +304,30 @@ def _build_quote_proposal_pdf(snapshot: dict, proposal_number: str, proposal_ver
 
 
 def _build_invoice_pdf(snapshot: dict) -> bytes:
-    """Render a version-bound invoice snapshot without re-reading mutable totals."""
-    from xml.sax.saxutils import escape
-
-    from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.lib.units import mm
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-
-    buffer = io.BytesIO()
-    invoice_number = str(snapshot.get("invoice_number") or "Invoice")
-    document = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        rightMargin=18 * mm,
-        leftMargin=18 * mm,
-        topMargin=18 * mm,
-        bottomMargin=18 * mm,
-        title=invoice_number,
-        author="Event OS",
+    """Render the canonical version-bound invoice snapshot used by the portal."""
+    from app.modules.billing.services.invoice_pdf_service import (
+        InvoicePdfSigningConfig,
+        invoice_issuer_from_settings,
+        render_invoice_pdf,
     )
-    styles = getSampleStyleSheet()
-    currency = escape(str(snapshot.get("currency") or "INR"))
-    story = [
-        Paragraph("Tax Invoice", styles["Title"]),
-        Paragraph(escape(invoice_number), styles["Heading2"]),
-        Paragraph(escape(str(snapshot.get("organization_name") or "Organization")), styles["Normal"]),
-        Spacer(1, 5 * mm),
-        Paragraph(
-            f"Issued: {escape(str(snapshot.get('issued_at') or 'Not recorded'))}<br/>"
-            f"Due: {escape(str(snapshot.get('due_date') or 'Not recorded'))}<br/>"
-            f"Status: {escape(str(snapshot.get('status') or 'UNKNOWN'))}",
-            styles["Normal"],
-        ),
-        Spacer(1, 8 * mm),
-    ]
-    rows = [["Description", "Quantity", "Amount"]]
-    for item in snapshot.get("items") or []:
-        rows.append([
-            escape(str(item.get("description") or "Invoice item")),
-            str(item.get("quantity") or 1),
-            f"{currency} {escape(str(item.get('amount') or '0.00'))}",
-        ])
-    if len(rows) == 1:
-        rows.append(["Invoice charge", "1", f"{currency} {escape(str(snapshot.get('amount') or '0.00'))}"])
-    table = Table(rows, colWidths=[105 * mm, 25 * mm, 40 * mm], repeatRows=1)
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#12372A")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#CBD5E1")),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
-    ]))
-    totals = Table([
-        ["Subtotal", f"{currency} {snapshot.get('amount', '0.00')}"],
-        ["GST", f"{currency} {snapshot.get('gst_amount', '0.00')}"],
-        ["Total", f"{currency} {snapshot.get('total_amount', '0.00')}"],
-    ], colWidths=[45 * mm, 45 * mm], hAlign="RIGHT")
-    totals.setStyle(TableStyle([
-        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("LINEABOVE", (0, -1), (-1, -1), 1, colors.HexColor("#12372A")),
-    ]))
-    story.extend([table, Spacer(1, 8 * mm), totals, Spacer(1, 12 * mm)])
-    story.append(Paragraph("Generated from an immutable, version-bound Event OS invoice snapshot.", styles["Italic"]))
-    document.build(story)
-    return buffer.getvalue()
+
+    canonical_snapshot = dict(snapshot)
+    canonical_snapshot.setdefault("buyer", {
+        "name": snapshot.get("organization_name") or "Organization",
+        "address": snapshot.get("billing_address") or "Address not recorded",
+        "gstin": snapshot.get("gstin") or "Not registered",
+    })
+    canonical_snapshot.setdefault("issuer", invoice_issuer_from_settings(settings))
+    canonical_snapshot.setdefault("plan_summary", [])
+    canonical_snapshot.setdefault("notes", [
+        "This system-generated invoice includes a certificate-backed digital signature when configured.",
+        "Plans, add-ons and licences apply only for the period shown above.",
+        "Additional terms are governed by the EventOS Terms of Service.",
+    ])
+    return render_invoice_pdf(
+        canonical_snapshot,
+        signing_config=InvoicePdfSigningConfig.from_settings(settings),
+    )
 
 
 def _set_export_status(

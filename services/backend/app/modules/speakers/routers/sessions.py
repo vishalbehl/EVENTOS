@@ -117,18 +117,12 @@ async def export_sessions_docx(
         metadata={"format": "docx", "domain": "sessions"},
     )
 
-    # 1. Fetch all sessions for this event sorted by start time
-    stmt = (
-        select(Session)
-        .options(
-            selectinload(Session.room),
-            selectinload(Session.session_speakers).selectinload(SessionSpeaker.speaker)
-        )
-        .where(Session.event_id == event.id)
-        .order_by(Session.start_time)
+    # One query-service projection owns tenant scope, eager loading, stable
+    # ordering, and the export safety bound.  The document shape is unchanged.
+    sessions = await SessionQueryService(db).list_for_export(
+        organization_id=event.organization_id,
+        event_id=event.id,
     )
-    res = await db.execute(stmt)
-    sessions = res.scalars().all()
 
     # 1.1 Localize timezone setup
     from zoneinfo import ZoneInfo
@@ -513,24 +507,30 @@ async def add_speaker_to_session(
         )
     )
     if dup.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail="Speaker already linked to this session.")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Speaker already linked to this session.",
+        )
     ss = SessionSpeaker(
         session_id=session_id,
         speaker_id=payload.speaker_id,
         presentation_title=payload.presentation_title,
         talk_order=payload.talk_order or 0,
-        talk_duration_minutes=payload.talk_duration_minutes,
-        start_time=payload.start_time,
-        end_time=payload.end_time,
+        role=payload.role or "Speaker",
+        is_confirmed=payload.is_confirmed,
     )
+    if payload.talk_duration_minutes is not None:
+        ss.talk_duration_minutes = payload.talk_duration_minutes
+    if payload.start_time is not None:
+        ss.start_time = payload.start_time
+    if payload.end_time is not None:
+        ss.end_time = payload.end_time
     db.add(ss)
     await db.commit()
     enqueue_event_speaker_projection_refresh(
         organization_id=event.organization_id, event_id=event.id
     )
     return MessageResponse(message="Speaker added to session.")
-
 
 @router.delete("/{session_id}/speakers/{session_speaker_id}", response_model=MessageResponse)
 async def remove_speaker_from_session(
@@ -635,7 +635,7 @@ async def _get_session_or_404(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
 
     # Enforce assignments for restricted roles
-    if user and user.role not in ["super_admin", "admin", "organiser"]:
+    if user and user.role not in ["super_admin", "admin", "organiser", "organizer"]:
         from app.modules.rbac.models.rbac import UserAccessNode
         from sqlalchemy import or_, and_
 
@@ -666,4 +666,3 @@ async def _get_session_or_404(
                 )
 
     return s
-

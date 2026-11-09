@@ -2,12 +2,38 @@
 
 import axios, { AxiosError, AxiosInstance, AxiosResponse, AxiosRequestConfig } from "axios"
 import { getErrorMessage } from "./utils"
+import { useAuthStore } from "@/store/use-auth-store"
 
 export interface ApiError {
   message: string
   status?: number
   code?: string
   details?: any
+  retryAfter?: number
+  correlationId?: string
+  retryableRead?: boolean
+  aborted?: boolean
+}
+
+export function shouldRetryRead(failureCount: number, error: unknown): boolean {
+  if (failureCount >= 1 || !error || typeof error !== "object") return false
+  const problem = error as ApiError
+  if (!problem.retryableRead || problem.aborted || (problem.retryAfter ?? 0) > 5) return false
+  return problem.status === undefined || [500, 502, 504].includes(problem.status)
+}
+
+export function readRetryDelay(attempt: number, error?: unknown): number {
+  const retryAfter = error && typeof error === "object" ? (error as ApiError).retryAfter ?? 0 : 0
+  const minimum = Math.min(5000, Math.max(500, retryAfter * 1000))
+  const ceiling = Math.min(5000, Math.max(minimum, 1000 * 2 ** Math.min(3, Math.max(0, attempt))))
+  return Math.round(minimum + Math.random() * (ceiling - minimum))
+}
+
+function parseRetryAfter(value: unknown): number | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined
+  const numeric = Number(value)
+  const seconds = Number.isFinite(numeric) ? numeric : (Date.parse(String(value)) - Date.now()) / 1000
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(86400, Math.ceil(seconds)) : undefined
 }
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000") + "/api/v1"
@@ -31,6 +57,9 @@ class ApiClient {
   private initializeRequestInterceptor() {
     this.client.interceptors.request.use(
       (config) => {
+        if (useAuthStore.getState().isContextSwitching && config.url !== "/access/context") {
+          throw new axios.CanceledError("Access context is changing", config)
+        }
         // Add auth token if available from Zustand storage
         if (typeof window !== "undefined") {
           try {
@@ -66,10 +95,24 @@ class ApiClient {
 
   private initializeResponseInterceptor() {
     this.client.interceptors.response.use(
-      (response: AxiosResponse) => response,
+      (response: AxiosResponse) => {
+        const sentAuthorization = response.config.headers?.Authorization
+        const activeToken = useAuthStore.getState().accessToken
+        if (sentAuthorization && sentAuthorization !== `Bearer ${activeToken}`) {
+          return Promise.reject({
+            message: "Response belongs to a previous access context",
+            code: "REQUEST_CANCELLED",
+            aborted: true,
+            retryableRead: false,
+          } satisfies ApiError)
+        }
+        return response
+      },
       (error: AxiosError) => {
         const apiError: ApiError = {
           message: "Something went wrong",
+          retryableRead: (error.config?.method ?? "").toUpperCase() === "GET",
+          aborted: axios.isCancel(error) || error.code === "ERR_CANCELED",
         }
 
         if (error.response) {
@@ -84,9 +127,24 @@ class ApiClient {
           )
           apiError.code = responseBody?.code ?? (detail && typeof detail === "object" ? detail.code : undefined)
           apiError.details = responseBody
+          apiError.retryAfter = parseRetryAfter(error.response.headers["retry-after"])
+          apiError.correlationId = responseBody?.detail?.correlation_id ?? error.response.headers["x-correlation-id"]
 
           if (error.response.status === 401 && typeof window !== "undefined") {
+            const sentAuthorization = error.config?.headers?.Authorization
+            const activeToken = useAuthStore.getState().accessToken
+            if (sentAuthorization && sentAuthorization !== `Bearer ${activeToken}`) {
+              apiError.aborted = true
+              apiError.retryableRead = false
+              return Promise.reject(apiError)
+            }
             try {
+              if (window.location.pathname === "/accept-invite") {
+                // Keep the private invitation in memory while requesting a new
+                // login; never retain the expired identity or navigate it away.
+                useAuthStore.getState().logout()
+                return Promise.reject(apiError)
+              }
               const storage = localStorage.getItem("obsidian-auth-storage")
               if (storage) {
                 const parsed = JSON.parse(storage)
@@ -101,6 +159,9 @@ class ApiClient {
               console.error("Failed to handle 401 session expiry", e)
             }
           }
+        } else if (apiError.aborted) {
+          apiError.code = "REQUEST_CANCELLED"
+          apiError.message = "Request cancelled"
         } else if (error.request) {
           apiError.message = "No response from server"
         } else {

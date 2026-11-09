@@ -69,8 +69,7 @@ class AttachmentCreate(BaseModel):
 
 
 def _tenant_event(user, event: Event, event_id: uuid.UUID) -> None:
-    platform_admin = getattr(user, "role", None) == "super_admin" or getattr(user, "platform_role", None) == "SUPER_ADMIN" or getattr(user, "is_platform_admin", False)
-    if event is None or (getattr(user, "organization_id", None) != event.organization_id and not platform_admin):
+    if event is None or getattr(user, "request_organization_id", None) != event.organization_id:
         raise HTTPException(status_code=404, detail="Event not found.")
 
 
@@ -96,7 +95,7 @@ async def create_service_request(event_id: uuid.UUID, payload: ServiceRequestCre
 @router.post("/events/{event_id}/venue-ops/requests")
 async def create_venue_ops_request(event_id: uuid.UUID, payload: ServiceRequestCreate = Body(...), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     idempotency_key = idempotency_key or f"legacy-{uuid.uuid4()}"
-    idem = await begin_idempotent(db, organization_id=user.organization_id, actor_id=user.id, operation="venue_ops.request.create", key=idempotency_key, payload={"event_id": str(event_id), **payload.model_dump(mode="json")})
+    idem = await begin_idempotent(db, organization_id=user.request_organization_id, actor_id=user.id, operation="venue_ops.request.create", key=idempotency_key, payload={"event_id": str(event_id), **payload.model_dump(mode="json")})
     replay = replay_response(idem)
     if replay:
         return replay[1]
@@ -108,51 +107,51 @@ async def create_venue_ops_request(event_id: uuid.UUID, payload: ServiceRequestC
 
 @router.get("/events/{event_id}/venue-ops/overview")
 async def venue_ops_overview(event_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
-    result = await TechnologyServiceQueryService(db).venue_ops_overview(event_id=event_id, organization_id=user.organization_id)
+    result = await TechnologyServiceQueryService(db).venue_ops_overview(event_id=event_id, organization_id=user.request_organization_id)
     if not result: raise HTTPException(status_code=404, detail="Event not found.")
     return result
 
 
 @router.get("/events/{event_id}/venue-ops/recommendations")
 async def venue_ops_recommendations(event_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
-    result = await TechnologyServiceQueryService(db).venue_ops_recommendations(event_id=event_id, organization_id=user.organization_id)
+    result = await TechnologyServiceQueryService(db).venue_ops_recommendations(event_id=event_id, organization_id=user.request_organization_id)
     if not result: raise HTTPException(status_code=404, detail="Event not found.")
     return result
 
 
 @router.get("/events/{event_id}/venue-ops/services")
 async def venue_ops_services(event_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
-    event = await TechnologyServiceQueryService(db).get_event_for_scope(event_id=event_id, organization_id=user.organization_id)
+    event = await TechnologyServiceQueryService(db).get_event_for_scope(event_id=event_id, organization_id=user.request_organization_id)
     if event is None: raise HTTPException(status_code=404, detail="Event not found.")
     return await TechnologyServiceQueryService(db).venue_ops_service_definitions()
 
 
 @router.post("/events/{event_id}/venue-ops/recommendations/recalculate")
 async def recalculate_recommendations(event_id: uuid.UUID, payload: dict[str, Any] = Body(default={}), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
-    result = await TechnologyServiceQueryService(db).venue_ops_recommendations(event_id=event_id, organization_id=user.organization_id, overrides=payload.get("overrides") or {})
+    result = await TechnologyServiceQueryService(db).venue_ops_recommendations(event_id=event_id, organization_id=user.request_organization_id, overrides=payload.get("overrides") or {})
     if not result: raise HTTPException(status_code=404, detail="Event not found.")
-    await TechnologyServiceCommandService(db).record_recommendation_snapshot(event_id=event_id, organization_id=user.organization_id, facts=result["facts"], overrides=payload.get("overrides") or {})
+    await TechnologyServiceCommandService(db).record_recommendation_snapshot(event_id=event_id, organization_id=user.request_organization_id, facts=result["facts"], overrides=payload.get("overrides") or {})
     return result
 
 
 @router.get("/events/{event_id}/venue-ops/quotes")
 async def venue_ops_quotes(event_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
-    event = await TechnologyServiceQueryService(db).get_event_for_scope(event_id=event_id, organization_id=user.organization_id)
+    event = await TechnologyServiceQueryService(db).get_event_for_scope(event_id=event_id, organization_id=user.request_organization_id)
     if event is None: raise HTTPException(status_code=404, detail="Event not found.")
     return await TechnologyServiceQueryService(db).venue_ops_quotes(
         event_id=event_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
     )
 
 
 @router.get("/events/{event_id}/venue-ops/fulfilment")
 async def venue_ops_fulfilment(event_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
-    event = await TechnologyServiceQueryService(db).get_event_for_scope(event_id=event_id, organization_id=user.organization_id)
+    event = await TechnologyServiceQueryService(db).get_event_for_scope(event_id=event_id, organization_id=user.request_organization_id)
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found.")
     return await TechnologyServiceQueryService(db).venue_ops_fulfilment(
         event_id=event_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
     )
 
 
@@ -160,11 +159,11 @@ async def venue_ops_fulfilment(event_id: uuid.UUID, db: AsyncSession = Depends(g
 async def update_service_request(request_id: uuid.UUID, payload: ServiceRequestUpdate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128), if_match: str | None = Header(default=None, alias="If-Match"), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     idempotency_key = idempotency_key or f"legacy-{uuid.uuid4()}"
     expected_version = require_if_match(if_match) if if_match is not None else payload.expected_version
-    idem = await begin_idempotent(db, organization_id=user.organization_id, actor_id=user.id, operation="venue_ops.request.update", key=idempotency_key, payload={"request_id": str(request_id), "expected_version": expected_version, **payload.model_dump(mode="json")})
+    idem = await begin_idempotent(db, organization_id=user.request_organization_id, actor_id=user.id, operation="venue_ops.request.update", key=idempotency_key, payload={"request_id": str(request_id), "expected_version": expected_version, **payload.model_dump(mode="json")})
     replay = replay_response(idem)
     if replay:
         return replay[1]
-    row = await TechnologyServiceCommandService(db).save_draft(request_id=request_id, organization_id=user.organization_id, user=user, items=payload.items, overrides=payload.planning_overrides, description=payload.description, expected_version=expected_version)
+    row = await TechnologyServiceCommandService(db).save_draft(request_id=request_id, organization_id=user.request_organization_id, user=user, items=payload.items, overrides=payload.planning_overrides, description=payload.description, expected_version=expected_version)
     result = _out(row)
     await TechnologyServiceCommandService(db).complete_idempotent(idem, response_status=200, response_body=result, resource_id=row.id)
     return result
@@ -173,11 +172,11 @@ async def update_service_request(request_id: uuid.UUID, payload: ServiceRequestU
 @router.post("/{request_id}/clarifications")
 async def add_service_request_clarification(request_id: uuid.UUID, payload: CommentCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     idempotency_key = idempotency_key or f"legacy-{uuid.uuid4()}"
-    idem = await begin_idempotent(db, organization_id=user.organization_id, actor_id=user.id, operation="venue_ops.request.clarification", key=idempotency_key, payload={"request_id": str(request_id), **payload.model_dump(mode="json")})
+    idem = await begin_idempotent(db, organization_id=user.request_organization_id, actor_id=user.id, operation="venue_ops.request.clarification", key=idempotency_key, payload={"request_id": str(request_id), **payload.model_dump(mode="json")})
     replay = replay_response(idem)
     if replay:
         return replay[1]
-    comment = await TechnologyServiceCommandService(db).add_comment(request_id=request_id, organization_id=user.organization_id, user=user, body=payload.body)
+    comment = await TechnologyServiceCommandService(db).add_comment(request_id=request_id, organization_id=user.request_organization_id, user=user, body=payload.body)
     result = {"id": str(comment.id), "request_id": str(comment.request_id), "body": comment.body, "author_type": comment.author_type, "created_at": comment.created_at.isoformat()}
     await TechnologyServiceCommandService(db).complete_idempotent(idem, response_status=201, response_body=result, resource_id=comment.id)
     return result
@@ -185,21 +184,21 @@ async def add_service_request_clarification(request_id: uuid.UUID, payload: Comm
 
 @router.get("/{request_id}/timeline")
 async def service_request_timeline(request_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
-    return await TechnologyServiceQueryService(db).request_timeline(request_id=request_id, organization_id=user.organization_id)
+    return await TechnologyServiceQueryService(db).request_timeline(request_id=request_id, organization_id=user.request_organization_id)
 
 
 @router.get("/{request_id}/event-snapshots")
 async def service_request_event_snapshots(request_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
-    snapshots = await TechnologyServiceQueryService(db).request_snapshots(request_id=request_id, organization_id=user.organization_id)
-    if not snapshots and await TechnologyServiceQueryService(db).request_detail(request_id=request_id, organization_id=user.organization_id) is None:
+    snapshots = await TechnologyServiceQueryService(db).request_snapshots(request_id=request_id, organization_id=user.request_organization_id)
+    if not snapshots and await TechnologyServiceQueryService(db).request_detail(request_id=request_id, organization_id=user.request_organization_id) is None:
         raise HTTPException(status_code=404, detail="Service request not found.")
     return snapshots
 
 
 @router.get("/{request_id}/attachments")
 async def service_request_attachments(request_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
-    attachments = await TechnologyServiceQueryService(db).request_attachments(request_id=request_id, organization_id=user.organization_id)
-    if not attachments and await TechnologyServiceQueryService(db).request_detail(request_id=request_id, organization_id=user.organization_id) is None:
+    attachments = await TechnologyServiceQueryService(db).request_attachments(request_id=request_id, organization_id=user.request_organization_id)
+    if not attachments and await TechnologyServiceQueryService(db).request_detail(request_id=request_id, organization_id=user.request_organization_id) is None:
         raise HTTPException(status_code=404, detail="Service request not found.")
     return attachments
 
@@ -207,11 +206,11 @@ async def service_request_attachments(request_id: uuid.UUID, db: AsyncSession = 
 @router.post("/{request_id}/attachments", status_code=201)
 async def attach_service_request_upload(request_id: uuid.UUID, payload: AttachmentCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     idempotency_key = idempotency_key or f"legacy-{uuid.uuid4()}"
-    idem = await begin_idempotent(db, organization_id=user.organization_id, actor_id=user.id, operation="venue_ops.request.attachment", key=idempotency_key, payload={"request_id": str(request_id), "upload_id": str(payload.upload_id)})
+    idem = await begin_idempotent(db, organization_id=user.request_organization_id, actor_id=user.id, operation="venue_ops.request.attachment", key=idempotency_key, payload={"request_id": str(request_id), "upload_id": str(payload.upload_id)})
     replay = replay_response(idem)
     if replay:
         return replay[1]
-    attachment = await TechnologyServiceCommandService(db).attach_upload(request_id=request_id, organization_id=user.organization_id, user=user, upload_id=payload.upload_id)
+    attachment = await TechnologyServiceCommandService(db).attach_upload(request_id=request_id, organization_id=user.request_organization_id, user=user, upload_id=payload.upload_id)
     result = {"id": str(attachment.id), "request_id": str(attachment.request_id), "file_name": attachment.file_name, "content_type": attachment.content_type, "size_bytes": attachment.size_bytes, "created_at": attachment.created_at.isoformat()}
     await TechnologyServiceCommandService(db).complete_idempotent(idem, response_status=201, response_body=result, resource_id=attachment.id)
     return result
@@ -219,28 +218,28 @@ async def attach_service_request_upload(request_id: uuid.UUID, payload: Attachme
 
 @router.get("/{request_id}/overview")
 async def service_request_overview(request_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
-    detail = await TechnologyServiceQueryService(db).request_detail(request_id=request_id, organization_id=user.organization_id)
+    detail = await TechnologyServiceQueryService(db).request_detail(request_id=request_id, organization_id=user.request_organization_id)
     if detail is None: raise HTTPException(status_code=404, detail="Service request not found.")
     return detail
 
 
 @router.get("/{request_id}/requirements")
 async def service_request_requirements(request_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
-    detail = await TechnologyServiceQueryService(db).request_detail(request_id=request_id, organization_id=user.organization_id)
+    detail = await TechnologyServiceQueryService(db).request_detail(request_id=request_id, organization_id=user.request_organization_id)
     if detail is None: raise HTTPException(status_code=404, detail="Service request not found.")
     return detail["items"]
 
 
 @router.get("/{request_id}/history")
 async def service_request_history(request_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
-    detail = await TechnologyServiceQueryService(db).request_detail(request_id=request_id, organization_id=user.organization_id)
+    detail = await TechnologyServiceQueryService(db).request_detail(request_id=request_id, organization_id=user.request_organization_id)
     if detail is None: raise HTTPException(status_code=404, detail="Service request not found.")
     return []
 
 
 @router.get("/{request_id}/activity-logs")
 async def service_request_activity_logs(request_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
-    detail = await TechnologyServiceQueryService(db).request_detail(request_id=request_id, organization_id=user.organization_id)
+    detail = await TechnologyServiceQueryService(db).request_detail(request_id=request_id, organization_id=user.request_organization_id)
     if detail is None: raise HTTPException(status_code=404, detail="Service request not found.")
     return []
 
@@ -254,7 +253,7 @@ async def service_request_remark(request_id: uuid.UUID, payload: CommentCreate, 
 async def service_request_kpis(event_id: uuid.UUID, organization_id: Optional[uuid.UUID] = None, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     event = await TechnologyServiceQueryService(db).get_event_for_scope(
         event_id=event_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
         is_platform_admin=getattr(user, "role", None) == "super_admin",
     )
     _tenant_event(user, event, event_id)
@@ -267,7 +266,7 @@ async def service_request_kpis(event_id: uuid.UUID, organization_id: Optional[uu
 async def service_request_kanban(event_id: uuid.UUID, limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     event = await TechnologyServiceQueryService(db).get_event_for_scope(
         event_id=event_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
         is_platform_admin=getattr(user, "role", None) == "super_admin",
     )
     _tenant_event(user, event, event_id)
@@ -280,7 +279,7 @@ async def service_request_kanban(event_id: uuid.UUID, limit: int = Query(50, ge=
 
 @router.get("/{request_id}")
 async def get_service_request(request_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
-    row = await TechnologyServiceQueryService(db).get(request_id=request_id, organization_id=user.organization_id)
+    row = await TechnologyServiceQueryService(db).get(request_id=request_id, organization_id=user.request_organization_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Service request not found.")
     return _out(row)
@@ -288,13 +287,13 @@ async def get_service_request(request_id: uuid.UUID, db: AsyncSession = Depends(
 
 @router.get("")
 async def list_service_requests(event_id: uuid.UUID, limit: int = Query(100, ge=1, le=200), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
-    rows = await TechnologyServiceQueryService(db).list(event_id=event_id, organization_id=user.organization_id, limit=limit)
+    rows = await TechnologyServiceQueryService(db).list(event_id=event_id, organization_id=user.request_organization_id, limit=limit)
     return [_out(row) for row in rows]
 
 
 async def _transition(request_id: uuid.UUID, target: str, db: AsyncSession, user, expected_version: int | None = None) -> dict[str, Any]:
     row = await TechnologyServiceCommandService(db).transition(
-        request_id=request_id, target=target, organization_id=user.organization_id, expected_version=expected_version, actor_id=user.id
+        request_id=request_id, target=target, organization_id=user.request_organization_id, expected_version=expected_version, actor_id=user.id
     )
     return _out(row)
 
@@ -303,7 +302,7 @@ async def _transition(request_id: uuid.UUID, target: str, db: AsyncSession, user
 async def submit_service_request(request_id: uuid.UUID, payload: TransitionRequest = Body(default=TransitionRequest()), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128), if_match: str | None = Header(default=None, alias="If-Match"), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     idempotency_key = idempotency_key or f"legacy-{uuid.uuid4()}"
     expected_version = require_if_match(if_match) if if_match is not None else payload.expected_version
-    idem = await begin_idempotent(db, organization_id=user.organization_id, actor_id=user.id, operation="venue_ops.request.submit", key=idempotency_key, payload={"request_id": str(request_id), "expected_version": expected_version})
+    idem = await begin_idempotent(db, organization_id=user.request_organization_id, actor_id=user.id, operation="venue_ops.request.submit", key=idempotency_key, payload={"request_id": str(request_id), "expected_version": expected_version})
     replay = replay_response(idem)
     if replay:
         return replay[1]
@@ -316,7 +315,7 @@ async def submit_service_request(request_id: uuid.UUID, payload: TransitionReque
 async def approve_service_request(request_id: uuid.UUID, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128), if_match: str | None = Header(default=None, alias="If-Match"), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     idempotency_key = idempotency_key or f"legacy-{uuid.uuid4()}"
     expected_version = require_if_match(if_match) if if_match is not None else None
-    idem = await begin_idempotent(db, organization_id=user.organization_id, actor_id=user.id, operation="venue_ops.request.approve", key=idempotency_key, payload={"request_id": str(request_id), "expected_version": expected_version})
+    idem = await begin_idempotent(db, organization_id=user.request_organization_id, actor_id=user.id, operation="venue_ops.request.approve", key=idempotency_key, payload={"request_id": str(request_id), "expected_version": expected_version})
     replay = replay_response(idem)
     if replay:
         return replay[1]

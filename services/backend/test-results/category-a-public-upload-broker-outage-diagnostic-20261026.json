@@ -1,0 +1,30 @@
+{
+  "status": "FAILED",
+  "stage": "public HTTP prepare and storage commit",
+  "error_type": "AssertionError",
+  "database_error_metadata": {
+    "sqlstate": null,
+    "constraint_name": null,
+    "table_name": null,
+    "column_name": null
+  },
+  "last_http": {
+    "status": 202,
+    "code": null,
+    "dispatch_failure_connection_attempts": 4
+  },
+  "error_location": [
+    {
+      "file": "runners.py",
+      "line": 119
+    },
+    {
+      "file": "base_events.py",
+      "line": 726
+    },
+    {
+      "file": "category_a_public_upload_runtime_probe.py",
+      "line": 257
+    }
+  ]
+}

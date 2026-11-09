@@ -53,12 +53,23 @@ export class ApiError extends Error {
 
 interface RetriableRequestConfig extends InternalAxiosRequestConfig {
   _authRetry?: boolean;
+  _sessionRevision?: number;
 }
 
 interface RefreshResponse {
   access_token: string;
   token_type: string;
   user: import("@/store/use-auth-store").User;
+  expires_in: number;
+}
+
+export function sessionChangedError() {
+  return new ApiError({ message: "The session changed. Start this action again.", code: "AUTH_SESSION_CHANGED" });
+}
+
+function isCookieAuthRequest(url?: string) {
+  return ["/auth/command-center/login", "/auth/command-center/logout", "/auth/command-center/refresh"]
+    .includes((url || "").split("?")[0]);
 }
 
 export interface DownloadedFile {
@@ -133,7 +144,19 @@ function toApiError(error: AxiosError<ProblemDetails>): ApiError {
 
 class ApiClient {
   private readonly client: AxiosInstance;
-  private refreshPromise: Promise<string> | null = null;
+  private refreshPromise: { revision: number; promise: Promise<RefreshResponse> } | null = null;
+  private authQueue: Promise<void> = Promise.resolve();
+
+  private enqueueAuth<T>(operation: () => Promise<T>, revision: number): Promise<T> {
+    // Serialize cookie-mutating operations in this tab as well as fencing state:
+    // ignoring an old JS result alone cannot undo its Set-Cookie response.
+    const pending = this.authQueue.then(() => {
+      if (useAuthStore.getState().sessionRevision !== revision) throw sessionChangedError();
+      return operation();
+    });
+    this.authQueue = pending.then(() => undefined, () => undefined);
+    return pending;
+  }
 
   constructor() {
     this.client = axios.create({
@@ -149,7 +172,8 @@ class ApiClient {
 
   private initializeRequestInterceptor() {
     this.client.interceptors.request.use((config) => {
-      const { accessToken, updateActivity } = useAuthStore.getState();
+      const { accessToken, updateActivity, sessionRevision } = useAuthStore.getState();
+      (config as RetriableRequestConfig)._sessionRevision = sessionRevision;
       if (accessToken && !config.headers.Authorization) {
         config.headers.Authorization = `Bearer ${accessToken}`;
       }
@@ -164,20 +188,42 @@ class ApiClient {
 
   private initializeResponseInterceptor() {
     this.client.interceptors.response.use(
-      (response: AxiosResponse) => response,
+      (response: AxiosResponse) => {
+        if ((response.config as RetriableRequestConfig)._sessionRevision !== useAuthStore.getState().sessionRevision) {
+          return Promise.reject(sessionChangedError());
+        }
+        return response;
+      },
       async (error: AxiosError<ProblemDetails>) => {
         const request = error.config as RetriableRequestConfig | undefined;
-        const isRefreshRequest = request?.url?.includes("/auth/command-center/refresh");
-
-        if (error.response?.status === 401 && request && !request._authRetry && !isRefreshRequest) {
+        const requestRevision = request?._sessionRevision;
+        if (request && requestRevision !== useAuthStore.getState().sessionRevision) {
+          return Promise.reject(sessionChangedError());
+        }
+        if (error.response?.status === 401 && request && !request._authRetry && !isCookieAuthRequest(request.url)) {
+          if (useAuthStore.getState().originalAccessToken) {
+            return Promise.reject(new ApiError({ status: 401, code: "IMPERSONATION_REFRESH_DENIED",
+              message: "This scoped session expired. End impersonation before authenticating again." }));
+          }
           request._authRetry = true;
+          let refreshedRevision = requestRevision;
           try {
-            const accessToken = await this.refreshAccessToken();
-            request.headers.Authorization = `Bearer ${accessToken}`;
+            const refreshed = await this.refreshSession();
+            refreshedRevision = useAuthStore.getState().sessionRevision;
+            request.headers.Authorization = `Bearer ${refreshed.access_token}`;
+            // Refresh may restore the session, but never silently replay a write.
+            if (!["get", "head", "options"].includes((request.method || "get").toLowerCase())) {
+              return Promise.reject(toApiError(error));
+            }
             return await this.client.request(request);
-          } catch {
-            useAuthStore.getState().logout();
-            if (typeof window !== "undefined") window.dispatchEvent(new Event("auth:session-expired"));
+          } catch (refreshError) {
+            if (refreshError instanceof ApiError && refreshError.code === "AUTH_SESSION_CHANGED") {
+              return Promise.reject(refreshError);
+            }
+            if (useAuthStore.getState().sessionRevision === refreshedRevision) {
+              useAuthStore.getState().logout();
+              if (typeof window !== "undefined") window.dispatchEvent(new Event("auth:session-expired"));
+            }
           }
         }
 
@@ -186,10 +232,14 @@ class ApiClient {
     );
   }
 
-  private refreshAccessToken(): Promise<string> {
-    if (this.refreshPromise) return this.refreshPromise;
-
-    this.refreshPromise = axios
+  public refreshSession(): Promise<RefreshResponse> {
+    if (useAuthStore.getState().originalAccessToken) {
+      return Promise.reject(new ApiError({ status: 401, code: "IMPERSONATION_REFRESH_DENIED",
+        message: "End impersonation before refreshing the administrator session." }));
+    }
+    const { sessionRevision: revision, rememberMe } = useAuthStore.getState();
+    if (this.refreshPromise && this.refreshPromise.revision === revision) return this.refreshPromise.promise;
+    const promise: Promise<RefreshResponse> = this.enqueueAuth(() => axios
       .post<RefreshResponse>(`${API_BASE_URL}/auth/command-center/refresh`, undefined, {
         timeout: DEFAULT_TIMEOUT_MS,
         withCredentials: true,
@@ -199,15 +249,15 @@ class ApiClient {
         },
       })
       .then(({ data }) => {
-        const rememberMe = useAuthStore.getState().rememberMe;
+        if (useAuthStore.getState().sessionRevision !== revision) throw sessionChangedError();
         useAuthStore.getState().setAuth(data.user, data.access_token, undefined, rememberMe);
-        return data.access_token;
-      })
+        return data;
+      }), revision)
       .finally(() => {
-        this.refreshPromise = null;
+        if (this.refreshPromise?.promise === promise) this.refreshPromise = null;
       });
-
-    return this.refreshPromise;
+    this.refreshPromise = { revision, promise };
+    return promise;
   }
 
   public async get<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
@@ -215,6 +265,10 @@ class ApiClient {
   }
 
   public async post<T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
+    if (isCookieAuthRequest(url)) {
+      return this.enqueueAuth(async () => (await this.client.post<T>(url, data, config)).data,
+        useAuthStore.getState().sessionRevision);
+    }
     return (await this.client.post<T>(url, data, config)).data;
   }
 

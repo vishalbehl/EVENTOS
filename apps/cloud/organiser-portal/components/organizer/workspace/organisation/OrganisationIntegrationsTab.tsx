@@ -1,25 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiClient, apiGet } from "@/lib/api-client";
+import { usePortalQueryScope } from "@/hooks/useAccessBootstrap";
 import { DataTable, Panel, StatusBadge } from "../OrganiserPrimitives";
 import { Unavailable } from "../OrganiserSection";
 import { OrganisationPage } from "./shared";
 
 export function OrganisationIntegrationsTab() {
   const client = useQueryClient();
-  const query = useQuery({ queryKey: ["organisation", "integrations"], queryFn: () => apiGet<any>("/organiser/integrations") });
-  const providers = useQuery({ queryKey: ["organisation", "integration-providers"], queryFn: () => apiGet<Array<{ id: string; name: string }>>("/developer/integration-providers") });
+  const scope = usePortalQueryScope();
+  const receipts = useRef(new Map<string, string>());
+  const query = useQuery({ queryKey: ["organisation", ...scope, "integrations"], queryFn: () => apiGet<any>("/organiser/integrations") });
+  const providers = useQuery({ queryKey: ["organisation", ...scope, "integration-providers"], queryFn: () => apiGet<Array<{ id: string; name: string }>>("/developer/integration-providers") });
   const [open, setOpen] = useState(false);
   const [providerId, setProviderId] = useState("");
-  const refresh = () => client.invalidateQueries({ queryKey: ["organisation", "integrations"] });
-  const connect = useMutation({ mutationFn: () => apiClient.post("/developer/integration-connections", { provider_id: providerId }, { headers: { "Idempotency-Key": crypto.randomUUID() } }), onSuccess: async () => { setOpen(false); setProviderId(""); await refresh(); toast.success("Integration connected."); }, onError: (error: any) => toast.error(error?.message || "Integration could not be connected.") });
-  const toggle = async (row: any) => { try { await apiClient.patch(`/developer/integration-connections/${row.id}`, { is_active: !row.is_active }, { headers: { "Idempotency-Key": crypto.randomUUID(), "If-Match": String(row.version) } }); await refresh(); toast.success(row.is_active ? "Integration deactivated." : "Integration activated."); } catch (error: any) { toast.error(error?.message || "Integration status could not be changed."); } };
+  const refresh = () => client.invalidateQueries({ queryKey: ["organisation", ...scope, "integrations"] });
+  const connect = useMutation({ mutationFn: () => { const signature = `connect:${providerId}`; const key = receipts.current.get(signature) || crypto.randomUUID(); receipts.current.set(signature, key); return apiClient.post("/developer/integration-connections", { provider_id: providerId }, { headers: { "Idempotency-Key": key } }); }, onSuccess: async () => { receipts.current.delete(`connect:${providerId}`); setOpen(false); setProviderId(""); await refresh(); toast.success("Integration connected."); }, onError: (error: any) => toast.error(error?.message || "Integration could not be connected.") });
+  const toggle = async (row: any) => { const signature = `toggle:${row.id}:${row.version}:${!row.is_active}`; const key = receipts.current.get(signature) || crypto.randomUUID(); receipts.current.set(signature, key); try { await apiClient.patch(`/developer/integration-connections/${row.id}`, { is_active: !row.is_active }, { headers: { "Idempotency-Key": key, "If-Match": String(row.version) } }); receipts.current.delete(signature); await refresh(); toast.success(row.is_active ? "Integration deactivated." : "Integration activated."); } catch (error: any) { toast.error(error?.message || "Integration status could not be changed."); } };
 
   return <OrganisationPage>
     <Panel title="Integrations" action={<Button onClick={() => setOpen(true)} disabled={providers.isError}><Plus className="mr-2 h-4 w-4" />Connect provider</Button>} className="p-0"><DataTable columns={["Provider", "Status", "Version", "Action"]} rows={(query.data?.items || []).map((row: any) => [row.provider, <StatusBadge key={`${row.id}-status`} status={row.is_active ? "Active" : "Inactive"} />, row.version, <Button key={`${row.id}-toggle`} variant="outline" size="sm" onClick={() => toggle(row)}>{row.is_active ? "Deactivate" : "Activate"}</Button>])} empty={query.isError ? "Integration status is unavailable." : "No integrations connected."} /></Panel>

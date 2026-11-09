@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 
 // â”€â”€â”€ OrganiserPage / PageContainer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export function OrganiserPage({
+  eyebrow,
   title,
   description,
   actions,
@@ -15,6 +16,7 @@ export function OrganiserPage({
   children,
   attention,
 }: {
+  eyebrow?: string;
   title: string;
   description?: string;
   actions?: ReactNode;
@@ -23,10 +25,15 @@ export function OrganiserPage({
   attention?: ReactNode;
 }) {
   return (
-    <div className="relative w-full">
-      <section className="mx-auto flex min-h-full w-full max-w-[1600px] shrink-0 flex-col space-y-6 px-[var(--space-page-x)] py-[var(--space-page-y)]">
-        <header className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
+    <div className="op-page relative w-full">
+      <section className="op-page-main mx-auto flex min-h-full w-full max-w-[1600px] shrink-0 flex-col">
+        <header className="op-page-header flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div className="min-w-0 space-y-1.5">
+            {eyebrow ? (
+              <p className="text-xs font-semibold tracking-[-0.01em] text-[var(--text-secondary)]">
+                {eyebrow}
+              </p>
+            ) : null}
             <h1 className="text-2xl font-semibold tracking-[-0.035em] text-[var(--text-primary)]">{title}</h1>
             {description ? (
               <p className="max-w-3xl text-sm leading-6 text-[var(--text-secondary)]">{description}</p>
@@ -36,7 +43,7 @@ export function OrganiserPage({
             <div className="flex w-full flex-wrap items-center gap-2.5 md:w-auto">{actions}</div>
           ) : null}
         </header>
-        {tabs ? <div className="border-b border-[var(--border-subtle)]">{tabs}</div> : null}
+        {tabs ? <div className="op-tabs-wrap">{tabs}</div> : null}
         {children}
       </section>
     </div>
@@ -52,15 +59,15 @@ export function PageTabs({
   active: string;
 }) {
   return (
-    <nav className="flex flex-wrap items-stretch gap-x-5" aria-label="Page sections">
+    <nav className="op-tabs flex flex-wrap items-center" aria-label="Page sections">
       {tabs.map((tab) => (
         <Link
           key={tab.href}
           href={tab.href}
           className={cn(
-            "relative pb-2.5 pt-1 text-xs font-semibold uppercase tracking-[0.08em] transition-colors duration-150",
+            "op-tab relative text-xs font-semibold transition-colors duration-150",
             active === tab.label
-              ? "text-[var(--text-primary)] after:absolute after:inset-x-0 after:-bottom-px after:h-0.5 after:bg-[var(--pri)]"
+              ? "is-active text-[var(--text-primary)]"
               : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
           )}
         >
@@ -126,12 +133,12 @@ export function MetricCard({
   const content = (
     <article
       aria-label={`${label}: ${value}`}
-      className="op-metric-card group flex h-full min-h-40 flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-default)] bg-[var(--bg-surface)] p-4 transition-transform duration-200 hover:-translate-y-0.5"
+      className="op-metric-card group flex h-full min-h-[108px] flex-col overflow-hidden p-4 transition-transform duration-200 hover:-translate-y-0.5"
     >
       <div className="flex items-center gap-2.5">
         <div
           className={cn(
-            "grid size-7 shrink-0 place-items-center rounded-lg border border-white/70 bg-[var(--bg-surface)] shadow-sm dark:border-white/10",
+            "op-metric-icon grid size-9 shrink-0 place-items-center",
             colors.bg
           )}
         >
@@ -139,12 +146,12 @@ export function MetricCard({
         </div>
         <span className="min-w-0 truncate text-xs font-medium text-[var(--text-secondary)]">{label}</span>
       </div>
-      <div className="flex flex-1 items-center py-3">
-        <span className="break-words font-mono text-3xl font-semibold tabular-nums tracking-[-0.045em] text-[var(--text-primary)]">
+      <div className="flex flex-1 items-center py-2">
+        <span className="op-metric-value break-words tabular-nums">
           {value}
         </span>
       </div>
-      <div className="flex min-h-8 items-end justify-between gap-3 border-t border-[var(--border-subtle)] pt-2.5">
+      <div className="flex min-h-5 items-end justify-between gap-3 pt-1">
         <div className="min-w-0">
           {hasDelta ? (
             <span
@@ -198,11 +205,13 @@ export function MetricCard({
 // â”€â”€â”€ Panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export function Panel({
   title,
+  description,
   action,
   children,
   className,
 }: {
   title?: string;
+  description?: string;
   action?: ReactNode;
   children: ReactNode;
   className?: string;
@@ -210,13 +219,13 @@ export function Panel({
   return (
     <div
       className={cn(
-        "rounded-[var(--radius-panel)] border border-[var(--border-subtle)] bg-[var(--bg-surface)] cc-panel-shadow",
+        "op-panel",
         className
       )}
     >
-      {(title || action) ? (
-        <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] px-5 py-3.5">
-          {title ? <h2 className="text-sm font-semibold text-[var(--text-primary)]">{title}</h2> : <span />}
+      {(title || description || action) ? (
+        <div className="op-panel-header flex items-center justify-between gap-3 px-5 py-3.5">
+          <div>{title ? <h2 className="text-sm font-semibold text-[var(--text-primary)]">{title}</h2> : null}{description ? <p className="mt-1 text-xs text-[var(--text-secondary)]">{description}</p> : null}</div>
           {action}
         </div>
       ) : null}
@@ -327,10 +336,10 @@ export function DataTable({
   };
 
   return (
-    <div className="flex max-h-[calc(100dvh-16rem)] min-h-[420px] w-full flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--bg-surface)] cc-panel-shadow">
+    <div className="op-table-shell flex max-h-[calc(100dvh-16rem)] min-h-[420px] w-full flex-col overflow-hidden">
       <div className="min-h-0 w-full flex-1">
         <div className="cc-scroll-region h-full w-full overflow-y-auto overflow-x-auto overscroll-contain">
-          <table className="w-full table-fixed border-collapse text-left">
+          <table className="op-table w-full table-fixed border-collapse text-left">
             <thead>
               <tr>
                 {columns.map((col) => (
@@ -397,7 +406,7 @@ export function DataTable({
                   onChange={(e) => changePageSize(Number(e.target.value))}
                   className="h-8 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-2 font-mono text-xs text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
                 >
-                  {[10, 25, 50].map((s) => <option key={s} value={s}>{s}</option>)}
+                  {[10, 20, 50, 100].map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </label>
             </div>
@@ -569,12 +578,12 @@ export function NeedsAttentionPane({
 }
 
 // â”€â”€â”€ QuickActions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-export function QuickActions({ actions }: { actions: Array<{ label: string; href: string; icon?: ReactNode }> }) {
+export function QuickActions({ actions }: { actions: Array<{ label: string; href: string; icon?: ReactNode; id?: string }> }) {
   return (
     <div className="grid grid-cols-2 gap-2.5">
-      {actions.map((action) => (
+      {actions.map((action, index) => (
         <Link
-          key={action.href}
+          key={action.id ?? `${action.label}-${index}`}
           href={action.href}
           className="flex min-h-[52px] items-center gap-2.5 rounded-[var(--radius-panel)] border border-[var(--border-subtle)] bg-[var(--bg-surface-2)] px-3 py-2.5 text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-surface-hover)]"
         >

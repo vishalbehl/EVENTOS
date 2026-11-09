@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="2" time="52.356" timestamp="2026-10-28T09:39:01.743589+05:30" hostname="Vishal"><testcase classname="tests.test_organization_console" name="test_capability_diagnostics_are_redacted_and_tenant_scoped" time="45.667" /><testcase classname="tests.test_organization_console" name="test_capability_restriction_restore_requires_independent_approval" time="3.595"><failure message="AssertionError: {&quot;detail&quot;:{&quot;code&quot;:&quot;PLATFORM_PERMISSION_DENIED&quot;}}&#10;assert 403 == 200&#10; +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code">client = &lt;httpx.AsyncClient object at 0x0000025B8560A490&gt;
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000025B9FEE2D50&gt;
+organization = &lt;Organization id=8761bdd6-e804-49cd-afc5-2ff4fb26aff8 slug=test-org-4916e7cf&gt;
+event = &lt;Event id=f3acc94c-0d79-49f1-bf5c-0330b1d199fc short_code=TCB4CE status=draft&gt;
+super_admin = &lt;User id=5273d84f-2a11-4cb1-94d5-0d35ecde7d29 email=admin-fdbed1@test.com role=super_admin&gt;
+
+    @pytest.mark.asyncio
+    async def test_capability_restriction_restore_requires_independent_approval(
+        client: AsyncClient,
+        db: AsyncSession,
+        organization: Organization,
+        event: Event,
+        super_admin: User,
+    ):
+        approver = User(
+            organization_id=organization.id,
+            email=f"restriction-approver-{uuid.uuid4().hex[:8]}@test.com",
+            password_hash="not-used",
+            first_name="Restriction",
+            last_name="Approver",
+            role="super_admin",
+            is_active=True,
+        )
+        db.add(approver)
+        await db.flush()
+        db.add(
+            OrganizationMember(
+                organization_id=organization.id,
+                user_id=approver.id,
+                org_role="admin",
+                accepted_at=datetime.now(timezone.utc),
+                is_active=True,
+            )
+        )
+        await db.flush()
+        base = f"/api/v1/platform/organizations/{organization.id}/console"
+        requested = await client.post(
+            f"{base}/restrictions",
+            headers={
+                **auth_headers(super_admin),
+                "Idempotency-Key": f"restriction-request-{uuid.uuid4()}",
+            },
+            json={
+                "event_id": str(event.id),
+                "capability_key": "speaker_management",
+                "restriction_type": "SECURITY",
+                "reason_code": "SECURITY_RESTRICTED",
+                "reason": "Temporarily contain speaker access while the incident is investigated.",
+                "case_reference": "SEC-2001",
+            },
+        )
+        assert requested.status_code == 202, requested.text
+        restriction_id = requested.json()["id"]
+        approved = await client.post(
+            f"{base}/restrictions/{restriction_id}/decision",
+            headers={
+                **auth_headers(approver),
+                "If-Match": "1",
+                "Idempotency-Key": f"restriction-approval-{uuid.uuid4()}",
+            },
+            json={
+                "decision": "APPROVED",
+                "reason": "Independently verified the incident containment requirement.",
+            },
+        )
+&gt;       assert approved.status_code == 200, approved.text
+E       AssertionError: {"detail":{"code":"PLATFORM_PERMISSION_DENIED"}}
+E       assert 403 == 200
+E        +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code
+
+tests\test_organization_console.py:1207: AssertionError</failure></testcase></testsuite></testsuites>

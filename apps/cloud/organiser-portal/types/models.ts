@@ -50,7 +50,7 @@ export interface Organization {
   name: string;
   slug: string;
   logo_url: string | null;
-  plan: string;
+  commercial_account_type?: "ORGANIZER" | "EMC" | null;
   created_at: string;
 }
 

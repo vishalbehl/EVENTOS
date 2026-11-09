@@ -4,7 +4,10 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.platform.models.health import OrganizationHealth
 from app.modules.analytics.models.usage import OrganizationUsage
-from app.modules.billing.models.subscription import OrganizationSubscription, SupportTicket
+from app.modules.support.models.ticket import SupportTicket
+from app.modules.billing.models.cloud_commercial import CommercialContract, CommercialContractItem, CommercialOffer
+from app.modules.billing.models.billing_domain_tables import Invoice
+from app.modules.billing.services.entitlement_resolver import EntitlementResolver
 
 class OrganizationHealthService:
     @staticmethod
@@ -16,13 +19,16 @@ class OrganizationHealthService:
         warnings = []
         
         # 1. Billing Status (Critical impact)
-        sub_stmt = (
-            select(OrganizationSubscription)
-            .where(OrganizationSubscription.organization_id == organization_id)
-            .order_by(OrganizationSubscription.created_at.desc())
+        contract_stmt = (
+            select(CommercialContract)
+            .join(CommercialAccount, CommercialAccount.id == CommercialContract.commercial_account_id)
+            .where(
+                CommercialAccount.owner_organization_id == organization_id,
+                CommercialContract.status.in_(["ACTIVE", "TRIAL", "GRACE_PERIOD", "PENDING_PAYMENT"]),
+            )
             .limit(1)
         )
-        sub = (await db.execute(sub_stmt)).scalar_one_or_none()
+        sub = (await db.execute(contract_stmt)).scalar_one_or_none()
         
         if sub:
             if sub.status in ["SUSPENDED", "EXPIRED", "CANCELLED"]:
@@ -34,16 +40,14 @@ class OrganizationHealthService:
                 
         # 2. Storage Limits (Warning impact)
         usage = await db.get(OrganizationUsage, organization_id)
-        if usage and sub and sub.plan:
-            # Plan relationships aren't loaded here by default, so we'd fetch plan.
-            from app.modules.billing.models.subscription import SubscriptionPlan
-            plan = await db.get(SubscriptionPlan, sub.plan_id)
-            if plan:
-                storage_limit_bytes = plan.storage_quota_mb * 1024 * 1024
-                if usage.storage_used_bytes > storage_limit_bytes * 0.9: # 90% full
+        if usage and sub:
+            storage_limit_mb = await EntitlementResolver.get_limit(db, organization_id, "storage_quota_mb")
+            if storage_limit_mb:
+                storage_limit_bytes = storage_limit_mb * 1024 * 1024
+                if usage.storage_used_bytes > storage_limit_bytes * 0.9:
                     score -= 15
                     warnings.append("STORAGE_CRITICAL")
-                elif usage.storage_used_bytes > storage_limit_bytes * 0.75: # 75% full
+                elif usage.storage_used_bytes > storage_limit_bytes * 0.75:
                     score -= 5
                     warnings.append("STORAGE_WARNING")
 

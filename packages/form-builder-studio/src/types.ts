@@ -73,6 +73,7 @@ export interface FormField {
 }
 
 export interface FormCategory {
+  version?: number; // Persisted API categories carry a version; local suggestions do not.
   id: string;
   organization_id?: string | null;
   name: string;
@@ -93,6 +94,8 @@ export interface FAQItem {
 }
 
 export interface FormSettings {
+  allow_drafts?: boolean;
+  show_word_count?: boolean;
   submit_button_label?: string;
   success_title?: string;
   success_message?: string;
@@ -112,6 +115,8 @@ export interface FormSettings {
     primary_color?: string;
     border_radius?: string;
     show_header_banner?: boolean;
+    /** Tenant-owned asset reference. Public delivery URLs are resolved by the backend. */
+    header_banner_asset_id?: string | null;
     header_banner_url?: string;
   };
 }
@@ -125,7 +130,8 @@ export interface FormTemplate {
   name: string;
   slug: string;
   description?: string;
-  category_key: string; // "registration" | "abstract" | "survey" | "speaker" | "sponsor" | "custom"
+  /** Stable operational purpose for standard codes; category_id selects display taxonomy. */
+  category_key: string;
   category_name?: string;
   scope_type: "GLOBAL" | "ORGANIZATION" | "EVENT";
   is_default: boolean;

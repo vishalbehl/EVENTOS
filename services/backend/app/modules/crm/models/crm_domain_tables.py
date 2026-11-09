@@ -113,16 +113,6 @@ class Note(Base):
     archived_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True)
     archive_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-class Contract(Base):
-    __tablename__ = "contracts"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), index=True)
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
-    value: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
-    start_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    end_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-
 class Proposal(Base):
     __tablename__ = "proposals"
 
@@ -135,7 +125,7 @@ class Proposal(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), index=True)
     opportunity_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("business.opportunities.id", ondelete="SET NULL"), nullable=True)
     event_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="RESTRICT"), nullable=True)
-    quote_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("business.quotes.id", ondelete="RESTRICT"), nullable=True, unique=True)
+    quote_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("commerce.quotes.id", ondelete="RESTRICT"), nullable=True, unique=True)
     proposal_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, unique=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="DRAFT")
@@ -161,7 +151,7 @@ class ProposalVersion(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False)
     proposal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("business.proposals.id", ondelete="CASCADE"), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
-    source_quote_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("business.quotes.id", ondelete="RESTRICT"), nullable=False)
+    source_quote_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("commerce.quotes.id", ondelete="RESTRICT"), nullable=False)
     source_quote_version: Mapped[int] = mapped_column(Integer, nullable=False)
     snapshot_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
     reason: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -217,20 +207,3 @@ class ProposalShareAccess(Base):
     ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
     user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-class CustomerHealth(Base):
-    __tablename__ = "customer_health"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), unique=True, index=True)
-    score: Mapped[int] = mapped_column(Integer, default=100)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-
-class Renewal(Base):
-    __tablename__ = "renewals"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), index=True)
-    contract_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("business.contracts.id", ondelete="CASCADE"))
-    renewal_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    status: Mapped[str] = mapped_column(String(50), default="PENDING")

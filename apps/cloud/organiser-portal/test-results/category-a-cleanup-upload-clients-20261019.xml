@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="16" failures="0" errors="0" time="0.0313668">
+    <testsuite name="test/category-a/scan-gated-upload-clients.test.ts" timestamp="2026-10-19T06:00:16.075Z" hostname="Vishal" tests="16" failures="0" errors="0" skipped="0" time="0.0313668">
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; returns only after READY and removes completed timer listeners" time="0.0142927">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; never accepts failed as a finished upload" time="0.0025639">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; never accepts quarantined as a finished upload" time="0.0011313">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; never accepts deleted as a finished upload" time="0.001416">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; never accepts cleanup_pending as a finished upload" time="0.0010092">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; rejects mismatched status identity even if it claims READY" time="0.000933">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; rejects a cross-origin status address before sending the capability" time="0.0008594">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; cancels a pending poll without retaining listeners or retrying the upload" time="0.0016851">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; returns only after READY and removes completed timer listeners" time="0.001799">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; never accepts failed as a finished upload" time="0.0006097">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; never accepts quarantined as a finished upload" time="0.0005184">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; never accepts deleted as a finished upload" time="0.0005047">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; never accepts cleanup_pending as a finished upload" time="0.000388">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; rejects mismatched status identity even if it claims READY" time="0.0003164">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; rejects a cross-origin status address before sending the capability" time="0.0004049">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; cancels a pending poll without retaining listeners or retrying the upload" time="0.0008502">
+        </testcase>
+    </testsuite>
+</testsuites>

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import invalidate_organization
 from app.modules.audit.models.audit_log import AuditLog
-from app.modules.billing.models.subscription import ActivityTimeline, OrganizationFeature, OrganizationSubscription
+from app.modules.billing.models.commercial_support import ActivityTimeline, OrganizationFeature
 from app.modules.platform.models.organization import Organization
 from app.modules.platform.models.feature import FeatureCatalog
 from app.modules.platform.models.platform_domain_tables import OrganizationDomain
@@ -116,62 +116,12 @@ class OrganizationCommandService:
             raise
 
     async def update_status(self, *, organization_id, actor, is_active: bool, suspension_reason: str) -> None:
-        try:
-            organization = await self.db.scalar(
-                select(Organization).where(Organization.id == organization_id).with_for_update()
-            )
-            if organization is None:
-                raise HTTPException(status_code=404, detail="Organization not found")
-
-            old_state = {
-                "is_active": organization.is_active,
-                "suspended_at": organization.suspended_at.isoformat() if organization.suspended_at else None,
-                "suspension_reason": organization.suspension_reason,
-            }
-            organization.is_active = is_active
-            if is_active:
-                organization.suspended_at = None
-                organization.suspension_reason = None
-            else:
-                organization.suspended_at = datetime.now(timezone.utc)
-                organization.suspension_reason = suspension_reason
-
-            subscription = await self.db.scalar(
-                select(OrganizationSubscription)
-                .where(OrganizationSubscription.organization_id == organization_id)
-                .where(OrganizationSubscription.status.in_(["ACTIVE", "TRIAL"]))
-                .order_by(OrganizationSubscription.created_at.desc())
-                .limit(1)
-                .with_for_update()
-            )
-            if subscription:
-                subscription.status = "ACTIVE" if is_active else "SUSPENDED"
-
-            action = "ORG_ACTIVATED" if is_active else "ORG_SUSPENDED"
-            self.db.add(ActivityTimeline(
-                organization_id=organization_id,
-                actor_id=actor.id,
-                action_type=action,
-                metadata_data={"reason": suspension_reason, "by": str(actor.id)},
-            ))
-            self._audit(
-                organization_id,
-                actor,
-                action,
-                organization_id,
-                old_state,
-                {
-                    "is_active": organization.is_active,
-                    "suspended_at": organization.suspended_at.isoformat() if organization.suspended_at else None,
-                    "suspension_reason": organization.suspension_reason,
-                    "subscription_status": subscription.status if subscription else None,
-                },
-                suspension_reason,
-            )
-            await self.db.commit()
-        except Exception:
-            await self.db.rollback()
-            raise
+        # The public alias is already disabled. Retire its underlying writer too:
+        # operational access must never suspend or rewrite commercial contracts.
+        raise HTTPException(409, detail={
+            "code": "GOVERNED_ORGANIZATION_LIFECYCLE_REQUIRED",
+            "message": "Use the governed organisation lifecycle workflow; operational and commercial state are separate.",
+        })
 
     async def add_domain(self, *, organization_id, actor, domain: str, reason: str) -> OrganizationDomain:
         try:

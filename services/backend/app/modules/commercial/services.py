@@ -81,6 +81,8 @@ class ServiceCatalogService:
         organization_id: Optional[uuid.UUID] = None,
     ) -> Optional[Service]:
         """Clone an existing service catalog item."""
+        if organization_id is None:
+            raise ValueError("A tenant owner is required for a service clone.")
         stmt = select(Service).where(Service.id == service_id)
         if organization_id is not None:
             stmt = stmt.where(
@@ -93,20 +95,23 @@ class ServiceCatalogService:
         # Fetch original features
         feat_stmt = select(ServiceFeature).where(ServiceFeature.service_id == service_id)
         original_features = (await db.execute(feat_stmt)).scalars().all()
+        if len(original_features) > 100:
+            raise ValueError("Service clone exceeds the bounded feature limit.")
 
         cloned_code = f"{original.service_code}_CLONE_{uuid.uuid4().hex[:6].upper()}"
         cloned_service = Service(
             id=uuid.uuid4(),
             # A shared catalog entry is a template; the clone belongs to the
             # requesting organization and must not remain globally mutable.
-            organization_id=organization_id if original.organization_id is None else original.organization_id,
+            organization_id=organization_id,
             category_id=original.category_id,
             service_code=cloned_code,
             service_name=f"{original.service_name} (Clone)",
             description=original.description,
             unit_type=original.unit_type,
             is_active=original.is_active,
-            is_internal=original.is_internal,
+            # Internal catalogue classification is not inherited by a tenant clone.
+            is_internal=False,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc)
         )

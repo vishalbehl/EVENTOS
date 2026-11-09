@@ -21,6 +21,9 @@ class SessionReorderItem(BaseModel):
     start_time: datetime
     end_time: datetime
     sort_order: int = Field(default=0, ge=0)
+    # Optional for compatibility with older clients. New builder clients send
+    # this token so concurrent editors cannot silently overwrite each other.
+    expected_version: Optional[int] = Field(default=None, ge=1)
 
 
 class BulkReorderRequest(BaseModel):
@@ -114,8 +117,10 @@ class SessionBuilderDetail(BaseModel):
                         "upload_status": ss.speaker.upload_status,
                         "talk_order": ss.talk_order,
                         "presentation_title": ss.presentation_title,
-                        "start_time": ss.start_time.isoformat() if ss.start_time else None,
-                        "end_time": ss.end_time.isoformat() if ss.end_time else None,
+                        # SessionPerson stores role/presentation metadata; the
+                        # scheduled window belongs to the parent session.
+                        "start_time": data.start_time.isoformat() if data.start_time else None,
+                        "end_time": data.end_time.isoformat() if data.end_time else None,
                     })
             setattr(data, "speakers", speakers_list)
             readiness = (approved / total * 100) if total > 0 else 100.0
@@ -124,6 +129,7 @@ class SessionBuilderDetail(BaseModel):
         return data
 
     id: uuid.UUID
+    version: int = 1
     event_id: uuid.UUID
     session_code: str
     name: str
@@ -135,7 +141,7 @@ class SessionBuilderDetail(BaseModel):
     room_name: Optional[str] = None
     moderator_name: Optional[str] = None
     description: Optional[str] = None
-    event_timezone: str = "UTC"
+    event_timezone: str = "Asia/Kolkata"
     speaker_count: int = 0
     readiness_pct: float = 100.0
     speakers: List[Dict[str, Any]] = []
@@ -167,7 +173,12 @@ class RoomBuilderResponse(BaseModel):
 
 class ConflictDetail(BaseModel):
     """A single scheduling conflict detected by the builder."""
-    type: Literal["room_overlap", "speaker_conflict", "out_of_bounds"]
+    type: Literal[
+        "room_overlap", "speaker_conflict", "out_of_bounds", "missing_room",
+        "speaker_unconfirmed", "speaker_upload_pending",
+        "travel_time", "session_overflow", "unassigned_moderator", "capacity_mismatch",
+        "speaker_unavailable", "invalid_session_state",
+    ]
     session_ids: List[uuid.UUID]
     speaker_id: Optional[uuid.UUID] = None
     room_id: Optional[uuid.UUID] = None
@@ -184,6 +195,7 @@ class BuilderSnapshotResponse(BaseModel):
     rooms: List[RoomBuilderResponse]
     tracks: List[TrackResponse]
     unscheduled_speakers: List[SpeakerSlimResponse]
+    accepted_candidates: List["AcceptedAbstractCandidate"] = Field(default_factory=list)
     conflicts: List[ConflictDetail]
     event_timezone: str = "UTC"
     event_start_date: Optional[datetime] = None
@@ -220,3 +232,54 @@ class PublishScheduleResponse(BaseModel):
     success: bool = True
     published_count: int
     message: str = "Schedule published successfully"
+    revision_id: uuid.UUID | None = None
+
+
+class AcceptedAbstractCandidate(BaseModel):
+    """Accepted content that has not yet become a scheduled session."""
+    id: uuid.UUID
+    code: str
+    title: str
+    abstract_type: str
+    topic: str | None = None
+    track: str | None = None
+    presenter_name: str | None = None
+    presenter_email: str | None = None
+    speaker_ready: bool = False
+
+
+class MaterializeCandidateRequest(BaseModel):
+    """Turn one accepted abstract into its linked, unscheduled session exactly once."""
+    duration_minutes: int = Field(default=30, ge=5, le=480)
+
+
+class ScheduleRevisionCreate(BaseModel):
+    label: str | None = Field(default=None, max_length=180)
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class ScheduleRevisionResponse(BaseModel):
+    id: uuid.UUID
+    revision_number: int
+    label: str | None = None
+    reason: str | None = None
+    checksum: str
+    created_at: datetime
+
+
+class SchedulePublicationSettings(BaseModel):
+    embed_enabled: bool = False
+    json_feed_enabled: bool = False
+
+
+class ScheduleAnnouncementRequest(BaseModel):
+    template_id: uuid.UUID
+    recipient_filter: Literal["all", "paid", "pending"] = "all"
+    target_type: Literal["participant", "speaker"] = "participant"
+    scheduled_at: Optional[datetime] = None
+
+
+class PublicScheduleResponse(BaseModel):
+    event_id: uuid.UUID
+    published_at: datetime | None
+    sessions: list[dict[str, Any]]

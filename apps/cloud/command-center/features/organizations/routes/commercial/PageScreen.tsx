@@ -31,8 +31,8 @@ import {
   useOrganizationUsage,
   useFinancialAdjustments,
   useDecideFinancialAdjustment,
-  useCommercialAccessRequests,
-  useDecideCommercialAccessRequest,
+  useCommercialRequests,
+  useDecideCommercialRequest,
 } from "@/features/organizations/api/organization-console-api";
 import { toast } from "sonner";
 import { useOrgConsole } from "@/features/organizations/context/OrgConsoleContext";
@@ -66,7 +66,7 @@ export default function CommercialPageScreen() {
   const orgId = params.orgId;
   const { summary } = useOrgConsole();
 
-  const [activeTab, setActiveTab] = useState("subscriptions");
+  const [activeTab, setActiveTab] = useState("contracts");
 
   const { data: domainRes, isLoading } = useOrganizationDomain(
     orgId,
@@ -85,8 +85,8 @@ export default function CommercialPageScreen() {
   const usageQuery = useOrganizationUsage(orgId);
   const financialAdjustments = useFinancialAdjustments(orgId);
   const decideFinancialAdjustment = useDecideFinancialAdjustment(orgId);
-  const commercialAccessRequests = useCommercialAccessRequests(orgId);
-  const decideCommercialAccess = useDecideCommercialAccessRequest(orgId);
+  const commercialRequests = useCommercialRequests(orgId);
+  const decideCommercialRequest = useDecideCommercialRequest(orgId);
   const catalogue = useQuery({
     queryKey: platformKey("capability-coverage"),
     queryFn: () => apiGet<{ features: Record<string, { scope: string; value_type: string }> }>("/platform/capabilities/coverage"),
@@ -121,19 +121,19 @@ export default function CommercialPageScreen() {
   if (isLoading) return <LoadingPage />;
 
   const domainData = domainRes?.data as any;
-  const subscriptions: any[] = domainData?.subscriptions ?? [];
+  const contracts: any[] = domainData?.contracts ?? [];
   const invoiceAgg = domainData?.invoices ?? { count: 0, total: 0 };
   const invoices: any[] = invoiceAgg.items ?? [];
   const approvedAdjustments = (financialAdjustments.data?.items ?? []).filter((item) => item.status === "APPROVED");
   const walletBalance = approvedAdjustments.reduce((total, item) => total + (item.adjustment_type === "CREDIT" ? Number(item.amount) : item.adjustment_type === "DEBIT" ? -Number(item.amount) : 0), 0);
   const activeSub =
-    subscriptions.find((s) => s.status === "active") ?? subscriptions[0];
+    contracts.find((s) => s.status === "ACTIVE") ?? contracts[0];
 
   const usageItems = usageQuery.data?.items ?? [];
 
   const tabs = [
-    { key: "subscriptions", label: "Subscriptions" },
-    { key: "requests", label: "Access Requests" },
+    { key: "contracts", label: "Contracts" },
+    { key: "requests", label: "Commercial Requests" },
     { key: "matrix", label: "Feature Matrix" },
     { key: "entitlements", label: "Entitlements Engine" },
     { key: "usage", label: "Usage & Top-ups" },
@@ -180,7 +180,7 @@ export default function CommercialPageScreen() {
       <OrgPageHeader
         icon={CircleDollarSign}
         title="Commercial Workspace"
-        description="Comprehensive commercial management, per-event subscriptions, feature matrix, entitlements & billing."
+        description="Comprehensive commercial management, contracts, allocations, entitlements and billing."
         generatedAt={domainRes?.generated_at}
         actions={
           <div className="flex gap-2">
@@ -204,7 +204,7 @@ export default function CommercialPageScreen() {
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <OrgMetricCard
-          label="Active Subscription"
+          label="Active Contract"
           value={activeSub?.status ? activeSub.status.toUpperCase() : "Unavailable"}
         />
         <OrgMetricCard label="Active Events" value={events.length} />
@@ -218,18 +218,18 @@ export default function CommercialPageScreen() {
 
       <OrgTabBar tabs={tabs} active={activeTab} onChange={setActiveTab} />
 
-      {/* ── Subscriptions Tab ──────────────────────────────── */}
-      {activeTab === "subscriptions" && (
+      {/* ── Contracts Tab ─────────────────────────────────── */}
+      {activeTab === "contracts" && (
         <div className="space-y-6">
           <OrgCard>
-            <OrgSectionTitle>Organization Master Subscription</OrgSectionTitle>
+            <OrgSectionTitle>Organization Commercial Contract</OrgSectionTitle>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
-                  Plan
+                  Offer
                 </p>
                 <p className="text-sm font-bold text-[var(--text-primary)]">
-                  {activeSub?.plan_id || "Unavailable"}
+                  {activeSub?.items?.[0]?.offer_code || activeSub?.contract_type || "Unavailable"}
                 </p>
               </div>
               <div>
@@ -243,9 +243,9 @@ export default function CommercialPageScreen() {
                   Period End
                 </p>
                 <p className="text-xs font-mono text-[var(--text-secondary)]">
-                  {activeSub?.current_period_end
+                  {activeSub?.ends_at
                     ? new Date(
-                      activeSub.current_period_end,
+                      activeSub.ends_at,
                     ).toLocaleDateString()
                     : "Unavailable"}
                 </p>
@@ -263,7 +263,7 @@ export default function CommercialPageScreen() {
 
           <OrgCard>
             <OrgSectionTitle>
-              Per-Event Subscription Hierarchy ({events.length} Events)
+              Per-Event Commercial Contracts ({events.length} Events)
             </OrgSectionTitle>
             <OrgDataTable
               columns={[
@@ -286,7 +286,7 @@ export default function CommercialPageScreen() {
                   header: "Assigned Event Plan",
                   render: (ev: any) => (
                     <span className="text-xs font-bold text-[var(--brand-primary)]">
-                      {ev.plan_name || "Contract not linked"}
+                      {ev.offer_name || "Contract not linked"}
                     </span>
                   ),
                 },
@@ -318,7 +318,7 @@ export default function CommercialPageScreen() {
               ]}
               rows={events}
               keyFn={(ev: any) => ev.id}
-              emptyMessage="No event subscriptions created"
+              emptyMessage="No event contracts created"
             />
           </OrgCard>
         </div>
@@ -327,23 +327,22 @@ export default function CommercialPageScreen() {
       {/* ── Feature Matrix Tab ──────────────────────────────── */}
       {activeTab === "requests" && (
         <OrgCard>
-          <OrgSectionTitle>Organizer Plan & Add-on Requests</OrgSectionTitle>
-          {commercialAccessRequests.isError ? (
+          <OrgSectionTitle>Commercial Requests</OrgSectionTitle>
+          {commercialRequests.isError ? (
             <UnavailableDomain reason="The commercial request ledger could not be loaded. No empty-data fallback was used." />
           ) : (
             <OrgDataTable
               columns={[
                 { key: "created_at", header: "Requested", render: (item: any) => <span className="text-xs font-mono">{new Date(item.created_at).toLocaleString()}</span> },
-                { key: "plan", header: "Plan & Add-ons", render: (item: any) => <div><p className="text-xs font-bold">{item.requested_plan_name || item.requested_plan_id} <span className="font-mono text-[10px] text-[var(--text-tertiary)]">v{item.requested_plan_version ?? "?"}</span></p><p className="mt-1 text-[10px] text-[var(--text-tertiary)]">{item.requested_addon_keys?.length ? item.requested_addon_keys.join(", ") : "No add-ons"}</p></div> },
-                { key: "quote", header: "Quoted", render: (item: any) => <span className="text-xs font-bold">{item.quoted_amount == null ? "Unavailable" : new Intl.NumberFormat("en-IN", { style: "currency", currency: item.currency || "INR" }).format(Number(item.quoted_amount))}</span> },
+                { key: "offers", header: "Offers & capacity", render: (item: any) => <div><p className="text-xs font-bold">{item.requested_offer_codes?.join(", ") || item.product_family}</p><p className="mt-1 text-[10px] text-[var(--text-tertiary)]">{item.request_type}</p></div> },
+                { key: "quote", header: "Quote", render: (item: any) => <span className="text-xs font-bold">{item.quote_reference || "Not issued"}</span> },
                 { key: "status", header: "Status", render: (item: any) => <OrgStatusBadge status={item.status} /> },
-                { key: "reason", header: "Reason", render: (item: any) => <p className="max-w-64 text-xs text-[var(--text-secondary)]">{item.reason}</p> },
-                { key: "actions", header: "Decision", render: (item: any) => item.status === "PENDING" ? <div className="flex gap-2"><GovernedActionButton label="Approve" title={`Approve ${item.requested_plan_name || "commercial access"}`} className="text-xs font-bold text-[var(--status-success)]" onConfirm={({ reason, caseReference }) => decideCommercialAccess.mutateAsync({ id: item.id, version: item.version, decision: "APPROVED", reason, case_reference: caseReference }).then(() => { toast.success("Commercial access applied"); })} /><GovernedActionButton label="Reject" title="Reject commercial access request" className="text-xs font-bold text-[var(--status-danger)]" onConfirm={({ reason, caseReference }) => decideCommercialAccess.mutateAsync({ id: item.id, version: item.version, decision: "REJECTED", reason, case_reference: caseReference }).then(() => { toast.success("Commercial request rejected"); })} /></div> : <span className="text-[10px] text-[var(--text-tertiary)]">{item.decision_reason || "Decision recorded"}</span> },
+                { key: "actions", header: "Decision", render: (item: any) => item.status === "PENDING" || item.status === "IN_REVIEW" ? <div className="flex gap-2"><GovernedActionButton label="Quote" title={`Issue quote for ${item.product_family}`} className="text-xs font-bold text-[var(--status-success)]" onConfirm={({ reason }) => decideCommercialRequest.mutateAsync({ id: item.id, version: item.version, decision: "QUOTE_ISSUED", reason }).then(() => { toast.success("Commercial quote issued"); })} /><GovernedActionButton label="Reject" title="Reject commercial request" className="text-xs font-bold text-[var(--status-danger)]" onConfirm={({ reason }) => decideCommercialRequest.mutateAsync({ id: item.id, version: item.version, decision: "REJECTED", reason }).then(() => { toast.success("Commercial request rejected"); })} /></div> : <span className="text-[10px] text-[var(--text-tertiary)]">Decision recorded</span> },
               ]}
-              rows={commercialAccessRequests.data?.items ?? []}
+              rows={commercialRequests.data ?? []}
               keyFn={(item: any) => item.id}
-              isLoading={commercialAccessRequests.isLoading}
-              emptyMessage="No commercial access requests"
+              isLoading={commercialRequests.isLoading}
+              emptyMessage="No commercial requests"
             />
           )}
         </OrgCard>
@@ -873,7 +872,7 @@ export default function CommercialPageScreen() {
               placeholder='JSON requested value, for example {"resource_id":"...","version":1,"status":"SUSPENDED"}'
             />
             <p className="mb-4 text-[10px] text-[var(--text-tertiary)]">
-              Billing lifecycle keys: billing.subscription.status,
+              Billing lifecycle keys: billing.contract.status,
               billing.entitlement_grant.issue,
               billing.entitlement_grant.capacity, and
               billing.entitlement_grant.status. The approved JSON must exactly

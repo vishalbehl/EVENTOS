@@ -28,6 +28,7 @@ import {
 } from "@/components/organizer/workspace/OrganiserPrimitives";
 import { useActivity, useEvent, useMainDashboardStats } from "@/hooks/useEvents";
 import { useEventNeedsAttention } from "@/hooks/useOrganiserDashboard";
+import { CommercialStatusBanner } from "@/components/organizer/commercial/CommercialStatusComponents";
 
 const inr = new Intl.NumberFormat("en-IN", {
   style: "currency",
@@ -66,6 +67,7 @@ export default function EventOverviewPage() {
       description="Monitor event setup, live attendee registrations, speakers, sessions, and operational readiness."
       attention={<NeedsAttentionPane items={attention || []} />}
     >
+      <CommercialStatusBanner eventId={eventId} />
       {/* ── Main Event Hero Card ─────────────────────────────────────── */}
       <Panel className="relative overflow-hidden bg-gradient-to-br from-[var(--op-panel-soft,#1c1d21)] via-[var(--op-panel,#18181b)] to-[var(--op-panel-soft,#1c1d21)] border border-[var(--op-border)]">
         <div className="grid gap-6 lg:grid-cols-[1fr_300px] lg:items-center">

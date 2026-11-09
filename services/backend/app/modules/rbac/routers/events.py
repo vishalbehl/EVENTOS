@@ -17,7 +17,7 @@ import re as _re
 
 from app.dependencies import (
     get_db, get_current_user, require_active_user,
-    get_current_event, CurrentEvent, OrganizerOrAbove, AdminOrAbove
+    get_current_event, CurrentEvent, OrganizerOrAbove, AdminOrAbove, TokenDep
 )
 from app.modules.events.models.event import Event
 from app.modules.platform.models.organization import Organization
@@ -30,6 +30,7 @@ from app.modules.billing.services.usage_reservation_service import UsageReservat
 from app.modules.events.services.event_mutation_service import EventMutationService
 from app.modules.events.application.commands import EventCommandService
 from app.modules.events.application.queries import EventQueryService
+from app.modules.rbac.services.access_contexts import selected_request_context
 from app.schemas.cursor_pagination import CursorPage
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -70,70 +71,28 @@ async def _reserve_storage_upload(
 
 @router.get("", response_model=List[EventSummary])
 async def list_events(
+    token: TokenDep,
     organization_id: Optional[uuid.UUID] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status",
                                          pattern="^(draft|active|completed|archived)$"),
     search: Optional[str] = Query(None, max_length=100),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ) -> List[EventSummary]:
     """List events scoped to the authenticated user's organisation."""
-    allowed_event_ids = None
-    if current_user.role in ('super_admin', 'system_admin', 'admin', 'organiser', 'organizer'):
-        target_org_id = organization_id or current_user.organization_id
-            
-        if not target_org_id:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={"code": "ORGANIZATION_CONTEXT_REQUIRED"},
-            )
-    else:
-        # Restricted roles: only see assigned events
-        from app.modules.rbac.models.rbac import UserAccessNode
-        from app.modules.rbac.models.user_assignment import UserEventAssignment
-        from sqlalchemy import or_, exists
-
-        # Check in both new RBAC table and legacy assignments table
-        # We also need to include events where the user has ROOM or SESSION assignments
-        assigned_event_ids = select(UserAccessNode.node_id).where(
-            UserAccessNode.user_id == current_user.id,
-            UserAccessNode.node_type == 'EVENT'
-        )
-
-        # Get event IDs for assigned rooms
-        from app.modules.agenda.models import Room
-        room_event_ids = select(Room.event_id).where(
-            Room.id.in_(
-                select(UserAccessNode.node_id).where(
-                    UserAccessNode.user_id == current_user.id,
-                    UserAccessNode.node_type == 'ROOM'
-                )
-            )
-        )
-
-        # Get event IDs for assigned sessions
-        from app.modules.agenda.models import Session
-        session_event_ids = select(Session.event_id).where(
-            Session.id.in_(
-                select(UserAccessNode.node_id).where(
-                    UserAccessNode.user_id == current_user.id,
-                    UserAccessNode.node_type == 'SESSION'
-                )
-            )
-        )
-
-        legacy_event_ids = select(UserEventAssignment.event_id).where(
-            UserEventAssignment.user_id == current_user.id
-        )
-
-        allowed_event_ids = assigned_event_ids.union(
-            room_event_ids,
-            session_event_ids,
-            legacy_event_ids,
-        )
-        target_org_id = current_user.organization_id
+    from app.modules.rbac.services.event_scope import listed_event_predicate
+    from app.modules.rbac.services.access_contexts import selected_request_context
+    target_org_id = token.active_organization_id
+    if organization_id is not None and organization_id != target_org_id:
+        raise HTTPException(404, detail={"code": "CONTEXT_NOT_FOUND"})
+    delegated = token.access_mode == "DELEGATED"
+    allowed_event_ids = select(Event.id).where(listed_event_predicate(db, current_user.id, target_org_id))
+    if token.active_workspace_id is not None:
+        allowed_event_ids = allowed_event_ids.where(Event.operational_workspace_id == token.active_workspace_id)
+    if token.active_event_id is not None:
+        allowed_event_ids = allowed_event_ids.where(Event.id == token.active_event_id)
 
     if not target_org_id:
         raise HTTPException(
@@ -141,20 +100,24 @@ async def list_events(
             detail={"code": "ORGANIZATION_CONTEXT_REQUIRED"},
         )
 
-    events = await EventQueryService(db).list_offset(
-        organization_id=target_org_id,
-        page=page,
-        page_size=page_size,
-        status=status_filter,
-        search=search,
-        allowed_event_ids=allowed_event_ids,
-    )
+    async with selected_request_context(db, current_user, token,
+                                        event_id=token.active_event_id,
+                                        action="EVENTS:VIEW" if delegated else None):
+        events = await EventQueryService(db).list_offset(
+            organization_id=target_org_id,
+            page=page,
+            page_size=page_size,
+            status=status_filter,
+            search=search,
+            allowed_event_ids=allowed_event_ids,
+        )
     return [EventSummary.model_validate(event) for event in events]
 
 
 @router.post("", response_model=EventResponse, status_code=status.HTTP_201_CREATED)
 async def create_event(
     payload: EventCreate,
+    token: TokenDep,
     idempotency_key: str = Header(
         min_length=16,
         max_length=120,
@@ -163,65 +126,67 @@ async def create_event(
     current_user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ) -> EventResponse:
-    if not current_user.organization_id:
+    if not token.active_organization_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"code": "ORGANIZATION_CONTEXT_REQUIRED"},
         )
-    event = await EventCommandService.create(
-        db,
-        organization_id=current_user.organization_id,
-        actor_user_id=current_user.id,
-        payload=payload,
-        idempotency_key=idempotency_key,
-        source="organizer_portal",
-    )
+    if token.access_mode != "DIRECT":
+        raise HTTPException(status_code=403, detail={"code": "DIRECT_MEMBERSHIP_REQUIRED"})
+    from app.modules.rbac.services.access_contexts import selected_request_context
+    if payload.operational_workspace_id is None:
+        payload = payload.model_copy(update={"operational_workspace_id": token.active_workspace_id})
+    elif token.active_workspace_id is not None and payload.operational_workspace_id != token.active_workspace_id:
+        raise HTTPException(status_code=404, detail={"code": "WORKSPACE_NOT_FOUND"})
+    async with selected_request_context(db, current_user, token, action="EVENTS:CREATE", write=True):
+        event = await EventCommandService.create(
+            db,
+            organization_id=token.active_organization_id,
+            actor_user_id=current_user.id,
+            payload=payload,
+            idempotency_key=idempotency_key,
+            source="organizer_portal",
+        )
     return EventResponse.model_validate(event)
 
 
 @router.get("/page", response_model=CursorPage[EventSummary])
 async def list_events_page(
+    token: TokenDep,
     organization_id: Optional[uuid.UUID] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status", pattern="^(draft|active|completed|archived)$"),
     search: Optional[str] = Query(None, max_length=100),
     page_size: int = Query(20, ge=1, le=100),
     cursor: Optional[str] = Query(None, max_length=512),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ) -> CursorPage[EventSummary]:
-    """Stable event pagination for large organizations; legacy ``GET /events`` remains unchanged."""
-    privileged = current_user.role in ("super_admin", "system_admin", "admin", "organiser", "organizer")
-    target_org_id = organization_id if privileged and organization_id else current_user.organization_id
+    """Cursor pagination uses the same customer scope as the offset route."""
+    from app.modules.rbac.services.event_scope import listed_event_predicate
+    from app.modules.rbac.services.access_contexts import selected_request_context
+    target_org_id = token.active_organization_id
+    if organization_id is not None and organization_id != target_org_id:
+        raise HTTPException(404, detail={"code": "CONTEXT_NOT_FOUND"})
     if not target_org_id:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "ORGANIZATION_CONTEXT_REQUIRED"})
+    delegated = token.access_mode == "DELEGATED"
+    allowed_event_ids = select(Event.id).where(listed_event_predicate(db, current_user.id, target_org_id))
+    if token.active_workspace_id is not None:
+        allowed_event_ids = allowed_event_ids.where(Event.operational_workspace_id == token.active_workspace_id)
+    if token.active_event_id is not None:
+        allowed_event_ids = allowed_event_ids.where(Event.id == token.active_event_id)
 
-    allowed_event_ids = None
-    if not privileged:
-        from app.modules.agenda.models import Room, Session
-        from app.modules.rbac.models.rbac import UserAccessNode
-        from app.modules.rbac.models.user_assignment import UserEventAssignment
-
-        assigned_event_ids = select(UserAccessNode.node_id).where(
-            UserAccessNode.user_id == current_user.id,
-            UserAccessNode.node_type == "EVENT",
+    async with selected_request_context(db, current_user, token,
+                                        event_id=token.active_event_id,
+                                        action="EVENTS:VIEW" if delegated else None):
+        page = await EventQueryService(db).list_page(
+            organization_id=target_org_id,
+            page_size=page_size,
+            cursor=cursor,
+            status=status_filter,
+            search=search,
+            allowed_event_ids=allowed_event_ids,
         )
-        room_event_ids = select(Room.event_id).where(
-            Room.id.in_(select(UserAccessNode.node_id).where(UserAccessNode.user_id == current_user.id, UserAccessNode.node_type == "ROOM"))
-        )
-        session_event_ids = select(Session.event_id).where(
-            Session.id.in_(select(UserAccessNode.node_id).where(UserAccessNode.user_id == current_user.id, UserAccessNode.node_type == "SESSION"))
-        )
-        legacy_event_ids = select(UserEventAssignment.event_id).where(UserEventAssignment.user_id == current_user.id)
-        allowed_event_ids = assigned_event_ids.union(room_event_ids, session_event_ids, legacy_event_ids)
-
-    page = await EventQueryService(db).list_page(
-        organization_id=target_org_id,
-        page_size=page_size,
-        cursor=cursor,
-        status=status_filter,
-        search=search,
-        allowed_event_ids=allowed_event_ids,
-    )
     return CursorPage(
         items=[EventSummary.model_validate(event) for event in page.items],
         next_cursor=page.next_cursor,
@@ -231,7 +196,7 @@ async def list_events_page(
 
 @router.get("/{event_id}", response_model=EventResponse)
 async def get_event(event: CurrentEvent) -> EventResponse:
-    """Get a single event. Scoped to user's org (super_admin bypasses)."""
+    """Get an event through accepted membership and explicit container scope."""
     return EventResponse.model_validate(event)
 
 
@@ -244,8 +209,6 @@ async def get_event_needs_attention(
     """Return actionable event setup/operations tasks for organizer pages."""
     from app.modules.organiser.router import _attention_for_event
 
-    if current_user.role != "super_admin" and event.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
     return await _attention_for_event(db, event)
 
 
@@ -253,12 +216,16 @@ async def get_event_needs_attention(
 async def update_event(
     payload: EventUpdate,
     event: CurrentEvent,
-    current_user: AdminOrAbove,
+    current_user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
     if_match: str | None = Header(None, alias="If-Match"),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> EventResponse:
-    expected_version = require_if_match(if_match) if if_match is not None else None
+    expected_version = require_if_match(if_match)
+    if idempotency_key is None:
+        raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+    if not 16 <= len(idempotency_key.strip()) <= 160:
+        raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
     updated, _, _ = await EventCommandService.update(
         db,
         event=event,
@@ -274,26 +241,32 @@ async def update_event(
 async def delete_event(
     event: CurrentEvent,
     current_user: OrganizerOrAbove,
+    token: TokenDep,
+    if_match: int = Header(..., alias="If-Match", ge=1),
     reason: str = Header(..., alias="X-Change-Reason", min_length=12, max_length=1000),
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """Soft-delete an event; permanent purge is a governed lifecycle job."""
-    await enforce_event_operation(
-        db,
-        event.organization_id,
-        event.id,
-        "events.planning.manage",
-        user_id=current_user.id,
-    )
-    archived = await EventCommandService.archive(
-        db,
-        event=event,
-        actor_user_id=current_user.id,
-        actor_role=current_user.platform_role or current_user.role,
-        reason=reason,
-        idempotency_key=idempotency_key,
-    )
+    async with selected_request_context(
+        db, current_user, token, event_id=event.id, action="EVENTS:DELETE", write=True,
+    ):
+        await enforce_event_operation(
+            db,
+            event.organization_id,
+            event.id,
+            "events.planning.manage",
+            user_id=current_user.id,
+        )
+        archived = await EventCommandService.archive(
+            db,
+            event=event,
+            actor_user_id=current_user.id,
+            actor_role=current_user.platform_role or current_user.role,
+            reason=reason,
+            expected_version=if_match,
+            idempotency_key=idempotency_key,
+        )
     if archived.deleted_at is None:
         return MessageResponse(message="Event is already archived for recovery.")
     return MessageResponse(
@@ -332,16 +305,29 @@ async def publish_event(
 async def archive_event(
     event: CurrentEvent,
     current_user: OrganizerOrAbove,
+    token: TokenDep,
+    if_match: int = Header(..., alias="If-Match", ge=1),
+    reason: str = Header(..., alias="X-Change-Reason", min_length=12, max_length=1000),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160),
     db: AsyncSession = Depends(get_db),
 ) -> EventResponse:
-    await enforce_event_operation(
-        db, event.organization_id, event.id, "events.planning.manage",
-        user_id=current_user.id,
-    )
-    event.status = "archived"
-    await db.commit()
-    await db.refresh(event)
-    return EventResponse.model_validate(event)
+    async with selected_request_context(
+        db, current_user, token, event_id=event.id, action="EVENTS:DELETE", write=True,
+    ):
+        await enforce_event_operation(
+            db, event.organization_id, event.id, "events.planning.manage",
+            user_id=current_user.id,
+        )
+        archived = await EventCommandService.archive(
+            db,
+            event=event,
+            actor_user_id=current_user.id,
+            actor_role=current_user.platform_role or current_user.role,
+            reason=reason,
+            expected_version=if_match,
+            idempotency_key=idempotency_key,
+        )
+    return EventResponse.model_validate(archived)
 
 @router.post(
     "/{event_id}/clear-data",
@@ -674,39 +660,3 @@ async def upload_venue_image(
     await db.refresh(event)
 
     return {"url": url, "venue_images": event.venue_images}
-
-
-
-
-from pydantic import BaseModel
-from typing import Optional
-
-class ApplyPlanRequest(BaseModel):
-    plan_name: Optional[str] = None
-    plan_id: Optional[str] = None
-    addon_keys: Optional[list[str]] = None
-
-@router.post(
-    "/{event_id}/apply-plan",
-    response_model=EventResponse,
-    deprecated=True,
-    include_in_schema=False,
-)
-async def apply_plan_to_event(
-    payload: ApplyPlanRequest,
-    event: CurrentEvent,
-    current_user: OrganizerOrAbove,
-    db: AsyncSession = Depends(get_db),
-) -> EventResponse:
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail={
-            "code": "COMMAND_CENTER_APPROVAL_REQUIRED",
-            "message": (
-                "Organizer Portal cannot apply plans, add-ons, or entitlement "
-                "snapshots. Submit a commercial access request for approval."
-            ),
-            "request_url": "/organisations/me/commercial-access-requests",
-            "event_id": str(event.id),
-        },
-    )

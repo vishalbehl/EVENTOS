@@ -1,5 +1,9 @@
 node_modules/
+.vscode/
+.agents/
+.github/
 .next/
+**/.next-category-a-browser/
 dist/
 build/
 out/
@@ -22,6 +26,10 @@ __pycache__/
 .env.staging.test
 D:/conf-platform/minio/
 D:/conf-platform/backups/
+# Persistent upload bytes belong in object storage, never in the checkout.
+services/backend/data/storage/
+services/venue/venue-server/data/content/
+services/venue/registration-server/data/content/
 infrastructure/caddy/caddy-local-root.crt
 .DS_Store
 Thumbs.db
@@ -30,19 +38,37 @@ scripts/
 services/backend/scripts/*
 !services/backend/scripts/verify_capability_migrations.py
 !services/backend/scripts/organizer_console_rollout.py
+!services/backend/scripts/reconcile_catalogue_duplicates.py
 scratch/
 docs/
+!docs/
+docs/*
 !docs/backend/
-!docs/backend/staging-object-storage.md
+!docs/backend/**
+!docs/object-storage.md
 .agents/
-excel_templates/
-.vscode/
 .codex/
 .claude/
 .cache/
 .terraform/
-.agents/
 md files/
 tools/
 CLAUDE.md
 devrun.ps1
+tmp
+ops
+governance
+docs
+reports
+
+# Category A release controls are production source, not local ops scratch.
+!services/backend/ops/
+services/backend/ops/*
+!services/backend/ops/category_a_*
+!services/backend/ops/prepare_3440_session_upgrade.py
+!services/backend/ops/verify_commercial_bootstrap.py
+!services/backend/ops/sql/
+!services/backend/ops/sql/provision_database_role_groups.sql
+
+# Contract coverage is part of the Category A CI/release gate.
+!services/backend/scripts/verify_category_a_endpoint_contracts.py

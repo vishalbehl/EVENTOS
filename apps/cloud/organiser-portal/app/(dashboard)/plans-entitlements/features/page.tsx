@@ -1,5 +1,2 @@
-import { PlanFeaturesTab } from "@/components/organizer/workspace/plans/PlanFeaturesTab";
-
-export default function Page() {
-  return <PlanFeaturesTab />;
-}
+import { CommercialCompatibilityTab } from "@/components/organizer/workspace/commercial/CommercialCompatibilityTab";
+export default function Page() { return <CommercialCompatibilityTab view="workspace" />; }

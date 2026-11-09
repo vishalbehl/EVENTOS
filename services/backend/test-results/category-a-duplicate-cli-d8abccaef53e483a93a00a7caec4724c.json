@@ -1,0 +1,17 @@
+{
+  "status": "FAILED",
+  "run_id": "d8abccaef53e483a93a00a7caec4724c",
+  "database": "category_a_restore_20261020_d8abccaef53e",
+  "environment": "local_fresh_rehearsal",
+  "applied_history_rewritten": false,
+  "applications_workers_providers": "NOT_STARTED",
+  "production_acceptance": "NOT_RUN",
+  "checks": [],
+  "child_failure": {
+    "returncode": 1,
+    "output_sha256": "24181bdbb5d10959acb1db0ae03754aec8bca46618752adcd84c2c2b99fed9d9"
+  },
+  "error_type": "RuntimeError",
+  "database_quarantined": true,
+  "completed_at": "2026-10-20T16:54:58.463858+00:00"
+}

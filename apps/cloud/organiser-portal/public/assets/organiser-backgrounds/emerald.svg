@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1200" viewBox="0 0 1920 1200" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="160" y1="30" x2="1760" y2="1170" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F6FAF7"/><stop offset=".32" stop-color="#EAF5EE"/><stop offset=".68" stop-color="#DEEDE3"/><stop offset="1" stop-color="#CEE3D5"/>
+    </linearGradient>
+    <linearGradient id="ridgeA" x1="960" y1="440" x2="960" y2="1080" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B8DAC6"/><stop offset="1" stop-color="#9BC7AB"/>
+    </linearGradient>
+    <linearGradient id="ridgeB" x1="960" y1="600" x2="960" y2="1200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8BBF9D"/><stop offset="1" stop-color="#6AA87F"/>
+    </linearGradient>
+    <filter id="softGlow"><feGaussianBlur stdDeviation="55"/></filter>
+    <pattern id="alpineGrid" width="128" height="128" patternUnits="userSpaceOnUse">
+      <path d="M128 0H0V128" stroke="#487858" stroke-opacity=".06"/>
+    </pattern>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#sky)"/>
+  <ellipse cx="540" cy="230" rx="520" ry="240" fill="#D1FAE5" fill-opacity=".6" filter="url(#softGlow)"/>
+  <ellipse cx="1440" cy="260" rx="460" ry="250" fill="#CCFBF1" fill-opacity=".5" filter="url(#softGlow)"/>
+  <path d="M0 660C180 580 320 630 490 560C670 480 820 570 1000 490C1180 420 1330 500 1510 440C1680 380 1800 420 1920 370V1200H0V660Z" fill="url(#ridgeA)" fill-opacity=".85"/>
+  <path d="M0 820C170 740 330 790 520 710C710 630 870 720 1060 640C1250 560 1420 650 1610 580C1750 530 1850 560 1920 520V1200H0V820Z" fill="#A8D2B9" fill-opacity=".82"/>
+  <path d="M0 960C200 880 380 930 570 850C760 770 930 860 1120 780C1320 700 1490 790 1690 710C1810 660 1880 680 1920 650V1200H0V960Z" fill="url(#ridgeB)" fill-opacity=".95"/>
+  <rect width="1920" height="1200" fill="url(#alpineGrid)"/>
+</svg>
+

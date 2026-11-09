@@ -152,10 +152,12 @@ async def upload_announcement_file(
     await db.commit()
 
     # Resolve access URL
-    if settings.STORAGE_MODE == "local":
-        url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
-    else:
-        url = f"{settings.S3_ENDPOINT_URL}/{bucket}/{storage_path}"
+    url = await asyncio.to_thread(
+        upload_service.create_presigned_download,
+        bucket=bucket,
+        storage_path=storage_path,
+        inline=True,
+    )
 
     return {
         "type": "file",

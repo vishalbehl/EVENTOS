@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import { 
   useGlobalUsers, 
   useUpdateUserStatus, 
@@ -56,6 +56,10 @@ type PendingUserAction =
   | { type: "platform-role"; user: GlobalUser; platformRole: "SUPER_ADMIN" | "SUPPORT_ADMIN" | "FINANCE_ADMIN" | "NONE" };
 
 export default function GlobalUsersPage() {
+  const actor = useAuthStore(state => state.user);
+  const roleCommand = useRef<{ signature: string; key: string } | null>(null);
+  const statusCommand = useRef<{ signature: string; key: string } | null>(null);
+  const securityCommand = useRef<{ signature: string; key: string } | null>(null);
   const [page, setPage] = useState(0);
   const limit = 20;
 
@@ -150,37 +154,40 @@ export default function GlobalUsersPage() {
     }
   };
 
-  // Reset 2FA handler
-  const handleReset2FA = async (user: GlobalUser, reason?: string) => {
+  const handleSecurityAction = async (action: "reset2fa" | "logout", user: GlobalUser, reason?: string) => {
     if (!reason || reason.trim().length < 12) {
       toast.error("An audit reason of at least 12 characters is required.");
       return;
     }
+    if (!Number.isInteger(user.version) || user.version < 1) {
+      toast.error("Refresh the user record before changing account security.");
+      void refetch();
+      return;
+    }
+    const signature = JSON.stringify([action, user.id, user.version, reason.trim()]);
+    if (securityCommand.current?.signature !== signature) securityCommand.current = { signature, key: crypto.randomUUID() };
+    const command = { userId: user.id, reason: reason.trim(), version: user.version, key: securityCommand.current.key };
     try {
-      await reset2FA.mutateAsync({ userId: user.id, reason });
-      toast.success("2FA reset successfully");
+      if (action === "reset2fa") await reset2FA.mutateAsync(command);
+      else await forceLogout.mutateAsync(command);
+      securityCommand.current = null;
+      toast.success(action === "reset2fa" ? "MFA reset and sessions revoked." : "User sessions revoked successfully.");
       setPendingAction(null);
-      refetch();
-    } catch {
-      toast.error("Failed to reset 2FA settings");
+      void refetch();
+    } catch (error: any) {
+      if ((error?.status ?? error?.response?.status) === 412) {
+        securityCommand.current = null;
+        setPendingAction(null);
+        void refetch();
+        toast.error("This user changed. Review the refreshed record before submitting again.");
+        return;
+      }
+      toast.error(error?.message || "Failed to update account security.");
     }
   };
 
-  // Force Logout handler
-  const handleForceLogout = async (user: GlobalUser, reason?: string) => {
-    if (!reason || reason.trim().length < 12) {
-      toast.error("An audit reason of at least 12 characters is required.");
-      return;
-    }
-    try {
-      await forceLogout.mutateAsync({ userId: user.id, reason });
-      toast.success("User sessions revoked successfully");
-      setPendingAction(null);
-      refetch();
-    } catch {
-      toast.error("Failed to revoke user sessions");
-    }
-  };
+  const handleReset2FA = (user: GlobalUser, reason?: string) => handleSecurityAction("reset2fa", user, reason);
+  const handleForceLogout = (user: GlobalUser, reason?: string) => handleSecurityAction("logout", user, reason);
 
   // Toggle active status
   const handleToggleStatus = async (user: GlobalUser, reason?: string) => {
@@ -190,16 +197,33 @@ export default function GlobalUsersPage() {
     }
     try {
       const nextActive = !user.is_active;
+      if (!Number.isInteger(user.version) || user.version < 1) {
+        toast.error("Refresh the user record before changing account status.");
+        void refetch();
+        return;
+      }
+      const signature = JSON.stringify([user.id, nextActive, user.version, reason.trim()]);
+      if (statusCommand.current?.signature !== signature) statusCommand.current = { signature, key: crypto.randomUUID() };
       await updateStatus.mutateAsync({
         userId: user.id,
         isActive: nextActive,
-        reason,
+        reason: reason.trim(),
+        version: user.version,
+        key: statusCommand.current.key,
       });
+      statusCommand.current = null;
       toast.success(`User is now ${nextActive ? "Active" : "Deactivated"}`);
       setPendingAction(null);
       refetch();
-    } catch {
-      toast.error("Failed to update status");
+    } catch (error: any) {
+      if ((error?.status ?? error?.response?.status) === 412) {
+        statusCommand.current = null;
+        setPendingAction(null);
+        void refetch();
+        toast.error("This user changed. Review the refreshed record before submitting again.");
+        return;
+      }
+      toast.error(error?.message || "Failed to update status");
     }
   };
 
@@ -213,11 +237,26 @@ export default function GlobalUsersPage() {
       return;
     }
     try {
-      await updatePlatformRole.mutateAsync({ userId: user.id, platformRole, reason: reason.trim() });
+      if (!Number.isInteger(user.version) || user.version < 1) {
+        toast.error("Refresh the user record before changing platform access.");
+        void refetch();
+        return;
+      }
+      const signature = JSON.stringify([user.id, platformRole, user.version, reason.trim()]);
+      if (roleCommand.current?.signature !== signature) roleCommand.current = { signature, key: crypto.randomUUID() };
+      await updatePlatformRole.mutateAsync({ userId: user.id, platformRole, reason: reason.trim(), version: user.version, key: roleCommand.current.key });
+      roleCommand.current = null;
       toast.success("Platform role updated and existing sessions revoked.");
       setPendingAction(null);
       refetch();
     } catch (error: any) {
+      if ((error?.status ?? error?.response?.status) === 412) {
+        roleCommand.current = null;
+        setPendingAction(null);
+        void refetch();
+        toast.error("This user changed. Review the refreshed record before submitting again.");
+        return;
+      }
       toast.error(error?.message || "Failed to update platform role");
     }
   };
@@ -395,31 +434,31 @@ export default function GlobalUsersPage() {
                   View Audit Trail
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setPendingAction({ type: "platform-role", user: u, platformRole: "SUPPORT_ADMIN" })} className="text-xs cursor-pointer flex gap-2">
+                <DropdownMenuItem disabled={actor?.platform_role !== "SUPER_ADMIN" || actor.organization_id !== u.organization_id} onClick={() => setPendingAction({ type: "platform-role", user: u, platformRole: "SUPPORT_ADMIN" })} className="text-xs cursor-pointer flex gap-2">
                   <Shield className="w-3.5 h-3.5 text-blue-400" />
                   Assign Support Admin
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setPendingAction({ type: "platform-role", user: u, platformRole: "FINANCE_ADMIN" })} className="text-xs cursor-pointer flex gap-2">
+                <DropdownMenuItem disabled={actor?.platform_role !== "SUPER_ADMIN" || actor.organization_id !== u.organization_id} onClick={() => setPendingAction({ type: "platform-role", user: u, platformRole: "FINANCE_ADMIN" })} className="text-xs cursor-pointer flex gap-2">
                   <Shield className="w-3.5 h-3.5 text-emerald-400" />
                   Assign Finance Admin
                 </DropdownMenuItem>
                 {u.platform_role && (
-                  <DropdownMenuItem onClick={() => setPendingAction({ type: "platform-role", user: u, platformRole: "NONE" })} className="text-xs cursor-pointer flex gap-2">
+                  <DropdownMenuItem disabled={actor?.platform_role !== "SUPER_ADMIN" || actor.organization_id !== u.organization_id || actor.id === u.id} onClick={() => setPendingAction({ type: "platform-role", user: u, platformRole: "NONE" })} className="text-xs cursor-pointer flex gap-2">
                     <ShieldOff className="w-3.5 h-3.5 text-orange-400" />
                     Remove Platform Role
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setPendingAction({ type: "status", user: u })} className="text-xs cursor-pointer flex gap-2">
+                <DropdownMenuItem disabled={actor?.platform_role !== "SUPER_ADMIN" || (u.id === actor?.id && u.is_active)} onClick={() => setPendingAction({ type: "status", user: u })} className="text-xs cursor-pointer flex gap-2">
                   {u.is_active ? <UserX className="w-3.5 h-3.5 text-[var(--danger)]" /> : <UserCheck className="w-3.5 h-3.5 text-[var(--success)]" />}
                   {u.is_active ? "Deactivate User" : "Activate User"}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setPendingAction({ type: "reset2fa", user: u })} className="text-xs cursor-pointer flex gap-2">
+                <DropdownMenuItem disabled={actor?.platform_role !== "SUPER_ADMIN" || u.id === actor?.id} onClick={() => setPendingAction({ type: "reset2fa", user: u })} className="text-xs cursor-pointer flex gap-2">
                   <Key className="w-3.5 h-3.5 text-violet-400" />
                   Reset 2FA
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setPendingAction({ type: "logout", user: u })} className="text-xs cursor-pointer flex gap-2 text-[var(--danger)] focus:text-[var(--danger)]">
+                <DropdownMenuItem disabled={actor?.platform_role !== "SUPER_ADMIN"} onClick={() => setPendingAction({ type: "logout", user: u })} className="text-xs cursor-pointer flex gap-2 text-[var(--danger)] focus:text-[var(--danger)]">
                   <LogOut className="w-3.5 h-3.5 text-[var(--danger)]" />
                   Force Logout
                 </DropdownMenuItem>

@@ -37,40 +37,19 @@ import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api-client";
 import { compileTemplateToPdf } from "@/lib/pdf-compiler";
 import AddParticipantModal from "@/components/organizer/registration/AddParticipantModal";
 import { useOperationAccess } from "@/lib/capabilities";
+import { TablePagination } from "@/components/organizer/common/TablePagination";
+import { useTablePagination } from "@/hooks/useTablePagination";
 import { cn } from "@/lib/utils";
-
-interface Participant {
-  id: string;
-  regno: string;
-  name: string;
-  first_name: string;
-  last_name: string;
-  email: string;
-  phone?: string;
-  company?: string;
-  designation?: string;
-  photo?: string;
-  avatar?: string;
-  profile_picture?: string;
-  role: string;
-  paid_status: string;
-  source: string;
-  registered_at: string;
-  is_free?: boolean;
-  qr_code_url?: string | null;
-}
+import {
+  ParticipantDrawer,
+  type Participant,
+  type Role,
+} from "@/components/organizer/registration/ParticipantDrawer";
 
 interface PrintTemplate {
   id: string;
   templateName: string;
   templateData: any;
-}
-
-interface Role {
-  id: string;
-  name: string;
-  role_code: string;
-  is_active: boolean;
 }
 
 export default function ParticipantsDirectory() {
@@ -113,11 +92,32 @@ export default function ParticipantsDirectory() {
   const [roleFilter, setRoleFilter] = useState("all");
   const [paidFilter, setPaidFilter] = useState("all");
 
+  const {
+    currentPage,
+    setCurrentPage,
+    pageSize,
+    setPageSize,
+    paginatedItems: paginatedParticipants,
+  } = useTablePagination(participants, 10);
+
   const roleByName = useMemo(() => new Map(roles.map((role) => [role.name, role])), [roles]);
   const roleByNameLower = useMemo(
     () => new Map(roles.map((role) => [role.name.toLowerCase(), role])),
     [roles]
   );
+
+  useEffect(() => {
+    if (selectedParticipantForDrawer) {
+      const mainEl = document.getElementById("organiser-main");
+      if (mainEl) {
+        const prevOverflow = mainEl.style.overflow;
+        mainEl.style.overflow = "hidden";
+        return () => {
+          mainEl.style.overflow = prevOverflow;
+        };
+      }
+    }
+  }, [selectedParticipantForDrawer]);
 
   const fetchData = async () => {
     if (!readAccess.enabled) {
@@ -358,9 +358,17 @@ export default function ParticipantsDirectory() {
   };
 
   const toggleSelectAll = () => {
-    setSelectedIds((prev) =>
-      prev.size === participants.length ? new Set() : new Set(participants.map((p) => p.id))
-    );
+    const pageIds = paginatedParticipants.map((p) => p.id);
+    const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allPageSelected) {
+        pageIds.forEach((id) => next.delete(id));
+      } else {
+        pageIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
   };
 
   const toggleSelected = (id: string) => {
@@ -477,7 +485,7 @@ export default function ParticipantsDirectory() {
   }
 
   return (
-    <div className="w-full space-y-6 p-6">
+    <div className="relative min-h-full flex-1 w-full space-y-6 p-6">
       {/* ── Top Header & Action Controls ── */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
@@ -683,7 +691,7 @@ export default function ParticipantsDirectory() {
                     className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer"
                     title="Select all"
                   >
-                    {participants.length > 0 && selectedIds.size === participants.length ? (
+                    {paginatedParticipants.length > 0 && paginatedParticipants.every((p) => selectedIds.has(p.id)) ? (
                       <CheckSquare className="size-4 text-[var(--pri)]" />
                     ) : (
                       <Square className="size-4" />
@@ -714,7 +722,7 @@ export default function ParticipantsDirectory() {
                   </td>
                 </tr>
               ) : (
-                participants.map((p) => (
+                paginatedParticipants.map((p) => (
                   <tr
                     key={p.id}
                     onClick={() => handleOpenDrawer(p)}
@@ -866,438 +874,52 @@ export default function ParticipantsDirectory() {
             </tbody>
           </table>
         </div>
+        <TablePagination
+          currentPage={currentPage}
+          totalItems={participants.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+          itemLabel="attendees"
+        />
       </div>
 
-      {/* ── Slide-Over Attendee Details & Edit Drawer ── */}
+      {/* ── Slide-Over Attendee Details & Edit Drawer (Matching Speaker Drawer Design) ── */}
       <AnimatePresence>
         {selectedParticipantForDrawer && (
-          <div className="fixed inset-0 z-50 flex justify-end bg-black/60">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setSelectedParticipantForDrawer(null)}
-              className="absolute inset-0"
-            />
-
-            <motion.div
-              initial={{ x: "100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "100%" }}
-              transition={{ type: "spring", damping: 25, stiffness: 220 }}
-              className="relative w-full max-w-md bg-[var(--card)] border-l border-[var(--border-default)] p-6 shadow-md z-10 flex flex-col h-full overflow-hidden"
-            >
-              {/* Drawer Header */}
-              <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-4 shrink-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary)]">
-                    Delegate Details
-                  </span>
-                  {!isEditing && (
-                    <button
-                      type="button"
-                      onClick={() => setIsEditing(true)}
-                      className="flex items-center gap-1 rounded-md bg-[var(--pri)]/10 px-2 py-0.5 text-[10px] font-bold text-[var(--pri)] hover:bg-[var(--pri)]/20 transition-colors cursor-pointer"
-                    >
-                      <Pencil className="size-2.5" />
-                      Edit
-                    </button>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedParticipantForDrawer(null)}
-                  className="rounded-md p-1 text-[var(--text-tertiary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                >
-                  <X className="size-4" />
-                </button>
-              </div>
-
-              {/* Drawer Scrollable Body */}
-              <div className="flex-1 overflow-y-auto py-4 space-y-5">
-                {isEditing ? (
-                  <div className="space-y-3.5">
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
-                        First Name
-                      </label>
-                      <input
-                        value={editForm.first_name}
-                        onChange={(e) => setEditForm((p) => ({ ...p, first_name: e.target.value }))}
-                        className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
-                        Last Name
-                      </label>
-                      <input
-                        value={editForm.last_name}
-                        onChange={(e) => setEditForm((p) => ({ ...p, last_name: e.target.value }))}
-                        className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
-                        Email Address
-                      </label>
-                      <input
-                        type="email"
-                        value={editForm.email}
-                        onChange={(e) => setEditForm((p) => ({ ...p, email: e.target.value }))}
-                        className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
-                        Phone Number
-                      </label>
-                      <input
-                        value={editForm.phone}
-                        onChange={(e) => setEditForm((p) => ({ ...p, phone: e.target.value }))}
-                        className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
-                        Company / Organization
-                      </label>
-                      <input
-                        value={editForm.company}
-                        onChange={(e) => setEditForm((p) => ({ ...p, company: e.target.value }))}
-                        className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
-                        Designation
-                      </label>
-                      <input
-                        value={editForm.designation}
-                        onChange={(e) => setEditForm((p) => ({ ...p, designation: e.target.value }))}
-                        className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
-                        Role Type
-                      </label>
-                      <select
-                        value={editForm.role}
-                        onChange={(e) => setEditForm((p) => ({ ...p, role: e.target.value }))}
-                        className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
-                      >
-                        {roles.map((r) => (
-                          <option key={r.id} value={r.name}>
-                            {r.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    {/* Attendee Profile Hero */}
-                    <div className="flex flex-col items-center text-center pb-5 border-b border-[var(--border-subtle)]">
-                      <div className="flex size-16 items-center justify-center rounded-full bg-[var(--pri)]/10 text-[var(--pri)] font-bold text-lg border border-[var(--pri)]/20 overflow-hidden mb-2.5">
-                        {selectedParticipantForDrawer.photo ||
-                        selectedParticipantForDrawer.avatar ||
-                        selectedParticipantForDrawer.profile_picture ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={
-                              selectedParticipantForDrawer.photo ||
-                              selectedParticipantForDrawer.avatar ||
-                              selectedParticipantForDrawer.profile_picture
-                            }
-                            alt={selectedParticipantForDrawer.name}
-                            className="size-full object-cover"
-                          />
-                        ) : (
-                          selectedParticipantForDrawer.name
-                            ?.split(" ")
-                            .map((n) => n[0])
-                            .join("")
-                            .slice(0, 2)
-                            .toUpperCase() || "AT"
-                        )}
-                      </div>
-                      <h2 className="text-base font-bold text-[var(--text-primary)]">
-                        {selectedParticipantForDrawer.name}
-                      </h2>
-                      <span className="mt-1 rounded-full border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 py-0.5 text-[10px] font-semibold text-[var(--text-primary)]">
-                        {selectedParticipantForDrawer.role}
-                      </span>
-                    </div>
-
-                    {/* Information Tiles */}
-                    <div className="space-y-2.5">
-                      {/* Reg No with Copy */}
-                      <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)]">
-                        <div className="flex items-center gap-2.5">
-                          <Briefcase className="size-4 text-[var(--text-tertiary)]" />
-                          <div>
-                            <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
-                              Registration Number
-                            </span>
-                            <span className="font-mono text-xs font-bold text-[var(--text-primary)]">
-                              {selectedParticipantForDrawer.regno}
-                            </span>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            navigator.clipboard.writeText(selectedParticipantForDrawer.regno);
-                            toast.success("Registration number copied.");
-                          }}
-                          className="rounded-md p-1.5 text-[var(--text-tertiary)] hover:bg-[var(--card)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                          title="Copy Reg No"
-                        >
-                          <Copy className="size-3.5" />
-                        </button>
-                      </div>
-
-                      {/* Confirmation QR */}
-                      <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)]">
-                        <div className="flex items-center gap-2.5">
-                          <QrCode className="size-4 text-sky-500" />
-                          <div>
-                            <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
-                              Confirmation QR Pass
-                            </span>
-                            <span className="text-xs font-semibold text-[var(--text-primary)]">
-                              {selectedParticipantForDrawer.qr_code_url ? "Active Pass" : "Not Issued"}
-                            </span>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => issueConfirmationQr(selectedParticipantForDrawer)}
-                          disabled={
-                            confirmationQrAccess.loading ||
-                            !confirmationQrAccess.enabled ||
-                            issuingQrFor === selectedParticipantForDrawer.id
-                          }
-                          className="rounded-lg border border-sky-500/20 bg-sky-500/10 px-2.5 py-1 text-[10px] font-bold text-sky-600 dark:text-sky-400 hover:bg-sky-500/20 transition-colors disabled:opacity-40 cursor-pointer"
-                        >
-                          {selectedParticipantForDrawer.qr_code_url ? "Rotate" : "Issue"}
-                        </button>
-                      </div>
-
-                      {/* Email */}
-                      <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)]">
-                        <div className="flex items-center gap-2.5 truncate mr-2">
-                          <Mail className="size-4 text-[var(--text-tertiary)] shrink-0" />
-                          <div className="truncate">
-                            <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
-                              Email
-                            </span>
-                            <span className="text-xs text-[var(--text-primary)] truncate block">
-                              {selectedParticipantForDrawer.email}
-                            </span>
-                          </div>
-                        </div>
-                        <a
-                          href={`mailto:${selectedParticipantForDrawer.email}`}
-                          className="rounded-md p-1.5 text-[var(--text-tertiary)] hover:bg-[var(--card)] hover:text-[var(--text-primary)] transition-colors shrink-0"
-                          title="Send email"
-                        >
-                          <Mail className="size-3.5" />
-                        </a>
-                      </div>
-
-                      {/* Phone */}
-                      {selectedParticipantForDrawer.phone && (
-                        <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)]">
-                          <div className="flex items-center gap-2.5">
-                            <Phone className="size-4 text-[var(--text-tertiary)]" />
-                            <div>
-                              <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
-                                Phone
-                              </span>
-                              <span className="text-xs text-[var(--text-primary)]">
-                                {selectedParticipantForDrawer.phone}
-                              </span>
-                            </div>
-                          </div>
-                          <a
-                            href={`tel:${selectedParticipantForDrawer.phone}`}
-                            className="rounded-md p-1.5 text-[var(--text-tertiary)] hover:bg-[var(--card)] hover:text-[var(--text-primary)] transition-colors"
-                            title="Call phone"
-                          >
-                            <Phone className="size-3.5" />
-                          </a>
-                        </div>
-                      )}
-
-                      {/* Company & Designation */}
-                      {(selectedParticipantForDrawer.company || selectedParticipantForDrawer.designation) && (
-                        <div className="p-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] space-y-2">
-                          {selectedParticipantForDrawer.company && (
-                            <div className="flex items-center gap-2.5">
-                              <Building className="size-4 text-[var(--text-tertiary)]" />
-                              <div>
-                                <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
-                                  Company
-                                </span>
-                                <span className="text-xs text-[var(--text-primary)] font-medium">
-                                  {selectedParticipantForDrawer.company}
-                                </span>
-                              </div>
-                            </div>
-                          )}
-                          {selectedParticipantForDrawer.designation && (
-                            <div className="flex items-center gap-2.5">
-                              <User className="size-4 text-[var(--text-tertiary)]" />
-                              <div>
-                                <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
-                                  Designation
-                                </span>
-                                <span className="text-xs text-[var(--text-primary)]">
-                                  {selectedParticipantForDrawer.designation}
-                                </span>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Payment Status */}
-                      <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)]">
-                        <div className="flex items-center gap-2.5">
-                          <DollarSign className="size-4 text-[var(--text-tertiary)]" />
-                          <div>
-                            <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
-                              Payment Status
-                            </span>
-                            <span
-                              className={cn(
-                                "text-xs font-bold",
-                                selectedParticipantForDrawer.is_free
-                                  ? "text-sky-600 dark:text-sky-400"
-                                  : selectedParticipantForDrawer.paid_status === "Paid"
-                                  ? "text-emerald-600 dark:text-emerald-400"
-                                  : "text-rose-600 dark:text-rose-400"
-                              )}
-                            >
-                              {selectedParticipantForDrawer.is_free
-                                ? "Free Pass"
-                                : selectedParticipantForDrawer.paid_status}
-                            </span>
-                          </div>
-                        </div>
-                        {!selectedParticipantForDrawer.is_free && (
-                          <button
-                            type="button"
-                            disabled={
-                              paymentAccess.loading ||
-                              registrationAccess.loading ||
-                              !paymentAccess.enabled ||
-                              !registrationAccess.enabled
-                            }
-                            onClick={async () => {
-                              const updated = {
-                                ...selectedParticipantForDrawer,
-                                paid_status:
-                                  selectedParticipantForDrawer.paid_status === "Paid" ? "Unpaid" : "Paid",
-                              };
-                              await handleTogglePayment(selectedParticipantForDrawer);
-                              setSelectedParticipantForDrawer(updated);
-                            }}
-                            className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-2.5 py-1 text-[10px] font-bold text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
-                          >
-                            Mark {selectedParticipantForDrawer.paid_status === "Paid" ? "Unpaid" : "Paid"}
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Source & Date */}
-                      <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)]">
-                        <div className="flex items-center gap-2.5">
-                          <Globe className="size-4 text-[var(--text-tertiary)]" />
-                          <div>
-                            <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
-                              Source
-                            </span>
-                            <span className="text-xs uppercase text-[var(--text-primary)]">
-                              {selectedParticipantForDrawer.source}
-                            </span>
-                          </div>
-                        </div>
-
-                        {selectedParticipantForDrawer.registered_at && (
-                          <div className="text-right">
-                            <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
-                              Registered Date
-                            </span>
-                            <span className="text-xs text-[var(--text-secondary)]">
-                              {new Date(selectedParticipantForDrawer.registered_at).toLocaleDateString()}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Drawer Footer Actions */}
-              <div className="border-t border-[var(--border-subtle)] pt-4 shrink-0 space-y-2">
-                {isEditing ? (
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setIsEditing(false)}
-                      className="flex-1 rounded-lg border border-[var(--border-default)] bg-[var(--card)] py-2 text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSaveChanges}
-                      disabled={registrationAccess.loading || !registrationAccess.enabled}
-                      className="flex-1 rounded-lg bg-[var(--pri)] py-2 text-xs font-bold text-[var(--primary-contrast)] shadow-sm hover:opacity-90 transition-all cursor-pointer"
-                    >
-                      Save Changes
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => printParticipants([selectedParticipantForDrawer])}
-                      disabled={printing}
-                      className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-[var(--pri)] py-2 text-xs font-bold text-[var(--primary-contrast)] shadow-sm hover:opacity-90 transition-all cursor-pointer"
-                    >
-                      <Printer className="size-3.5" />
-                      Print Badge
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const p = selectedParticipantForDrawer;
-                        setSelectedParticipantForDrawer(null);
-                        await handleDelete(p.id, p.name);
-                      }}
-                      disabled={registrationAccess.loading || !registrationAccess.enabled}
-                      className="flex items-center justify-center gap-1.5 rounded-lg border border-rose-500/20 bg-rose-500/10 px-4 py-2 text-xs font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 transition-colors disabled:opacity-40 cursor-pointer"
-                    >
-                      <Trash2 className="size-3.5" />
-                      Archive
-                    </button>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          </div>
+          <ParticipantDrawer
+            participant={selectedParticipantForDrawer}
+            eventId={eventId}
+            roles={roles}
+            badgeDesign={badgeDesign}
+            printing={printing}
+            onClose={() => setSelectedParticipantForDrawer(null)}
+            onPrint={() => printParticipants([selectedParticipantForDrawer])}
+            onUpdate={(updated) => {
+              setParticipants((prev) =>
+                prev.map((p) => (p.id === updated.id ? updated : p))
+              );
+              setSelectedParticipantForDrawer(updated);
+            }}
+            onDelete={async (id, name) => {
+              setSelectedParticipantForDrawer(null);
+              await handleDelete(id, name);
+            }}
+            onTogglePayment={async (p) => {
+              await handleTogglePayment(p);
+              setSelectedParticipantForDrawer((cur) =>
+                cur
+                  ? {
+                      ...cur,
+                      paid_status: cur.paid_status === "Paid" ? "Unpaid" : "Paid",
+                    }
+                  : null
+              );
+            }}
+            onIssueQr={async (p) => {
+              await issueConfirmationQr(p);
+            }}
+          />
         )}
       </AnimatePresence>
 

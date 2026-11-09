@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="19" failures="0" errors="0" time="3.243615">
+    <testsuite name="lib/catalogue-reconciliation-progress.test.ts" timestamp="2026-10-27T17:35:33.159Z" hostname="Vishal" tests="3" failures="0" errors="0" skipped="0" time="0.0204392">
+        <testcase classname="lib/catalogue-reconciliation-progress.test.ts" name="does not equate broker dispatch with page completion" time="0.0047806">
+        </testcase>
+        <testcase classname="lib/catalogue-reconciliation-progress.test.ts" name="requires enumeration and all nonempty durable streams before success" time="0.0009951">
+        </testcase>
+        <testcase classname="lib/catalogue-reconciliation-progress.test.ts" name="keeps legacy and failed runs explicit instead of synthesising completion" time="0.0007785">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/reviewed-blueprint-correction.test.tsx" timestamp="2026-10-27T17:35:33.167Z" hostname="Vishal" tests="8" failures="0" errors="0" skipped="0" time="1.8247598">
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; preserves a selected category when a background refresh replaces its loaded page" time="0.8079299">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; sends the loaded version, selected category and reviewed document; keeps a failed draft" time="0.1975025">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; refuses malformed reviewed JSON without issuing a mutation" time="0.1262292">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; requires explicit invalid-lineage confirmation and retains it after an error" time="0.1628321">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; drops the correction draft when identity context changes" time="0.1052392">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; does not restore an old blocked version from a refresh after confirmed repair" time="0.1381741">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; keeps the draft when a successful HTTP result identifies a different record" time="0.1019858">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; does not hide a newer blocker after a confirmed older repair" time="0.1734912">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/category-a/catalogue-background-refresh.test.tsx" timestamp="2026-10-27T17:35:33.172Z" hostname="Vishal" tests="4" failures="0" errors="0" skipped="0" time="1.2665329">
+        <testcase classname="test/category-a/catalogue-background-refresh.test.tsx" name="keeps other blocked blueprints visible during a slow background refresh after repair" time="0.6230966">
+        </testcase>
+        <testcase classname="test/category-a/catalogue-background-refresh.test.tsx" name="requires an explicit rubric proposal and preserves it when recorded scores prevent correction" time="0.3472834">
+        </testcase>
+        <testcase classname="test/category-a/catalogue-background-refresh.test.tsx" name="loads more blocked rubrics only when requested" time="0.1713777">
+        </testcase>
+        <testcase classname="test/category-a/catalogue-background-refresh.test.tsx" name="loads category 101 only after an explicit request and collapses duplicate rows" time="0.1121298">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/category-a/catalogue-read-controller.test.tsx" timestamp="2026-10-27T17:35:33.174Z" hostname="Vishal" tests="4" failures="0" errors="0" skipped="0" time="0.1318831">
+        <testcase classname="test/category-a/catalogue-read-controller.test.tsx" name="merges large pages in stable identity order and rejects unsafe continuations" time="0.0106529">
+        </testcase>
+        <testcase classname="test/category-a/catalogue-read-controller.test.tsx" name="suppresses duplicate reads and prevents an invalidated late page from publishing" time="0.0605665">
+        </testcase>
+        <testcase classname="test/category-a/catalogue-read-controller.test.tsx" name="a refresh aborts every older slot before publishing its own result" time="0.0153747">
+        </testcase>
+        <testcase classname="test/category-a/catalogue-read-controller.test.tsx" name="enforces Retry-After without replaying and exposes safe correlation details" time="0.0308227">
+        </testcase>
+    </testsuite>
+</testsuites>

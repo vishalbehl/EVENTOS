@@ -83,8 +83,27 @@ async def test_realtime_user_cannot_join_cross_tenant_event(db, organizer) -> No
     )
     db.add(other_org)
     await db.flush()
+    from app.modules.rbac.models.access_foundation import OperationalWorkspace, OrganizationAccessRevision
+    other_ws = OperationalWorkspace(
+        organization_id=other_org.id,
+        name="Other WS",
+        is_default=True,
+        status="ACTIVE",
+    )
+    db.add(other_ws)
+    from datetime import datetime, timezone
+    from app.modules.rbac.models.organization_member import OrganizationMember
+    from sqlalchemy import select
+    org_member = await db.scalar(select(OrganizationMember).where(OrganizationMember.user_id == organizer.id))
+    if org_member:
+        org_member.accepted_at = datetime.now(timezone.utc)
+        org_member.org_role = "owner"
+    db.add(OrganizationAccessRevision(organization_id=other_org.id, revision=1))
+    db.add(OrganizationAccessRevision(organization_id=organizer.organization_id, revision=1))
+    await db.flush()
     other_event = Event(
         organization_id=other_org.id,
+        operational_workspace_id=other_ws.id,
         created_by=organizer.id,
         name="Other Tenant Event",
         short_code=f"RT{uuid.uuid4().hex[:6].upper()}",

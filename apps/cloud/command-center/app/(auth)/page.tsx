@@ -37,6 +37,8 @@ function BrandLockup({ compact = false }: { compact?: boolean }) {
 export default function AdminLoginPage() {
   const router = useRouter();
   const { isAuthenticated, accessToken, user, hasHydrated } = useAuthStore();
+  const [mounted, setMounted] = useState(false);
+  const loginReady = mounted && hasHydrated;
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -47,23 +49,29 @@ export default function AdminLoginPage() {
   const [cooldown, setCooldown] = useState(0);
   const [restored, setRestored] = useState(false);
   const mfaRef = useRef<HTMLInputElement>(null);
+  const navigationRequested = useRef(false);
   const emailId = useId();
   const passwordId = useId();
   const mfaId = useId();
   const rememberId = useId();
 
+  useEffect(() => { setMounted(true); }, []);
+
   useEffect(() => {
     if (!isAuthenticated || !accessToken || !user) return;
     const isAdmin = user.platform_role === "SUPER_ADMIN" || user.is_platform_admin || user.role === "super_admin";
-    if (isAdmin) router.replace("/dashboard/overview");
+    if (isAdmin && !navigationRequested.current) {
+      navigationRequested.current = true;
+      router.replace("/dashboard/overview");
+    }
   }, [isAuthenticated, accessToken, user, router]);
 
   useEffect(() => {
     if (!hasHydrated || restored || isAuthenticated) return;
     setRestored(true);
-    void authService.restore().then((active) => {
-      if (active) router.replace("/dashboard/overview");
-    });
+    // Validated session state drives navigation in one place above. Competing
+    // replace calls can cancel an in-flight App Router transition.
+    void authService.restore();
   }, [hasHydrated, restored, isAuthenticated, router]);
 
   useEffect(() => {
@@ -74,6 +82,7 @@ export default function AdminLoginPage() {
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!loginReady || loading) return;
     if (!email.trim() || !password) return void toast.error("Email and password are required.");
     if (authStep === "credentials") {
       setAuthStep("mfa");
@@ -85,7 +94,6 @@ export default function AdminLoginPage() {
     try {
       await authService.login({ email: email.trim(), password, mfa_code: mfaCode }, rememberMe);
       toast.success("Identity and MFA verified.");
-      router.replace("/dashboard/overview");
     } catch (error) {
       if (error instanceof ApiError && error.status === 429) setCooldown(error.retryAfter || 900);
       toast.error(error instanceof Error ? error.message : "Authentication failed.");
@@ -115,7 +123,7 @@ export default function AdminLoginPage() {
                 <div className="mb-7 flex items-center gap-4 text-[10px] font-semibold uppercase tracking-[0.28em] text-white/74 [@media(max-height:900px)]:mb-4"><ScanLine className="size-5" /> Command center / Restricted access</div>
                 <h1 className="font-mono text-[clamp(3.1rem,4vw,4.5rem)] font-medium leading-[.96] tracking-[-.07em] text-white [@media(max-height:900px)]:text-[3.35rem]">Precision.<br />Control.<br /><span className="text-white/76">Excellence.</span></h1>
                 <div className="mt-7 h-px max-w-sm bg-gradient-to-r from-white via-white/35 to-transparent [@media(max-height:900px)]:mt-4" />
-                <p className="mt-5 max-w-sm text-sm leading-7 text-white/52 [@media(max-height:900px)]:mt-3 [@media(max-height:900px)]:text-xs [@media(max-height:900px)]:leading-5">The centralized hub for managing organizations, infrastructure, subscriptions, and critical platform operations.</p>
+                <p className="mt-5 max-w-sm text-sm leading-7 text-white/52 [@media(max-height:900px)]:mt-3 [@media(max-height:900px)]:text-xs [@media(max-height:900px)]:leading-5">The centralized hub for managing organizations, infrastructure, commercial contracts, and critical platform operations.</p>
               </div>
 
               <div className="relative aspect-square w-full max-h-[470px] max-w-[470px] place-self-center [@media(max-height:900px)]:max-h-[350px] [@media(max-height:900px)]:max-w-[350px]">
@@ -155,7 +163,7 @@ export default function AdminLoginPage() {
                   <div className="mx-auto mt-4 flex items-center gap-3 [@media(max-height:900px)]:mt-3"><span className="h-px flex-1 bg-white/10" /><span className="size-0 border-x-[5px] border-t-[6px] border-x-transparent border-t-white/70" /><span className="h-px flex-1 bg-white/10" /></div>
                 </div>
 
-                <form onSubmit={handleLogin} className="mt-5 flex flex-col space-y-3.5 [@media(max-height:900px)]:mt-3 [@media(max-height:900px)]:space-y-2.5" noValidate>
+                <form onSubmit={handleLogin} aria-busy={!loginReady} className="mt-5 flex flex-col space-y-3.5 [@media(max-height:900px)]:mt-3 [@media(max-height:900px)]:space-y-2.5" noValidate>
                   {authStep === "credentials" ? (
                     <motion.div key="credentials" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="space-y-3.5 [@media(max-height:900px)]:space-y-2.5">
                       <label htmlFor={emailId} className="block text-[10px] font-semibold uppercase text-white/72">Work email</label>
@@ -163,7 +171,7 @@ export default function AdminLoginPage() {
                       <label htmlFor={passwordId} className="block text-[10px] font-semibold uppercase text-white/72">Password</label>
                       <div className="relative -mt-2 overflow-hidden rounded-xl border border-white/14 bg-white/[0.025] transition-[border-color,box-shadow,background-color] duration-200 focus-within:border-white/48 focus-within:bg-white/[0.04] focus-within:shadow-[0_0_0_4px_rgba(255,255,255,.055)]"><Lock className="absolute left-4 top-1/2 size-4 -translate-y-1/2 text-white/62" /><Input id={passwordId} type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your Password" className="h-11 rounded-xl border-0 bg-transparent px-12 text-xs font-medium text-white focus-visible:ring-0 [@media(max-height:900px)]:h-10" required disabled={loading} /><button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute right-3 top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-lg text-white/55 transition-colors hover:bg-white/[0.06] hover:text-white" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</button></div>
                       <div className="flex items-start justify-between gap-4 py-1"><label htmlFor={rememberId} className="flex cursor-pointer items-start gap-3"><input id={rememberId} type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} className="mt-0.5 size-4 rounded border-white/30 bg-black accent-white" /><span><span className="block text-[11px] text-white/82">Remember this device</span><span className="mt-1 block text-[10px] text-white/38">Secure session for 30 days</span></span></label><span className="text-[10px] text-white/42">MFA protected</span></div>
-                      <Button type="submit" className="group flex h-12 w-full items-center justify-between rounded-2xl border border-white bg-white py-1 pl-5 pr-1 text-xs font-semibold uppercase tracking-[.04em] text-black shadow-[0_12px_30px_rgba(255,255,255,.08)] hover:bg-[#e7e7e7] active:scale-[.985] [@media(max-height:900px)]:h-11"><span className="flex items-center gap-2.5"><Lock className="size-4" /> Continue securely</span><span className="grid size-10 place-items-center rounded-xl bg-black text-white"><ArrowRight className="size-4 transition-transform group-hover:translate-x-1" /></span></Button>
+                      <Button type="submit" disabled={!loginReady || loading} className="group flex h-12 w-full items-center justify-between rounded-2xl border border-white bg-white py-1 pl-5 pr-1 text-xs font-semibold uppercase tracking-[.04em] text-black shadow-[0_12px_30px_rgba(255,255,255,.08)] hover:bg-[#e7e7e7] active:scale-[.985] [@media(max-height:900px)]:h-11"><span className="flex items-center gap-2.5"><Lock className="size-4" /> Continue securely</span><span className="grid size-10 place-items-center rounded-xl bg-black text-white"><ArrowRight className="size-4 transition-transform group-hover:translate-x-1" /></span></Button>
                       <div className="flex items-center gap-3 py-1"><span className="h-px flex-1 bg-white/12" /><span className="text-[9px] uppercase tracking-[.18em] text-white/35">Alternative access</span><span className="h-px flex-1 bg-white/12" /></div>
                       <div className="grid grid-cols-2 gap-3"><button type="button" disabled title="SSO is not configured" className="flex h-10 items-center justify-center gap-2 rounded-xl border border-white/12 bg-white/[0.018] text-[11px] text-white/38"><UserRound className="size-4" /> SSO login</button><button type="button" disabled title="Hardware-key login is not configured" className="flex h-10 items-center justify-center gap-2 rounded-xl border border-white/12 bg-white/[0.018] text-[11px] text-white/38"><KeyRound className="size-4" /> Hardware key</button></div>
                     </motion.div>

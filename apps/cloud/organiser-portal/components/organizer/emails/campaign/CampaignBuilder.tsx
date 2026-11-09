@@ -124,6 +124,7 @@ export default function CampaignBuilder({ eventId, onCreated }: Props) {
                                     <FieldWrapper label="Campaign Name" icon={<Send className="w-4 h-4" />}>
                                         <input
                                             required
+                                            maxLength={150}
                                             value={formData.name}
                                             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                                             placeholder="e.g., Abstract Deadline Reminder"
@@ -153,7 +154,7 @@ export default function CampaignBuilder({ eventId, onCreated }: Props) {
                                                 className="w-full bg-transparent border-0 font-bold text-[var(--text)] focus:ring-0 p-0 appearance-none cursor-pointer"
                                             >
                                                 <option value="all" className="bg-[var(--card)]">All Attendees</option>
-                                                <option value="pending" className="bg-[var(--card)]">Pending Uploads</option>
+                                                <option value="pending_upload" className="bg-[var(--card)]">Pending Uploads (upload-required roles)</option>
                                                 <option value="uploaded" className="bg-[var(--card)]">Success Uploads</option>
                                                 <option value="approved" className="bg-[var(--card)]">Approved Speakers</option>
                                                 <option value="rejected" className="bg-[var(--card)]">Rejected Speakers</option>

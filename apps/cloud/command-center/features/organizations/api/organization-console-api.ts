@@ -1,6 +1,7 @@
 "use client";
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRef } from "react";
 import { apiClient } from "@/lib/api-client";
 import { queryKeys } from "@/lib/query-keys";
 
@@ -61,6 +62,10 @@ export interface OrganizationConsoleSummary {
     slug: string;
     logo_url?: string | null;
     is_active: boolean;
+    organization_kind: "NORMAL" | "EMC" | "CLIENT";
+    lifecycle_state: "ACTIVE" | "SUSPENDED" | "ARCHIVED";
+    archived_at: string | null;
+    profile_version: number;
     is_internal_unrestricted?: boolean;
     created_at: string;
     country: string;
@@ -71,12 +76,12 @@ export interface OrganizationConsoleSummary {
     is_suspended?: boolean;
     suspension_reason?: string | null;
   };
-  subscription?: {
+  contract?: {
     id: string;
     status: string;
-    plan_id: string;
-    plan_name: string;
-    current_period_end?: string | null;
+    offer_id?: string | null;
+    offer_name: string;
+    ends_at?: string | null;
     mrr?: number | null;
   } | null;
   metrics: OrganizationConsoleMetric[];
@@ -113,7 +118,7 @@ export interface OrganizationEventItem {
   state?: string | null;
   timezone: string;
   currency: string;
-  plan_name?: string | null;
+  offer_name?: string | null;
   registrations_count?: number;
   revenue?: number;
   features?: Record<string, boolean>;
@@ -249,6 +254,12 @@ export interface SecurityPolicyUpdate {
 
 // ── Lifecycle Job Types ───────────────────────────────────────
 
+export const destructiveLifecycleUnavailable = (jobType: string): boolean =>
+  jobType === "MERGE" || jobType === "PURGE" || jobType === "DELETE";
+
+export const destructiveLifecycleUnavailableReason =
+  "Organization merge and purge are unavailable until ownership, retention and legal-hold workflows are implemented and verified. Existing data and history are preserved.";
+
 export interface LifecycleJobCreate {
   job_type: "ARCHIVE" | "RESTORE" | "EXPORT" | "CLONE" | "MERGE" | "PURGE";
   target_organization_id?: string;
@@ -271,6 +282,8 @@ export interface LifecycleJobOut {
   result_metadata: Record<string, unknown>;
   manifest_checksum: string;
   attempt_count: number;
+  dispatch_attempts: number;
+  next_dispatch_at: string | null;
   version: number;
   started_at?: string | null;
 }
@@ -433,21 +446,17 @@ export interface CapabilityDiagnostics {
   }>;
 }
 
-export interface CommercialAccessRequestItem {
+export interface CommercialRequestItem {
   id: string;
-  event_id?: string | null;
-  requested_plan_id: string;
-  requested_plan_name?: string | null;
-  requested_plan_version?: number | null;
-  requested_addon_keys: string[];
-  quoted_amount?: number | null;
-  currency: string;
-  reason: string;
-  case_reference?: string | null;
-  status: "PENDING" | "REJECTED" | "APPLIED";
-  requested_by: string;
-  decided_by?: string | null;
-  decision_reason?: string | null;
+  organization_id: string;
+  product_family: string;
+  request_type: string;
+  requested_offer_codes: string[];
+  requested_capacity: Record<string, unknown>;
+  requirements: Record<string, unknown>;
+  quote_id?: string | null;
+  quote_reference?: string | null;
+  status: string;
   version: number;
   created_at: string;
 }
@@ -480,8 +489,8 @@ const keys = {
   audit: (orgId: string) => queryKeys.organizationConsole.domain(orgId, "audit-cursor"),
   rollout: (orgId: string) => queryKeys.organizationConsole.domain(orgId, "rollout"),
   diagnostics: (orgId: string) => queryKeys.organizationConsole.domain(orgId, "diagnostics"),
-  commercialAccess: (orgId: string) =>
-    queryKeys.organizationConsole.domain(orgId, "commercial-access-requests"),
+  commercialRequests: (orgId: string) =>
+    queryKeys.organizationConsole.domain(orgId, "commercial-requests"),
 };
 
 // ── Hooks — Summary & Domain ──────────────────────────────────
@@ -740,24 +749,24 @@ export const useDecideEntitlementOverrideRevocation = (orgId: string) => {
   });
 };
 
-export const useCommercialAccessRequests = (orgId: string) => useQuery({
-  queryKey: keys.commercialAccess(orgId),
-  queryFn: () => apiClient.get<{ items: CommercialAccessRequestItem[]; freshness_at: string }>(`/platform/organizations/${orgId}/console/commercial/access-requests`),
+export const useCommercialRequests = (orgId: string) => useQuery({
+  queryKey: keys.commercialRequests(orgId),
+  queryFn: () => apiClient.get<CommercialRequestItem[]>(`/platform/commercial/requests?organization_id=${encodeURIComponent(orgId)}`),
   enabled: Boolean(orgId),
 });
 
-export const useDecideCommercialAccessRequest = (orgId: string) => {
+export const useDecideCommercialRequest = (orgId: string) => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, version, decision, reason, case_reference }: { id: string; version: number; decision: "APPROVED" | "REJECTED"; reason: string; case_reference: string }) =>
-      apiClient.post(`/platform/organizations/${orgId}/console/commercial/access-requests/${id}/decision`, {
+    mutationFn: ({ id, version, decision, reason, quote_reference }: { id: string; version: number; decision: "APPROVED" | "REJECTED" | "QUOTE_ISSUED"; reason: string; quote_reference?: string }) =>
+      apiClient.post(`/platform/commercial/requests/${id}/decision`, {
         decision,
         reason,
-        case_reference,
+        quote_reference,
       }, { headers: { "If-Match": String(version), "Idempotency-Key": crypto.randomUUID() } }),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: keys.commercialAccess(orgId) }),
+        queryClient.invalidateQueries({ queryKey: keys.commercialRequests(orgId) }),
         queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "billing") }),
         queryClient.invalidateQueries({ queryKey: keys.summary(orgId) }),
       ]);
@@ -916,12 +925,19 @@ export const useEventDomainWorkspace = (orgId: string, eventId: string, workspac
 export const useUpdateEventSettings = (orgId: string, eventId: string) => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: { data: Record<string, unknown>; reason: string; case_reference: string }) =>
-      apiClient.patch(`/platform/organizations/${orgId}/console/events/${eventId}/settings`, payload),
+    mutationFn: ({ version, idempotencyKey, ...payload }: {
+      data: Record<string, unknown>; reason: string; case_reference: string;
+      version: number; idempotencyKey: string;
+    }) => apiClient.patch<{ version: number }>(
+      `/platform/organizations/${orgId}/console/events/${eventId}/settings`, payload,
+      { headers: { "If-Match": String(version), "Idempotency-Key": idempotencyKey } }),
+    retry: false,
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: keys.events(orgId) }),
         queryClient.invalidateQueries({ queryKey: keys.eventDetail(orgId, eventId) }),
+        queryClient.invalidateQueries({ queryKey: keys.eventWorkspace(orgId, eventId, "settings", false) }),
+        queryClient.invalidateQueries({ queryKey: keys.eventWorkspace(orgId, eventId, "settings", true) }),
       ]);
     },
   });
@@ -982,52 +998,143 @@ export const useRevokeOrganizationSessions = (orgId: string) => useMutation({ mu
 
 export const useUpdateOrganizationMember = (orgId: string) => {
   const queryClient = useQueryClient();
-  return useMutation({ mutationFn: ({ memberId, orgRole, reason }: { memberId: string; orgRole: string; reason: string }) => apiClient.patch(`/platform/organisations/${orgId}/members/${memberId}`, { org_role: orgRole, reason }), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "members") }) });
+  const receipt = useRef({ signature: "", key: "" });
+  return useMutation({ retry: false, mutationFn: ({ memberId, orgRole, reason, version }: { memberId: string; orgRole: string; reason: string; version: number }) => {
+    const signature = JSON.stringify([orgId, memberId, orgRole, reason, version]);
+    if (receipt.current.signature !== signature) receipt.current = { signature, key: crypto.randomUUID() };
+    return apiClient.patch(`/platform/organisations/${orgId}/members/${memberId}`, { org_role: orgRole, reason },
+      { headers: { "If-Match": String(version), "Idempotency-Key": receipt.current.key } });
+  }, onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "members") }) });
 };
+
+export const useOrganizationMemberDirectory = (orgId: string, cursor: string | null) => useQuery({
+  queryKey: [...keys.domain(orgId, "members"), "directory", cursor],
+  queryFn: ({ signal }) => apiClient.get<{ items: Array<Record<string, any>>; next_cursor: string | null; has_next: boolean }>(
+    `/platform/organisations/${orgId}/member-directory`, { params: { cursor: cursor ?? undefined, limit: 50 }, signal }),
+  enabled: !!orgId, retry: false, staleTime: 0,
+});
 
 export const useInviteOrganizationMember = (orgId: string) => {
   const queryClient = useQueryClient();
-  return useMutation({ mutationFn: (payload: { email: string; org_role: string; reason: string }) => apiClient.post(`/platform/organisations/${orgId}/members`, payload), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "members") }) });
+  const receipt = useRef({ signature: "", key: "" });
+  return useMutation({ retry: false, mutationFn: (payload: { email: string; org_role: string; reason: string }) => {
+    const signature = JSON.stringify([orgId, payload]);
+    if (receipt.current.signature !== signature) receipt.current = { signature, key: crypto.randomUUID() };
+    return apiClient.post<{ invite_token: string | null; replayed: boolean; message: string }>(`/platform/organisations/${orgId}/members`, payload,
+      { headers: { "Idempotency-Key": receipt.current.key } });
+  }, onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "members") }) });
 };
 
 export const useRemoveOrganizationMember = (orgId: string) => {
   const queryClient = useQueryClient();
-  return useMutation({ mutationFn: ({ memberId, reason }: { memberId: string; reason: string }) => apiClient.delete(`/platform/organisations/${orgId}/members/${memberId}`, { data: { reason } }), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "members") }) });
+  const receipt = useRef({ signature: "", key: "" });
+  return useMutation({ retry: false, mutationFn: ({ memberId, reason, version }: { memberId: string; reason: string; version: number }) => {
+    const signature = JSON.stringify([orgId, memberId, reason, version]);
+    if (receipt.current.signature !== signature) receipt.current = { signature, key: crypto.randomUUID() };
+    return apiClient.delete(`/platform/organisations/${orgId}/members/${memberId}`, { data: { reason },
+      headers: { "If-Match": String(version), "Idempotency-Key": receipt.current.key } });
+  }, onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "members") }) });
+};
+
+export const useReplaceOrganizationInvitation = (orgId: string) => {
+  const queryClient = useQueryClient();
+  const receipt = useRef({ signature: "", key: "" });
+  return useMutation({ retry: false, mutationFn: ({ memberId, reason, version }: { memberId: string; reason: string; version: number }) => {
+    const signature = JSON.stringify([orgId, memberId, reason, version]);
+    if (receipt.current.signature !== signature) receipt.current = { signature, key: crypto.randomUUID() };
+    return apiClient.post<{ invite_token: string | null; version: number }>(`/platform/organisations/${orgId}/members/${memberId}/invitation/resend`, { reason },
+      { headers: { "If-Match": String(version), "Idempotency-Key": receipt.current.key } });
+  }, onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "members") }) });
 };
 
 export const useSetOrganizationMemberEvent = (orgId: string) => {
   const queryClient = useQueryClient();
-  return useMutation({ mutationFn: ({ memberId, eventId, assigned, reason }: { memberId: string; eventId: string; assigned: boolean; reason: string }) => assigned ? apiClient.put(`/platform/organisations/${orgId}/members/${memberId}/events/${eventId}`, { permissions: {}, reason }, { headers: { "Idempotency-Key": crypto.randomUUID() } }) : apiClient.delete(`/platform/organisations/${orgId}/members/${memberId}/events/${eventId}`, { data: { reason } }), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "members") }) });
+  const receipt = useRef({ signature: "", key: "" });
+  return useMutation({ retry: false, mutationFn: ({ memberId, eventId, assigned, reason, version }: { memberId: string; eventId: string; assigned: boolean; reason: string; version: number }) => {
+    const signature = JSON.stringify([orgId, memberId, eventId, assigned, reason, version]);
+    if (receipt.current.signature !== signature) receipt.current = { signature, key: crypto.randomUUID() };
+    const headers = { "If-Match": String(version), "Idempotency-Key": receipt.current.key };
+    const path = `/platform/organisations/${orgId}/members/${memberId}/events/${eventId}`;
+    return assigned ? apiClient.put(path, { permissions: { "EVENTS:VIEW": true }, reason }, { headers }) : apiClient.delete(path, { headers, data: { reason } });
+  }, onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "members") }) });
 };
 
-export type OrganizationTeam = { id: string; name: string; description?: string | null; version: number; member_ids: string[]; events: Array<{ event_id: string; permissions: Record<string, unknown> }>; created_at: string; updated_at: string };
+export type OrganizationTeam = { id: string; name: string; description?: string | null; version: number; member_ids: string[]; events: Array<{ event_id: string; permissions: Record<string, unknown>; authorization_version: 0 | 1 }>; created_at: string; updated_at: string };
+export type OrganizationTeamMutation = Pick<OrganizationTeam, "id" | "name" | "description" | "version" | "updated_at"> & {
+  status: "ACTIVE" | "ARCHIVED"; owner_member_id: string | null; deleted_at: string | null; policy_revision: number; correlation_id: string;
+};
 
-export const useOrganizationTeams = (orgId: string) => useQuery({ queryKey: keys.domain(orgId, "teams"), queryFn: () => apiClient.get<{ items: OrganizationTeam[] }>(`/platform/organizations/${orgId}/console/teams`), enabled: Boolean(orgId) });
+export const useOrganizationTeams = (orgId: string) => useQuery({ queryKey: keys.domain(orgId, "teams"), retry: false, staleTime: 0,
+  queryFn: ({ signal }) => apiClient.get<{ items: OrganizationTeam[] }>(`/platform/organizations/${orgId}/console/teams`, { signal }), enabled: Boolean(orgId) });
 
 export const useCreateOrganizationTeam = (orgId: string) => {
   const queryClient = useQueryClient();
-  return useMutation({ mutationFn: (payload: { name: string; description?: string; reason: string }) => apiClient.post<OrganizationTeam>(`/platform/organizations/${orgId}/console/teams`, payload), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "teams") }) });
+  const receipt = useRef<{ signature: string; key: string } | null>(null);
+  return useMutation({ retry: false, mutationFn: (payload: { name: string; description?: string; reason: string }) => {
+    const signature = JSON.stringify({ orgId, payload });
+    if (receipt.current?.signature !== signature) receipt.current = { signature, key: crypto.randomUUID() };
+    return apiClient.post<OrganizationTeam>(`/platform/organizations/${orgId}/console/teams`, payload,
+      { headers: { "Idempotency-Key": receipt.current.key } });
+  }, onSuccess: () => { receipt.current = null; return queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "teams") }); } });
 };
 
 export const useUpdateOrganizationTeam = (orgId: string) => {
   const queryClient = useQueryClient();
-  return useMutation({ mutationFn: ({ teamId, version, ...payload }: { teamId: string; version: number; name: string; description?: string; reason: string }) => apiClient.patch<OrganizationTeam>(`/platform/organizations/${orgId}/console/teams/${teamId}`, payload, { headers: { "If-Match": String(version) } }), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "teams") }) });
+  const receipt = useRef<{ signature: string; key: string } | null>(null);
+  return useMutation({ retry: false, mutationFn: ({ teamId, version, ...payload }: { teamId: string; version: number; name: string; description?: string; reason: string }) => {
+    const signature = JSON.stringify({ orgId, teamId, version, payload });
+    if (receipt.current?.signature !== signature) receipt.current = { signature, key: crypto.randomUUID() };
+    return apiClient.patch<OrganizationTeamMutation>(`/platform/organizations/${orgId}/console/teams/${teamId}`, payload,
+      { headers: { "If-Match": String(version), "Idempotency-Key": receipt.current.key } });
+  }, onSuccess: () => { receipt.current = null; return queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "teams") }); } });
 };
 
 export const useArchiveOrganizationTeam = (orgId: string) => {
   const queryClient = useQueryClient();
-  return useMutation({ mutationFn: ({ teamId, version, reason }: { teamId: string; version: number; reason: string }) => apiClient.delete(`/platform/organizations/${orgId}/console/teams/${teamId}`, { headers: { "If-Match": String(version) }, data: { reason } }), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "teams") }) });
+  const receipt = useRef<{ signature: string; key: string } | null>(null);
+  return useMutation({ retry: false, mutationFn: ({ teamId, version, reason }: { teamId: string; version: number; reason: string }) => {
+    const payload = { reason }; const signature = JSON.stringify({ orgId, teamId, version, payload });
+    if (receipt.current?.signature !== signature) receipt.current = { signature, key: crypto.randomUUID() };
+    return apiClient.delete<OrganizationTeamMutation>(`/platform/organizations/${orgId}/console/teams/${teamId}`,
+      { headers: { "If-Match": String(version), "Idempotency-Key": receipt.current.key }, data: payload });
+  }, onSuccess: () => { receipt.current = null; return queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "teams") }); } });
 };
 
 export const useSetOrganizationTeamMember = (orgId: string) => {
   const queryClient = useQueryClient();
-  return useMutation({ mutationFn: ({ teamId, memberId, assigned, reason }: { teamId: string; memberId: string; assigned: boolean; reason: string }) => assigned ? apiClient.put(`/platform/organizations/${orgId}/console/teams/${teamId}/members/${memberId}`, { reason, permissions: {} }) : apiClient.delete(`/platform/organizations/${orgId}/console/teams/${teamId}/members/${memberId}`, { data: { reason } }), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "teams") }) });
+  const receipt = useRef<{ signature: string; key: string } | null>(null);
+  return useMutation({ retry: false, mutationFn: ({ teamId, memberId, assigned, reason, version }: { teamId: string; memberId: string; assigned: boolean; reason: string; version: number }) => {
+    const signature = JSON.stringify({ orgId, teamId, memberId, assigned, reason, version });
+    if (receipt.current?.signature !== signature) receipt.current = { signature, key: crypto.randomUUID() };
+    const headers = { "If-Match": String(version), "Idempotency-Key": receipt.current.key };
+    const path = `/platform/organizations/${orgId}/console/teams/${teamId}/members/${memberId}`;
+    return assigned ? apiClient.put<TeamMemberMutation>(path, { reason }, { headers })
+      : apiClient.delete<TeamMemberMutation>(path, { data: { reason }, headers });
+  }, onSuccess: () => { receipt.current = null; return queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "teams") }); } });
 };
+
+type TeamMemberMutation = { team_id: string; member_id: string; assigned: boolean; team_version: number; policy_revision: number; correlation_id: string };
 
 export const useSetOrganizationTeamEvent = (orgId: string) => {
   const queryClient = useQueryClient();
-  return useMutation({ mutationFn: ({ teamId, eventId, assigned, permissions, reason }: { teamId: string; eventId: string; assigned: boolean; permissions: Record<string, unknown>; reason: string }) => assigned ? apiClient.put(`/platform/organizations/${orgId}/console/teams/${teamId}/events/${eventId}`, { reason, permissions }) : apiClient.delete(`/platform/organizations/${orgId}/console/teams/${teamId}/events/${eventId}`, { data: { reason } }), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "teams") }) });
+  const receipt = useRef<{ signature: string; key: string } | null>(null);
+  return useMutation({ retry: false, mutationFn: ({ teamId, eventId, assigned, permissions, reason, version }: { teamId: string; eventId: string; assigned: boolean; permissions: Record<string, boolean>; reason: string; version: number }) => {
+    const signature = JSON.stringify({ orgId, teamId, eventId, assigned, permissions, reason, version });
+    if (receipt.current?.signature !== signature) receipt.current = { signature, key: crypto.randomUUID() };
+    const headers = { "If-Match": String(version), "Idempotency-Key": receipt.current.key };
+    const path = `/platform/organizations/${orgId}/console/teams/${teamId}/events/${eventId}`;
+    return assigned ? apiClient.put<TeamEventMutation>(path, { reason, permissions }, { headers })
+      : apiClient.delete<TeamEventMutation>(path, { data: { reason }, headers });
+  }, onSuccess: () => { receipt.current = null; return queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "teams") }); } });
 };
+
+type TeamEventMutation = { team_id: string; event_id: string; assigned: boolean; authorization_version: 0 | 1; permissions: Record<string, boolean>; team_version: number; policy_revision: number; correlation_id: string };
+
+export const useOrganizationTeamEventActions = (orgId: string, eventId: string) => useQuery({
+  queryKey: [...keys.domain(orgId, "teams"), "grantable-actions", eventId], enabled: !!orgId && !!eventId,
+  retry: false, staleTime: 0, queryFn: ({ signal }) => apiClient.get<{ event_id: string; actions: string[] }>(
+    `/platform/organizations/${orgId}/console/teams/event-actions`, { signal, params: { event_id: eventId } }),
+});
 
 type NotificationRulePayload = { name: string; trigger_key: string; channel: "EMAIL" | "SMS" | "WHATSAPP" | "PUSH" | "IN_APP" | "WEBHOOK"; recipients: Record<string, unknown>; conditions: Record<string, unknown>; escalation_policy: Record<string, unknown>; is_enabled: boolean; reason: string; template_id?: string };
 type NotificationChannelPayload = { channel: "EMAIL" | "SMS" | "WHATSAPP" | "PUSH" | "IN_APP" | "WEBHOOK"; provider: string; state: "UNAVAILABLE" | "CONFIGURED" | "ACTIVE" | "PAUSED" | "DEGRADED"; secret_reference?: string; configuration: Record<string, unknown>; reason: string };
@@ -1064,26 +1171,36 @@ export const useUpdateIntegrationConnection = (orgId: string) => {
 
 export const useCreateLifecycleJob = (orgId: string) => {
   const queryClient = useQueryClient();
+  const receipt = useRef({ signature: "", key: "" });
   return useMutation({
-    mutationFn: ({
+    retry: false,
+    mutationFn: async ({
       payload,
       idempotencyKey,
       stepUpToken,
+      organizationVersion,
     }: {
       payload: LifecycleJobCreate;
       idempotencyKey: string;
       stepUpToken?: string;
-    }) =>
-      apiClient.post<LifecycleJobOut>(
+      organizationVersion: number;
+    }) => {
+      if (destructiveLifecycleUnavailable(payload.job_type)) throw new Error(destructiveLifecycleUnavailableReason);
+      if (!Number.isInteger(organizationVersion) || organizationVersion < 1) throw new Error("Reload the organisation before requesting a lifecycle change.");
+      const signature = JSON.stringify([orgId, payload, organizationVersion]);
+      if (receipt.current.signature !== signature) receipt.current = { signature, key: idempotencyKey };
+      return apiClient.post<LifecycleJobOut>(
         `/platform/organizations/${orgId}/console/advanced/jobs`,
         payload,
         {
           headers: {
-            "Idempotency-Key": idempotencyKey,
+            "Idempotency-Key": receipt.current.key,
+            "If-Match": String(organizationVersion),
             ...(stepUpToken ? { "X-Step-Up-Token": stepUpToken } : {}),
           },
         }
-      ),
+      );
+    },
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: keys.summary(orgId) }),
@@ -1096,24 +1213,37 @@ export const useCreateLifecycleJob = (orgId: string) => {
 
 export const useLifecycleJobs = (orgId: string) => useQuery({
   queryKey: keys.lifecycleJobs(orgId),
-  queryFn: () => apiClient.get<LifecycleJobOut[]>(`/platform/organizations/${orgId}/console/advanced/jobs`),
-  refetchInterval: (query) => query.state.data?.some((job) => ["PENDING", "RETRY_PENDING", "RUNNING"].includes(job.status)) ? 3000 : false,
+  queryFn: ({ signal }) => apiClient.get<LifecycleJobOut[]>(`/platform/organizations/${orgId}/console/advanced/jobs`, { signal }),
+  enabled: !!orgId, retry: false, staleTime: 0,
+  refetchInterval: (query) => query.state.status !== "error" && query.state.data?.some((job) => ["PENDING", "RETRY_PENDING", "RUNNING"].includes(job.status)) ? 3000 : false,
 });
 
 export const useDecideLifecycleJob = (orgId: string) => {
   const queryClient = useQueryClient();
+  const receipt = useRef({ signature: "", key: "" });
   return useMutation({
-    mutationFn: ({ jobId, decision, reason, version }: { jobId: string; decision: "APPROVED" | "REJECTED"; reason: string; version: number }) =>
-      apiClient.post<LifecycleJobOut>(`/platform/organizations/${orgId}/console/advanced/jobs/${jobId}/approval`, { decision, reason, version }),
+    retry: false,
+    mutationFn: ({ jobId, decision, reason, version }: { jobId: string; decision: "APPROVED" | "REJECTED"; reason: string; version: number }) => {
+      const signature = JSON.stringify([orgId, jobId, decision, reason, version]);
+      if (receipt.current.signature !== signature) receipt.current = { signature, key: crypto.randomUUID() };
+      return apiClient.post<LifecycleJobOut>(`/platform/organizations/${orgId}/console/advanced/jobs/${jobId}/approval`, { decision, reason, version },
+        { headers: { "If-Match": String(version), "Idempotency-Key": receipt.current.key } });
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.lifecycleJobs(orgId) }),
   });
 };
 
 export const useRetryLifecycleJob = (orgId: string) => {
   const queryClient = useQueryClient();
+  const receipt = useRef({ signature: "", key: "" });
   return useMutation({
-    mutationFn: ({ jobId, reason, version }: { jobId: string; reason: string; version: number }) =>
-      apiClient.post<LifecycleJobOut>(`/platform/organizations/${orgId}/console/advanced/jobs/${jobId}/retry`, { decision: "APPROVED", reason, version }),
+    retry: false,
+    mutationFn: ({ jobId, reason, version }: { jobId: string; reason: string; version: number }) => {
+      const signature = JSON.stringify([orgId, jobId, reason, version]);
+      if (receipt.current.signature !== signature) receipt.current = { signature, key: crypto.randomUUID() };
+      return apiClient.post<LifecycleJobOut>(`/platform/organizations/${orgId}/console/advanced/jobs/${jobId}/retry`, { decision: "APPROVED", reason, version },
+        { headers: { "If-Match": String(version), "Idempotency-Key": receipt.current.key } });
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.lifecycleJobs(orgId) }),
   });
 };
@@ -1139,4 +1269,3 @@ export const useCreateConsoleExport = (orgId: string) => {
 };
 
 export const downloadConsoleExport = (orgId: string, exportId: string) => apiClient.get<{ download_url: string; filename: string; expires_in: number }>(`/platform/organizations/${orgId}/console/exports/${exportId}/download`);
-

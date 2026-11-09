@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.operations_planning.models import Project
+from app.modules.rbac.services.event_scope import owned_event_scope
 from app.modules.resource_management.models import (
     EquipmentAssignment,
     ResourcePlan,
@@ -29,6 +30,7 @@ class ResourceCommandService:
             select(Project).where(
                 Project.id == project_id,
                 Project.organization_id == organization_id,
+                owned_event_scope(self.db, Project.event_id, organization_id),
             )
         )
         if project is None:

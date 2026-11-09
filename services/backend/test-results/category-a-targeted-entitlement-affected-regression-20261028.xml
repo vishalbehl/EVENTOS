@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="36" time="225.150" timestamp="2026-10-28T09:34:40.160842+05:30" hostname="Vishal"><testcase classname="tests.test_delegated_form_management" name="test_registration_form_narrow_enforcement_matches_full_policy" time="16.990" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[event_scope-SURVEY]" time="6.791" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[event_scope-SPEAKER_INTAKE]" time="6.630" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[workspace_scope-SURVEY]" time="6.375" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[workspace_scope-SPEAKER_INTAKE]" time="7.084" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[requested-SURVEY]" time="4.618" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[requested-SPEAKER_INTAKE]" time="4.170" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[suspended-SURVEY]" time="5.553" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[suspended-SPEAKER_INTAKE]" time="5.430" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[detached-SURVEY]" time="5.458" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[detached-SPEAKER_INTAKE]" time="6.076" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[missing_action-SURVEY]" time="5.423" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[missing_action-SPEAKER_INTAKE]" time="5.700" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[foreign_event-SURVEY]" time="5.055" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[foreign_event-SPEAKER_INTAKE]" time="6.129" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[catalogue_denied-SURVEY]" time="6.218" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[catalogue_denied-SPEAKER_INTAKE]" time="6.759" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_delegated_binding_http_contract[SURVEY-survey]" time="42.135"><properties><property name="operational_binding_max_queries" value="66" /><property name="operational_binding_max_duration_ms" value="940" /><property name="operational_binding_relation_counts" value="{&quot;platform.organizations&quot;:6,&quot;events.events&quot;:5,&quot;identity.users&quot;:3,&quot;organizer_access.organization_members&quot;:3,&quot;organizer_access.permissions&quot;:3,&quot;platform.idempotency_records&quot;:3,&quot;of&quot;:3,&quot;design.form_templates&quot;:3,&quot;command_center_audit.logs&quot;:3,&quot;organizer_access.emc_client_delegations&quot;:2,&quot;organizer_access.emc_client_relationships&quot;:2,&quot;organizer_access.operational_workspaces&quot;:2,&quot;design.portal_theme_settings&quot;:2,&quot;organizer_access.organization_access_revisions&quot;:2,&quot;organizer_access.user_roles&quot;:2,&quot;scoped_roles&quot;:2,&quot;organizer_access.scoped_permissions&quot;:2,&quot;access.user_access_nodes&quot;:2,&quot;commerce.entitlement_override_requests&quot;:2,&quot;design.event_form_template_bindings&quot;:2,&quot;design.form_categories&quot;:2,&quot;identity.refresh_tokens&quot;:1,&quot;organizer_access.user_role_assignments&quot;:1,&quot;organizer_access.role_inheritance_maps&quot;:1,&quot;organizer_access.role_permissions&quot;:1,&quot;commerce.capability_revisions&quot;:1,&quot;commerce.commercial_contracts&quot;:1,&quot;commerce.commercial_accounts&quot;:1,&quot;commerce.commercial_contract_items&quot;:1,&quot;commerce.commercial_offers&quot;:1,&quot;commerce.commercial_offer_versions&quot;:1,&quot;commerce.commercial_offer_entitlements&quot;:1,&quot;commerce.organization_feature_overrides&quot;:1,&quot;commerce.feature_catalog&quot;:1,&quot;commerce.event_activations&quot;:1,&quot;commerce.event_commercial_contracts&quot;:1,&quot;platform.feature_flags&quot;:1,&quot;commerce.capability_restrictions&quot;:1,&quot;platform.platform_flag_definitions&quot;:1}" /></properties></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_delegated_binding_http_contract[SPEAKER_INTAKE-speaker_intake]" time="14.952"><properties><property name="operational_binding_max_queries" value="66" /><property name="operational_binding_max_duration_ms" value="1025" /><property name="operational_binding_relation_counts" value="{&quot;platform.organizations&quot;:6,&quot;events.events&quot;:5,&quot;identity.users&quot;:3,&quot;organizer_access.organization_members&quot;:3,&quot;organizer_access.permissions&quot;:3,&quot;platform.idempotency_records&quot;:3,&quot;of&quot;:3,&quot;design.form_templates&quot;:3,&quot;command_center_audit.logs&quot;:3,&quot;organizer_access.emc_client_delegations&quot;:2,&quot;organizer_access.emc_client_relationships&quot;:2,&quot;organizer_access.operational_workspaces&quot;:2,&quot;design.portal_theme_settings&quot;:2,&quot;organizer_access.organization_access_revisions&quot;:2,&quot;organizer_access.user_roles&quot;:2,&quot;scoped_roles&quot;:2,&quot;organizer_access.scoped_permissions&quot;:2,&quot;access.user_access_nodes&quot;:2,&quot;commerce.entitlement_override_requests&quot;:2,&quot;design.event_form_template_bindings&quot;:2,&quot;design.form_categories&quot;:2,&quot;identity.refresh_tokens&quot;:1,&quot;organizer_access.user_role_assignments&quot;:1,&quot;organizer_access.role_inheritance_maps&quot;:1,&quot;organizer_access.role_permissions&quot;:1,&quot;commerce.capability_revisions&quot;:1,&quot;commerce.commercial_contracts&quot;:1,&quot;commerce.commercial_accounts&quot;:1,&quot;commerce.commercial_contract_items&quot;:1,&quot;commerce.commercial_offers&quot;:1,&quot;commerce.commercial_offer_versions&quot;:1,&quot;commerce.commercial_offer_entitlements&quot;:1,&quot;commerce.organization_feature_overrides&quot;:1,&quot;commerce.feature_catalog&quot;:1,&quot;commerce.event_activations&quot;:1,&quot;commerce.event_commercial_contracts&quot;:1,&quot;platform.feature_flags&quot;:1,&quot;commerce.capability_restrictions&quot;:1,&quot;platform.platform_flag_definitions&quot;:1}" /></properties></testcase><testcase classname="tests.test_platform_commercial_capabilities" name="test_support_can_read_crm_but_not_billing" time="0.505" /><testcase classname="tests.test_platform_commercial_capabilities" name="test_finance_can_read_billing_but_not_crm" time="0.564" /><testcase classname="tests.test_platform_commercial_capabilities" name="test_platform_lifecycle_and_role_revocation_deny_old_claims[archived]" time="0.481" /><testcase classname="tests.test_platform_commercial_capabilities" name="test_platform_lifecycle_and_role_revocation_deny_old_claims[suspended]" time="0.425" /><testcase classname="tests.test_platform_commercial_capabilities" name="test_platform_lifecycle_and_role_revocation_deny_old_claims[inactive]" time="0.435" /><testcase classname="tests.test_platform_commercial_capabilities" name="test_platform_lifecycle_and_role_revocation_deny_old_claims[not_platform]" time="0.415" /><testcase classname="tests.test_platform_commercial_capabilities" name="test_platform_lifecycle_and_role_revocation_deny_old_claims[revoked_role]" time="0.445" /><testcase classname="tests.test_platform_commercial_capabilities" name="test_customer_global_admin_label_cannot_grant_platform_authority" time="0.454" /><testcase classname="tests.test_platform_commercial_capabilities" name="test_support_crm_mutation_fails_closed" time="0.004" /><testcase classname="tests.test_registration_qr_and_abstracts" name="test_abstract_setup_and_form_gets_are_read_only_when_unconfigured" time="3.148" /><testcase classname="tests.test_registration_qr_and_abstracts" name="test_abstract_form_http_write_requires_version_and_stable_retry" time="9.054" /><testcase classname="tests.test_registration_qr_and_abstracts" name="test_registration_confirmation_qr_issue_rotate_and_verify" time="5.710" /><testcase classname="tests.test_registration_qr_and_abstracts" name="test_registration_confirmation_qr_requires_event_entitlement" time="1.875" /><testcase classname="tests.test_registration_qr_and_abstracts" name="test_organiser_standalone_abstract_workflow" time="26.035" /><testcase classname="tests.test_organization_console" name="test_capability_diagnostics_are_redacted_and_tenant_scoped" time="0.882"><failure message="TypeError: 'plan' is an invalid keyword argument for Organization">client = &lt;httpx.AsyncClient object at 0x000001E221171E10&gt;
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001E2222480B0&gt;
+organization = &lt;Organization id=5271b4df-a30f-4047-ab15-fbd5cf7f7f94 slug=test-org-524b640e&gt;
+event = &lt;Event id=583fdbd0-0d3e-4275-9396-54cc22a23354 short_code=TC079A status=draft&gt;
+super_admin = &lt;User id=450a9c48-9c6a-4e2d-91f7-ac958da74407 email=admin-6cb651@test.com role=super_admin&gt;
+
+    @pytest.mark.asyncio
+    async def test_capability_diagnostics_are_redacted_and_tenant_scoped(
+        client: AsyncClient,
+        db: AsyncSession,
+        organization: Organization,
+        event: Event,
+        super_admin: User,
+    ):
+&gt;       other = Organization(
+            name="Other Diagnostics Tenant",
+            slug=f"other-diagnostics-{uuid.uuid4().hex[:8]}",
+            plan="pro",
+        )
+
+tests\test_organization_console.py:647: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+&lt;string&gt;:4: in __init__
+    ???
+.venv\Lib\site-packages\sqlalchemy\orm\state.py:596: in _initialize_instance
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\langhelpers.py:122: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+.venv\Lib\site-packages\sqlalchemy\orm\state.py:594: in _initialize_instance
+    manager.original_init(*mixed[1:], **kwargs)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;Organization id=None slug=other-diagnostics-6856cec8&gt;
+kwargs = {'name': 'Other Diagnostics Tenant', 'plan': 'pro', 'slug': 'other-diagnostics-6856cec8'}
+cls_ = &lt;class 'app.modules.platform.models.organization.Organization'&gt;
+k = 'plan'
+
+    def _declarative_constructor(self: Any, **kwargs: Any) -&gt; None:
+        """A simple constructor that allows initialization from kwargs.
+    
+        Sets attributes on the constructed instance using the names and
+        values in ``kwargs``.
+    
+        Only keys that are present as
+        attributes of the instance's class are allowed. These could be,
+        for example, any mapped columns or relationships.
+        """
+        cls_ = type(self)
+        for k in kwargs:
+            if not hasattr(cls_, k):
+&gt;               raise TypeError(
+                    "%r is an invalid keyword argument for %s" % (k, cls_.__name__)
+                )
+E               TypeError: 'plan' is an invalid keyword argument for Organization
+
+.venv\Lib\site-packages\sqlalchemy\orm\decl_base.py:2179: TypeError</failure></testcase><testcase classname="tests.test_organization_console" name="test_capability_control_expiry_preserves_history_and_expires_reservations" time="1.094" /><testcase classname="tests.test_organization_console" name="test_capability_restriction_restore_requires_independent_approval" time="3.345"><failure message="AssertionError: {&quot;detail&quot;:{&quot;code&quot;:&quot;CONTEXT_NOT_FOUND&quot;}}&#10;assert 404 == 200&#10; +  where 404 = &lt;Response [404 Not Found]&gt;.status_code">client = &lt;httpx.AsyncClient object at 0x000001E222447A50&gt;
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001E2222489B0&gt;
+organization = &lt;Organization id=91ab7289-c466-4c98-8b3e-9041fcd4137c slug=test-org-c76e6dc3&gt;
+event = &lt;Event id=b4ae36fa-b026-48da-8340-597d4cdee98f short_code=TCE2C1 status=draft&gt;
+super_admin = &lt;User id=e352d51d-7f1b-43a5-83ea-f931948c998c email=admin-aa36bb@test.com role=super_admin&gt;
+
+    @pytest.mark.asyncio
+    async def test_capability_restriction_restore_requires_independent_approval(
+        client: AsyncClient,
+        db: AsyncSession,
+        organization: Organization,
+        event: Event,
+        super_admin: User,
+    ):
+        approver = User(
+            organization_id=organization.id,
+            email=f"restriction-approver-{uuid.uuid4().hex[:8]}@test.com",
+            password_hash="not-used",
+            first_name="Restriction",
+            last_name="Approver",
+            role="super_admin",
+            is_active=True,
+        )
+        db.add(approver)
+        await db.flush()
+        base = f"/api/v1/platform/organizations/{organization.id}/console"
+        requested = await client.post(
+            f"{base}/restrictions",
+            headers={
+                **auth_headers(super_admin),
+                "Idempotency-Key": f"restriction-request-{uuid.uuid4()}",
+            },
+            json={
+                "event_id": str(event.id),
+                "capability_key": "speaker_management",
+                "restriction_type": "SECURITY",
+                "reason_code": "SECURITY_RESTRICTED",
+                "reason": "Temporarily contain speaker access while the incident is investigated.",
+                "case_reference": "SEC-2001",
+            },
+        )
+        assert requested.status_code == 202, requested.text
+        restriction_id = requested.json()["id"]
+        approved = await client.post(
+            f"{base}/restrictions/{restriction_id}/decision",
+            headers={
+                **auth_headers(approver),
+                "If-Match": "1",
+                "Idempotency-Key": f"restriction-approval-{uuid.uuid4()}",
+            },
+            json={
+                "decision": "APPROVED",
+                "reason": "Independently verified the incident containment requirement.",
+            },
+        )
+&gt;       assert approved.status_code == 200, approved.text
+E       AssertionError: {"detail":{"code":"CONTEXT_NOT_FOUND"}}
+E       assert 404 == 200
+E        +  where 404 = &lt;Response [404 Not Found]&gt;.status_code
+
+tests\test_organization_console.py:1198: AssertionError</failure></testcase></testsuite></testsuites>

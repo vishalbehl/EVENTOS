@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 class EmailTemplateCreate(BaseModel):
@@ -78,19 +78,22 @@ class EmailComponentResponse(BaseModel):
 
 
 class CampaignCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     template_id: uuid.UUID
     name: str = Field(min_length=1, max_length=150)
     recipient_filter: str = Field(
-        pattern="^(all|pending_upload|uploaded|approved|rejected|posters|specific_session|specific_room|specific_speakers|custom_list|custom|[a-zA-Z0-9_-]+)$"
+        pattern="^(all|pending_upload|uploaded|approved|rejected|posters|specific_session|specific_room|specific_speakers|custom_list|custom|paid|unpaid|pending|specific_participants)$"
     )
     session_id_filter: Optional[uuid.UUID] = None
     room_id_filter: Optional[uuid.UUID] = None
-    speaker_ids: Optional[List[uuid.UUID]] = None  # for specific_speakers
+    speaker_ids: Optional[List[uuid.UUID]] = Field(None, max_length=100)
     scheduled_at: Optional[datetime] = None
     target_type: str = Field(default="speaker", pattern="^(speaker|participant)$")
 
 
 class CampaignUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    speaker_ids: Optional[List[uuid.UUID]] = Field(None, max_length=100)
     template_id: Optional[uuid.UUID] = None
     name: Optional[str] = Field(None, min_length=1, max_length=150)
     recipient_filter: Optional[str] = Field(
@@ -104,6 +107,7 @@ class CampaignUpdate(BaseModel):
 
 
 class CampaignResponse(BaseModel):
+    dispatch_authorized: bool = False
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -122,6 +126,45 @@ class CampaignResponse(BaseModel):
     target_type: str
     created_at: datetime
     version: int = 1
+
+
+class CampaignActionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=10, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def meaningful_reason(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 10 or any(ord(char) < 32 for char in value):
+            raise ValueError("A plain-text audit reason of 10–500 characters is required.")
+        return value
+
+
+class CampaignActionResult(BaseModel):
+    campaign_id: uuid.UUID
+    version: int = Field(ge=1)
+    status: str
+    message: str
+
+
+class CampaignDeliverySummary(BaseModel):
+    """Allowlisted, campaign-wide counts, separate from cursor-page contents."""
+    campaign_id: uuid.UUID
+    event_id: uuid.UUID
+    name: str
+    created_at: datetime
+    version: int = Field(ge=1)
+    status: str
+    target_type: str
+    observed_at: datetime
+    total_logs: int = Field(ge=0)
+    sent_count: int = Field(ge=0)
+    failed_count: int = Field(ge=0)
+    opened_count: int = Field(ge=0)
+    queued_count: int = Field(ge=0)
+    sending_count: int = Field(ge=0)
+    unknown_count: int = Field(ge=0)
 
 
 class SendToSpeakersRequest(BaseModel):

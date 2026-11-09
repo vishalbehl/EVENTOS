@@ -30,6 +30,7 @@ from app.websocket.events import broadcast_file_event, EventType
 from app.core.dependencies.feature_gate import enforce_event_operation, require_event_feature, require_event_operation
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
 from app.modules.presentations.application.commands import PresentationFileCommandService
+from app.modules.presentations.application.queries import PresentationFileQueryService
 from app.modules.analytics.services.projection_dispatch import enqueue_event_speaker_projection_refresh
 
 router = APIRouter(prefix="/events/{event_id}/files", tags=["files"], dependencies=[require_event_feature("FEAT_FILE_UPLOADS")])
@@ -118,68 +119,16 @@ async def list_files(
     upload_status: Optional[str] = Query(None),
     current_version_only: bool = Query(True),
 ) -> List[PresentationFileResponse]:
-    from sqlalchemy.orm import selectinload
-    from sqlalchemy import or_
-    q = select(PresentationFile).where(PresentationFile.event_id == event.id).options(
-        selectinload(PresentationFile.speaker),
-        selectinload(PresentationFile.session_speaker).selectinload(SessionSpeaker.session),
-        selectinload(PresentationFile.validation)
+    files = await PresentationFileQueryService(db).list_for_event(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        user_id=current_user.id,
+        user_role=current_user.role,
+        session_speaker_id=session_speaker_id,
+        upload_status=upload_status,
+        current_version_only=current_version_only,
     )
-
-    # Apply restricted access filtering for non-admin roles
-    if current_user.role not in ["super_admin", "admin", "organiser"]:
-        from app.modules.rbac.models.rbac import UserAccessNode
-        from app.modules.rbac.models.user_assignment import UserEventAssignment
-
-        # Get assigned node IDs for this user
-        nodes_result = await db.execute(
-            select(UserAccessNode.node_id, UserAccessNode.node_type)
-            .where(UserAccessNode.user_id == current_user.id)
-        )
-        nodes = nodes_result.all()
-        
-        assigned_event_ids = {n.node_id for n in nodes if n.node_type == 'EVENT'}
-        assigned_room_ids = {n.node_id for n in nodes if n.node_type == 'ROOM'}
-        assigned_session_ids = {n.node_id for n in nodes if n.node_type == 'SESSION'}
-        
-        # Also check legacy assignments (only if they are event-wide)
-        legacy_result = await db.execute(
-            select(UserEventAssignment.event_id).where(
-                UserEventAssignment.user_id == current_user.id,
-                or_(
-                    ~UserEventAssignment.permissions.has_key('node_type'),
-                    UserEventAssignment.permissions['node_type'].astext == 'event'
-                )
-            )
-        )
-        assigned_event_ids.update(legacy_result.scalars().all())
-
-        # Filter files: they must belong to an assigned event, room, or session
-        if event.id not in assigned_event_ids:
-            q = q.where(
-                or_(
-                    PresentationFile.session_speaker_id.in_(
-                        select(SessionSpeaker.id)
-                        .join(Session, Session.id == SessionSpeaker.session_id)
-                        .where(
-                            or_(
-                                Session.id.in_(assigned_session_ids),
-                                Session.room_id.in_(assigned_room_ids)
-                            )
-                        )
-                    )
-                )
-            )
-
-    if session_speaker_id:
-        q = q.where(PresentationFile.session_speaker_id == session_speaker_id)
-    if upload_status:
-        q = q.where(PresentationFile.upload_status == upload_status)
-    if current_version_only:
-        q = q.where(PresentationFile.is_current_version.is_(True))
-    q = q.order_by(PresentationFile.uploaded_at.desc())
-    result = await db.execute(q)
-    return [PresentationFileResponse.model_validate(f) for f in result.scalars().all()]
+    return [PresentationFileResponse.model_validate(file) for file in files]
 
 
 @router.get("/{file_id}", response_model=PresentationFileResponse)

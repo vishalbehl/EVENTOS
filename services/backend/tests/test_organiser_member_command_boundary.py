@@ -25,7 +25,9 @@ def test_member_commands_are_tenant_locked_versioned_and_rollback_safe():
     assert all(f"async def {name}" in source for name in ("resend_invitation", "revoke_invitation", "update_role", "update_status", "bulk_update_status"))
     assert source.count(".with_for_update()") >= 4
     assert "VERSION_CONFLICT" in source
-    assert "RefreshToken" in source
+    assert "RefreshToken" not in source
+    assert "user.is_active =" not in source
+    assert "lock_revision" in source
     assert "AuditLog" in source
     assert "invalidate_organization" in source
     assert "await self.db.rollback()" in source

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="17" failures="0" errors="0" time="0.0215695">
+    <testsuite name="test/category-a/registration-editor-load.test.ts" timestamp="2026-10-20T17:26:35.848Z" hostname="Vishal" tests="17" failures="0" errors="0" skipped="0" time="0.0215695">
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (401)" time="0.0052712">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (403)" time="0.0005119">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (404)" time="0.000489">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (409)" time="0.0004804">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (429)" time="0.001068">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (503)" time="0.0005477">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="preserves an ambiguous legacy-selector conflict without guessing a document or retrying" time="0.0008518">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="retains intentionally empty server fields, with no synthetic default or reset" time="0.0005336">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="uses a verified selected blueprint and the loaded aggregate version" time="0.0030916">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="preserves the active aggregate when its original source was selected" time="0.0008997">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="keeps a valid current form editable but explicitly disables an unavailable reset" time="0.0006351">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="rejects conflicting event markers instead of treating another copy as active" time="0.0010545">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="rejects a non-registration or retired target" time="0.0006244">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="does not publish a response completed after its scope became obsolete" time="0.0003787">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="rejects foreign, unversioned or oversized aggregate responses" time="0.0003602">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="rejects foreign, unversioned or oversized aggregate responses" time="0.0002497">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="rejects foreign, unversioned or oversized aggregate responses" time="0.0002428">
+        </testcase>
+    </testsuite>
+</testsuites>

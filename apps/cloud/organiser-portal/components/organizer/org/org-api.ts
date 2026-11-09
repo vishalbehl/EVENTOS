@@ -1,6 +1,7 @@
 "use client";
 
 import { apiClient } from "@/lib/api-client";
+import { countryOptions, getTimezoneOptions } from "@/lib/organisation-locale-options";
 
 export type OrgRole = "owner" | "admin" | "member" | "billing_only";
 
@@ -9,16 +10,11 @@ export type Organization = {
   name: string;
   slug: string;
   logo_url?: string | null;
-  plan: "trial" | "starter" | "pro" | "enterprise";
-  plan_expires_at?: string | null;
   primary_color: string;
   secondary_color: string;
   billing_email?: string | null;
   country: string;
   timezone: string;
-  max_events: number;
-  max_users: number;
-  max_storage_gb: number;
   is_active: boolean;
   onboarding_completed: boolean;
   organization_type?: string | null;
@@ -41,19 +37,19 @@ export type Organization = {
 };
 
 export type OrgMe = {
-  organization: Omit<Organization, "plan" | "plan_expires_at" | "max_events" | "max_users" | "max_storage_gb">;
+  organization: Organization;
   member_count: number;
   event_count: number;
   storage_used_gb: number;
-  plan_limits: { events: number | null; users: number | null; storage_gb: number | null };
+  entitlement_limits: { events: number | null; users: number | null; storage_gb: number | null };
   commercial: {
     availability: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE";
     freshness_at: string;
     source: string;
-    subscription_id: string | null;
-    subscription_status: string | null;
-    plan_id: string | null;
-    plan_name: string | null;
+    contract_id: string | null;
+    contract_status: string | null;
+    offer_id: string | null;
+    offer_name: string | null;
   };
   org_role: OrgRole;
 };
@@ -86,7 +82,8 @@ export function usageTone(value: number, max: number) {
 export const orgApi = {
   checkSlug: (slug: string) => apiClient.get<{ available: boolean }>(`/auth/check-slug?slug=${encodeURIComponent(slugify(slug))}`),
   signup: (data: Record<string, unknown>) => apiClient.post<any>("/auth/signup", data),
-  acceptInvite: (data: Record<string, unknown>) => apiClient.post<any>("/auth/accept-invite", data),
+  previewInvite: (token: string, signal?: AbortSignal) => apiClient.post<{ membership_id: string; organization_id: string; organization_name: string; org_role: string; version: number; expires_at: string }>("/auth/invitation", { token }, { signal }),
+  acceptInvite: (token: string, version: number, key: string, signal?: AbortSignal) => apiClient.post<{ organization_id: string; organization_name: string; state: "ACCEPTED" }>("/auth/accept-invite", { token }, { signal, headers: { "If-Match": String(version), "Idempotency-Key": key } }),
   me: () => apiClient.get<OrgMe>("/organisations/me"),
   updateMe: (data: Partial<Organization>) => {
     const payload = { ...data };
@@ -95,47 +92,60 @@ export const orgApi = {
     }
     return apiClient.put<{ organization: Organization }>("/organisations/me", payload);
   },
+  // Compatibility first page only; never use this array to infer tenant totals.
   members: () => apiClient.get<OrgMember[]>("/organisations/me/members"),
-  invite: (email: string, org_role: OrgRole) => apiClient.post<{ message: string; invite_token?: string }>(
+  membersPage: (cursor?: string | null, signal?: AbortSignal) => apiClient.get<{ items: OrgMember[]; next_cursor: string | null; has_next: boolean }>(
+    `/organiser/members/cursor?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }),
+  invite: (email: string, org_role: OrgRole, key: string) => apiClient.post<{ message: string; invite_token?: string | null; expires_at: string; replayed: boolean }>(
     "/organisations/me/members/invite",
     { email, org_role },
-    { headers: { "Idempotency-Key": crypto.randomUUID() } },
+    { headers: { "Idempotency-Key": key } },
   ),
-  updateMember: (id: string, org_role: OrgRole) => apiClient.put(`/organisations/me/members/${id}`, { org_role }),
-  removeMember: (id: string) => apiClient.delete(`/organisations/me/members/${id}`),
+  updateMember: (id: string, org_role: OrgRole, version: number, reason: string) => apiClient.put(`/organisations/me/members/${id}`, { org_role, reason }, { headers: { "If-Match": String(version) } }),
+  removeMember: (id: string, version: number, reason: string) => apiClient.delete(`/organisations/me/members/${id}?reason=${encodeURIComponent(reason)}`, { headers: { "If-Match": String(version) } }),
   platformOrgs: (params = "") => apiClient.get<{ items: Organization[]; page: number; per_page: number }>(`/platform/organisations${params}`),
   platformOrg: (id: string) => apiClient.get<any>(`/platform/organisations/${id}`),
   platformUpdate: (id: string, data: Record<string, unknown>) => apiClient.put(`/platform/organisations/${id}`, data),
-  impersonate: (id: string) => apiClient.post<{ access_token: string }>(`/platform/organisations/${id}/impersonate`),
-  plans: () => apiClient.get<any[]>("/organisations/plans"),
-  plan: (id: string) => apiClient.get<any>("/organisations/plans/" + id),
-  addons: () => apiClient.get<any[]>("/organisations/addons"),
-  addon: (id: string) => apiClient.get<any>("/organisations/addons/" + id),
-  calculatePrice: (data: Record<string, any>) => apiClient.post<any>("/organisations/calculate-price", data),
-  currentBillingPlan: () => apiClient.get<any>("/billing/plan"),
-  activateEvent: (eventId: string, subscriptionId: string) =>
-    apiClient.post<any>(`/billing/events/${eventId}/activate`, { subscription_id: subscriptionId }),
-  requestCommercialAccess: (data: Record<string, unknown>) =>
-    apiClient.post<any>("/organisations/me/commercial-access-requests", data, {
+  eventOffers: () => apiClient.get<any[]>("/commercial/catalog?family=EVENT"),
+  eventOffer: (id: string) => apiClient.get<any>("/commercial/catalog/" + id),
+  capacityOffers: () => apiClient.get<any[]>("/commercial/catalog?family=CAPACITY_ADDON"),
+  capacityOffer: (id: string) => apiClient.get<any>("/commercial/catalog/" + id),
+  calculatePrice: (data: Record<string, any>) => apiClient.post<any>("/commercial/pricing/preview", data),
+  currentCommercialContract: async () => {
+    const contracts = await apiClient.get<any[]>("/commercial/contracts");
+    const contract = contracts?.[0];
+    const item = contract?.items?.[0];
+    return {
+      status: contract?.status,
+      contract_id: contract?.id,
+      contract_status: contract?.status,
+      ends_at: contract?.ends_at,
+      offer: { id: item?.offer_id, name: item?.offer_code || item?.display_name || "No active commercial offer" },
+      usage: { events: { max: 0 } },
+    };
+  },
+  requestCommercialQuote: (data: Record<string, any>) =>
+    apiClient.post<any>("/commercial/requests", {
+      account_type: "ORGANIZER",
+      request_type: "QUOTE",
+      events: data.event_id ? [{ event_id: data.event_id, offer_code: data.offer_code, capacity_addon_codes: data.capacity_addon_codes || [] }] : [],
+      reason: data.reason,
+      billing_profile: {
+        billing_name: data.billing_name,
+        billing_email: data.billing_email,
+        billing_phone: data.billing_phone,
+        gst_number: data.gst_number,
+      },
+    }, {
       headers: { "Idempotency-Key": crypto.randomUUID() },
     }),
   commercialAccessRequests: () =>
-    apiClient.get<any>("/organisations/me/commercial-access-requests"),
+    apiClient.get<any>("/commercial/requests"),
 };
 
-export const countries = [
-  { value: "IN", label: "India" },
-  { value: "US", label: "United States" },
-  { value: "GB", label: "United Kingdom" },
-  { value: "AE", label: "United Arab Emirates" },
-  { value: "SG", label: "Singapore" },
-];
+export const countries = countryOptions.map((country) => ({
+  value: country.code,
+  label: `${country.flag} ${country.name}`,
+}));
 
-export const timezones = [
-  "Asia/Kolkata",
-  "Asia/Dubai",
-  "Asia/Singapore",
-  "Europe/London",
-  "America/New_York",
-  "America/Los_Angeles",
-];
+export const timezones = getTimezoneOptions();

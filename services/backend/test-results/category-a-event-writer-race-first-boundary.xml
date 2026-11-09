@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="1" failures="1" skipped="0" tests="1" time="38.842" timestamp="2026-10-19T10:52:48.929531+05:30" hostname="Vishal"><testcase classname="tests.test_event_writer_retirement_races" name="test_retirement_orders_before_customer_writer[template-registration]" time="30.801"><failure message="AttributeError: 'NoneType' object has no attribute 'is_active'">tests\test_event_writer_retirement_races.py:172: in test_retirement_orders_before_customer_writer
+    await assert_current_references(observer, data, kind)
+tests\test_event_writer_retirement_races.py:143: in assert_current_references
+    assert category.is_active and category.deleted_at is None
+           ^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'NoneType' object has no attribute 'is_active'</failure></testcase><testcase classname="tests.test_event_writer_retirement_races" name="test_retirement_orders_before_customer_writer[template-registration]" time="3.839"><error message="failed on teardown with &quot;sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) &lt;class 'asyncpg.exceptions.ForeignKeyViolationError'&gt;: update or delete on table &quot;organizations&quot; violates foreign key constraint &quot;operational_workspaces_organization_id_fkey&quot; on table &quot;operational_workspaces&quot;&#10;DETAIL:  Key (id)=(7ddf9ed6-8c8e-4faf-a74b-d17fb46f9756) is still referenced from table &quot;operational_workspaces&quot;.&#10;[SQL: DELETE FROM platform.organizations WHERE platform.organizations.id = $1::UUID]&#10;[parameters: (UUID('7ddf9ed6-8c8e-4faf-a74b-d17fb46f9756'),)]&#10;(Background on this error at: https://sqlalche.me/e/20/gkpj)&quot;">.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.ForeignKeyViolationError: update or delete on table "organizations" violates foreign key constraint "operational_workspaces_organization_id_fkey" on table "operational_workspaces"
+E   DETAIL:  Key (id)=(7ddf9ed6-8c8e-4faf-a74b-d17fb46f9756) is still referenced from table "operational_workspaces".
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: &lt;class 'asyncpg.exceptions.ForeignKeyViolationError'&gt;: update or delete on table "organizations" violates foreign key constraint "operational_workspaces_organization_id_fkey" on table "operational_workspaces"
+E   DETAIL:  Key (id)=(7ddf9ed6-8c8e-4faf-a74b-d17fb46f9756) is still referenced from table "operational_workspaces".
+
+The above exception was the direct cause of the following exception:
+tests\test_event_writer_retirement_races.py:84: in customer_race
+    await db.execute(delete(Organization).where(Organization.id == data["owner_id"]))
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:448: in execute
+    result = await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2372: in execute
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\bulk_persistence.py:2033: in orm_execute_statement
+    return super().orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) &lt;class 'asyncpg.exceptions.ForeignKeyViolationError'&gt;: update or delete on table "organizations" violates foreign key constraint "operational_workspaces_organization_id_fkey" on table "operational_workspaces"
+E   DETAIL:  Key (id)=(7ddf9ed6-8c8e-4faf-a74b-d17fb46f9756) is still referenced from table "operational_workspaces".
+E   [SQL: DELETE FROM platform.organizations WHERE platform.organizations.id = $1::UUID]
+E   [parameters: (UUID('7ddf9ed6-8c8e-4faf-a74b-d17fb46f9756'),)]
+E   (Background on this error at: https://sqlalche.me/e/20/gkpj)</error></testcase></testsuite></testsuites>

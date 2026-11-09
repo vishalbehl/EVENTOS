@@ -118,24 +118,19 @@ class ConnectionManager:
         if not connections:
             return 0
 
-        dead: list[WebSocket] = []
         sent = 0
 
         for ws in connections:
-            try:
-                await ws.send_json(payload)
+            if await self.send_to(ws, payload):
                 sent += 1
-            except Exception as exc:
-                logger.debug(f"WebSocket send failed (removing dead connection): {exc}")
-                dead.append(ws)
-
-        for ws in dead:
-            self.disconnect(ws)
 
         return sent
 
     async def broadcast_to_all(self, payload: dict) -> int:
         """Broadcast to every connected client across all rooms."""
+        from app.websocket.publication import CONTROL
+        if not isinstance(payload, dict) or payload.get("type") not in CONTROL:
+            raise ValueError("Resource output requires an explicit authorised channel")
         total = 0
         for room in list(self._rooms.keys()):
             total += await self.broadcast(room, payload)
@@ -147,21 +142,46 @@ class ConnectionManager:
         Returns True on success, False if send failed.
         """
         try:
-            await websocket.send_json(payload)
+            await asyncio.wait_for(self._authorized_send(websocket, payload), timeout=3)
             return True
         except Exception as exc:
-            logger.debug(f"Unicast send failed: {exc}")
+            from app.websocket.auth import RealtimeAuthError
+            if isinstance(exc, RealtimeAuthError):
+                # Missing a domain grant omits that message; other permitted
+                # domain streams remain available. Revoked sessions are closed
+                # by the periodic context watchdog, with every send denied now.
+                return False
+            from app.websocket.publication import RealtimeOutputContractError
+            if isinstance(exc, RealtimeOutputContractError):
+                logger.warning("Native realtime output requires a registered projection")
+                return False
+            logger.debug("Native realtime delivery denied/unavailable: {}", type(exc).__name__)
             self.disconnect(websocket)
+            try:
+                await asyncio.wait_for(websocket.close(code=1008), timeout=1)
+            except Exception:
+                pass
             return False
+
+    async def _authorized_send(self, websocket, payload):
+        from app.database import AsyncSessionLocal
+        from app.websocket.publication import authorized_output
+        principal = getattr(websocket.state, "realtime_principal", None)
+        lease = getattr(websocket.state, "realtime_lease", None)
+        if principal is None or lease is None:
+            raise ValueError("An authenticated leased recipient is required")
+        await lease.action("renew")
+        async with AsyncSessionLocal() as db:
+            async with authorized_output(db, principal,
+                    getattr(websocket.state, "realtime_room_id", None),
+                    getattr(websocket.state, "realtime_event_id", None), payload) as projected:
+                await asyncio.wait_for(websocket.send_json(projected), timeout=1)
 
     async def send_text_to(self, websocket: WebSocket, text: str) -> bool:
         """Send raw text to a single WebSocket."""
-        try:
-            await websocket.send_text(text)
-            return True
-        except Exception:
-            self.disconnect(websocket)
-            return False
+        # Raw data cannot bypass the output contract. No current source caller
+        # uses this compatibility interface; migrate future users to envelopes.
+        return False
 
     # ── Heartbeat ─────────────────────────────────────────────
 

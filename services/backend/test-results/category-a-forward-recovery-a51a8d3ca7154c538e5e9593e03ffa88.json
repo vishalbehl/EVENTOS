@@ -1,0 +1,17 @@
+{
+  "status": "FAILED",
+  "environment": "local_isolated_rehearsal",
+  "run_id": "a51a8d3ca7154c538e5e9593e03ffa88",
+  "restored_database": "category_a_restore_20261020_4eeff58ce5f1",
+  "backup_evidence_sha256": "68ddc0cff7625306cb388b92b85d7c2ed0e3ad54bfc6b3a3aa8e8936f1b78042",
+  "recovery_strategy": "fail_closed_forward_only",
+  "application_binary_rollback": "UNAVAILABLE",
+  "application_deployment": "NOT_RUN",
+  "edge_worker_storage_containment": "NOT_RUN",
+  "staging_or_production_acceptance": "NOT_RUN",
+  "started_at": "2026-10-20T10:50:23.820233+00:00",
+  "failed_stage": "final_containment",
+  "error_type": "RuntimeError",
+  "completed_at": "2026-10-20T10:50:23.950483+00:00",
+  "probe_sha256": "aa2f6e11661c60931c2bb357e516cf5c9441f7bf620b2c8b3ac8102cf501c3fb"
+}

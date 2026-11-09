@@ -32,7 +32,7 @@ from typing import AsyncGenerator
 
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
@@ -71,83 +71,87 @@ from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.identity.services.auth_service import hash_password
 
 
-async def activate_event_for_test(db: AsyncSession, event: Event) -> None:
-    """Create a real snapshot-first license for tests that mutate paid resources."""
+async def activate_event_for_test(
+    db: AsyncSession,
+    event: Event,
+    *,
+    abstracts: bool = False,
+    confirmation_qr: bool = False,
+    attendee_checkin: bool = False,
+) -> None:
+    """Create a canonical commercial event contract for capacity-aware tests."""
     from sqlalchemy import select
-    from app.modules.billing.models.subscription import OrganizationSubscription, PlanFeature, SubscriptionPlan
+    from app.modules.billing.models.cloud_commercial import (
+        CommercialAccount, CommercialAccountWorkspace, CommercialContract,
+        CommercialContractItem, CommercialOffer, CommercialOfferEntitlement,
+        CommercialOfferPrice, CommercialOfferVersion,
+    )
     from app.modules.billing.services.activation_service import ActivationService
-    from app.modules.billing.services.capability_service import CapabilityService
-    from app.modules.platform.models.feature import FeatureCatalog
     from app.modules.platform.models.platform_domain_tables import FeatureFlag
+    from app.modules.platform.models.organization_console import EventCommercialContract
 
-    await CapabilityService.sync_catalogue(db)
-
-    plan = SubscriptionPlan(
-        name=f"Test Licensed Plan {uuid.uuid4().hex[:8]}",
-        max_events=100,
-        max_event_team_members=100,
-        max_registrations=10000,
-        max_speakers=1000,
-        max_sessions=1000,
-        max_rooms=100,
-        max_ticket_categories=100,
-        max_badge_templates=100,
-        max_certificate_templates=100,
-        max_emails_per_event=100000,
-        storage_quota_mb=10240,
-    )
-    db.add(plan)
+    account = await db.scalar(select(CommercialAccount).where(CommercialAccount.owner_organization_id == event.organization_id))
+    if account is None:
+        account = CommercialAccount(owner_organization_id=event.organization_id, account_type="ORGANIZER", status="ACTIVE", currency="INR", country="IN")
+        db.add(account)
+        await db.flush()
+        db.add(CommercialAccountWorkspace(commercial_account_id=account.id, organization_id=event.organization_id, workspace_role="OWNER", status="ACTIVE"))
+    offer = CommercialOffer(code=f"TEST_EVENT_{uuid.uuid4().hex[:10]}", product_family="EVENT", name="Test Event Offer", display_name="Test Event Offer", scope_type="EVENT", lifecycle_status="PUBLISHED", is_quote_only=False)
+    db.add(offer)
     await db.flush()
-    features = (await db.scalars(select(FeatureCatalog).where(FeatureCatalog.is_active.is_(True)))).all()
-    for feature in features:
-        value_type = (feature.value_type or "BOOLEAN").upper()
-        if value_type == "BOOLEAN":
-            value = True
-        elif value_type == "LIMIT":
-            value = 10000
-        else:
-            value = (feature.allowed_values or [None])[-1]
-        db.add(PlanFeature(
-            plan_id=plan.id,
-            feature_id=feature.id,
-            enabled=True,
-            value_type=value_type,
-            entitlement_value={"value": value},
-            scope_type=feature.scope_type,
-            enforcement_mode=feature.enforcement_mode,
+    offer_version = CommercialOfferVersion(offer_id=offer.id, version_number=1, effective_from=datetime.now(timezone.utc), version_status="PUBLISHED", change_reason="Test commercial offer")
+    db.add(offer_version)
+    await db.flush()
+    db.add(CommercialOfferPrice(offer_version_id=offer_version.id, billing_interval="PER_EVENT", pricing_unit="EVENT", amount=0, currency="INR", tax_mode="EXCLUSIVE"))
+    for key, quantity, unit in (("max_registrations", 10000, "REGISTRATION"), ("max_speakers", 1000, "SPEAKER"), ("max_sessions", 1000, "SESSION"), ("storage_quota_mb", 10240, "MB")):
+        db.add(CommercialOfferEntitlement(offer_version_id=offer_version.id, entitlement_key=key, scope_type="EVENT", value_type="QUANTITY", quantity=quantity, unit_type=unit, consumption_model="LIMIT", hard_ceiling=True))
+    feature_tiers = {"FEAT_REGISTRATION_PORTAL": "BASIC", "FEAT_REGISTRATION_FORMS": "STANDARD"}
+    if abstracts:
+        feature_tiers["FEAT_ABSTRACT_SUBMISSION"] = "BASIC"
+    if confirmation_qr:
+        feature_tiers["FEAT_QR_CONFIRMATION"] = "BASIC"
+    if attendee_checkin:
+        feature_tiers["FEAT_ATTENDEE_CHECKIN"] = "BASIC"
+    for key, value in feature_tiers.items():
+        db.add(CommercialOfferEntitlement(
+            offer_version_id=offer_version.id,
+            entitlement_key=key,
+            scope_type="EVENT",
+            value_type="TIER",
+            metadata_json={"value": value},
+            consumption_model="UNLOCK",
+            hard_ceiling=True,
         ))
+    contract = CommercialContract(commercial_account_id=account.id, contract_type="EVENT", status="ACTIVE", starts_at=datetime.now(timezone.utc), billing_interval="PER_EVENT", currency="INR", price_book_version="test", auto_renew=False)
+    db.add(contract)
     await db.flush()
-    subscription = OrganizationSubscription(
-        organization_id=event.organization_id,
-        plan_id=plan.id,
-        status="ACTIVE",
-    )
-    db.add(subscription)
+    db.add(CommercialContractItem(contract_id=contract.id, offer_id=offer.id, offer_version_id=offer_version.id, event_id=event.id, quantity=1, unit_price=0, tax_rate=18, line_total=0, allocation_snapshot_json={"max_registrations": 10000, "max_speakers": 1000, "max_sessions": 1000, "storage_quota_mb": 10240}))
     await db.flush()
-    await ActivationService.activate_event(
-        db,
+    await ActivationService.activate_event(db, organization_id=event.organization_id, event_id=event.id, commercial_contract_id=contract.id, activation_policy="SNAPSHOT_LOCKED", idempotency_key=f"test-activation-{event.id}", actor_id=event.created_by)
+    db.add(EventCommercialContract(
         organization_id=event.organization_id,
         event_id=event.id,
-        subscription_id=subscription.id,
-        grant_id=None,
-        activation_policy="SNAPSHOT_LOCKED",
-        idempotency_key=f"test-activation-{event.id}",
-        actor_id=event.created_by,
-    )
-    enforcement_flag = await db.scalar(
-        select(FeatureFlag).where(
-            FeatureFlag.organization_id == event.organization_id,
-            FeatureFlag.flag_key == "organizer_console_entitlement_enforce",
-        )
-    )
+        version=1,
+        status="ACTIVE",
+        plan_key="TEST_EVENT",
+        plan_version="1",
+        currency="INR",
+        entitlements={
+            **{key: {"type": "TIER", "value": value} for key, value in feature_tiers.items()},
+            "max_registrations": {"type": "LIMIT", "value": 10000},
+            "max_speakers": {"type": "LIMIT", "value": 1000},
+            "max_sessions": {"type": "LIMIT", "value": 1000},
+            "storage_quota_mb": {"type": "LIMIT", "value": 10240},
+        },
+        hard_ceilings={},
+        addons=[],
+        source={"test_fixture": True, "commercial_contract_id": str(contract.id)},
+        created_by=event.created_by,
+    ))
+    event.status = "active"
+    enforcement_flag = await db.scalar(select(FeatureFlag).where(FeatureFlag.organization_id == event.organization_id, FeatureFlag.flag_key == "organizer_console_entitlement_enforce"))
     if enforcement_flag is None:
-        db.add(
-            FeatureFlag(
-                organization_id=event.organization_id,
-                flag_key="organizer_console_entitlement_enforce",
-                is_enabled=True,
-            )
-        )
+        db.add(FeatureFlag(organization_id=event.organization_id, flag_key="organizer_console_entitlement_enforce", is_enabled=True))
     else:
         enforcement_flag.is_enabled = True
     await db.commit()
@@ -255,7 +259,40 @@ async def setup_test_database():
                 await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
             for schema in schemas:
                 await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+            if "organizer_access" in schemas:
+                await conn.execute(text("""CREATE OR REPLACE FUNCTION organizer_access.category_a_team_permissions_valid_v1(payload jsonb)
+                  RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+                    SELECT CASE WHEN jsonb_typeof(payload) = 'object' THEN
+                      (SELECT count(*) <= 100 AND coalesce(bool_and(
+                        jsonb_typeof(value) = 'boolean' AND key = ANY(ARRAY['EVENTS:VIEW', 'EVENTS:CREATE', 'EVENTS:EDIT', 'EVENTS:DELETE', 'EVENTS:EXPORT', 'SESSIONS:VIEW', 'SESSIONS:CREATE', 'SESSIONS:EDIT', 'SESSIONS:DELETE', 'SESSIONS:APPROVE', 'SESSIONS:OVERRIDE', 'SESSIONS:EXPORT', 'SPEAKERS:VIEW', 'SPEAKERS:CREATE', 'SPEAKERS:EDIT', 'SPEAKERS:DELETE', 'SPEAKERS:APPROVE', 'SPEAKERS:EXPORT', 'FILES:VIEW', 'FILES:CREATE', 'FILES:EDIT', 'FILES:DELETE', 'FILES:APPROVE', 'FILES:REJECT', 'FILES:DOWNLOAD', 'FILES:EXPORT', 'ROOMS:VIEW', 'ROOMS:CREATE', 'ROOMS:EDIT', 'ROOMS:DELETE', 'ROOMS:OVERRIDE', 'QUEUE:VIEW', 'QUEUE:CREATE', 'QUEUE:EDIT', 'QUEUE:DELETE', 'QUEUE:OVERRIDE', 'DEVICES:VIEW', 'DEVICES:CREATE', 'DEVICES:EDIT', 'DEVICES:DELETE', 'POSTERS:VIEW', 'POSTERS:CREATE', 'POSTERS:EDIT', 'POSTERS:DELETE', 'POSTERS:APPROVE', 'POSTERS:EXPORT', 'REPORTS:VIEW', 'REPORTS:EXPORT', 'ANALYTICS:VIEW', 'ANALYTICS:REG_DASHBOARD', 'ANALYTICS:HUB', 'ANALYTICS:EXPORT', 'PARTICIPANTS:VIEW', 'PARTICIPANTS:CREATE', 'PARTICIPANTS:EDIT', 'PARTICIPANTS:DELETE', 'PARTICIPANTS:IMPORT', 'PARTICIPANTS:EXPORT', 'REGISTRATION:VIEW_QUEUE', 'REGISTRATION:APPROVE', 'REGISTRATION:REJECT', 'REGISTRATION:WAITLIST', 'REGISTRATION:OVERRIDE', 'REG_CONFIG:VIEW', 'REG_CONFIG:EDIT', 'REG_CONFIG:PRICING', 'REG_CONFIG:ROLES', 'REG_CONFIG:FORM', 'REG_CONFIG:FAQ', 'BADGES:VIEW', 'BADGES:GENERATE', 'BADGES:PRINT', 'BADGES:REPRINT', 'BADGES:TEMPLATES', 'BADGES:QUEUE', 'BADGES:EXPORT', 'CHECKIN:VIEW', 'CHECKIN:QR', 'CHECKIN:MANUAL', 'CHECKIN:UNDO', 'CHECKIN:LOGS', 'CAMPAIGNS:VIEW', 'CAMPAIGNS:CREATE', 'CAMPAIGNS:EDIT', 'CAMPAIGNS:SEND', 'CAMPAIGNS:DELETE', 'CAMPAIGNS:TEMPLATES', 'ANNOUNCEMENTS:VIEW', 'ANNOUNCEMENTS:EDIT']::text[])), true)
+                       FROM jsonb_each(payload))
+                    ELSE false END
+                  $$;"""))
             await conn.run_sync(Base.metadata.create_all)
+            # Metadata cannot install database functions. Use the real frozen
+            # migration SQL rather than mocking public discovery in API tests.
+            from pathlib import Path
+            import runpy
+            discovery = runpy.run_path(str(Path(__file__).parents[1] /
+                "alembic/versions/20261016_3580_public_form_discovery.py"))
+            await conn.execute(text(discovery["PUBLIC_FORM_OWNER_SQL"]))
+            await conn.execute(text(
+                "REVOKE ALL ON FUNCTION registration.public_form_owner_v1(uuid) FROM PUBLIC"))
+            retirement_discovery = runpy.run_path(str(Path(__file__).parents[1] /
+                "alembic/versions/20261016_3590_catalogue_reference_discovery.py"))
+            await conn.execute(text(retirement_discovery["REFERENCE_OWNER_SQL"]))
+            await conn.execute(text(
+                "REVOKE ALL ON FUNCTION design.catalogue_reference_owners_v1(text,uuid,uuid,uuid) FROM PUBLIC"))
+            review_projection = runpy.run_path(str(Path(__file__).parents[1] /
+                "alembic/versions/20261022_3670_programme_rubric_reconciliation.py"))
+            await conn.execute(text(review_projection["BLOCKED_REVIEW_SQL"]))
+            await conn.execute(text(
+                "REVOKE ALL ON FUNCTION design.catalogue_blocked_review_v1(text,uuid,timestamptz,uuid,integer) FROM PUBLIC"))
+            template_review = runpy.run_path(str(Path(__file__).parents[1] /
+                "alembic/versions/20261016_3620_source_template_review_projection.py"))
+            await conn.execute(text(template_review["TEMPLATE_REVIEW_SQL"]))
+            await conn.execute(text(
+                "REVOKE ALL ON FUNCTION design.catalogue_template_review_v1(uuid,uuid,timestamptz,uuid,integer) FROM PUBLIC"))
 
             # Create default partitions for test runs only when parent tables exist in metadata/schema.
             partition_specs = [
@@ -402,10 +439,10 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     async def _override_get_db():
         yield fastapi_app.state.test_db_session
 
-    async def _override_current_user(token_data=Depends(get_token_data)):
+    async def _override_current_user(request: Request, token_data=Depends(get_token_data)):
         # Keep real JWT decoding and account validation, but bind the lookup to
         # the same transaction as the route under test.
-        return await get_current_user(token_data, fastapi_app.state.test_db_session)
+        return await get_current_user(request, token_data, fastapi_app.state.test_db_session)
 
     async def _override_active_user(user=Depends(_override_current_user)):
         if not user.is_active:
@@ -416,25 +453,13 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
             )
         return user
 
-    async def _override_super_admin(user=Depends(_override_active_user)):
-        from fastapi import HTTPException, status
-        if not (
-            user.role == "super_admin"
-            or user.platform_role == "SUPER_ADMIN"
-            or getattr(user, "is_platform_admin", False)
-        ):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Super Admin access required.")
-        return user
-
     fastapi_app.dependency_overrides[get_db] = _override_get_db
     fastapi_app.dependency_overrides[get_current_user] = _override_current_user
     fastapi_app.dependency_overrides[require_active_user] = _override_active_user
-    fastapi_app.dependency_overrides[require_super_admin] = _override_super_admin
     if fastapi_app is not asgi_app and hasattr(asgi_app, "dependency_overrides"):
         asgi_app.dependency_overrides[get_db] = _override_get_db
         asgi_app.dependency_overrides[get_current_user] = _override_current_user
         asgi_app.dependency_overrides[require_active_user] = _override_active_user
-        asgi_app.dependency_overrides[require_super_admin] = _override_super_admin
 
     # Register the prefix-free compatibility routes once. Re-registering them
     # for every test leaves stale dependency graphs at the front of the router.
@@ -463,6 +488,7 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
             yield ac
     finally:
         app.database.AsyncSessionLocal = original_sessionmaker
+        await async_engine.dispose()
         fastapi_app.dependency_overrides.clear()
         if fastapi_app is not asgi_app and hasattr(asgi_app, "dependency_overrides"):
             asgi_app.dependency_overrides.clear()
@@ -474,12 +500,15 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
 @pytest_asyncio.fixture
 async def organization(db: AsyncSession) -> Organization:
     """Create and persist a test Organization."""
+    from app.modules.rbac.models.access_foundation import OrganizationAccessRevision
+
     org = Organization(
         name="Test Org",
         slug=f"test-org-{uuid.uuid4().hex[:8]}",
-        plan="pro",
     )
     db.add(org)
+    await db.flush()
+    db.add(OrganizationAccessRevision(organization_id=org.id, revision=1))
     await db.flush()
     return org
 
@@ -487,6 +516,7 @@ async def organization(db: AsyncSession) -> Organization:
 @pytest_asyncio.fixture
 async def organizer(db: AsyncSession, organization: Organization) -> User:
     """Create and persist an event_organizer User."""
+    from app.modules.rbac.models.organization_member import OrganizationMember
     user = User(
         organization_id=organization.id,
         email=f"organizer-{uuid.uuid4().hex[:6]}@test.com",
@@ -502,7 +532,9 @@ async def organizer(db: AsyncSession, organization: Organization) -> User:
     membership = UserOrganizationMembership(
         user_id=user.id,
         organization_id=organization.id,
-        org_role="organiser"
+        org_role="owner",
+        accepted_at=datetime.now(timezone.utc),
+        is_active=True,
     )
     db.add(membership)
     await db.flush()
@@ -511,26 +543,26 @@ async def organizer(db: AsyncSession, organization: Organization) -> User:
 
 @pytest_asyncio.fixture
 async def super_admin(db: AsyncSession, organization: Organization) -> User:
-    """Create and persist a super_admin User."""
+    """Create a platform identity without implicit customer membership."""
+    platform_org = Organization(name="Test Platform", slug=f"test-platform-{uuid.uuid4().hex[:8]}", is_platform_org=True)
+    db.add(platform_org)
+    await db.flush()
+    from app.modules.rbac.models.access_foundation import OrganizationAccessRevision
+    db.add(OrganizationAccessRevision(organization_id=platform_org.id, revision=1))
+    await db.flush()
     user = User(
-        organization_id=organization.id,
+        organization_id=platform_org.id,
         email=f"admin-{uuid.uuid4().hex[:6]}@test.com",
         password_hash=hash_password("adminpassword123"),
         first_name="Super",
         last_name="Admin",
         role="super_admin",
+        platform_role="SUPER_ADMIN",
         is_active=True,
     )
     db.add(user)
     await db.flush()
 
-    membership = UserOrganizationMembership(
-        user_id=user.id,
-        organization_id=organization.id,
-        org_role="super_admin"
-    )
-    db.add(membership)
-    await db.flush()
     return user
 
 
@@ -538,9 +570,15 @@ async def super_admin(db: AsyncSession, organization: Organization) -> User:
 async def event(db: AsyncSession, organization: Organization, organizer: User) -> Event:
     """Create and persist a draft Event."""
     from datetime import date
+    from app.modules.rbac.models.access_foundation import OperationalWorkspace
+    workspace = OperationalWorkspace(organization_id=organization.id, name="Event Workspace")
+    db.add(workspace)
+    await db.flush()
+
     ev = Event(
         organization_id=organization.id,
         created_by=organizer.id,
+        operational_workspace_id=workspace.id,
         name="Test Conference 2026",
         short_code=f"TC{uuid.uuid4().hex[:4].upper()}",
         location="Test City",
@@ -616,10 +654,8 @@ async def speaker(db: AsyncSession, event: Event) -> Speaker:
         affiliation="Test University",
         country="India",
         upload_token=token_hash,
-        speaker_code=token_hash[:8].upper(),
         upload_status="pending",
     )
-    print("CONFTEST FIXTURE: sp.speaker_code =", sp.speaker_code)
     sp._plain_token = plain_token  # stash for use in tests
     db.add(sp)
     await db.flush()
@@ -655,66 +691,13 @@ def make_access_token(user: User) -> str:
     # state so repeated requests remain independent of session expiration.
     claims = user.__dict__.get("_test_auth_claims")
     if claims is None:
-        claims = (user.id, user.role, user.organization_id)
+        claims = (user.id, user.role, user.organization_id, user.auth_revision)
         user.__dict__["_test_auth_claims"] = claims
     from types import SimpleNamespace
-    return create_access_token(SimpleNamespace(id=claims[0], role=claims[1], organization_id=claims[2]))
+    return create_access_token(SimpleNamespace(id=claims[0], role=claims[1], organization_id=claims[2], auth_revision=claims[3]))
 
 
 def auth_headers(user: User) -> dict:
     """Return Authorization headers dict for httpx requests."""
     token = make_access_token(user)
     return {"Authorization": f"Bearer {token}"}
-
-
-async def assign_typed_plan_limits(
-    db: AsyncSession,
-    plan,
-    **limits: int,
-) -> None:
-    """Create canonical typed LIMIT assignments for a test plan."""
-    from sqlalchemy import select
-
-    from app.modules.billing.capability_registry import (
-        CATALOG_LIMIT_KEYS,
-        LIMIT_DEFINITIONS,
-        PLATFORM_HARD_CEILINGS,
-    )
-    from app.modules.billing.models.subscription import PlanFeature
-    from app.modules.platform.models.feature import FeatureCatalog
-
-    catalogue_key_by_limit = {
-        limit_key: catalogue_key
-        for catalogue_key, limit_key in CATALOG_LIMIT_KEYS.items()
-    }
-    for limit_key, value in limits.items():
-        catalogue_key = catalogue_key_by_limit[limit_key]
-        definition = LIMIT_DEFINITIONS[limit_key]
-        feature = await db.scalar(
-            select(FeatureCatalog).where(FeatureCatalog.key == catalogue_key)
-        )
-        if feature is None:
-            feature = FeatureCatalog(
-                key=catalogue_key,
-                name=limit_key.replace("_", " ").title(),
-                category="LIMITS",
-                scope_type=definition["scope"],
-                value_type="LIMIT",
-                default_value={"value": 0},
-                unit=definition["unit"],
-                period=definition["period"],
-                metric_key=definition["metric_key"],
-            )
-            db.add(feature)
-            await db.flush()
-        db.add(PlanFeature(
-            plan_id=plan.id,
-            feature_id=feature.id,
-            enabled=True,
-            value_type="LIMIT",
-            entitlement_value={"value": int(value)},
-            scope_type=definition["scope"],
-            enforcement_mode="HARD",
-            hard_ceiling={"value": PLATFORM_HARD_CEILINGS[limit_key]},
-        ))
-    await db.flush()

@@ -14,6 +14,9 @@ from app.models.print_template import PrintTemplate
 from app.models.participant_role import ParticipantRole
 from app.models.participant import Participant
 from app.models.participant_registration import ParticipantRegistration
+from app.models.ticket_type import TicketType
+from app.models.promo_code import PromoCode
+from app.models.payment_transaction import PaymentTransaction
 from app.models.capacity_rule import CapacityRule
 from app.models.companion import Companion
 from app.models.room import Room
@@ -28,7 +31,7 @@ from app.models.room_device import RoomDevice
 from app.models.action_log import ParticipantActionLog
 from app.websocket.connection import broadcast_queue_update
 
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 
 def _source_root_url(base_url: str, source_type: str) -> str:
@@ -40,13 +43,21 @@ def _source_root_url(base_url: str, source_type: str) -> str:
         return f"{url}/api/v1/sync"
     return f"{url}/api/v1/registration-source"
 
-def parse_dt(v):
-    if not v:
+def parse_dt(dt_str):
+    if not dt_str:
         return None
-    if isinstance(v, (datetime, date)):
-        return v
     try:
-        return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+def parse_uuid(uuid_val):
+    if not uuid_val:
+        return None
+    if isinstance(uuid_val, uuid.UUID):
+        return uuid_val
+    try:
+        return uuid.UUID(str(uuid_val))
     except Exception:
         return None
 
@@ -187,40 +198,61 @@ async def _upsert_schedule_data(db: AsyncSession, data: dict):
 
     # 3. UPSERT participants
     for p_data in data.get("participants", []):
+        raw_roles = p_data.get("roles") or []
+        if isinstance(raw_roles, str):
+            raw_roles = [raw_roles]
         p_stmt = insert(Participant).values(
             id=p_data["id"],
             event_id=event_id,
             regno=p_data.get("regno"),
-            name=p_data["name"],
             first_name=p_data.get("first_name", ""),
             last_name=p_data.get("last_name", ""),
             email=p_data.get("email"),
             phone=p_data.get("phone"),
             role=p_data.get("role", "Delegate"),
+            role_id=parse_uuid(p_data.get("role_id")),
+            roles=raw_roles,
+            track_id=parse_uuid(p_data.get("track_id")),
             company=p_data.get("company"),
             designation=p_data.get("designation"),
             country=p_data.get("country"),
+            state=p_data.get("state"),
+            approval_status=p_data.get("approval_status", "Approved"),
             paid_status=p_data.get("paid_status", "Unpaid"),
+            badge_status=p_data.get("badge_status", "Unprinted"),
+            checkin_status=p_data.get("checkin_status", "Pending"),
             source=p_data.get("source", "offline"),
+            qr_code_url=p_data.get("qr_code_url"),
             custom_fields=p_data.get("custom_fields", {}),
-            registered_at=parse_dt(p_data.get("registered_at"))
+            registered_at=parse_dt(p_data.get("registered_at")) or datetime.now(timezone.utc),
+            updated_at=parse_dt(p_data.get("updated_at")) or datetime.now(timezone.utc),
+            version=p_data.get("version", 1),
         ).on_conflict_do_update(
             index_elements=["id"],
             set_={
                 "regno": p_data.get("regno"),
-                "name": p_data["name"],
                 "first_name": p_data.get("first_name", ""),
                 "last_name": p_data.get("last_name", ""),
                 "email": p_data.get("email"),
                 "phone": p_data.get("phone"),
                 "role": p_data.get("role", "Delegate"),
+                "role_id": parse_uuid(p_data.get("role_id")),
+                "roles": raw_roles,
+                "track_id": parse_uuid(p_data.get("track_id")),
                 "company": p_data.get("company"),
                 "designation": p_data.get("designation"),
                 "country": p_data.get("country"),
+                "state": p_data.get("state"),
+                "approval_status": p_data.get("approval_status", "Approved"),
                 "paid_status": p_data.get("paid_status", "Unpaid"),
+                "badge_status": p_data.get("badge_status", "Unprinted"),
+                "checkin_status": p_data.get("checkin_status", "Pending"),
                 "source": p_data.get("source", "offline"),
+                "qr_code_url": p_data.get("qr_code_url"),
                 "custom_fields": p_data.get("custom_fields", {}),
-                "registered_at": parse_dt(p_data.get("registered_at"))
+                "registered_at": parse_dt(p_data.get("registered_at")) or datetime.now(timezone.utc),
+                "updated_at": parse_dt(p_data.get("updated_at")) or datetime.now(timezone.utc),
+                "version": p_data.get("version", 1),
             }
         )
         await db.execute(p_stmt)
@@ -238,7 +270,8 @@ async def _upsert_schedule_data(db: AsyncSession, data: dict):
             reviewed_at=parse_dt(r_data.get("reviewed_at")),
             review_notes=r_data.get("review_notes"),
             waitlist_position=r_data.get("waitlist_position"),
-            rejection_reason=r_data.get("rejection_reason")
+            rejection_reason=r_data.get("rejection_reason"),
+            approval_source=r_data.get("approval_source", "portal"),
         ).on_conflict_do_update(
             index_elements=["id"],
             set_={
@@ -250,7 +283,8 @@ async def _upsert_schedule_data(db: AsyncSession, data: dict):
                 "reviewed_at": parse_dt(r_data.get("reviewed_at")),
                 "review_notes": r_data.get("review_notes"),
                 "waitlist_position": r_data.get("waitlist_position"),
-                "rejection_reason": r_data.get("rejection_reason")
+                "rejection_reason": r_data.get("rejection_reason"),
+                "approval_source": r_data.get("approval_source", "portal"),
             }
         )
         await db.execute(r_stmt)
@@ -282,6 +316,85 @@ async def _upsert_schedule_data(db: AsyncSession, data: dict):
             },
         )
         await db.execute(ext_stmt)
+
+    # 3d. UPSERT ticket_types
+    for tt_data in data.get("ticket_types", []):
+        role_name = tt_data.get("role_name") or tt_data.get("name") or "Delegate"
+        tier_name = tt_data.get("tier_name") or tt_data.get("code") or "Standard"
+        tt_stmt = insert(TicketType).values(
+            id=tt_data["id"],
+            event_id=event_id,
+            role_name=role_name,
+            tier_name=tier_name,
+            price=float(tt_data.get("price", 0.0)),
+            available_from=parse_dt(tt_data.get("available_from")),
+            available_until=parse_dt(tt_data.get("available_until")),
+        ).on_conflict_do_update(
+            index_elements=["event_id", "role_name", "tier_name"],
+            set_={
+                "price": float(tt_data.get("price", 0.0)),
+                "available_from": parse_dt(tt_data.get("available_from")),
+                "available_until": parse_dt(tt_data.get("available_until")),
+            }
+        )
+        await db.execute(tt_stmt)
+
+    # 3e. UPSERT promo_codes
+    for pc_data in data.get("promo_codes", []):
+        pc_stmt = insert(PromoCode).values(
+            id=pc_data["id"],
+            event_id=event_id,
+            code=pc_data["code"],
+            discount_type=pc_data.get("discount_type", "PERCENTAGE"),
+            discount_value=float(pc_data.get("discount_value", 0.0)),
+            max_uses=pc_data.get("max_uses"),
+            used_count=pc_data.get("used_count", pc_data.get("current_uses", 0)),
+            expiry_date=parse_dt(pc_data.get("expiry_date")),
+            is_active=pc_data.get("is_active", True),
+        ).on_conflict_do_update(
+            index_elements=["event_id", "code"],
+            set_={
+                "discount_type": pc_data.get("discount_type", "PERCENTAGE"),
+                "discount_value": float(pc_data.get("discount_value", 0.0)),
+                "max_uses": pc_data.get("max_uses"),
+                "used_count": pc_data.get("used_count", pc_data.get("current_uses", 0)),
+                "expiry_date": parse_dt(pc_data.get("expiry_date")),
+                "is_active": pc_data.get("is_active", True),
+            }
+        )
+        await db.execute(pc_stmt)
+
+    # 3f. UPSERT payment_transactions
+    for pt_data in data.get("payment_transactions", []):
+        reg_id = parse_uuid(pt_data.get("registration_id") or pt_data.get("participant_id"))
+        pt_stmt = insert(PaymentTransaction).values(
+            id=pt_data["id"],
+            event_id=event_id,
+            registration_id=reg_id,
+            amount=float(pt_data.get("amount", 0.0)),
+            currency=pt_data.get("currency", "USD"),
+            status=pt_data.get("status", "completed"),
+            payment_method=pt_data.get("payment_method", "stripe"),
+            gateway_order_id=pt_data.get("gateway_order_id"),
+            gateway_payment_id=pt_data.get("gateway_payment_id") or pt_data.get("gateway_transaction_id"),
+            promo_code_id=parse_uuid(pt_data.get("promo_code_id")),
+            discount_applied=float(pt_data.get("discount_applied", 0.0)),
+            created_at=parse_dt(pt_data.get("created_at") or pt_data.get("paid_at")) or datetime.now(timezone.utc),
+        ).on_conflict_do_update(
+            index_elements=["id"],
+            set_={
+                "registration_id": reg_id,
+                "amount": float(pt_data.get("amount", 0.0)),
+                "currency": pt_data.get("currency", "USD"),
+                "status": pt_data.get("status", "completed"),
+                "payment_method": pt_data.get("payment_method", "stripe"),
+                "gateway_order_id": pt_data.get("gateway_order_id"),
+                "gateway_payment_id": pt_data.get("gateway_payment_id") or pt_data.get("gateway_transaction_id"),
+                "promo_code_id": parse_uuid(pt_data.get("promo_code_id")),
+                "discount_applied": float(pt_data.get("discount_applied", 0.0)),
+            }
+        )
+        await db.execute(pt_stmt)
 
     # Registration Server intentionally skips presentation/poster payloads.
     #
@@ -318,30 +431,32 @@ async def _upsert_schedule_data(db: AsyncSession, data: dict):
 
     # 4. UPSERT badges
     for b_data in data.get("badges", []):
+        badge_code = b_data.get("badge_code") or b_data.get("badge_number") or str(uuid.uuid4())[:8]
+        qr_token = b_data.get("qr_token") or b_data.get("qr_code") or f"QR-{badge_code}"
+        barcode = b_data.get("barcode") or badge_code
         b_stmt = insert(Badge).values(
             id=b_data["id"],
-            participant_id=b_data["participant_id"],
-            badge_code=b_data["badge_code"],
-            qr_token=b_data["qr_token"],
-            barcode=b_data["barcode"],
+            participant_id=parse_uuid(b_data["participant_id"]),
+            badge_code=badge_code,
+            qr_token=qr_token,
+            barcode=barcode,
             nfc_uid=b_data.get("nfc_uid"),
-            template_id=b_data.get("template_id"),
+            template_id=parse_uuid(b_data.get("template_id")),
             status=b_data.get("status", "created"),
-            issued_at=parse_dt(b_data.get("issued_at")),
-            created_at=parse_dt(b_data.get("created_at")),
-            updated_at=parse_dt(b_data.get("updated_at"))
+            issued_at=parse_dt(b_data.get("issued_at") or b_data.get("printed_at")),
+            created_at=parse_dt(b_data.get("created_at")) or datetime.now(timezone.utc),
+            updated_at=parse_dt(b_data.get("updated_at")) or datetime.now(timezone.utc),
         ).on_conflict_do_update(
             index_elements=["id"],
             set_={
-                "badge_code": b_data["badge_code"],
-                "qr_token": b_data["qr_token"],
-                "barcode": b_data["barcode"],
+                "badge_code": badge_code,
+                "qr_token": qr_token,
+                "barcode": barcode,
                 "nfc_uid": b_data.get("nfc_uid"),
-                "template_id": b_data.get("template_id"),
+                "template_id": parse_uuid(b_data.get("template_id")),
                 "status": b_data.get("status", "created"),
-                "issued_at": parse_dt(b_data.get("issued_at")),
-                "created_at": parse_dt(b_data.get("created_at")),
-                "updated_at": parse_dt(b_data.get("updated_at"))
+                "issued_at": parse_dt(b_data.get("issued_at") or b_data.get("printed_at")),
+                "updated_at": parse_dt(b_data.get("updated_at")) or datetime.now(timezone.utc),
             }
         )
         await db.execute(b_stmt)

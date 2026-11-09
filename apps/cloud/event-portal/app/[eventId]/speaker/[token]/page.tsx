@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useState, useRef, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   Calendar, Clock, MapPin, FileUp, CheckCircle2,
   AlertCircle, ChevronRight, Presentation, LogOut,
@@ -27,15 +27,22 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn, formatInTZ, UPLOAD_STATUS_COLOR, UPLOAD_STATUS_LABEL } from "@/lib/utils";
+import { PortalAccessFailure } from "@/components/PortalAccessFailure";
 
 export default function DirectSpeakerWorkspacePage() {
+  const params = useParams();
+  return <SpeakerWorkspace key={`${String(params.eventId || "")}:${String(params.token || "")}`} />;
+}
+
+function SpeakerWorkspace() {
   const params = useParams();
   const router = useRouter();
   const token = (params.token as string) || "";
   const eventId = (params.eventId as string) || "";
   const queryClient = useQueryClient();
 
-  const { data: portal, isLoading, error } = usePortalAuth(eventId, token);
+  const { data: portal, isLoading, isFetching, error, refetch } = usePortalAuth(eventId, token);
+  const profileLoaded = useRef(false);
   const deadlineInfo = useDeadlineStatus(
     portal?.upload_deadline ?? null,
     portal?.allow_override ?? false
@@ -56,7 +63,8 @@ export default function DirectSpeakerWorkspacePage() {
   const [savingProfile, setSavingProfile] = useState(false);
 
   useEffect(() => {
-    if (portal) {
+    if (portal && !profileLoaded.current) {
+      profileLoaded.current = true;
       setBio(portal.bio || "");
       setDesignation(portal.designation || "");
       setAffiliation(portal.affiliation || "");
@@ -159,20 +167,8 @@ export default function DirectSpeakerWorkspacePage() {
   }
 
   if (error || !portal) {
-    return (
-      <div className="max-w-md mx-auto py-16 text-center space-y-4">
-        <div className="h-16 w-16 rounded-full bg-[var(--status-danger-muted)] border border-[var(--status-danger)]/40 flex items-center justify-center mx-auto">
-          <AlertCircle className="h-8 w-8 text-[var(--status-danger)]" />
-        </div>
-        <h2 className="text-xl font-bold text-[var(--text)]">Invalid or Expired Speaker Link</h2>
-        <p className="text-xs text-[var(--muted)] leading-relaxed">
-          The speaker token provided is invalid or has expired. Please check your invitation email or sign in with your email OTP.
-        </p>
-        <Button onClick={() => router.push(`/${eventId}/login`)}>
-          Go to Sign In
-        </Button>
-      </div>
-    );
+    return <PortalAccessFailure error={error} busy={isFetching} onRetry={() => { void refetch(); }}
+      onSignIn={() => router.push(`/${eventId}/login`)} />;
   }
 
   return (

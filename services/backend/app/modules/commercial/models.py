@@ -94,9 +94,14 @@ class CommercialQuote(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False
     )
-    event_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="RESTRICT"), nullable=False
+    event_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="RESTRICT"), nullable=True
     )
+    product_family: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    commercial_request_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("commerce.plan_requests.id", ondelete="SET NULL"), nullable=True
+    )
+    price_book_version: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     service_request_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         nullable=True,
@@ -139,12 +144,12 @@ class CommercialQuote(Base):
 
 
 class CommercialQuoteLineItem(Base):
-    __tablename__ = "quote_line_items"
+    __tablename__ = "quote_items"
     __table_args__ = (Index("ix_quote_line_items_quote", "quote_id", "sort_order"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     quote_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("business.quotes.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("commerce.quotes.id", ondelete="CASCADE"), nullable=False
     )
     category: Mapped[str] = mapped_column(String(80), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -153,12 +158,31 @@ class CommercialQuoteLineItem(Base):
     duration_days: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     unit_rate: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
     line_subtotal: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False)
+    product_family: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    offer_code: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    offer_version_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("commerce.plan_versions.id", ondelete="SET NULL"), nullable=True
+    )
+    allocation_version_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("commerce.plan_versions.id", ondelete="SET NULL"), nullable=True
+    )
+    event_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="SET NULL"), nullable=True
+    )
+    client_workspace_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("commerce.account_organizations.id", ondelete="SET NULL"), nullable=True
+    )
+    commercial_request_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("commerce.plan_requests.id", ondelete="SET NULL"), nullable=True
+    )
+    tax_rate: Mapped[Optional[float]] = mapped_column(Numeric(7, 4), nullable=True)
+    source_snapshot_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     quote: Mapped["CommercialQuote"] = relationship(back_populates="line_items")
 
 
 class CommercialQuoteRevision(Base):
-    __tablename__ = "quote_revisions"
+    __tablename__ = "quote_versions"
     __table_args__ = (
         UniqueConstraint("quote_id", "version", name="uq_quote_revision_version"),
         Index("ix_quote_revisions_quote_created", "quote_id", "created_at"),
@@ -166,7 +190,7 @@ class CommercialQuoteRevision(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     quote_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("business.quotes.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("commerce.quotes.id", ondelete="CASCADE"), nullable=False
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False
@@ -182,7 +206,7 @@ class CommercialQuoteRevision(Base):
 
 
 class QuoteApprovalWorkflow(Base):
-    __tablename__ = "quote_approval_workflows"
+    __tablename__ = "quote_approvals"
     __table_args__ = (
         UniqueConstraint("quote_id", name="uq_quote_approval_workflow_quote"),
         UniqueConstraint("organization_id", "submission_idempotency_key", name="uq_quote_approval_submission_idempotency"),
@@ -194,7 +218,7 @@ class QuoteApprovalWorkflow(Base):
         UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False
     )
     quote_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("business.quotes.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("commerce.quotes.id", ondelete="CASCADE"), nullable=False
     )
     quote_version: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING")
@@ -221,7 +245,7 @@ class QuoteApprovalStep(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     workflow_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("business.quote_approval_workflows.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("commerce.quote_approvals.id", ondelete="CASCADE"), nullable=False
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False

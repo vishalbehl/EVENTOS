@@ -1,0 +1,13 @@
+[
+  {"table":"room_types","source_id":"bf43608d-1a0c-4339-b709-2ee7c12a94ad","replacement_id":"5bb50b3b-6454-4123-8ec1-0ccb5e34d53f"},
+  {"table":"session_types","source_id":"e8d13fcf-d95f-41f6-b34c-e973bc9b3926","replacement_id":"0950aff4-7141-44c0-b2aa-453f61a67d29"},
+  {"table":"session_types","source_id":"d2ceae43-0d5a-4a69-8f52-f11cf1e02ecf","replacement_id":"5042b530-d304-44ed-85bd-8f0621c9f123"},
+  {"table":"session_types","source_id":"f6a06bf5-5b20-4ee9-84da-7393e0c084e8","replacement_id":"95819211-c862-4360-9049-34a40fc837e7"},
+  {"table":"session_types","source_id":"f8869644-e99c-4183-82b2-c16340715c76","replacement_id":"4947ca01-6cc7-42b2-83b9-b0a06b97b9d1"},
+  {"table":"session_types","source_id":"e95321d4-930b-4222-95da-19aeed9e051f","replacement_id":"95fbbbcf-ab28-4f3a-8421-751a5cf6ac8a"},
+  {"table":"session_types","source_id":"d75a15ef-7c54-4229-bcd9-4cc3e5fecbc0","replacement_id":"531823f1-e4f3-400e-9961-930646d55bbb"},
+  {"table":"session_types","source_id":"d93d015a-ce69-4d13-9db1-5fd75b901b0f","replacement_id":"018439e8-3d82-4901-94cc-01afe7addeb8"},
+  {"table":"track_types","source_id":"378e9d01-bbae-4917-8f3b-1c09e1b96c37","replacement_id":"02c888f6-4dee-42ee-96c4-82aa7523c9cc"},
+  {"table":"track_types","source_id":"b6d17831-230d-4f99-aa82-0fc66352a66c","replacement_id":"2d3c6a08-c8b7-43ca-a9c6-e039e23ccb81"},
+  {"table":"track_types","source_id":"ff5dd5b1-5efb-41ce-8219-db4efbeb1fe4","replacement_id":"b009caa2-7691-42f9-ab80-50734b4b87a0"}
+]

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="3" failures="0" errors="0" time="1.5628164">
+    <testsuite name="test/category-a/client-form-delegation.test.tsx" timestamp="2026-10-20T10:13:42.665Z" hostname="Vishal" tests="3" failures="0" errors="0" skipped="0" time="1.5628164">
+        <testcase classname="test/category-a/client-form-delegation.test.tsx" name="requires an explicit checkbox selection and sends the canonical scoped action" time="1.3604776">
+        </testcase>
+        <testcase classname="test/category-a/client-form-delegation.test.tsx" name="shows the same understandable action to the approving client" time="0.0394625">
+        </testcase>
+        <testcase classname="test/category-a/client-form-delegation.test.tsx" name="does not offer form management when the server does not list it as grantable" time="0.1554984">
+        </testcase>
+    </testsuite>
+</testsuites>

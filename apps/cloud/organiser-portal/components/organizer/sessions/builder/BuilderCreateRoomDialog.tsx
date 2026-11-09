@@ -11,6 +11,7 @@ import { useRoomTypes } from "@/hooks/useRoomTypes";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
 import { formatApiError } from "@/lib/utils";
+import { Portal } from "@/components/ui/portal";
 
 interface BuilderCreateRoomDialogProps {
   isOpen: boolean;
@@ -112,27 +113,28 @@ export function BuilderCreateRoomDialog({ isOpen, onClose, roomToEdit }: Builder
   };
 
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <>
-          <motion.div
-            key="builder-room-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={onClose}
-            className="fixed inset-0 bg-black/60 z-[200]"
-          />
-
-          <div
-            key="builder-room-wrapper"
-            className="fixed inset-0 flex items-center justify-center z-[210] pointer-events-none p-4"
-          >
+    <Portal>
+      <AnimatePresence>
+        {isOpen && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 overflow-y-auto">
+            {/* Full-screen backdrop overlay */}
             <motion.div
-              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              key="builder-room-overlay"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={onClose}
+              className="fixed inset-0 bg-black/75 backdrop-blur-xs cursor-pointer"
+            />
+
+            {/* Centered Modal Card */}
+            <motion.div
+              key="builder-room-card"
+              initial={{ scale: 0.95, opacity: 0, y: 15 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 20 }}
-              className="w-full max-w-md rounded-2xl border border-[var(--border-default)] bg-[var(--card)] shadow-2xl pointer-events-auto flex flex-col max-h-[90vh] overflow-hidden relative text-[var(--text-primary)]"
+              exit={{ scale: 0.95, opacity: 0, y: 15 }}
+              transition={{ duration: 0.15 }}
+              className="relative z-10 w-full max-w-md rounded-2xl border border-[var(--border-default)] bg-[var(--card)] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden text-[var(--text-primary)] my-auto"
             >
               {/* Header */}
               <div className="flex items-center justify-between p-5 border-b border-[var(--border-subtle)]">
@@ -271,8 +273,8 @@ export function BuilderCreateRoomDialog({ isOpen, onClose, roomToEdit }: Builder
               </div>
             </motion.div>
           </div>
-        </>
-      )}
-    </AnimatePresence>
+        )}
+      </AnimatePresence>
+    </Portal>
   );
 }

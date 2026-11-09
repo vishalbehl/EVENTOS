@@ -2,19 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useParams, usePathname } from "next/navigation";
-import { AnimatePresence, motion } from "framer-motion";
-import { Lock, Loader2, X } from "lucide-react";
+import { Lock, Loader2 } from "lucide-react";
 import { Sidebar } from "@/components/organizer/layout/Sidebar";
-import { Header } from "@/components/organizer/layout/Header";
+import { OrganisationTopbar } from "@/components/organizer/layout/OrganisationTopbar";
 import { FloatingNeedsAttentionBoard } from "@/components/organizer/layout/FloatingNeedsAttentionBoard";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useSocket } from "@/hooks/use-socket";
 import { useEvent } from "@/hooks/useEvents";
-import { useOrganiserNeedsAttention } from "@/hooks/useOrganiserDashboard";
 import { cn } from "@/lib/utils";
 import { useUIStore } from "@/store/useUIStore";
-import { useAuthStore } from "@/store/use-auth-store";
+import { accessContextCacheKey, useAuthStore } from "@/store/use-auth-store";
 import {
   capabilityForPath,
   CapabilityBoundary,
@@ -55,8 +53,9 @@ export default function DashboardLayout({
   const isPlatformWorkspace = !eventId;
   const { data: event, isLoading: isEventLoading } = useEvent(eventId);
 
-  const { isAuthenticated, accessToken, user, logout, hasHydrated } =
+  const { isAuthenticated, accessToken, user, logout, hasHydrated, isContextSwitching, activeContext } =
     useAuthStore();
+  const screenContextKey = `${user?.id ?? "anonymous"}:${accessContextCacheKey(activeContext, user?.organization_id)}`;
   const { isSidebarCollapsed, isMobileOpen, setMobileOpen, isSecondarySidebarOpen } = useUIStore();
   const [hydrated, setHydrated] = useState(false);
   const [impersonatingOrg, setImpersonatingOrg] = useState<string | null>(null);
@@ -77,7 +76,7 @@ export default function DashboardLayout({
         const token = useAuthStore.getState().accessToken;
         const baseUrl =
           process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-        const response = await fetch(`${baseUrl}/api/v1/global-settings`, {
+        const response = await fetch(`${baseUrl}/api/v1/global-settings/public`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
           signal: controller.signal,
         });
@@ -311,13 +310,24 @@ export default function DashboardLayout({
   return (
     <OrganizationCapabilitiesProvider>
       <EventCapabilitiesProvider eventId={eventId}>
+        {isContextSwitching ? <div className="fixed inset-0 z-[200] grid place-items-center bg-[var(--op-page-bg)]" role="status" aria-live="polite">
+          <div className="flex flex-col items-center gap-3">
+            <Loader2 className="h-8 w-8 animate-spin text-[var(--op-primary)]" />
+            <span className="text-[10px] font-black uppercase tracking-widest text-[var(--op-muted)]">Switching workspace…</span>
+          </div>
+        </div> : null}
         <div
-          className="relative h-screen overflow-hidden"
-          style={{ background: "var(--op-page-bg)" }}
+          key={screenContextKey}
+          className={cn(
+            "organisation-portal-shell relative h-screen overflow-hidden",
+            eventId && "event-workspace-shell",
+            isContextSwitching && "pointer-events-none opacity-0",
+          )}
         >
+          <div className="organisation-portal-backdrop" aria-hidden />
           {/* Mobile Sidebar Navigation Drawer Overlay */}
           <Sheet open={isMobileOpen} onOpenChange={setMobileOpen}>
-            <SheetContent side="left" aria-describedby={undefined} className={cn("p-0 md:hidden overflow-hidden", eventId ? (isSecondarySidebarOpen ? "w-[min(92vw,308px)]" : "w-[72px]") : "w-[min(88vw,20rem)]")}>
+            <SheetContent side="left" aria-describedby={undefined} className={cn("p-0 overflow-hidden lg:hidden", eventId ? (isSecondarySidebarOpen ? "w-[min(92vw,308px)]" : "w-[72px]") : "w-[min(88vw,20rem)]")}>
               <SheetTitle className="sr-only">Organiser Portal navigation</SheetTitle>
               <Sidebar />
             </SheetContent>
@@ -325,10 +335,12 @@ export default function DashboardLayout({
 
           <aside
             className={cn(
-              "hidden h-full md:fixed md:inset-y-0 md:z-[80] md:flex md:flex-col transition-all duration-200 ease-in-out",
+              "hidden h-full flex-col transition-all duration-200 ease-in-out",
+              "lg:fixed lg:inset-y-0 lg:z-[80] lg:flex",
+              isPlatformWorkspace ? "organisation-portal-sidebar" : "event-workspace-sidebar",
               eventId
-                ? (isSecondarySidebarOpen ? "md:w-[308px]" : "md:w-[68px]")
-                : (isSidebarCollapsed ? "md:w-[72px]" : "md:w-[248px]")
+                ? (isSecondarySidebarOpen ? "lg:w-[308px]" : "lg:w-[68px]")
+                : (isSidebarCollapsed ? "lg:w-[82px]" : "lg:w-[228px]")
             )}
           >
             <Sidebar />
@@ -337,12 +349,10 @@ export default function DashboardLayout({
           <main
             className={cn(
               "relative flex h-screen flex-col overflow-hidden transition-all duration-200 ease-in-out",
-              eventId
-                ? (isSecondarySidebarOpen ? "md:pl-[308px]" : "md:pl-[68px]")
-                : (isSidebarCollapsed ? "md:pl-[72px]" : "md:pl-[248px]")
+              "organisation-portal-main",
             )}
           >
-            <Header />
+            <OrganisationTopbar />
 
             {impersonatingOrg && (
               <div
@@ -365,14 +375,29 @@ export default function DashboardLayout({
               </div>
             )}
 
-            <div className="flex min-h-0 flex-1 flex-col p-2 sm:p-3 md:p-4">
-              <div id="organiser-main" tabIndex={-1} className="cc-route-enter cc-scroll-region custom-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden rounded-[16px] border border-[var(--border-default)] bg-[var(--bg-surface-2)] shadow-sm">
+            {!impersonatingOrg && (user?.role === "super_admin" || user?.is_platform_admin) && (
+              <div className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-600 dark:text-amber-400 md:mx-6">
+                <span>
+                  <strong>Platform Super Admin Session:</strong> Eventos is the host platform organization, so tenant workspace APIs return 404 for this direct session. To manage organizations or impersonate a tenant, visit{" "}
+                  <a href="http://localhost:3000" className="underline font-bold hover:text-amber-500">Command Center (Port 3000)</a>, or sign in as an organiser (e.g. <code>category-a-admin@example.com</code> / <code>admin123</code>).
+                </span>
+                <a
+                  href="http://localhost:3000"
+                  className="rounded bg-amber-500/20 px-2.5 py-1 text-[11px] font-bold text-amber-700 dark:text-amber-300 transition-colors hover:bg-amber-500/30"
+                >
+                  Open Command Center &rarr;
+                </a>
+              </div>
+            )}
+
+            <div className="organisation-portal-content-wrap flex min-h-0 flex-1 flex-col">
+              <div id="organiser-main" tabIndex={-1} className="organisation-portal-content relative cc-route-enter cc-scroll-region custom-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden">
                 <EventPageBoundary eventId={eventId} pathname={pathname || ""}>
                   {content}
                 </EventPageBoundary>
               </div>
             </div>
-            <FloatingNeedsAttentionBoard />
+            {!isPlatformWorkspace ? <FloatingNeedsAttentionBoard /> : null}
           </main>
         </div>
       </EventCapabilitiesProvider>

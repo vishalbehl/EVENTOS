@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.cache import invalidate_event
 from app.core.concurrency import raise_version_conflict
-from app.core.dependencies.feature_gate import enforce_event_operation
+from app.core.dependencies.feature_gate import enforce_platform_event_operation as enforce_event_operation
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.events.models.event import Event
 

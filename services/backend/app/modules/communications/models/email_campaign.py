@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, CheckConstraint
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, CheckConstraint, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -36,6 +36,13 @@ class EmailCampaign(Base, SoftDeleteMixin):
     """
     __tablename__ = "email_campaigns"
     __table_args__ = (
+        CheckConstraint("(worker_token IS NULL AND worker_lease_until IS NULL) OR "
+            "(worker_token IS NOT NULL AND worker_lease_until IS NOT NULL)", name="ck_campaign_worker_lease"),
+        UniqueConstraint("id", "event_id", name="uq_campaign_event_owner"),
+        CheckConstraint("(recipient_snapshot_dispatch_id IS NULL AND recipient_snapshot_count IS NULL AND recipient_snapshot_target_type IS NULL) OR "
+            "(recipient_snapshot_dispatch_id IS NOT NULL AND recipient_snapshot_count IS NOT NULL AND recipient_snapshot_count >= 0 "
+            "AND recipient_snapshot_target_type IS NOT NULL AND recipient_snapshot_target_type IN ('speaker','participant'))",
+            name="ck_campaign_snapshot_state"),
         CheckConstraint(
             "status IN ('draft', 'scheduled', 'sending', 'sent', 'failed')",
             name="ck_ec_status"
@@ -43,6 +50,13 @@ class EmailCampaign(Base, SoftDeleteMixin):
         CheckConstraint(
             "recipient_filter IN ('all', 'pending_upload', 'uploaded', 'approved', 'rejected', 'posters', 'specific_session', 'specific_room', 'specific_speakers', 'custom', 'paid', 'unpaid', 'pending', 'specific_participants', 'custom_list')",
             name="ck_ec_filter"
+        ),
+        CheckConstraint(
+            "(send_actor_id IS NULL AND send_organization_id IS NULL AND send_audience IS NULL "
+            "AND send_dispatch_id IS NULL AND send_authorized_at IS NULL) OR "
+            "(send_actor_id IS NOT NULL AND send_organization_id IS NOT NULL AND send_audience IS NOT NULL "
+            "AND send_audience IN ('CUSTOMER','PLATFORM') AND send_dispatch_id IS NOT NULL "
+            "AND send_authorized_at IS NOT NULL)", name="ck_campaign_dispatch_authority",
         ),
         {"schema": "communications"},
     )
@@ -74,6 +88,16 @@ class EmailCampaign(Base, SoftDeleteMixin):
         nullable=True,
     )
     # For specific_session filter
+    send_actor_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    worker_token: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    worker_lease_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    recipient_snapshot_dispatch_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    recipient_snapshot_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    recipient_snapshot_target_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    send_organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    send_audience: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    send_dispatch_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    send_authorized_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     session_id_filter: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("agenda.sessions.id", ondelete="SET NULL"),
@@ -125,6 +149,12 @@ class EmailCampaign(Base, SoftDeleteMixin):
     )
 
     # ── Relationships ─────────────────────────────────────
+    @property
+    def dispatch_authorized(self) -> bool:
+        """Presence of recorded intent, not a claim that authority is still live."""
+        return bool(self.send_actor_id and self.send_organization_id and self.send_audience
+                    and self.send_dispatch_id and self.send_authorized_at)
+
     event: Mapped["Event"] = relationship("Event", back_populates="email_campaigns")
     template: Mapped["EmailTemplate"] = relationship("EmailTemplate")
     creator: Mapped[Optional["User"]] = relationship("User", foreign_keys=[created_by])

@@ -6,54 +6,40 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.events.models.event import Event
 from app.modules.agenda.models import Session
 from app.modules.events.models.speaker import Speaker
-from app.modules.identity.models.refresh_token import RefreshToken
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
 from app.modules.platform.models.organization_console import (
     OrganizationBrandProfile,
     OrganizationLifecycleJob,
-    OrganizationLocation,
-    OrganizationSecurityPolicy,
 )
 from app.modules.presentations.models.presentation_file import PresentationFile
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_registration import ParticipantRegistration
 from app.modules.registration.models.payment_transaction import PaymentTransaction
+from app.core.tenant_context import TenantContextGuard
+from app.modules.platform.services.lifecycle_authority import lock_lifecycle_authority
+from app.modules.platform.services.clone_projection import CLONE_EXCLUSIONS, CLONE_PROJECTION_VERSION, portable_brand_tokens
 
 
 class OrganizationLifecycleService:
-    RETAINED_PURGE_TABLES = {
-        ("platform", "organizations"),
-        ("platform", "organization_lifecycle_jobs"),
-        ("identity", "users"),
-    }
-    RETAINED_PURGE_SCHEMAS = {"audit", "billing"}
+    # Tenant reassignment/erasure needs a separate verified retention and ownership
+    # workflow. Approval alone cannot make the old generic FK walker safe.
+    UNAVAILABLE_DESTRUCTIVE_OPERATIONS = frozenset({"MERGE", "PURGE", "DELETE"})
 
     @staticmethod
-    async def _organization_tables(db: AsyncSession) -> list[tuple[str, str]]:
-        rows = (await db.execute(text("""
-            SELECT DISTINCT ns.nspname AS schema_name, rel.relname AS table_name
-            FROM pg_constraint con
-            JOIN pg_class rel ON rel.oid = con.conrelid
-            JOIN pg_namespace ns ON ns.oid = rel.relnamespace
-            JOIN pg_class parent ON parent.oid = con.confrelid
-            JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace
-            JOIN pg_attribute attr ON attr.attrelid = rel.oid AND attr.attnum = ANY(con.conkey)
-            WHERE con.contype='f' AND parent_ns.nspname='platform' AND parent.relname='organizations' AND attr.attname='organization_id'
-            ORDER BY ns.nspname, rel.relname
-        """))).mappings().all()
-        return [(row["schema_name"], row["table_name"]) for row in rows]
-
-    @staticmethod
-    def _qualified(schema: str, table: str) -> str:
-        return f'"{schema.replace(chr(34), chr(34) * 2)}"."{table.replace(chr(34), chr(34) * 2)}"'
+    def require_available_operation(job_type: str) -> None:
+        if job_type in OrganizationLifecycleService.UNAVAILABLE_DESTRUCTIVE_OPERATIONS:
+            raise HTTPException(409, detail={
+                "code": "DESTRUCTIVE_LIFECYCLE_UNAVAILABLE",
+                "message": "Organization merge and purge are unavailable until ownership, retention and legal-hold workflows are implemented and verified. Existing data and history are preserved.",
+            })
 
     @staticmethod
     def _manifest_checksum(manifest: dict) -> str:
@@ -68,11 +54,16 @@ class OrganizationLifecycleService:
 
     @staticmethod
     async def build_manifest(db: AsyncSession, organization_id: uuid.UUID, job_type: str, target_organization_id: uuid.UUID | None) -> tuple[dict, str]:
+        OrganizationLifecycleService.require_available_operation(job_type)
         event_ids = select(Event.id).where(Event.organization_id == organization_id)
         scalar = lambda statement: statement.scalar_subquery()
         fixed_counts = (
             await db.execute(
                 select(
+                    scalar(select(Organization.profile_version).where(Organization.id == organization_id)).label("organization_version"),
+                    scalar(select(Organization.is_active).where(Organization.id == organization_id)).label("organization_active"),
+                    scalar(select(Organization.archived_at).where(Organization.id == organization_id)).label("archived_at"),
+                    scalar(select(Organization.suspended_at).where(Organization.id == organization_id)).label("suspended_at"),
                     scalar(select(func.count(Event.id)).where(Event.organization_id == organization_id)).label("events"),
                     scalar(select(func.count(User.id)).where(User.organization_id == organization_id)).label("users"),
                     scalar(select(func.count(ParticipantRegistration.id)).where(ParticipantRegistration.event_id.in_(event_ids))).label("registrations"),
@@ -85,131 +76,123 @@ class OrganizationLifecycleService:
                 )
             )
         ).mappings().one()
+        if fixed_counts["organization_version"] is None:
+            raise HTTPException(404, detail={"code": "RESOURCE_NOT_FOUND"})
         counts = {key: int(fixed_counts[key] or 0) for key in (
             "events", "users", "registrations", "participants", "speakers",
             "sessions", "files", "registration_payments", "audit_records_retained",
         )}
-        table_counts: dict[str, int] = {}
-        if job_type in {"MERGE", "PURGE", "DELETE"}:
-            for schema, table in await OrganizationLifecycleService._organization_tables(db):
-                if schema == "audit" or table == "organization_lifecycle_jobs":
-                    continue
-                count = await db.scalar(text(f"SELECT COUNT(*) FROM {OrganizationLifecycleService._qualified(schema, table)} WHERE organization_id=:organization_id"), {"organization_id": organization_id})
-                table_counts[f"{schema}.{table}"] = int(count or 0)
-        destructive = job_type in {"MERGE", "PURGE", "DELETE"}
+        target_version = None
+        if job_type == "CLONE":
+            if not target_organization_id or target_organization_id == organization_id:
+                raise HTTPException(422, detail={"code": "INVALID_CLONE_SCOPE"})
+            async with TenantContextGuard.scoped(db, target_organization_id):
+                target = await db.scalar(select(Organization).where(Organization.id == target_organization_id))
+                if not target or target.is_platform_org or target.lifecycle_state != "ACTIVE":
+                    raise HTTPException(404, detail={"code": "RESOURCE_NOT_FOUND"})
+                target_version = target.profile_version
         manifest = {
             "job_type": "PURGE" if job_type == "DELETE" else job_type,
             "organization_id": str(organization_id),
+            "organization_version": int(fixed_counts["organization_version"]),
+            "organization_state": "ARCHIVED" if fixed_counts["archived_at"] is not None else "ACTIVE" if fixed_counts["organization_active"] and fixed_counts["suspended_at"] is None else "SUSPENDED",
             "target_organization_id": str(target_organization_id) if target_organization_id else None,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "counts": {key: int(value) for key, value in counts.items()},
-            "table_counts": table_counts,
-            "legal_holds": [],
+            "table_counts": {},
+            "legal_holds": None,
+            "legal_hold_check": "NOT_PERFORMED",
             "blocked": False,
-            "requires_two_person_approval": destructive,
+            "requires_two_person_approval": False,
             "recoverable": job_type not in {"PURGE", "DELETE"},
-            "restore_window_days": 30 if job_type == "ARCHIVE" else None,
+            "restore_window_days": None,
             "configuration_only": job_type == "CLONE",
-            "excluded_from_clone": ["events", "users", "billing_history", "audit_logs", "credentials", "api_secrets", "personal_data"] if job_type == "CLONE" else [],
-            "retained_after_purge": ["non_sensitive_audit_proof", "financial_records_required_by_law"] if destructive else [],
+            "clone_projection_version": CLONE_PROJECTION_VERSION if job_type == "CLONE" else None,
+            "target_organization_version": target_version,
+            "excluded_from_clone": list(CLONE_EXCLUSIONS) if job_type == "CLONE" else [],
         }
         checksum = OrganizationLifecycleService._manifest_checksum(manifest)
         return manifest, checksum
 
     @staticmethod
     async def execute(db: AsyncSession, job: OrganizationLifecycleJob) -> dict:
-        organization = await db.scalar(select(Organization).where(Organization.id == job.organization_id).with_for_update())
+        # Check again for already queued/retried legacy jobs, before any resource
+        # mutation; creation and approval checks are not execution authority.
+        OrganizationLifecycleService.require_available_operation(job.job_type)
+        _, revisions = await lock_lifecycle_authority(db, job.organization_id, job.requested_by, job.target_organization_id)
+        organization = await db.scalar(select(Organization).where(Organization.id == job.organization_id)
+            .with_for_update().execution_options(populate_existing=True))
         if not organization:
             raise HTTPException(status_code=404, detail="Organization not found")
+        if organization.is_platform_org:
+            raise HTTPException(403, detail={"code": "PLATFORM_TENANT_LIFECYCLE_FORBIDDEN"})
+        expected = job.dry_run_manifest.get("organization_version")
+        if type(expected) is not int or expected < 1:
+            raise HTTPException(409, detail={"code": "LEGACY_LIFECYCLE_REAPPROVAL_REQUIRED"})
+        if organization.profile_version != expected:
+            raise HTTPException(412, detail={"code": "STALE_VERSION"})
         job_type = "PURGE" if job.job_type == "DELETE" else job.job_type
-        if job_type in {"MERGE", "PURGE"}:
-            manifest, checksum = await OrganizationLifecycleService.build_manifest(db, job.organization_id, job_type, job.target_organization_id)
-            if checksum != job.manifest_checksum:
-                raise HTTPException(status_code=409, detail="Lifecycle manifest changed; a new approval is required")
-            if manifest["blocked"]:
-                raise HTTPException(status_code=409, detail="An active legal hold blocks this lifecycle operation")
         if job_type == "ARCHIVE":
+            if organization.lifecycle_state != "ACTIVE":
+                raise HTTPException(409, detail={"code": "ORGANIZATION_NOT_ACTIVE"})
             organization.is_active = False
-            organization.suspended_at = datetime.now(timezone.utc)
-            organization.suspension_reason = job.reason
-            user_ids = select(User.id).where(User.organization_id == job.organization_id)
-            revoked = await db.execute(update(RefreshToken).where(RefreshToken.user_id.in_(user_ids), RefreshToken.is_revoked.is_(False)).values(is_revoked=True, revoked_at=datetime.now(timezone.utc), revoked_reason="organization_archive"))
-            return {"organization_active": False, "sessions_revoked": int(revoked.rowcount or 0), "recoverable": True}
+            organization.archived_at = datetime.now(timezone.utc)
+            organization.profile_version += 1
+            revisions[organization.id].revision += 1
+            # Revoke tenant access, not the global identity's sessions in other
+            # organisations. All protected requests must revalidate tenant state.
+            return {"organization_active": False, "lifecycle_state": "ARCHIVED",
+                    "organization_version": organization.profile_version,
+                    "policy_revision": revisions[organization.id].revision,
+                    "recoverable": True, "events_preserved": True}
         if job_type == "RESTORE":
+            if organization.archived_at is None or organization.suspended_at is not None:
+                raise HTTPException(409, detail={"code": "ARCHIVED_ORGANIZATION_REQUIRED"})
             organization.is_active = True
-            organization.suspended_at = None
-            organization.suspension_reason = None
-            return {"organization_active": True, "recoverable": True}
+            organization.archived_at = None
+            organization.profile_version += 1
+            revisions[organization.id].revision += 1
+            return {"organization_active": True, "lifecycle_state": "ACTIVE",
+                    "organization_version": organization.profile_version,
+                    "policy_revision": revisions[organization.id].revision, "recoverable": True}
         if job_type == "EXPORT":
             return {"manifest": job.dry_run_manifest, "format": "JSON", "contains_personal_data": False, "status": "MANIFEST_EXPORTED"}
         if job_type == "CLONE":
             if not job.target_organization_id:
                 raise HTTPException(status_code=422, detail="Clone target is required")
-            target = await db.get(Organization, job.target_organization_id)
-            if not target:
-                raise HTTPException(status_code=404, detail="Clone target not found")
+            if organization.lifecycle_state != "ACTIVE" or job.target_organization_id == organization.id:
+                raise HTTPException(409, detail={"code": "INVALID_CLONE_SCOPE"})
             copied: dict[str, int] = {}
-            for model, fields, key in (
-                (OrganizationLocation, ("location_type", "name", "address", "latitude", "longitude", "timezone", "contact", "storage_node_ref", "venue_server_ref", "status"), "locations"),
-                (OrganizationBrandProfile, ("status", "assets", "tokens", "templates"), "brand_profiles"),
-                (OrganizationSecurityPolicy, ("require_mfa", "allowed_auth_methods", "password_policy", "session_policy", "trusted_device_policy", "sso_config", "sso_enforced", "allowed_cidrs"), "security_policies"),
-            ):
-                source_rows = (await db.scalars(select(model).where(model.organization_id == job.organization_id))).all()
-                for source in source_rows:
-                    values = {field: getattr(source, field) for field in fields if hasattr(source, field)}
-                    db.add(model(organization_id=target.id, **values))
-                copied[key] = len(source_rows)
-            return {"target_organization_id": str(target.id), "configuration_only": True, "copied": copied, "excluded": job.dry_run_manifest.get("excluded_from_clone", [])}
-        if job_type == "MERGE":
-            if not job.target_organization_id:
-                raise HTTPException(status_code=422, detail="Merge target is required")
-            target = await db.scalar(select(Organization).where(Organization.id == job.target_organization_id).with_for_update())
-            if not target or not target.is_active or target.is_platform_org:
-                raise HTTPException(status_code=409, detail="Merge target must be an active non-platform organization")
-            moved: dict[str, int] = {}
-            excluded = {("platform", "organizations"), ("platform", "organization_lifecycle_jobs")}
-            for schema, table in await OrganizationLifecycleService._organization_tables(db):
-                if (schema, table) in excluded or schema == "audit": continue
-                identity_guard = " AND is_platform_admin=false AND platform_role IS NULL AND role <> 'super_admin'" if (schema, table) == ("identity", "users") else ""
-                result = await db.execute(text(f"UPDATE {OrganizationLifecycleService._qualified(schema, table)} SET organization_id=:target WHERE organization_id=:source{identity_guard}"), {"source": job.organization_id, "target": target.id})
-                moved[f"{schema}.{table}"] = int(result.rowcount or 0)
-            organization.is_active = False
-            organization.suspended_at = datetime.now(timezone.utc)
-            organization.suspension_reason = f"Merged into organization {target.id}: {job.reason}"
-            organization.custom_domain = None
-            organization.billing_email = None
-            return {"source_organization_id": str(organization.id), "target_organization_id": str(target.id), "moved": moved, "source_tombstoned": True, "audit_history_retained_on_source": True}
-        if job_type == "PURGE":
-            now = datetime.now(timezone.utc)
-            deleted: dict[str, int] = {}
-            tables = [(schema, table) for schema, table in await OrganizationLifecycleService._organization_tables(db) if schema not in OrganizationLifecycleService.RETAINED_PURGE_SCHEMAS and (schema, table) not in OrganizationLifecycleService.RETAINED_PURGE_TABLES]
-            # Referencing organization-scoped rows are attempted before roots. Constraint
-            # failures are isolated to savepoints and retried after their children clear.
-            pending = list(tables)
-            while pending:
-                progressed = False
-                deferred: list[tuple[str, str]] = []
-                for schema, table in pending:
-                    try:
-                        async with db.begin_nested():
-                            result = await db.execute(text(f"DELETE FROM {OrganizationLifecycleService._qualified(schema, table)} WHERE organization_id=:organization_id"), {"organization_id": job.organization_id})
-                        deleted[f"{schema}.{table}"] = int(result.rowcount or 0)
-                        progressed = True
-                    except Exception:
-                        deferred.append((schema, table))
-                if deferred and not progressed:
-                    blocked = ", ".join(f"{schema}.{table}" for schema, table in deferred)
-                    raise HTTPException(status_code=409, detail=f"Purge dependency graph could not be resolved safely: {blocked}")
-                pending = deferred
-            tenant_user_ids = select(User.id).where(User.organization_id == job.organization_id)
-            revoked = await db.execute(update(RefreshToken).where(RefreshToken.user_id.in_(tenant_user_ids), RefreshToken.is_revoked.is_(False)).values(is_revoked=True, revoked_at=now, revoked_reason="organization_purge"))
-            anonymized = await db.execute(update(User).where(User.organization_id == job.organization_id, User.is_platform_admin.is_(False), User.platform_role.is_(None), User.role != "super_admin").values(email=func.concat("purged+", User.id, "@invalid.local"), first_name="Purged", last_name="User", phone=None, password_hash=None, avatar_url=None, two_factor_secret=None, allowed_ips=None, notification_preferences={}, is_active=False, deleted_at=now))
-            organization.name = f"Purged organization {organization.id}"
-            organization.slug = f"purged-{organization.id}"
-            organization.logo_url = None; organization.banner_thumbnail_url = None
-            organization.custom_domain = None; organization.billing_email = None
-            organization.portal_name = None; organization.onboarding_draft = {}
-            organization.is_active = False
-            organization.suspended_at = now; organization.suspension_reason = "Permanent purge completed"
-            return {"organization_tombstoned": True, "deleted": deleted, "users_anonymized": int(anonymized.rowcount or 0), "sessions_revoked": int(revoked.rowcount or 0), "retained": job.dry_run_manifest.get("retained_after_purge", [])}
+            if job.dry_run_manifest.get("clone_projection_version") != CLONE_PROJECTION_VERSION:
+                raise HTTPException(409, detail={"code": "LEGACY_LIFECYCLE_REAPPROVAL_REQUIRED"})
+            async with TenantContextGuard.scoped(db, job.target_organization_id):
+                target = await db.scalar(select(Organization).where(Organization.id == job.target_organization_id)
+                    .with_for_update().execution_options(populate_existing=True))
+                if not target or target.is_platform_org or target.lifecycle_state != "ACTIVE":
+                    raise HTTPException(404, detail={"code": "RESOURCE_NOT_FOUND"})
+                if target.profile_version != job.dry_run_manifest.get("target_organization_version"):
+                    raise HTTPException(412, detail={"code": "STALE_CLONE_TARGET"})
+                if await db.scalar(select(OrganizationBrandProfile.id).where(OrganizationBrandProfile.organization_id == target.id)):
+                    raise HTTPException(409, detail={"code": "CLONE_TARGET_CONFIGURATION_EXISTS"})
+            # Select only the portable column. Assets, templates, contacts,
+            # credentials and commercial fields are structurally unavailable
+            # to this clone path rather than filtered after loading an ORM row.
+            source = (await db.execute(select(
+                OrganizationBrandProfile.id, OrganizationBrandProfile.tokens).where(
+                    OrganizationBrandProfile.organization_id == organization.id))).one_or_none()
+            tokens = portable_brand_tokens(source.tokens) if source else {}
+            async with TenantContextGuard.scoped(db, target.id):
+                if source is not None:
+                    db.add(OrganizationBrandProfile(organization_id=target.id, status="DRAFT", assets={}, templates={}, tokens=tokens))
+                await db.flush()
+            copied["brand_profiles"] = int(source is not None)
+            copied["colour_tokens"] = len(tokens)
+            async with TenantContextGuard.scoped(db, target.id):
+                target.profile_version += 1
+                revisions[target.id].revision += 1
+                await db.flush()
+            return {"target_organization_id": str(target.id), "configuration_only": True,
+                "contains_financial_data": False, "contains_credentials": False,
+                "contains_personal_data": False, "copied": copied,
+                "excluded": job.dry_run_manifest.get("excluded_from_clone", [])}
         raise HTTPException(status_code=501, detail=f"Lifecycle execution for {job_type} is not implemented safely")

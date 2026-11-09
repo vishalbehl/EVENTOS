@@ -51,7 +51,10 @@ class TenantContextGuard:
             tenant_org_id.reset(token)
             # A failed flush leaves SQLAlchemy in pending-rollback state. Do not
             # mask the original exception by issuing another statement here.
-            if session.is_active:
+            # SET LOCAL is already cleared by commit/rollback; starting a new
+            # transaction solely to restore it retains a connection and adds a
+            # redundant round trip.
+            if session.is_active and session.in_transaction():
                 await TenantContextGuard.apply(session, previous)
 
 

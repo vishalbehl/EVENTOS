@@ -22,6 +22,7 @@ class WorkerSettings(BaseSettings):
     environment: str = "development"
     # ── Database (sync psycopg2 — workers use sync SQLAlchemy) ─
     DATABASE_URL_SYNC: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/eventos_db"
+    REQUIRE_RLS_SAFE_RUNTIME_ROLE: bool = False
 
     # ── Redis / Celery ─────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -44,6 +45,23 @@ class WorkerSettings(BaseSettings):
     RESEND_API_KEY: str = ""
     EMAIL_FROM_ADDRESS: str = "noreply@conf-platform.com"
     EMAIL_FROM_NAME: str = "EventOS IT"
+
+    # ── Invoice PDF identity and certificate signing ─────
+    INVOICE_ISSUER_NAME: str = "EventOS IT Solutions"
+    INVOICE_ISSUER_ADDRESS: str = "Delhi, India"
+    INVOICE_ISSUER_GSTIN: str = ""
+    INVOICE_ISSUER_PAN: str = ""
+    INVOICE_ISSUER_SAC: str = "998314"
+    INVOICE_ISSUER_WEBSITE: str = "www.eventos.com"
+    INVOICE_ISSUER_EMAIL: str = "billing@eventos.com"
+    INVOICE_ISSUER_PHONE: str = "+91 11 4703 8800"
+    INVOICE_SIGNING_PKCS12_PATH: str = ""
+    INVOICE_SIGNING_PKCS12_PASSWORD: str = ""
+    INVOICE_SIGNER_NAME: str = "EventOS IT Solutions"
+    INVOICE_SIGNING_REASON: str = "Authorised EventOS tax invoice"
+    INVOICE_SIGNING_LOCATION: str = "Delhi, India"
+    INVOICE_SIGNING_TSA_URL: str = ""
+    INVOICE_PDF_REQUIRE_CRYPTOGRAPHIC_SIGNATURE: bool = False
 
     # ── WhatsApp (Meta Cloud API) ──────────────────────────────
     WHATSAPP_API_URL: str = "https://graph.facebook.com/v18.0"
@@ -90,6 +108,16 @@ class WorkerSettings(BaseSettings):
         if self.environment != "production":
             return self
         errors: list[str] = []
+        if not self.REQUIRE_RLS_SAFE_RUNTIME_ROLE:
+            errors.append("REQUIRE_RLS_SAFE_RUNTIME_ROLE must be enabled")
+        if not self.INVOICE_PDF_REQUIRE_CRYPTOGRAPHIC_SIGNATURE:
+            errors.append("INVOICE_PDF_REQUIRE_CRYPTOGRAPHIC_SIGNATURE must be enabled")
+        if not self.INVOICE_SIGNING_PKCS12_PATH:
+            errors.append("INVOICE_SIGNING_PKCS12_PATH must reference a mounted secret")
+        if not self.INVOICE_SIGNING_PKCS12_PASSWORD:
+            errors.append("INVOICE_SIGNING_PKCS12_PASSWORD must be configured")
+        if not self.INVOICE_ISSUER_GSTIN or not self.INVOICE_ISSUER_PAN:
+            errors.append("INVOICE_ISSUER_GSTIN and INVOICE_ISSUER_PAN must be configured")
         if not self.DATABASE_URL_SYNC.startswith("postgresql+"):
             errors.append("DATABASE_URL_SYNC must use PostgreSQL")
         if not self.REDIS_URL.startswith("rediss://"):

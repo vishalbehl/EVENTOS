@@ -29,9 +29,6 @@ class ProviderWebhookEvent(Base):
     invoice_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("commerce.invoices.id", ondelete="SET NULL"), nullable=True
     )
-    transaction_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("commerce.subscription_transactions.id", ondelete="SET NULL"), nullable=True
-    )
     provider: Mapped[str] = mapped_column(String(30), nullable=False)
     provider_event_id: Mapped[str] = mapped_column(String(255), nullable=False)
     event_type: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -46,4 +43,3 @@ class ProviderWebhookEvent(Base):
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )
     processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-

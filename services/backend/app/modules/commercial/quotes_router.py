@@ -91,20 +91,23 @@ async def _invalidate_venue_ops_quote_cache(
         )
 
 
-def _has_platform_scope(user) -> bool:
-    return bool(
-        user.role == "super_admin"
-        or getattr(user, "platform_role", None) == "SUPER_ADMIN"
-        or getattr(user, "is_platform_admin", False)
-    )
+async def _has_platform_scope(db, user) -> bool:
+    from app.modules.rbac.services.platform_permissions import platform_permission_authority
+    try:
+        await platform_permission_authority(db, user.id, "platform:billing:manage")
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            return False
+        raise
+    return True
 
 
-def _target_org(user, requested: uuid.UUID | None) -> uuid.UUID:
-    if _has_platform_scope(user):
-        return requested or user.organization_id
-    if requested and requested != user.organization_id:
+async def _target_org(db, user, requested: uuid.UUID | None) -> uuid.UUID:
+    if await _has_platform_scope(db, user):
+        return requested or user.request_organization_id
+    if requested and requested != user.request_organization_id:
         raise HTTPException(status_code=404, detail="Organization not found.")
-    return user.organization_id
+    return user.request_organization_id
 
 
 async def _validate_scope(
@@ -334,7 +337,7 @@ async def list_quotes(
     limit: int = Query(default=100, ge=1, le=250),
     db: AsyncSession = Depends(get_db),
 ) -> list[CommercialQuote]:
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
         return await QuoteQueryService(db).list_page(
             organization_id=target_org,
@@ -352,7 +355,7 @@ async def create_quote(
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128),
     db: AsyncSession = Depends(get_db),
 ) -> CommercialQuote:
-    target_org = _target_org(current_user, payload.organization_id)
+    target_org = await _target_org(db, current_user, payload.organization_id)
     fingerprint = request_fingerprint(payload.model_dump(mode="json"))
     async with TenantContextGuard.scoped(db, target_org):
         # Serialize idempotency allocation within a tenant; correctness does not rely on a pre-check race.
@@ -408,7 +411,7 @@ async def get_quote(
     organization_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> CommercialQuote:
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
         quote = await QuoteQueryService(db).get_quote(
             organization_id=target_org, quote_id=quote_id
@@ -424,19 +427,19 @@ async def organiser_review_quote(
     current_user: OrganizerOrAbove,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    async with TenantContextGuard.scoped(db, current_user.organization_id):
+    async with TenantContextGuard.scoped(db, current_user.request_organization_id):
         quote = await QuoteQueryService(db).get_quote(
-            organization_id=current_user.organization_id, quote_id=quote_id
+            organization_id=current_user.request_organization_id, quote_id=quote_id
         )
         if not quote or not quote.service_request_id:
             raise HTTPException(status_code=404, detail="Venue Ops quote not found.")
         result = _organiser_quote_out(quote)
         proposal = await QuoteQueryService(db).get_proposal_for_quote(
-            organization_id=current_user.organization_id, quote_id=quote.id
+            organization_id=current_user.request_organization_id, quote_id=quote.id
         )
         if proposal:
             exports = await QuoteQueryService(db).list_proposal_documents(
-                organization_id=current_user.organization_id, proposal_id=proposal.id
+                organization_id=current_user.request_organization_id, proposal_id=proposal.id
             )
             result["proposal"] = {"id": str(proposal.id), "proposal_number": proposal.proposal_number, "status": proposal.status, "current_version": proposal.current_version}
             result["documents"] = [{"export_id": str(item.id), "proposal_version": item.source_version, "status": item.status, "file_format": item.file_format, "created_at": item.created_at, "completed_at": item.completed_at, "expires_at": item.expires_at, "failure_reason": item.failure_reason} for item in exports]
@@ -450,19 +453,19 @@ async def organiser_quote_documents(
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     """Quote-shaped Venue Ops document view backed by proposal exports."""
-    async with TenantContextGuard.scoped(db, current_user.organization_id):
+    async with TenantContextGuard.scoped(db, current_user.request_organization_id):
         quote = await QuoteQueryService(db).get_quote(
-            organization_id=current_user.organization_id, quote_id=quote_id
+            organization_id=current_user.request_organization_id, quote_id=quote_id
         )
         if not quote or not quote.service_request_id:
             raise HTTPException(status_code=404, detail="Venue Ops quote not found.")
         proposal = await QuoteQueryService(db).get_proposal_for_quote(
-            organization_id=current_user.organization_id, quote_id=quote.id
+            organization_id=current_user.request_organization_id, quote_id=quote.id
         )
         if not proposal:
             return []
         exports = await QuoteQueryService(db).list_proposal_documents(
-            organization_id=current_user.organization_id, proposal_id=proposal.id
+            organization_id=current_user.request_organization_id, proposal_id=proposal.id
         )
         return [{"export_id": str(item.id), "quote_id": str(quote.id), "proposal_id": str(proposal.id), "proposal_version": item.source_version, "status": item.status, "file_format": item.file_format, "created_at": item.created_at, "completed_at": item.completed_at, "expires_at": item.expires_at, "failure_reason": item.failure_reason} for item in exports]
 
@@ -489,8 +492,8 @@ async def organiser_request_quote_revision(
     reason = str(payload.get("reason") or "").strip()
     expected_version = require_if_match(if_match) if if_match is not None else int(payload.get("expected_version") or 0)
     if len(reason) < 3: raise HTTPException(status_code=422, detail="A revision reason is required.")
-    async with TenantContextGuard.scoped(db, current_user.organization_id):
-        quote = await load_quote(db, quote_id, current_user.organization_id, for_update=True)
+    async with TenantContextGuard.scoped(db, current_user.request_organization_id):
+        quote = await load_quote(db, quote_id, current_user.request_organization_id, for_update=True)
         if not quote or not quote.service_request_id: raise HTTPException(status_code=404, detail="Venue Ops quote not found.")
         fingerprint = request_fingerprint({"quote_id": str(quote_id), "action": "REVISION", "reason": reason, "expected_version": expected_version})
         if quote.organiser_revision_idempotency_key == idempotency_key:
@@ -506,9 +509,9 @@ async def organiser_request_quote_revision(
         db.add(_audit(quote, current_user, "QUOTE_REVISION_REQUESTED", reason=reason))
         outbox = stage_event(db, event_id=quote.event_id, name="venue_ops.quote.revised", payload={"event_id": str(quote.event_id), "quote_id": str(quote.id), "request_id": str(quote.service_request_id), "entity_version": quote.version, "status": quote.status})
         await commit_transaction(db)
-        await _invalidate_venue_ops_quote_cache(current_user.organization_id, quote.event_id)
+        await _invalidate_venue_ops_quote_cache(current_user.request_organization_id, quote.event_id)
         await dispatch_staged_event(db, outbox)
-        return _organiser_quote_out(await load_quote(db, quote.id, current_user.organization_id))
+        return _organiser_quote_out(await load_quote(db, quote.id, current_user.request_organization_id))
 
 
 @router.post("/quotes/{quote_id}/organiser-decision")
@@ -525,8 +528,8 @@ async def organiser_decide_quote(
     expected_version = require_if_match(if_match) if if_match is not None else int(payload.get("expected_version") or 0)
     if action not in {"APPROVE", "DECLINE", "DISCARD"} or len(reason) < 3:
         raise HTTPException(status_code=422, detail="A valid decision and reason are required.")
-    async with TenantContextGuard.scoped(db, current_user.organization_id):
-        quote = await load_quote(db, quote_id, current_user.organization_id, for_update=True)
+    async with TenantContextGuard.scoped(db, current_user.request_organization_id):
+        quote = await load_quote(db, quote_id, current_user.request_organization_id, for_update=True)
         if not quote or not quote.service_request_id: raise HTTPException(status_code=404, detail="Venue Ops quote not found.")
         fingerprint = request_fingerprint({"quote_id": str(quote_id), "action": action, "reason": reason, "expected_version": expected_version})
         if quote.organiser_decision_idempotency_key == idempotency_key:
@@ -553,11 +556,11 @@ async def organiser_decide_quote(
         if action == "APPROVE":
             fulfilment_outbox = stage_event(db, event_id=quote.event_id, name="venue_ops.fulfilment.created", payload={"event_id": str(quote.event_id), "quote_id": str(quote.id), "request_id": str(quote.service_request_id), "entity_version": quote.version, "status": "PLANNING"})
         await commit_transaction(db)
-        await _invalidate_venue_ops_quote_cache(current_user.organization_id, quote.event_id)
+        await _invalidate_venue_ops_quote_cache(current_user.request_organization_id, quote.event_id)
         await dispatch_staged_event(db, outbox)
         if fulfilment_outbox is not None:
             await dispatch_staged_event(db, fulfilment_outbox)
-        return _organiser_quote_out(await load_quote(db, quote.id, current_user.organization_id))
+        return _organiser_quote_out(await load_quote(db, quote.id, current_user.request_organization_id))
 
 
 @router.patch("/quotes/{quote_id}", response_model=QuoteOut)
@@ -569,7 +572,7 @@ async def update_quote(
     if_match: str | None = Header(default=None, alias="If-Match"),
     db: AsyncSession = Depends(get_db),
 ) -> CommercialQuote:
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
         quote = await load_quote(db, quote_id, target_org, for_update=True)
         if not quote:
@@ -613,7 +616,7 @@ async def list_quote_revisions(
     organization_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> list[CommercialQuoteRevision]:
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
         quote = await QuoteQueryService(db).get_quote(
             organization_id=target_org, quote_id=quote_id
@@ -632,7 +635,7 @@ async def get_quote_approval(
     organization_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> QuoteApprovalWorkflow | None:
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
         quote = await QuoteQueryService(db).get_quote(
             organization_id=target_org, quote_id=quote_id
@@ -653,7 +656,7 @@ async def submit_quote_for_approval(
     organization_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> QuoteApprovalWorkflow:
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     fingerprint = request_fingerprint({"quote_id": str(quote_id), **payload.model_dump(mode="json")})
     async with TenantContextGuard.scoped(db, target_org):
         await db.scalar(select(Organization.id).where(Organization.id == target_org).with_for_update())
@@ -684,7 +687,7 @@ async def submit_quote_for_approval(
             assignee = await db.get(User, payload.assigned_user_id)
             if not assignee or not assignee.is_active:
                 raise HTTPException(status_code=404, detail="Approver not found.")
-            if assignee.organization_id != target_org and not _has_platform_scope(assignee):
+            if assignee.organization_id != target_org and not await _has_platform_scope(db, assignee):
                 raise HTTPException(status_code=404, detail="Approver not found.")
 
         workflow = QuoteApprovalWorkflow(
@@ -733,7 +736,7 @@ async def decide_quote_approval_step(
     db: AsyncSession = Depends(get_db),
 ) -> QuoteApprovalWorkflow:
     del step_up  # Dependency enforces recent MFA assurance before domain mutation.
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     fingerprint = request_fingerprint({
         "quote_id": str(quote_id),
         "step_id": str(step_id),
@@ -763,7 +766,7 @@ async def decide_quote_approval_step(
         if workflow.quote_version != quote.version or quote.status != "PENDING_APPROVAL":
             raise HTTPException(status_code=409, detail="QUOTE_APPROVAL_VERSION_MISMATCH")
 
-        is_platform_approver = _has_platform_scope(current_user)
+        is_platform_approver = await _has_platform_scope(db, current_user)
         if step.assigned_user_id and step.assigned_user_id != current_user.id and not is_platform_approver:
             raise HTTPException(status_code=403, detail="Approval step is assigned to another user.")
         if not is_platform_approver:
@@ -813,7 +816,7 @@ async def convert_quote_to_proposal(
     organization_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> Proposal:
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     fingerprint = request_fingerprint({"quote_id": str(quote_id), **payload.model_dump(mode="json")})
     async with TenantContextGuard.scoped(db, target_org):
         await db.scalar(select(Organization.id).where(Organization.id == target_org).with_for_update())
@@ -895,7 +898,7 @@ async def send_proposal_to_organiser(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Freeze and expose an approved Venue Ops proposal in the organiser portal."""
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     expected_version = int(payload.get("expected_version") or 0)
     reason = str(payload.get("reason") or "").strip()
     if len(reason) < 3:
@@ -967,7 +970,7 @@ async def get_proposal(
     organization_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> Proposal:
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
         proposal = await QuoteQueryService(db).get_proposal(
             organization_id=target_org, proposal_id=proposal_id
@@ -984,7 +987,7 @@ async def get_proposal_versions(
     organization_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> list[ProposalVersion]:
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
         proposal = await QuoteQueryService(db).get_proposal(
             organization_id=target_org, proposal_id=proposal_id
@@ -1005,7 +1008,7 @@ async def request_proposal_document(
     organization_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     fingerprint = request_fingerprint({"proposal_id": str(proposal_id), **payload.model_dump(mode="json")})
     async with TenantContextGuard.scoped(db, target_org):
         await db.scalar(select(Organization.id).where(Organization.id == target_org).with_for_update())
@@ -1109,7 +1112,7 @@ async def list_proposal_documents(
     organization_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
         proposal = await _load_proposal(db, proposal_id, target_org)
         if not proposal or not proposal.quote_id:
@@ -1134,7 +1137,7 @@ async def get_proposal_document(
     organization_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
         export = await QuoteQueryService(db).get_proposal_document(
             organization_id=target_org, proposal_id=proposal_id, export_id=export_id
@@ -1158,7 +1161,7 @@ async def download_proposal_document(
     organization_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
         proposal = await _load_proposal(db, proposal_id, target_org)
         export = await QuoteQueryService(db).get_proposal_document(
@@ -1203,7 +1206,7 @@ async def create_proposal_share(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     del step_up
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     fingerprint = request_fingerprint({"proposal_id": str(proposal_id), **payload.model_dump(mode="json")})
     async with TenantContextGuard.scoped(db, target_org):
         proposal = await _load_proposal(db, proposal_id, target_org, for_update=True)
@@ -1264,7 +1267,7 @@ async def list_proposal_shares(
     organization_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
         if not await _load_proposal(db, proposal_id, target_org):
             raise HTTPException(status_code=404, detail="Proposal not found.")
@@ -1282,7 +1285,7 @@ async def list_proposal_share_accesses(
     organization_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> list[ProposalShareAccess]:
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
         share = await QuoteQueryService(db).get_proposal_share(
             organization_id=target_org, proposal_id=proposal_id, share_id=share_id
@@ -1306,7 +1309,7 @@ async def revoke_proposal_share(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     del step_up
-    target_org = _target_org(current_user, organization_id)
+    target_org = await _target_org(db, current_user, organization_id)
     fingerprint = request_fingerprint({"proposal_id": str(proposal_id), "share_id": str(share_id), **payload.model_dump()})
     async with TenantContextGuard.scoped(db, target_org):
         share = await db.scalar(select(ProposalShare).where(

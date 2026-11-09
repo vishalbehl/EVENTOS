@@ -1,0 +1,13 @@
+{
+  "status": "PASSED",
+  "database": "category_a_rehearsal_20261015",
+  "upload_id": "c2038245-452d-412f-b9ac-1369aa625a0d",
+  "actual_restricted_non_owner_login": true,
+  "exact_generated_upload_only": true,
+  "dry_run_preserved_bytes": true,
+  "real_provider_zero_byte_fence": true,
+  "delayed_write_rejected": true,
+  "replay_one_completion_audit": true,
+  "accounting_remained_released": true,
+  "disposable_storage_removed": true
+}

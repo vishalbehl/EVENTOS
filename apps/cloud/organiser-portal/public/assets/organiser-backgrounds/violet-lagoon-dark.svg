@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1200" viewBox="0 0 1920 1200" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="80" y1="40" x2="1820" y2="1160" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#080714"/><stop offset=".32" stop-color="#140D2B"/><stop offset=".66" stop-color="#0C1B2B"/><stop offset="1" stop-color="#091422"/>
+    </linearGradient>
+    <linearGradient id="water" x1="960" y1="570" x2="960" y2="1200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0E283F" stop-opacity=".75"/><stop offset="1" stop-color="#0A1422" stop-opacity=".96"/>
+    </linearGradient>
+    <filter id="blur"><feGaussianBlur stdDeviation="42"/></filter>
+    <pattern id="grid" width="144" height="144" patternUnits="userSpaceOnUse"><path d="M144 0H0V144" stroke="#7A58B5" stroke-opacity=".06"/></pattern>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#sky)"/>
+  <circle cx="420" cy="250" r="300" fill="#8B5CF6" fill-opacity=".24" filter="url(#blur)"/>
+  <circle cx="1530" cy="210" r="310" fill="#06B6D4" fill-opacity=".20" filter="url(#blur)"/>
+  <path d="M0 707C180 605 294 653 438 576C596 492 702 567 855 488C1010 408 1121 493 1276 426C1446 352 1640 416 1920 302V1200H0V707Z" fill="#1C1838" fill-opacity=".80"/>
+  <path d="M0 870C149 791 281 825 420 743C570 655 681 727 827 649C976 569 1089 650 1237 584C1403 510 1571 558 1721 497C1792 468 1853 449 1920 432V1200H0V870Z" fill="#122033" fill-opacity=".86"/>
+  <path d="M0 990C193 896 354 947 509 859C669 768 809 857 965 770C1125 681 1251 768 1410 702C1574 634 1731 675 1920 602V1200H0V990Z" fill="url(#water)"/>
+  <rect width="1920" height="1200" fill="url(#grid)"/>
+</svg>
+

@@ -24,7 +24,7 @@ from app.modules.identity.models.user import User
 from app.modules.platform.services.metering_service import MeteringService
 from app.modules.speakers.schemas.session import SessionCreate, SessionUpdate
 from app.modules.speakers.schemas.speaker import SpeakerCreate, SpeakerUpdate
-from app.modules.venue.schemas.room import ROOM_TYPES, RoomCreate, RoomUpdate
+from app.modules.venue.schemas.room import RoomCreate, RoomUpdate
 from app.modules.speakers.schemas.session_builder import TrackUpsertRequest
 
 
@@ -111,7 +111,6 @@ class EventResourceMutationService:
         speaker = Speaker(
             event_id=event.id,
             upload_token=secrets.token_urlsafe(48),
-            speaker_code=secrets.token_hex(5).upper(),
             token_expires_at=datetime.now(timezone.utc) + timedelta(days=365),
             **values,
         )
@@ -274,7 +273,7 @@ class EventResourceMutationService:
             user_id=actor_user_id,
         )
         await EventResourceMutationService._validate_session_references(
-            db, event, payload.room_id, payload.moderator_id
+            db, event, payload.room_id, payload.moderator_id, payload.track_id
         )
         duplicate = await db.scalar(
             select(Session.id).where(
@@ -357,18 +356,32 @@ class EventResourceMutationService:
         if expected_version is not None and current_version != expected_version:
             raise_version_conflict(current_version)
         changes = payload.model_dump(exclude_unset=True)
+        # `moderator_name` is a legacy response-only compatibility field. The
+        # persisted relationship is `moderator_id`; assigning the display name
+        # directly raises because AgendaSession exposes it as a read-only
+        # property. Ignore it unless a real mutable field is supplied.
+        changes.pop("moderator_name", None)
         start_time = changes.get("start_time", session.start_time)
         end_time = changes.get("end_time", session.end_time)
-        if end_time <= start_time:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="end_time must be after start_time",
-            )
+        if start_time is not None and end_time is not None:
+            st = start_time
+            et = end_time
+            if st.tzinfo is not None and et.tzinfo is None:
+                et = et.replace(tzinfo=st.tzinfo)
+            elif st.tzinfo is None and et.tzinfo is not None:
+                st = st.replace(tzinfo=et.tzinfo)
+            if et <= st:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="end_time must be after start_time",
+                )
+        track_id = changes.get("track_id", getattr(session, "track_id", None))
         await EventResourceMutationService._validate_session_references(
             db,
             event,
             changes.get("room_id", session.room_id),
             changes.get("moderator_id", session.moderator_id),
+            track_id,
         )
         if changes.get("session_code"):
             duplicate = await db.scalar(
@@ -640,6 +653,7 @@ class EventResourceMutationService:
         event: Event,
         room_id: uuid.UUID | None,
         moderator_id: uuid.UUID | None,
+        track_id: uuid.UUID | None = None,
     ) -> None:
         if room_id and not await db.scalar(
             select(Room.id).where(
@@ -651,6 +665,16 @@ class EventResourceMutationService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Room not found in this event",
+            )
+        if track_id and not await db.scalar(
+            select(Track.id).where(
+                Track.id == track_id,
+                Track.event_id == event.id,
+            )
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Track not found in this event",
             )
         if moderator_id:
             moderator = await db.get(User, moderator_id)

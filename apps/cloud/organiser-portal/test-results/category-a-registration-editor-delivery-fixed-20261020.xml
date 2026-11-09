@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="25" failures="0" errors="0" time="2.7993709">
+    <testsuite name="test/category-a/client-form-delegation.test.tsx" timestamp="2026-10-20T10:31:04.596Z" hostname="Vishal" tests="3" failures="0" errors="0" skipped="0" time="1.4184064">
+        <testcase classname="test/category-a/client-form-delegation.test.tsx" name="requires an explicit checkbox selection and sends the canonical scoped action" time="1.2513528">
+        </testcase>
+        <testcase classname="test/category-a/client-form-delegation.test.tsx" name="shows the same understandable action to the approving client" time="0.0334936">
+        </testcase>
+        <testcase classname="test/category-a/client-form-delegation.test.tsx" name="does not offer form management when the server does not list it as grantable" time="0.1291134">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/category-a/form-builder-selected-event.test.ts" timestamp="2026-10-20T10:31:04.612Z" hostname="Vishal" tests="2" failures="0" errors="0" skipped="0" time="0.1454431">
+        <testcase classname="test/category-a/form-builder-selected-event.test.ts" name="retains the selected event for every registration-builder template read" time="0.1305377">
+        </testcase>
+        <testcase classname="test/category-a/form-builder-selected-event.test.ts" name="encodes source identity and transmits event scope to the canonical read endpoint" time="0.0104586">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/category-a/registration-editor-load.test.ts" timestamp="2026-10-20T10:31:04.616Z" hostname="Vishal" tests="13" failures="0" errors="0" skipped="0" time="0.0626087">
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (401)" time="0.0227513">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (403)" time="0.0017895">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (404)" time="0.0016128">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (409)" time="0.0015791">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (429)" time="0.0022595">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (503)" time="0.0014727">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="retains intentionally empty server fields, with no synthetic default or reset" time="0.0024384">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="uses a verified selected blueprint and the loaded aggregate version" time="0.0039946">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="preserves the active aggregate when its original source was selected" time="0.0056207">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="keeps a valid current form editable but explicitly disables an unavailable reset" time="0.0022749">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="rejects conflicting event markers instead of treating another copy as active" time="0.0036553">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="rejects a non-registration or retired target" time="0.0020108">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="does not publish a response completed after its scope became obsolete" time="0.004392">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/category-a/registration-editor-unavailable.test.tsx" timestamp="2026-10-20T10:31:04.631Z" hostname="Vishal" tests="7" failures="0" errors="0" skipped="0" time="1.1729127">
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="never opens a substitute editor after a required source fails (403)" time="0.5887545">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="never opens a substitute editor after a required source fails (404)" time="0.0631881">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="never opens a substitute editor after a required source fails (503)" time="0.0410498">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="shows an intentionally empty server form without a fabricated default or reset" time="0.1665503">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="keeps a valid copy editable when its historical root is unavailable, without resetting from a fixture" time="0.1278382">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="binds the selected server blueprint when reset is saved, preserving its disabled features" time="0.1135799">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="honours retry-after without automatically reading or replaying a mutation" time="0.0672744">
+        </testcase>
+    </testsuite>
+</testsuites>

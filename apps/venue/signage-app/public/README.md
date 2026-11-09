@@ -1,1 +1,0 @@
-# Signage Public Assets

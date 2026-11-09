@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="31.384" timestamp="2026-10-17T19:47:40.063807+05:30" hostname="Vishal"><testcase classname="tests.test_category_retirement_operational_continuity" name="test_category_reassignment_preserves_live_registration_binding" time="28.512"><failure message="AssertionError: Taxonomy changes must not change a template's operational purpose&#10;assert ['TEMPLATE_RE..._UNAVAILABLE'] == []&#10;  &#10;  Left contains one more item: 'TEMPLATE_REFERENCE_UNAVAILABLE'&#10;  Use -v to get more diff">tests\test_category_retirement_operational_continuity.py:43: in test_category_reassignment_preserves_live_registration_binding
+    assert after[form.id] == [], "Taxonomy changes must not change a template's operational purpose"
+E   AssertionError: Taxonomy changes must not change a template's operational purpose
+E   assert ['TEMPLATE_RE..._UNAVAILABLE'] == []
+E     
+E     Left contains one more item: 'TEMPLATE_REFERENCE_UNAVAILABLE'
+E     Use -v to get more diff</failure></testcase></testsuite></testsuites>

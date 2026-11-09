@@ -24,8 +24,11 @@ class TenantTable:
 # tables. Child tables reached only through event_id require a separate policy
 # strategy and are deliberately not inferred here.
 TENANT_TABLES: tuple[TenantTable, ...] = (
+    TenantTable("organizer_access", "operational_workspaces"),
+    TenantTable("organizer_access", "workspace_role_bindings"),
+    TenantTable("organizer_access", "organization_access_revisions"),
+    TenantTable("organizer_access", "access_mutations"),
     TenantTable("events", "events"),
-    TenantTable("commerce", "organization_subscriptions"),
     TenantTable("commerce", "entitlement_grants"),
     TenantTable("commerce", "grant_consumptions"),
     TenantTable("commerce", "event_activations"),
@@ -38,6 +41,8 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     TenantTable("operations", "job_control_requests"),
     TenantTable("operations", "source_api_keys"),
     TenantTable("content", "durable_uploads"),
+    TenantTable("design", "catalogue_reconciliation_work"),
+    TenantTable("programme", "evaluation_plans"),
 )
 
 
@@ -74,7 +79,6 @@ DERIVED_TENANT_TABLES: tuple[TenantTable, ...] = (
 MIXED_TENANT_TABLES: tuple[TenantTable, ...] = (
     TenantTable("venue", "printers", "organization_id", "MIXED_CANARY", "DIRECT_REQUIRED_EVENT"),
     TenantTable("commerce", "invoices", "organization_id", "MIXED_CANARY", "DIRECT_OPTIONAL_EVENT"),
-    TenantTable("commerce", "organization_addons", "organization_id", "MIXED_CANARY", "DIRECT_OPTIONAL_EVENT"),
     TenantTable("operation_templates", "template_installations", "organization_id", "MIXED_CANARY", "DIRECT_REQUIRED_EVENT"),
     TenantTable("organizer_access", "user_role_assignments", "user_id", "MIXED_CANARY", "USER_OPTIONAL_SCOPE"),
 )

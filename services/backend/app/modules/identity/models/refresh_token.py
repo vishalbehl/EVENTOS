@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, String, Text
 from sqlalchemy.dialects.postgresql import INET, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,6 +35,41 @@ class RefreshToken(Base):
     the entire family is invalidated immediately.
     """
     __tablename__ = "refresh_tokens"
+    __table_args__ = (
+        CheckConstraint(
+            "access_mode IN ('DIRECT', 'DELEGATED')",
+            name="ck_refresh_token_access_mode",
+        ),
+        CheckConstraint(
+            "(access_mode = 'DIRECT' AND acting_organization_id = active_organization_id "
+            "AND relationship_id IS NULL AND active_event_id IS NULL) OR "
+            "(access_mode = 'DELEGATED' AND relationship_id IS NOT NULL "
+            "AND active_workspace_id IS NOT NULL "
+            "AND acting_organization_id <> active_organization_id)",
+            name="ck_refresh_token_context_shape",
+        ),
+        ForeignKeyConstraint(["active_organization_id"], ["platform.organizations.id"],
+                             name="fk_refresh_context_organization"),
+        ForeignKeyConstraint(["acting_organization_id"], ["platform.organizations.id"],
+                             name="fk_refresh_context_actor_organization"),
+        ForeignKeyConstraint(
+            ["active_organization_id", "active_workspace_id"],
+            ["organizer_access.operational_workspaces.organization_id", "organizer_access.operational_workspaces.id"],
+            name="fk_refresh_context_workspace",
+        ),
+        ForeignKeyConstraint(
+            ["active_organization_id", "active_event_id"],
+            ["events.events.organization_id", "events.events.id"],
+            name="fk_refresh_context_event",
+        ),
+        ForeignKeyConstraint(
+            ["relationship_id", "active_organization_id", "acting_organization_id"],
+            ["organizer_access.emc_client_relationships.id", "organizer_access.emc_client_relationships.client_organization_id",
+             "organizer_access.emc_client_relationships.emc_organization_id"],
+            name="fk_refresh_context_relationship",
+        ),
+        {"schema": "identity"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -54,6 +89,27 @@ class RefreshToken(Base):
     # Groups tokens from the same login session for family invalidation
     family_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), nullable=False, default=uuid.uuid4, index=True
+    )
+
+    # The selected operational context belongs to this browser/device session,
+    # not to the identity record. Every request still revalidates live access.
+    access_mode: Mapped[str] = mapped_column(
+        String(12), nullable=False, default="DIRECT", server_default="DIRECT"
+    )
+    active_organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    acting_organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    active_workspace_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    active_event_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    relationship_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True
     )
 
     # Device/browser context for user-facing session management

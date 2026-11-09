@@ -27,7 +27,7 @@ async def calculate_price(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     try:
         res = await PricingService.calculate_price(
             db=db,
@@ -49,7 +49,7 @@ async def simulate_pricing(
     db: AsyncSession = Depends(get_db),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", min_length=8, max_length=255),
 ):
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     try:
         return await PricingCommandService.simulate(
             db,
@@ -69,7 +69,7 @@ async def get_simulations(
     db: AsyncSession = Depends(get_db),
     limit: int = Query(100, ge=1, le=100),
 ):
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     return await PricingQueryService.list_simulations(
         db, organization_id=org_id, user_id=current_user.id, limit=limit
     )
@@ -82,7 +82,7 @@ async def delete_simulation(
 ):
     deleted = await PricingCommandService.delete(
         db,
-        organization_id=current_user.organization_id,
+        organization_id=current_user.request_organization_id,
         user_id=current_user.id,
         simulation_id=simulation_id,
     )
@@ -96,7 +96,7 @@ async def get_forecast(
     db: AsyncSession = Depends(get_db),
     limit: int = Query(100, ge=1, le=100),
 ):
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     if not org_id:
         return []
     
@@ -201,7 +201,7 @@ async def superadmin_create_pricing_rule(
 ):
     rule = await PricingCommandService.create_rule(
         db,
-        organization_id=current_user.organization_id,
+        organization_id=current_user.request_organization_id,
         payload=body.model_dump(),
     )
     return {"status": "success", "id": str(rule.id)}
@@ -216,7 +216,7 @@ async def superadmin_update_pricing_rule(
     rule = await PricingCommandService.update_rule(
         db,
         rule_id=rule_id,
-        organization_id=current_user.organization_id,
+        organization_id=current_user.request_organization_id,
         payload=body.model_dump(exclude_unset=True),
     )
     return {"status": "success", "id": str(rule_id)}
@@ -362,7 +362,7 @@ async def superadmin_run_simulation(
     # Save simulation run
     sim = PricingSimulation(
         id=uuid.uuid4(),
-        organization_id=current_user.organization_id,
+        organization_id=current_user.request_organization_id,
         user_id=current_user.id,
         name=body.name or f"Simulation - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         input_data=body.model_dump(mode="json"),
@@ -370,7 +370,7 @@ async def superadmin_run_simulation(
         created_at=datetime.now(timezone.utc)
     )
     db.add(sim)
-    await command.commit(organization_id=current_user.organization_id)
+    await command.commit(organization_id=current_user.request_organization_id)
     
     return output_data
 
@@ -487,7 +487,7 @@ async def superadmin_create_template(
     # Create the template instance
     tpl_obj = model_class(
         id=uuid.uuid4(),
-        organization_id=current_user.organization_id,
+        organization_id=current_user.request_organization_id,
         name=body.name,
         slug=slug,
         description=body.description_text,
@@ -512,7 +512,7 @@ async def superadmin_create_template(
         tpl_obj.image_url = body.image_url
 
     db.add(tpl_obj)
-    await command.commit(organization_id=current_user.organization_id)
+    await command.commit(organization_id=current_user.request_organization_id)
     return {"status": "success", "slug": slug}
 
 @router.put("/superadmin/catalog/templates/{slug}")
@@ -570,7 +570,7 @@ async def superadmin_update_template(
     if body.image_url is not None and hasattr(tpl, 'image_url'):
         tpl.image_url = body.image_url
 
-    await command.commit(organization_id=current_user.organization_id)
+    await command.commit(organization_id=current_user.request_organization_id)
     return {"status": "success"}
 
 @router.post("/superadmin/catalog/templates/{slug}/duplicate")
@@ -605,27 +605,49 @@ async def superadmin_duplicate_template(
     if exists_res:
         new_slug = f"{new_slug}-{uuid.uuid4().hex[:4]}"
 
-    # Clone properties
+    # Explicit portable configuration only. New database columns—including
+    # credentials, personal data, commercial-contract references, and managed
+    # assets—are excluded until deliberately classified here.
+    portable_fields = {
+        RoomTemplate: (
+            "short_description", "total_estimated_cost", "consumables_cost",
+            "default_capacity", "room_type", "podiums", "setup_time",
+            "teardown_time",
+        ),
+        RegistrationTemplate: (
+            "short_description", "total_estimated_cost", "consumables_cost",
+            "registration_type", "min_attendees",
+            "max_attendees", "recommended_reg_type", "reg_counters", "kiosks",
+            "badge_stations", "qr_stations", "helpdesk_counters",
+            "checkins_per_hour", "badge_per_piece_cost", "setup_time",
+            "teardown_time", "is_single_kiosk",
+        ),
+        SrrTemplate: (
+            "short_description", "total_estimated_cost", "consumables_cost",
+            "srr_type", "min_speakers",
+            "max_speakers", "recommended_event_size", "preview_stations",
+            "checkin_counters", "is_single_station", "consultation_desks",
+            "printer_stations", "speakers_per_hour", "setup_time",
+            "teardown_time",
+        ),
+    }
+    portable_values = {name: getattr(tpl, name) for name in portable_fields[model_class]}
     cloned_tpl = model_class(
         id=uuid.uuid4(),
         organization_id=tpl.organization_id,
         name=new_name,
         slug=new_slug,
         description=tpl.description,
-        status=tpl.status,
+        status="DRAFT",
         is_default=False,
         version=tpl.version,
-        usage_count=0
+        usage_count=0,
+        image_url=None,
+        **portable_values,
     )
-    
-    # Copy other columns dynamically
-    for column in model_class.__table__.columns:
-        col_name = column.name
-        if col_name not in ["id", "slug", "name", "is_default", "usage_count", "created_at", "updated_at"]:
-            setattr(cloned_tpl, col_name, getattr(tpl, col_name))
             
     db.add(cloned_tpl)
-    await command.commit(organization_id=current_user.organization_id)
+    await command.commit(organization_id=current_user.request_organization_id)
     return {"status": "success", "slug": new_slug}
 
 @router.post("/superadmin/catalog/templates/{slug}/default")
@@ -659,7 +681,7 @@ async def superadmin_set_default_template(
 
     # Set default on this template
     tpl.is_default = True
-    await command.commit(organization_id=current_user.organization_id)
+    await command.commit(organization_id=current_user.request_organization_id)
     return {"status": "success"}
 
 @router.delete("/superadmin/catalog/templates/{slug}")
@@ -677,7 +699,7 @@ async def superadmin_delete_template(
         tpl = (await db.execute(stmt)).scalar_one_or_none()
         if tpl:
             await db.delete(tpl)
-            await command.commit(organization_id=current_user.organization_id)
+            await command.commit(organization_id=current_user.request_organization_id)
             return {"status": "success"}
 
     raise HTTPException(status_code=404, detail="Template not found")

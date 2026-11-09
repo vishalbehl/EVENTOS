@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="5" skipped="0" tests="100" time="222.752" timestamp="2026-10-21T11:02:57.736561+05:30" hostname="Vishal"><testcase classname="tests.test_platform_catalogue_mutation_revocation" name="test_platform_catalogue_command_revocation_ordering[False-create]" time="20.046"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">committed_session_factory = async_sessionmaker(class_='AsyncSession', autocommit=False, bind=&lt;sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x0000022861189250&gt;, autoflush=False, expire_on_commit=False)
+race_fixture = {'actor_id': UUID('6782fa51-d40b-414a-a4b9-7d85c6f48865'), 'category_key': 'race-0-6cdc29cb', 'platform_id': UUID('2fd7ccba-986e-4f2e-9b38-14bd3f8a10bf'), 'replacement_category': UUID('2406a9a7-63da-47ab-978c-3667bb1e41bf'), ...}
+operation = 'create', writer_first = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("operation", ["create", "template", "category", "repair"])
+    @pytest.mark.parametrize("writer_first", [False, True])
+    async def test_platform_catalogue_command_revocation_ordering(
+            committed_session_factory, race_fixture, operation, writer_first):
+        data, task = race_fixture, None
+        if operation == "repair":
+            await prepare_taxonomy_repair(committed_session_factory, data)
+        try:
+            async with committed_session_factory() as outer, committed_session_factory() as second:
+                connection = await outer.connection()
+                async with AsyncSession(bind=connection, expire_on_commit=False,
+                        join_transaction_mode="create_savepoint") as first:
+                    if writer_first:
+                        await mutate(first, data, operation)
+                        pid = await second.scalar(text("SELECT pg_backend_pid()"))
+                        task = asyncio.create_task(revoke(second, data))
+                    else:
+                        await revoke(first, data)
+                        pid = await second.scalar(text("SELECT pg_backend_pid()"))
+                        task = asyncio.create_task(mutate(second, data, operation))
+                    await wait_for_blocker(first, pid, task)
+                    await first.close()
+                    await outer.commit()
+                    if writer_first:
+                        await asyncio.wait_for(task, 15)
+                        await second.commit()
+                    else:
+&gt;                       with pytest.raises(HTTPException) as denied:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E                       Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_platform_catalogue_mutation_revocation.py:57: Failed</failure></testcase><testcase classname="tests.test_platform_catalogue_mutation_revocation" name="test_platform_catalogue_command_revocation_ordering[False-template]" time="1.682"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">committed_session_factory = async_sessionmaker(class_='AsyncSession', autocommit=False, bind=&lt;sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x0000022861189250&gt;, autoflush=False, expire_on_commit=False)
+race_fixture = {'actor_id': UUID('062ff6dd-8fa7-49d8-9274-41903036f36b'), 'category_key': 'race-0-6725c6ba', 'platform_id': UUID('ffc28a6e-ecbf-4fa2-8135-0236bf343825'), 'replacement_category': UUID('29181dfc-820f-41fe-ab92-7e1643afcf9a'), ...}
+operation = 'template', writer_first = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("operation", ["create", "template", "category", "repair"])
+    @pytest.mark.parametrize("writer_first", [False, True])
+    async def test_platform_catalogue_command_revocation_ordering(
+            committed_session_factory, race_fixture, operation, writer_first):
+        data, task = race_fixture, None
+        if operation == "repair":
+            await prepare_taxonomy_repair(committed_session_factory, data)
+        try:
+            async with committed_session_factory() as outer, committed_session_factory() as second:
+                connection = await outer.connection()
+                async with AsyncSession(bind=connection, expire_on_commit=False,
+                        join_transaction_mode="create_savepoint") as first:
+                    if writer_first:
+                        await mutate(first, data, operation)
+                        pid = await second.scalar(text("SELECT pg_backend_pid()"))
+                        task = asyncio.create_task(revoke(second, data))
+                    else:
+                        await revoke(first, data)
+                        pid = await second.scalar(text("SELECT pg_backend_pid()"))
+                        task = asyncio.create_task(mutate(second, data, operation))
+                    await wait_for_blocker(first, pid, task)
+                    await first.close()
+                    await outer.commit()
+                    if writer_first:
+                        await asyncio.wait_for(task, 15)
+                        await second.commit()
+                    else:
+&gt;                       with pytest.raises(HTTPException) as denied:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E                       Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_platform_catalogue_mutation_revocation.py:57: Failed</failure></testcase><testcase classname="tests.test_platform_catalogue_mutation_revocation" name="test_platform_catalogue_command_revocation_ordering[False-category]" time="1.773"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">committed_session_factory = async_sessionmaker(class_='AsyncSession', autocommit=False, bind=&lt;sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x0000022861189250&gt;, autoflush=False, expire_on_commit=False)
+race_fixture = {'actor_id': UUID('b7e5a97b-10a0-4b86-bd87-e001d411709e'), 'category_key': 'race-0-5ecef791', 'platform_id': UUID('0ca918f3-bf9e-4ceb-9dc1-73c75eedcb5b'), 'replacement_category': UUID('42900dee-1ecf-4015-8069-93243af67c38'), ...}
+operation = 'category', writer_first = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("operation", ["create", "template", "category", "repair"])
+    @pytest.mark.parametrize("writer_first", [False, True])
+    async def test_platform_catalogue_command_revocation_ordering(
+            committed_session_factory, race_fixture, operation, writer_first):
+        data, task = race_fixture, None
+        if operation == "repair":
+            await prepare_taxonomy_repair(committed_session_factory, data)
+        try:
+            async with committed_session_factory() as outer, committed_session_factory() as second:
+                connection = await outer.connection()
+                async with AsyncSession(bind=connection, expire_on_commit=False,
+                        join_transaction_mode="create_savepoint") as first:
+                    if writer_first:
+                        await mutate(first, data, operation)
+                        pid = await second.scalar(text("SELECT pg_backend_pid()"))
+                        task = asyncio.create_task(revoke(second, data))
+                    else:
+                        await revoke(first, data)
+                        pid = await second.scalar(text("SELECT pg_backend_pid()"))
+                        task = asyncio.create_task(mutate(second, data, operation))
+                    await wait_for_blocker(first, pid, task)
+                    await first.close()
+                    await outer.commit()
+                    if writer_first:
+                        await asyncio.wait_for(task, 15)
+                        await second.commit()
+                    else:
+&gt;                       with pytest.raises(HTTPException) as denied:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E                       Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_platform_catalogue_mutation_revocation.py:57: Failed</failure></testcase><testcase classname="tests.test_platform_catalogue_mutation_revocation" name="test_platform_catalogue_command_revocation_ordering[False-repair]" time="2.240"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">committed_session_factory = async_sessionmaker(class_='AsyncSession', autocommit=False, bind=&lt;sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x0000022861189250&gt;, autoflush=False, expire_on_commit=False)
+race_fixture = {'actor_id': UUID('cffd3902-099f-4664-b469-9b9cc75bdc27'), 'category_key': 'race-0-cf5be4e1', 'platform_id': UUID('dc3aa7b7-1a18-4ace-8a4c-37bf5501e70d'), 'replacement_category': UUID('045c8e92-5258-4a91-b2e7-5dbb870ea762'), ...}
+operation = 'repair', writer_first = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("operation", ["create", "template", "category", "repair"])
+    @pytest.mark.parametrize("writer_first", [False, True])
+    async def test_platform_catalogue_command_revocation_ordering(
+            committed_session_factory, race_fixture, operation, writer_first):
+        data, task = race_fixture, None
+        if operation == "repair":
+            await prepare_taxonomy_repair(committed_session_factory, data)
+        try:
+            async with committed_session_factory() as outer, committed_session_factory() as second:
+                connection = await outer.connection()
+                async with AsyncSession(bind=connection, expire_on_commit=False,
+                        join_transaction_mode="create_savepoint") as first:
+                    if writer_first:
+                        await mutate(first, data, operation)
+                        pid = await second.scalar(text("SELECT pg_backend_pid()"))
+                        task = asyncio.create_task(revoke(second, data))
+                    else:
+                        await revoke(first, data)
+                        pid = await second.scalar(text("SELECT pg_backend_pid()"))
+                        task = asyncio.create_task(mutate(second, data, operation))
+                    await wait_for_blocker(first, pid, task)
+                    await first.close()
+                    await outer.commit()
+                    if writer_first:
+                        await asyncio.wait_for(task, 15)
+                        await second.commit()
+                    else:
+&gt;                       with pytest.raises(HTTPException) as denied:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E                       Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_platform_catalogue_mutation_revocation.py:57: Failed</failure></testcase><testcase classname="tests.test_platform_catalogue_mutation_revocation" name="test_platform_catalogue_command_revocation_ordering[True-create]" time="2.354" /><testcase classname="tests.test_platform_catalogue_mutation_revocation" name="test_platform_catalogue_command_revocation_ordering[True-template]" time="2.274" /><testcase classname="tests.test_platform_catalogue_mutation_revocation" name="test_platform_catalogue_command_revocation_ordering[True-category]" time="2.276" /><testcase classname="tests.test_platform_catalogue_mutation_revocation" name="test_platform_catalogue_command_revocation_ordering[True-repair]" time="2.560" /><testcase classname="tests.test_duplicate_cli_authority_ordering" name="test_duplicate_maintenance_authority_orders_with_revocation[historical-False]" time="1.190" /><testcase classname="tests.test_duplicate_cli_authority_ordering" name="test_duplicate_maintenance_authority_orders_with_revocation[historical-True]" time="1.001" /><testcase classname="tests.test_duplicate_cli_authority_ordering" name="test_duplicate_maintenance_authority_orders_with_revocation[platform-False]" time="1.061" /><testcase classname="tests.test_duplicate_cli_authority_ordering" name="test_duplicate_maintenance_authority_orders_with_revocation[platform-True]" time="1.094" /><testcase classname="tests.test_duplicate_cli_authority_ordering" name="test_duplicate_maintenance_missing_revision_fails_without_implicit_repair" time="0.887" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes0]" time="0.005" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes1]" time="0.003" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes2]" time="0.007" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes3]" time="0.007" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes4]" time="0.007" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes5]" time="0.007" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes6]" time="0.009" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes7]" time="0.008" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes8]" time="0.007" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_equivalent_event_marker_spellings_have_same_identity" time="0.006" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_incompatible_mapping_rejected_before_any_write[changes0]" time="0.008" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_incompatible_mapping_rejected_before_any_write[changes1]" time="0.008" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_replacement_parent_rejected_before_any_write[retired]" time="0.004" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_replacement_parent_rejected_before_any_write[deleted]" time="0.007" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_replacement_parent_rejected_before_any_write[foreign]" time="0.009" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_replacement_parent_rejected_before_any_write[missing]" time="0.005" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[purpose]" time="1.135" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[scope]" time="1.042" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[event]" time="1.033" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[conflicting_markers]" time="1.103" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[missing_markers]" time="0.848" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[malformed_marker]" time="0.859" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[foreign_event_owner]" time="0.992" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[retired_parent]" time="0.951" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[owned_parent_for_global]" time="0.981" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[valid_global]" time="0.948" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[valid_event]" time="1.192" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_category_mapping_rejects_invalid_owned_references[global_template]" time="1.200" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_category_mapping_rejects_invalid_owned_references[foreign_event]" time="1.163" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_category_mapping_rejects_invalid_owned_references[valid_owned]" time="1.100" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_category_mapping_rejects_invalid_owned_references[valid_global]" time="0.912" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_abstract_reference_reassignment_preserves_json_and_lineage" time="0.859" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_exhausted_reference_budget_changes_nothing[template]" time="0.829" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_exhausted_reference_budget_changes_nothing[category]" time="0.765" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_parallel_catalogue_receipts_do_not_deadlock_owner_serialization" time="2.482" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_owner_serialization_still_blocks_lifecycle_changes" time="1.108" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_taxonomy_repair_before_waiting_writer_rejects_cached_key" time="3.923" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_waiting_taxonomy_repair_preserves_preceding_writer_and_lineage" time="3.146" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_retirement_before_waiting_writer_rejects_stale_reference[template]" time="2.778" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_retirement_before_waiting_writer_rejects_stale_reference[category]" time="2.847" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_writer_before_retirement_is_preserved_and_reassigned[template]" time="2.462" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_writer_before_retirement_is_preserved_and_reassigned[category]" time="2.659" /><testcase classname="tests.test_reviewed_aggregate_retirement_races" name="test_retirement_before_reviewed_repair[template-registration]" time="4.598" /><testcase classname="tests.test_reviewed_aggregate_retirement_races" name="test_retirement_before_reviewed_repair[template-abstract]" time="4.849" /><testcase classname="tests.test_reviewed_aggregate_retirement_races" name="test_retirement_before_reviewed_repair[category-registration]" time="5.206" /><testcase classname="tests.test_reviewed_aggregate_retirement_races" name="test_retirement_before_reviewed_repair[category-abstract]" time="5.117" /><testcase classname="tests.test_reviewed_aggregate_retirement_races" name="test_reviewed_repair_before_retirement[template-registration]" time="5.028" /><testcase classname="tests.test_reviewed_aggregate_retirement_races" name="test_reviewed_repair_before_retirement[template-abstract]" time="4.621" /><testcase classname="tests.test_reviewed_aggregate_retirement_races" name="test_reviewed_repair_before_retirement[category-registration]" time="5.312" /><testcase classname="tests.test_reviewed_aggregate_retirement_races" name="test_reviewed_repair_before_retirement[category-abstract]" time="5.070" /><testcase classname="tests.test_reviewed_template_retirement_races" name="test_retirement_precedes_reviewed_global_template_repair[template]" time="3.560" /><testcase classname="tests.test_reviewed_template_retirement_races" name="test_retirement_precedes_reviewed_global_template_repair[category]" time="3.490" /><testcase classname="tests.test_reviewed_template_retirement_races" name="test_reviewed_global_template_repair_precedes_retirement[template]" time="3.465" /><testcase classname="tests.test_reviewed_template_retirement_races" name="test_reviewed_global_template_repair_precedes_retirement[category]" time="3.429" /><testcase classname="tests.test_catalogue_checkpoint_concurrency" name="test_two_claimers_skip_uncommitted_checkpoint_claim" time="1.730" /><testcase classname="tests.test_catalogue_checkpoint_concurrency" name="test_parallel_duplicate_waits_then_cannot_consume_next_page" time="3.473" /><testcase classname="tests.test_catalogue_checkpoint_concurrency" name="test_platform_revocation_orders_against_page_checkpoint[False]" time="2.611" /><testcase classname="tests.test_catalogue_checkpoint_concurrency" name="test_platform_revocation_orders_against_page_checkpoint[True]" time="3.512" /><testcase classname="tests.test_catalogue_durable_pages" name="test_global_then_205_owned_categories_survive_missing_continuation_publish" time="18.170"><failure message="AssertionError: assert {'blocked_cou...eted': 8, ...} == {'blocked_cou...eted': 8, ...}&#10;  &#10;  Omitting 5 identical items, use -vv to show&#10;  Differing items:&#10;  {'checked_count': 206} != {'checked_count': 205}&#10;  Use -v to get more diff">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000022864EE58B0&gt;
+organization = &lt;Organization id=3165a49d-e2e1-492f-b073-13e9e32b2d30 slug=test-org-72b9c793&gt;
+super_admin = &lt;User id=f71348d2-91ea-41ca-9bc2-8c8223a609ef email=admin-07e089@test.com role=super_admin&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x00000228660389F0&gt;
+
+    @pytest.mark.asyncio
+    async def test_global_then_205_owned_categories_survive_missing_continuation_publish(db, organization, super_admin, monkeypatch):
+        categories = [FormCategory(organization_id=organization.id, name=f"Durable {index}", slug=f"durable-{uuid.uuid4().hex}") for index in range(205)]
+        db.add_all(categories)
+        await db.commit()
+        run_id, owner, platform, actor = await initialize(db, organization, super_admin, monkeypatch)
+        # Only global taxonomy may start until its template-validation stage ends.
+        first = await execute_claimed(db, platform)
+        assert len(first) == 1
+        async with TenantContextGuard.scoped(db, platform):
+            global_work = await db.get(Work, first[0][0])
+            assert global_work.kind == "GLOBAL" and global_work.stage == "GLOBAL_TEMPLATE"
+        assert await service.execute_page(*first[0]) == {"status": "STALE_OR_UNAVAILABLE"}
+        await execute_claimed(db, platform)
+        # No continuation was published; recovery discovers the committed cursor.
+        for _ in range(8):
+            messages = await service.claim_pages(platform)
+            if not messages:
+                break
+            for message in messages:
+                await service.execute_page(*message)
+        async with TenantContextGuard.scoped(db, platform):
+            run = await db.get(Run, run_id)
+            result = await service.progress(db, run)
+&gt;           assert result == dict(completion_status="COMPLETED", streams_total=2, streams_completed=2,
+                pages_completed=8, checked_count=205, blocked_count=0)
+E           AssertionError: assert {'blocked_cou...eted': 8, ...} == {'blocked_cou...eted': 8, ...}
+E             
+E             Omitting 5 identical items, use -vv to show
+E             Differing items:
+E             {'checked_count': 206} != {'checked_count': 205}
+E             Use -v to get more diff
+
+tests\test_catalogue_durable_pages.py:70: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_durable_pages" name="test_checkpoint_audit_failure_rolls_back_flushed_page_and_cursor" time="5.673" /><testcase classname="tests.test_catalogue_durable_pages" name="test_lost_initial_message_reclaims_generation_and_rejects_old_message" time="2.683" /><testcase classname="tests.test_catalogue_durable_pages" name="test_legacy_dispatched_run_is_not_reported_complete" time="1.246" /><testcase classname="tests.test_catalogue_durable_pages" name="test_committed_platform_revocation_stops_page_execution" time="2.138" /><testcase classname="tests.test_catalogue_durable_pages" name="test_database_rejects_invalid_work_ownership_stage_and_completion[owner]" time="0.998" /><testcase classname="tests.test_catalogue_durable_pages" name="test_database_rejects_invalid_work_ownership_stage_and_completion[stage]" time="1.149" /><testcase classname="tests.test_catalogue_durable_pages" name="test_database_rejects_invalid_work_ownership_stage_and_completion[counter]" time="1.146" /><testcase classname="tests.test_catalogue_durable_pages" name="test_database_rejects_invalid_work_ownership_stage_and_completion[fake_completion]" time="1.216" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_stale_or_unversioned_fanout_cannot_overwrite_recovered_generation[start-None]" time="1.562" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_stale_or_unversioned_fanout_cannot_overwrite_recovered_generation[start-1]" time="1.526" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_stale_or_unversioned_fanout_cannot_overwrite_recovered_generation[complete-None]" time="1.516" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_stale_or_unversioned_fanout_cannot_overwrite_recovered_generation[complete-1]" time="1.342" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_stale_or_unversioned_fanout_cannot_overwrite_recovered_generation[fail-None]" time="1.506" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_stale_or_unversioned_fanout_cannot_overwrite_recovered_generation[fail-1]" time="1.502" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_expired_running_generation_failure_is_terminal_and_audited[actor_missing]" time="1.379" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_expired_running_generation_failure_is_terminal_and_audited[exhausted]" time="1.379" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_reclaim_audit_failure_rolls_back_generation_and_can_recover" time="1.347" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_independent_recovery_claimers_do_not_duplicate_running_reclaim" time="1.770" /><testcase classname="tests.test_catalogue_dispatch_messages" name="test_recovery_publishes_committed_generation_and_keeps_broker_failure_pending" time="0.044" /><testcase classname="tests.test_catalogue_dispatch_messages" name="test_next_fanout_page_preserves_generation_and_one_hundred_tenant_bound" time="0.011" /><testcase classname="tests.test_catalogue_dispatch_messages" name="test_stale_fanout_stops_before_discovery_or_publishing" time="0.008" /><testcase classname="tests.test_catalogue_worker_context" name="test_reconciliation_pages_over_one_hundred_without_loss_or_duplicate_evidence" time="9.492" /><testcase classname="tests.test_catalogue_worker_context" name="test_committed_dispatch_recovers_after_lease_and_preserves_context" time="2.252" /><testcase classname="tests.test_catalogue_worker_context" name="test_reconciliation_uses_target_and_restores_inherited_context[platform]" time="2.271" /><testcase classname="tests.test_catalogue_worker_context" name="test_reconciliation_uses_target_and_restores_inherited_context[customer]" time="2.267" /><testcase classname="tests.test_catalogue_worker_context" name="test_global_taxonomy_duplicate_count_includes_global_rows" time="1.992" /><testcase classname="tests.test_catalogue_worker_context" name="test_started_fanout_crash_is_reclaimable_after_its_lease" time="1.070" /><testcase classname="tests.test_catalogue_worker_context" name="test_started_fanout_holds_a_lease_covering_its_hard_timeout" time="3.449" /></testsuite></testsuites>

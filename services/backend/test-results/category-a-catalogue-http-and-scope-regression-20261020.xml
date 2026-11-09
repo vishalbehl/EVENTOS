@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="31" time="145.193" timestamp="2026-10-20T22:40:38.115761+05:30" hostname="Vishal"><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[member-id]" time="18.680" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[member-slug]" time="1.899" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[unentitled_owner-id]" time="2.265" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[unentitled_owner-slug]" time="2.228" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[unaccepted-id]" time="1.393" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[unaccepted-slug]" time="1.033" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[platform-id]" time="1.219" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[platform-slug]" time="1.177" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_selected_event_detail_remains_available[id]" time="2.070" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_selected_event_detail_remains_available[slug]" time="1.426" /><testcase classname="tests.test_catalogue_platform_route_contracts" name="test_platform_catalogue_http_mutation_contract[templates]" time="1.008"><failure message="AssertionError: assert (201 == 201 and {'category_id...575823Z', ...} == {'category_id...575823Z', ...}&#10; +  where 201 = &lt;Response [201 Created]&gt;.status_code&#10;  &#10;  Omitting 19 identical items, use -vv to show&#10;  Differing items:&#10;  {'category_name': 'Registration'} != {'category_name': 'Registration adapter fixture'}&#10;  Use -v to get more diff)">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000029E3FF4FF20&gt;
+super_admin = &lt;User id=c375e96e-49ef-4887-a819-d96c6766a5e9 email=admin-ce2010@test.com role=super_admin&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x0000029E40B1B700&gt;
+kind = 'templates'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["templates", "categories"])
+    async def test_platform_catalogue_http_mutation_contract(db, super_admin, monkeypatch, kind):
+        monkeypatch.setattr(settings, "ENFORCE_PRIVILEGED_MFA", True)
+        actor_id, org_id = super_admin.id, super_admin.organization_id
+        token = TokenData(user_id=actor_id, role="super_admin", organization_id=org_id,
+            jti=str(uuid.uuid4()), amr=(), auth_time=datetime.now(timezone.utc))
+        app = FastAPI()
+        module = form_templates if kind == "templates" else form_categories
+        app.include_router(module.platform_router, prefix="/api/v1")
+    
+        async def identity():
+            # A new request reloads persisted identity after any command rollback.
+            return await db.scalar(select(User).where(User.id == actor_id).execution_options(populate_existing=True))
+    
+        async def parsed_token():
+            return token
+    
+        async def database():
+            async with TenantContextGuard.scoped(db, org_id):
+                yield db
+    
+        app.dependency_overrides[get_current_user] = identity
+        app.dependency_overrides[get_token_data] = parsed_token
+        app.dependency_overrides[get_db] = database
+        path = f"/api/v1/platform/forms/{kind}"
+        payload = {"name": "Platform adapter fixture", "slug": f"platform-adapter-{uuid.uuid4().hex}"}
+        if kind == "templates":
+            category = FormCategory(name="Registration adapter fixture", slug="registration", is_system=True)
+            db.add(category)
+            await db.commit()
+            payload.update(scope_type="GLOBAL", category_key="registration", category_id=str(category.id),
+                fields=[], settings={})
+        key = str(uuid.uuid4())
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            no_mfa = await client.post(path, json=payload, headers={"Idempotency-Key": key})
+            assert no_mfa.status_code == 403 and no_mfa.json()["detail"]["code"] == "STEP_UP_REQUIRED"
+            token.amr = ("mfa",)
+            missing_key = await client.post(path, json=payload)
+            assert missing_key.status_code == 428
+            created = await client.post(path, json=payload, headers={"Idempotency-Key": key})
+            assert created.status_code == 201, created.text
+            body = created.json()
+            assert body["version"] == 1 and body["organization_id"] is None
+            assert created.headers["cache-control"] == "no-store"
+            replay = await client.post(path, json=payload, headers={"Idempotency-Key": key})
+&gt;           assert replay.status_code == 201 and replay.json() == body
+E           AssertionError: assert (201 == 201 and {'category_id...575823Z', ...} == {'category_id...575823Z', ...}
+E            +  where 201 = &lt;Response [201 Created]&gt;.status_code
+E             
+E             Omitting 19 identical items, use -vv to show
+E             Differing items:
+E             {'category_name': 'Registration'} != {'category_name': 'Registration adapter fixture'}
+E             Use -v to get more diff)
+
+tests\test_catalogue_platform_route_contracts.py:69: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_platform_route_contracts" name="test_platform_catalogue_http_mutation_contract[categories]" time="1.814" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[event_scope-SURVEY]" time="9.584" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[event_scope-SPEAKER_INTAKE]" time="9.376" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[workspace_scope-SURVEY]" time="9.262" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[workspace_scope-SPEAKER_INTAKE]" time="9.187" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[requested-SURVEY]" time="3.877" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[requested-SPEAKER_INTAKE]" time="4.147" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[suspended-SURVEY]" time="5.368" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[suspended-SPEAKER_INTAKE]" time="5.623" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[detached-SURVEY]" time="5.465" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[detached-SPEAKER_INTAKE]" time="5.409" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[missing_action-SURVEY]" time="5.594" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[missing_action-SPEAKER_INTAKE]" time="5.764" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[foreign_event-SURVEY]" time="4.907" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[foreign_event-SPEAKER_INTAKE]" time="5.053" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[catalogue_denied-SURVEY]" time="4.905" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[catalogue_denied-SPEAKER_INTAKE]" time="4.853" /><testcase classname="tests.test_registration_catalogue_reference_scope" name="test_registration_save_revalidates_catalogue_scope_and_preserves_lineage[shared]" time="3.831" /><testcase classname="tests.test_registration_catalogue_reference_scope" name="test_registration_save_revalidates_catalogue_scope_and_preserves_lineage[foreign]" time="1.756" /><testcase classname="tests.test_registration_catalogue_reference_scope" name="test_registration_save_revalidates_catalogue_scope_and_preserves_lineage[retired]" time="3.355" /></testsuite></testsuites>

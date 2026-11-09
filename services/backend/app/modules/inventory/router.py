@@ -17,7 +17,7 @@ async def import_hardware(file: UploadFile = File(...), current_user: User = Dep
     contents = await file.read()
     count = await InventoryCommandService(db).import_hardware(
         contents=contents,
-        organization_id=current_user.organization_id,
+        organization_id=current_user.request_organization_id,
     )
     return {"status": "success", "count": count}
 

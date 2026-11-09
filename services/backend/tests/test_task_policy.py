@@ -121,10 +121,15 @@ def test_email_campaign_task_classifies_failures_before_retrying():
 
 def test_email_campaign_uses_durable_recipient_claims_before_external_delivery():
     import inspect
-    from app.modules.notifications.tasks.email_tasks import _process_email_campaign_with_session
+    from app.modules.notifications.tasks.email_tasks import (
+        _process_email_campaign_with_session,
+        _process_email_campaign_with_slot,
+    )
     from app.modules.notifications.services import email_service
 
-    task_source = inspect.getsource(_process_email_campaign_with_session)
+    wrapper_source = inspect.getsource(_process_email_campaign_with_session)
+    task_source = inspect.getsource(_process_email_campaign_with_slot)
+    assert "_process_email_campaign_with_slot" in wrapper_source
     assert "claim_campaign_recipient" in task_source
     assert "log_id=log_id" in task_source
     assert "await db.commit()" in inspect.getsource(email_service.claim_campaign_recipient)

@@ -21,7 +21,7 @@ const payment = {
   id: "33333333-3333-3333-3333-333333333333",
   organization_id: invoice.organization_id,
   invoice_id: invoice.id,
-  plan_name: "Enterprise",
+  offer_name: "Enterprise",
   amount: 1180,
   currency: "INR",
   provider: "OFFLINE",

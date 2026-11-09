@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { addDays, differenceInCalendarDays, format, parseISO } from "date-fns";
 import {
@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Columns3,
   GanttChart,
+  History,
   LayoutList,
   Loader2,
   Minus,
@@ -23,6 +24,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useSessionBuilderStore, type ViewMode } from "@/store/useSessionBuilderStore";
 import { usePublishSchedule } from "@/hooks/useSessionBuilder";
+import { ScheduleHistoryDialog } from "./ScheduleHistoryDialog";
+import { SchedulePreviewDialog } from "./SchedulePreviewDialog";
 
 interface BuilderToolbarProps {
   onNewSession?: () => void;
@@ -55,6 +58,8 @@ export function BuilderToolbar({ onNewSession }: BuilderToolbarProps = {}) {
   const zoomLevel = useSessionBuilderStore((state) => state.zoomLevel);
   const setZoomLevel = useSessionBuilderStore((state) => state.setZoomLevel);
   const publishMutation = usePublishSchedule(eventIdStr);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const availableDates = useMemo(() => {
     const sessionCounts = new Map<string, number>();
@@ -98,10 +103,11 @@ export function BuilderToolbar({ onNewSession }: BuilderToolbarProps = {}) {
 
   const handlePublish = () => {
     if (blockingConflicts > 0) {
-      const proceed = window.confirm(
-        `${blockingConflicts} blocking schedule conflict${blockingConflicts === 1 ? "" : "s"} remain. Publish anyway?`,
-      );
-      if (!proceed) return;
+      // Publication is authoritative: the backend rejects blocking conflicts.
+      // Keep the action deterministic and send the organiser to the conflict
+      // panel instead of offering a misleading "publish anyway" escape hatch.
+      toggleConflictPanel();
+      return;
     }
     publishMutation.mutate(undefined);
   };
@@ -165,6 +171,12 @@ export function BuilderToolbar({ onNewSession }: BuilderToolbarProps = {}) {
 
           <Button onClick={onNewSession} variant="outline" className="hidden h-9 gap-2 px-3 text-xs font-semibold md:inline-flex">
             <Plus className="size-3.5" /> New session
+          </Button>
+          <Button onClick={() => setHistoryOpen(true)} variant="outline" className="hidden h-9 gap-2 px-3 text-xs font-semibold lg:inline-flex">
+            <History className="size-3.5" /> History
+          </Button>
+          <Button onClick={() => setPreviewOpen(true)} variant="outline" className="hidden h-9 gap-2 px-3 text-xs font-semibold lg:inline-flex">
+            <LayoutList className="size-3.5" /> Preview
           </Button>
           <Button
             onClick={handlePublish}
@@ -246,6 +258,8 @@ export function BuilderToolbar({ onNewSession }: BuilderToolbarProps = {}) {
           </span>
         </div>
       </div>
+      <ScheduleHistoryDialog eventId={eventIdStr} open={historyOpen} onClose={() => setHistoryOpen(false)} />
+      <SchedulePreviewDialog eventId={eventIdStr} open={previewOpen} onClose={() => setPreviewOpen(false)} />
     </header>
   );
 }

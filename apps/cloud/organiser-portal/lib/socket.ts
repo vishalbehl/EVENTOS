@@ -1,84 +1,26 @@
 import { io, Socket } from 'socket.io-client';
-
+import { ScopedRealtimeClient } from '../../../../packages/utils/realtime-client';
+import { useAuthStore } from '@/store/use-auth-store';
 const getSocketUrl = () => {
-  const configuredUrl = process.env.NEXT_PUBLIC_WS_URL || process.env.NEXT_PUBLIC_API_URL;
-  if (configuredUrl) return configuredUrl.replace(/\/$/, "");
-
-  if (typeof window !== 'undefined') {
-    const host = window.location.hostname;
-    if (host === 'localhost') return 'http://localhost:8000';
-    if (host === '127.0.0.1') return 'http://127.0.0.1:8000';
-  }
+  const configured = process.env.NEXT_PUBLIC_WS_URL || process.env.NEXT_PUBLIC_API_URL;
+  if (configured) return configured.replace(/\/$/, '');
+  if (typeof window !== 'undefined' && window.location.hostname === '127.0.0.1') return 'http://127.0.0.1:8000';
   return 'http://localhost:8000';
 };
 
-class SocketService {
-  public socket: Socket | null = null;
-  private currentToken: string | null = null;
+export const socketService = new ScopedRealtimeClient<Socket>((token) => io(getSocketUrl(), {
+  auth: { token },
+  transports: ['websocket', 'polling'],
+  reconnection: false,
+  autoConnect: false,
+  timeout: 10000,
+}));
 
-  connect(token: string) {
-    if (!token) return;
-    if (this.socket && this.currentToken === token) {
-      if (this.socket.connected) return;
-      if (!this.socket.disconnected) return;
-    }
-    
-    // If token changed or old socket was disconnected, clean up first
-    if (this.socket) {
-      this.disconnect();
-    }
-
-    this.currentToken = token;
-    const socketUrl = getSocketUrl();
-    
-    this.socket = io(socketUrl, {
-      auth: { token },
-      transports: ['websocket', 'polling'],
-      reconnectionAttempts: 5,
-      reconnectionDelay: 2000,
-      reconnectionDelayMax: 10000,
-      timeout: 20000,
-      autoConnect: true,
-    });
-
-    let hasLoggedError = false;
-
-    this.socket.on('connect', () => {
-      hasLoggedError = false;
-      console.log('[Socket.IO] Connected to backend:', this.socket?.id);
-    });
-
-    this.socket.on('connect_error', (error) => {
-      const isAuthError = /invalid|expired|authentication|access token|refused/i.test(error.message);
-      
-      if (isAuthError) {
-        console.warn('[Socket.IO] Authentication rejected or expired. Disconnecting socket.');
-        this.disconnect();
-      } else if (!hasLoggedError) {
-        hasLoggedError = true;
-        console.debug(`[Socket.IO] Connecting to real-time service (${error.message})...`);
-      }
-    });
+// Tear down synchronously, before effects can render data from an old identity.
+useAuthStore.subscribe((state, previous) => {
+  if (state.accessToken !== previous.accessToken || state.user?.id !== previous.user?.id
+    || state.user?.organization_id !== previous.user?.organization_id || !state.isAuthenticated) {
+    socketService.disconnect();
   }
-
-  joinEvent(eventId: string) {
-    if (!this.socket || !this.socket.connected) return;
-    this.socket.emit('join_event_room', { event_id: eventId });
-  }
-
-  joinVenueOps(eventId: string) {
-    if (!this.socket || !this.socket.connected) return;
-    this.socket.emit('join_venue_ops_room', { event_id: eventId });
-  }
-
-  disconnect() {
-    if (this.socket) {
-      this.socket.disconnect();
-      this.socket = null;
-    }
-    this.currentToken = null;
-  }
-}
-
-export const socketService = new SocketService();
+});
 export default socketService;

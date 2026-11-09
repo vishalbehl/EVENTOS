@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -32,15 +32,18 @@ import {
   Wallet,
   Info
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { ThemedIllustration, IllustrationName } from "@/components/ui/themed-illustration";
 import {
   CountryStateEntry,
   fetchCountryStates,
   getAllowedCountries,
   getStatesForCountry,
-} from "@/lib/country-states";
-import { COUNTRY_DIAL_CODES, getDialCodeForCountry } from "@/lib/country-dial-codes";
+  COUNTRY_DIAL_CODES,
+  getDialCodeForCountry,
+  MASTER_ROLE_CATEGORIES,
+} from "@eventos/form-builder-studio";
+import { uploadPublicRegistrationFile, requiresNewUploadAttempt } from "@/lib/scan-gated-registration-upload";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -56,7 +59,20 @@ interface FormField {
   placeholder?: string;
   step_index?: number;
   grid_width?: "full" | "half" | "third";
+  validation?: {
+    allowed_file_types?: string[];
+    max_file_size_mb?: number;
+  };
 }
+
+type ManagedUploadValue = {
+  kind: "managed-upload";
+  managed_url: string;
+  name: string;
+  size: number;
+  type: string;
+  preview_url?: string;
+};
 
 interface ConfiguredStep {
   id: string;
@@ -101,6 +117,16 @@ export default function DynamicRegistrationPage() {
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [uploadStates, setUploadStates] = useState<Record<string, {
+    status: "uploading";
+    progress: number;
+    filename: string;
+  }>>({});
+  const uploadControllers = useRef(new Map<string, AbortController>());
+  const uploadRetryKeys = useRef(new Map<string, { fingerprint: string; key: string }>());
+  const submissionRetryKey = useRef<{ fingerprint: string; key: string } | null>(null);
+  const previewUrls = useRef(new Set<string>());
+  const hasPendingUploads = Object.keys(uploadStates).length > 0;
   const [promoCode, setPromoCode] = useState("");
   const [validatingPromo, setValidatingPromo] = useState(false);
   const [appliedPromo, setAppliedPromo] = useState<{
@@ -117,6 +143,21 @@ export default function DynamicRegistrationPage() {
     status?: string;
   } | null>(null);
 
+  const [alreadyRegisteredData, setAlreadyRegisteredData] = useState<{
+    regno?: string;
+    name?: string;
+    category?: string;
+    email?: string;
+    phone?: string;
+  } | null>(null);
+
+  useEffect(() => () => {
+    uploadControllers.current.forEach((controller) => controller.abort());
+    previewUrls.current.forEach((url) => URL.revokeObjectURL(url));
+    uploadControllers.current.clear();
+    previewUrls.current.clear();
+  }, []);
+
   // Check if user is already registered or redirect to login if no session token
   useEffect(() => {
     const token =
@@ -127,14 +168,36 @@ export default function DynamicRegistrationPage() {
       return;
     }
 
-    // Verify against dashboard API
-    fetch(`${API_BASE}/api/v1/portal/dashboard/${eventId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((dash) => {
+    // Check fast cached registration flag
+    const cachedRegistered = localStorage.getItem(`portal_registered_${eventId}`) === "true";
+    const cachedParticipant = localStorage.getItem(`portal_participant_${eventId}`);
+    if (cachedRegistered && cachedParticipant) {
+      try {
+        const parsed = JSON.parse(cachedParticipant);
+        if (parsed?.regno) {
+          setAlreadyRegisteredData({
+            regno: parsed.regno,
+            name: parsed.name,
+            category: parsed.category,
+            email: parsed.email,
+          });
+        }
+      } catch {}
+    }
+
+    // Verify against both dashboard API and user profile
+    Promise.all([
+      fetch(`${API_BASE}/api/v1/portal/dashboard`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then((res) => (res.ok ? res.json() : null)),
+      fetch(`${API_BASE}/api/v1/portal/users/${eventId}/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then((res) => (res.ok ? res.json() : null)),
+    ])
+      .then(([dash, usr]) => {
         const isRegistered =
           Boolean(dash?.participant?.regno) ||
+          Boolean(usr?.is_registered) ||
           (dash?.registration?.status &&
             dash?.registration?.status !== "not_registered" &&
             dash?.registration?.status !== "closed" &&
@@ -142,10 +205,16 @@ export default function DynamicRegistrationPage() {
 
         if (isRegistered) {
           localStorage.setItem(`portal_registered_${eventId}`, "true");
-          toast.info("You are already registered! Redirecting to your dashboard...");
-          router.replace(`/${eventId}/dashboard`);
+          setAlreadyRegisteredData({
+            regno: dash?.participant?.regno || "CONFIRMED",
+            name: dash?.participant?.name || usr?.full_name || "Registered Delegate",
+            category: dash?.participant?.category || "Delegate",
+            email: dash?.participant?.email || usr?.email || "",
+            phone: dash?.participant?.phone || "",
+          });
         } else {
           localStorage.removeItem(`portal_registered_${eventId}`);
+          setAlreadyRegisteredData(null);
         }
       })
       .catch(() => {});
@@ -167,7 +236,12 @@ export default function DynamicRegistrationPage() {
         const p = JSON.parse(storedParticipant);
         if (p.regno) {
           localStorage.setItem(`portal_registered_${eventId}`, "true");
-          router.replace(`/${eventId}/dashboard`);
+          setAlreadyRegisteredData({
+            regno: p.regno,
+            name: p.name || "",
+            category: p.category || "Delegate",
+            email: p.email || "",
+          });
           return;
         }
         const nameParts = (p.name || "").trim().split(" ");
@@ -204,16 +278,20 @@ export default function DynamicRegistrationPage() {
       .finally(() => setLoading(false));
   }, [eventId]);
 
-  // All active non-role fields, sorted by step_index then sort_order
+  // All active fields, sorted by step_index then configured order
   const activeFields: FormField[] = useMemo(() => {
     if (!config?.fields || !Array.isArray(config.fields)) return [];
     return [...config.fields]
-      .filter((f: FormField) => f.is_active !== false && f.id !== "role" && f.name !== "role")
+      .filter((f: FormField) => f.is_active !== false)
       .sort((a: FormField, b: FormField) => {
         const si = (a.step_index ?? 0) - (b.step_index ?? 0);
         return si !== 0 ? si : 0;
       });
   }, [config]);
+
+  const hasRoleFieldInForm = useMemo(() => {
+    return activeFields.some((f) => f.id === "role" || f.name === "role" || f.type === "role");
+  }, [activeFields]);
 
   // Configured form steps from the form builder (settings.steps)
   const configuredSteps: ConfiguredStep[] = useMemo(() => {
@@ -279,7 +357,7 @@ export default function DynamicRegistrationPage() {
       stepIndex: idx,
     }));
 
-    if (roleOptions.length > 0) {
+    if (!hasRoleFieldInForm && roleOptions.length > 0) {
       steps.push({
         key: "category",
         label: "Pass Category",
@@ -339,25 +417,34 @@ export default function DynamicRegistrationPage() {
   const validateFormStep = (fields: FormField[]) => {
     const errs: Record<string, string> = {};
 
-    // Special name validation: first_name is pulled from the combined name row
-    const hasFirstName = fields.some((f) => (f.name || f.id) === "first_name");
-    const hasName = fields.some((f) => (f.name || f.id) === "name");
-    if (hasFirstName && !formData.first_name?.trim()) {
-      errs.first_name = "First name is required";
-    }
-    if (hasName && !hasFirstName && !formData.name?.trim()) {
-      errs.name = "Full name is required";
-    }
-
     for (const field of fields) {
+      if (["section", "heading", "paragraph", "divider"].includes(field.type)) continue;
+
       const key = field.name || field.id;
-      if (["first_name", "last_name", "name", "title"].includes(key)) continue;
       const val = formData[key];
+
       if (field.is_required && (!val || (typeof val === "string" && !val.trim()))) {
         errs[key] = `${field.label || key} is required`;
+        continue;
       }
-      if (field.type === "email" && val && !/\S+@\S+\.\S+/.test(val)) {
+
+      if (field.type === "email" && val && !/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(val)) {
         errs[key] = "Please enter a valid email address";
+      }
+
+      if ((field.type === "phone" || key.includes("phone") || key.includes("mobile")) && val) {
+        const digits = String(val).replace(/\D/g, "");
+        if (digits.length < 7 || digits.length > 15) {
+          errs[key] = "Enter a valid phone number (7-15 digits)";
+        }
+      }
+
+      if (field.type === "country" || key === "country") {
+        const currentCountry = formData.country || val;
+        const availableStates = getStatesForCountry(countryStates, currentCountry);
+        if (availableStates.length > 0 && field.is_required && !formData.country_state && !formData.state) {
+          errs.country_state = "Please select state / province";
+        }
       }
     }
 
@@ -388,7 +475,127 @@ export default function DynamicRegistrationPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const isManagedUploadValue = (value: unknown): value is ManagedUploadValue =>
+    Boolean(value && typeof value === "object" &&
+      (value as ManagedUploadValue).kind === "managed-upload" &&
+      typeof (value as ManagedUploadValue).managed_url === "string");
+
+  const removeManagedUpload = (key: string) => {
+    uploadControllers.current.get(key)?.abort();
+    uploadControllers.current.delete(key);
+    uploadRetryKeys.current.delete(key);
+    setUploadStates((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+    setFormData((current) => {
+      const existing = current[key];
+      if (isManagedUploadValue(existing) && existing.preview_url) {
+        URL.revokeObjectURL(existing.preview_url);
+        previewUrls.current.delete(existing.preview_url);
+      }
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const uploadManagedField = async (field: FormField, key: string, file: File) => {
+    const configuredMaximum = Number(field.validation?.max_file_size_mb || 10);
+    const maximumMb = Number.isFinite(configuredMaximum) && configuredMaximum > 0
+      ? configuredMaximum : 10;
+    if (file.size > maximumMb * 1024 * 1024) {
+      setErrors((current) => ({ ...current, [key]: `File size exceeds the ${maximumMb}MB limit.` }));
+      return;
+    }
+    const allowed = (field.validation?.allowed_file_types || [])
+      .map((value) => value.trim().toLowerCase().replace(/^\./, ""))
+      .filter(Boolean);
+    const extension = file.name.includes(".") ? file.name.split(".").pop()?.toLowerCase() || "" : "";
+    if (allowed.length && !allowed.includes(extension)) {
+      setErrors((current) => ({ ...current, [key]: "This file type is not allowed for this field." }));
+      return;
+    }
+
+    uploadControllers.current.get(key)?.abort();
+    const controller = new AbortController();
+    uploadControllers.current.set(key, controller);
+    const fingerprint = `${file.name}:${file.size}:${file.lastModified}:${file.type}`;
+    const previousReceipt = uploadRetryKeys.current.get(key);
+    const idempotencyKey = previousReceipt?.fingerprint === fingerprint
+      ? previousReceipt.key : crypto.randomUUID();
+    uploadRetryKeys.current.set(key, { fingerprint, key: idempotencyKey });
+    setUploadStates((current) => ({
+      ...current,
+      [key]: { status: "uploading", progress: 0, filename: file.name },
+    }));
+    setErrors((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+
+    try {
+      const accepted = await uploadPublicRegistrationFile({
+        apiOrigin: API_BASE,
+        eventId,
+        fieldName: field.id,
+        file,
+        idempotencyKey,
+        signal: controller.signal,
+        onProgress: (progress) => setUploadStates((current) =>
+          current[key]?.status === "uploading"
+            ? { ...current, [key]: { ...current[key], progress } }
+            : current),
+      });
+      if (uploadControllers.current.get(key) !== controller) return;
+      const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
+      if (previewUrl) previewUrls.current.add(previewUrl);
+      setFormData((current) => {
+        const previous = current[key];
+        if (isManagedUploadValue(previous) && previous.preview_url) {
+          URL.revokeObjectURL(previous.preview_url);
+          previewUrls.current.delete(previous.preview_url);
+        }
+        return { ...current, [key]: {
+          kind: "managed-upload",
+          managed_url: accepted.managed_url,
+          name: accepted.filename || file.name,
+          size: file.size,
+          type: file.type,
+          preview_url: previewUrl,
+        } satisfies ManagedUploadValue,
+        };
+      });
+      setUploadStates((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      uploadRetryKeys.current.delete(key);
+    } catch (error) {
+      if (controller.signal.aborted || uploadControllers.current.get(key) !== controller) return;
+      if (requiresNewUploadAttempt(error)) uploadRetryKeys.current.delete(key);
+      const message = error instanceof Error ? error.message : "The file could not be uploaded securely.";
+      setUploadStates((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      setErrors((current) => ({ ...current, [key]: message }));
+    } finally {
+      if (uploadControllers.current.get(key) === controller) {
+        uploadControllers.current.delete(key);
+      }
+    }
+  };
+
   const handleSubmitRegistration = async () => {
+    if (hasPendingUploads) {
+      toast.error("Wait for file security processing to finish before submitting.");
+      return;
+    }
     // Validate each form step before submission
     for (let i = 0; i < configuredSteps.length; i++) {
       const fields = fieldsByStep[i] || [];
@@ -429,12 +636,22 @@ export default function DynamicRegistrationPage() {
       const custom_fields: Record<string, any> = {};
       const payloadData: Record<string, any> = {};
 
-      for (const [k, v] of Object.entries(formData)) {
-        if (standardKeys.has(k)) {
-          payloadData[k] = v;
-        } else {
-          custom_fields[k] = v;
+      for (const field of activeFields) {
+        const stateKey = field.name || field.id;
+        const value = formData[stateKey];
+        const safeValue = isManagedUploadValue(value) ? value.managed_url : value;
+        const standardKey = standardKeys.has(field.id) ? field.id
+          : standardKeys.has(stateKey) ? stateKey : null;
+        if (standardKey) {
+          payloadData[standardKey] = safeValue;
+        } else if (field.id) {
+          custom_fields[field.id] = safeValue;
         }
+      }
+      // Some canonical defaults can be supplied by authentication/profile data
+      // even when the current visual form omits them.
+      for (const key of standardKeys) {
+        if (!(key in payloadData) && key in formData) payloadData[key] = formData[key];
       }
 
       // Consolidate full name with title prefix
@@ -472,9 +689,18 @@ export default function DynamicRegistrationPage() {
         custom_fields,
       };
 
+      const submissionFingerprint = JSON.stringify(payload);
+      const idempotencyKey = submissionRetryKey.current?.fingerprint === submissionFingerprint
+        ? submissionRetryKey.current.key
+        : crypto.randomUUID();
+      submissionRetryKey.current = { fingerprint: submissionFingerprint, key: idempotencyKey };
+
       const res = await fetch(`${API_BASE}/api/v1/portal/registration/${eventId}/register`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
         body: JSON.stringify(payload),
       });
 
@@ -488,6 +714,7 @@ export default function DynamicRegistrationPage() {
         message: resData.message || "Registration confirmed successfully!",
         status: resData.status || "approved",
       });
+      submissionRetryKey.current = null;
 
       if (resData.token) {
         localStorage.setItem(`portal_token_${eventId}`, resData.token);
@@ -515,19 +742,115 @@ export default function DynamicRegistrationPage() {
     }
   };
 
-  // Helper renderer for generic inputs (Single Column Flow with large h-12 height)
-  const renderSingleColumnField = (field: FormField) => {
+  const getColSpanClass = (gridWidth?: string) => {
+    switch (gridWidth) {
+      case "third":
+        return "col-span-1 md:col-span-2";
+      case "half":
+        return "col-span-1 md:col-span-3";
+      case "full":
+      default:
+        return "col-span-1 md:col-span-6";
+    }
+  };
+
+  // Grid-aware renderer supporting all form builder field types, layouts, dial codes, full country & state, and categorized roles
+  const renderGridField = (field: FormField) => {
     const key = field.name || field.id;
     const val = formData[key] ?? "";
     const error = errors[key];
+    const spanClass = getColSpanClass(field.grid_width);
 
-    // Phone input with integrated country dial code selector (Strictly digits only)
-    if (field.type === "phone" || key === "phone") {
+    // Layout elements
+    if (field.type === "section") {
       return (
-        <div key={key} className="space-y-2 text-left">
+        <div key={key} className="col-span-1 md:col-span-6 pt-4 pb-2 border-b border-[var(--border-default)]">
+          <h3 className="text-base font-black text-[var(--text)]">{field.label}</h3>
+          {field.placeholder && <p className="text-xs text-[var(--muted)] mt-0.5">{field.placeholder}</p>}
+        </div>
+      );
+    }
+    if (field.type === "heading") {
+      return (
+        <div key={key} className="col-span-1 md:col-span-6 pt-2">
+          <h4 className="text-sm font-black text-[var(--text)] uppercase tracking-wider">{field.label}</h4>
+        </div>
+      );
+    }
+    if (field.type === "paragraph") {
+      return (
+        <div key={key} className="col-span-1 md:col-span-6 text-xs text-[var(--muted)] leading-relaxed">
+          {field.placeholder || field.label}
+        </div>
+      );
+    }
+    if (field.type === "divider") {
+      return (
+        <div key={key} className="col-span-1 md:col-span-6 py-2">
+          <hr className="border-t border-[var(--border-default)]" />
+        </div>
+      );
+    }
+
+    // Role selector with master categories
+    if (field.type === "role" || key === "role" || key === "category") {
+      return (
+        <div key={key} className={`${spanClass} space-y-2 text-left`}>
           <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)] flex items-center justify-between">
             <span>
-              {field.label || "Mobile / WhatsApp Number"} {field.is_required && <span className="text-rose-500">*</span>}
+              {field.label || "Registration Role / Category"} {field.is_required && <span className="text-rose-500">*</span>}
+            </span>
+          </label>
+          <select
+            value={formData.role || ""}
+            onChange={(e) => setFormData({ ...formData, role: e.target.value })}
+            className={`w-full h-12 px-4 rounded-xl text-sm font-semibold bg-[var(--bg-surface-2)] border-2 text-[var(--text)] transition-all cursor-pointer ${
+              error
+                ? "border-rose-500 ring-2 ring-rose-500/20"
+                : "border-[var(--border-default)] focus:border-[var(--pri)] focus:ring-4 focus:ring-[var(--pri)]/15 focus:bg-[var(--card)]"
+            }`}
+          >
+            <option value="">Select your participation role...</option>
+            {Object.entries(MASTER_ROLE_CATEGORIES).map(([catTitle, roleList]) => {
+              const availableInCat = roleList.filter((r) =>
+                roleOptions.some((opt) => opt.toLowerCase() === r.toLowerCase())
+              );
+              if (availableInCat.length === 0) return null;
+              return (
+                <optgroup key={catTitle} label={catTitle}>
+                  {availableInCat.map((roleName) => (
+                    <option key={roleName} value={roleName}>
+                      {roleName}
+                    </option>
+                  ))}
+                </optgroup>
+              );
+            })}
+            {roleOptions
+              .filter(
+                (r) =>
+                  !Object.values(MASTER_ROLE_CATEGORIES)
+                    .flat()
+                    .some((mr) => mr.toLowerCase() === r.toLowerCase())
+              )
+              .map((cr) => (
+                <option key={cr} value={cr}>
+                  {cr}
+                </option>
+              ))}
+          </select>
+          {error && <span className="text-xs text-rose-500 font-bold block">{error}</span>}
+        </div>
+      );
+    }
+
+    // Phone input with integrated country dial code selector
+    if (field.type === "phone" || key === "phone" || key.includes("mobile") || key.includes("tel")) {
+      return (
+        <div key={key} className={`${spanClass} space-y-2 text-left`}>
+          <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)] flex items-center justify-between">
+            <span>
+              {field.label || "Phone Number"} {field.is_required && <span className="text-rose-500">*</span>}
             </span>
             <span className="text-[10px] font-bold text-[var(--muted)]">Numbers only</span>
           </label>
@@ -548,7 +871,7 @@ export default function DynamicRegistrationPage() {
               inputMode="numeric"
               pattern="[0-9]*"
               maxLength={15}
-              placeholder={field.placeholder || "Enter mobile number"}
+              placeholder={field.placeholder || "Enter phone number"}
               value={val}
               onChange={(e) => {
                 const digitsOnly = e.target.value.replace(/\D/g, "");
@@ -572,8 +895,7 @@ export default function DynamicRegistrationPage() {
       const availableStates = getStatesForCountry(countryStates, currentCountry);
 
       return (
-        <div key={key} className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
-          {/* Country Selector */}
+        <div key={key} className={`${spanClass} grid grid-cols-1 sm:grid-cols-2 gap-3 text-left`}>
           <div className="space-y-2">
             <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)] flex items-center justify-between">
               <span>
@@ -607,7 +929,6 @@ export default function DynamicRegistrationPage() {
             {error && <span className="text-xs text-rose-500 font-bold block">{error}</span>}
           </div>
 
-          {/* State / Province Selector */}
           <div className="space-y-2">
             <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)] flex items-center justify-between">
               <span>State / Province</span>
@@ -646,12 +967,13 @@ export default function DynamicRegistrationPage() {
                 className="w-full h-12 px-4 rounded-xl text-sm font-semibold bg-[var(--bg-surface-2)] border-2 border-[var(--border-default)] text-[var(--text)] focus:border-[var(--pri)] focus:ring-4 focus:ring-[var(--pri)]/15 focus:bg-[var(--card)] transition-all"
               />
             )}
+            {errors.country_state && <span className="text-xs text-rose-500 font-bold block">{errors.country_state}</span>}
           </div>
         </div>
       );
     }
 
-    // Skip separate state/country_state field if country is already rendered in personal list
+    // Skip separate state/country_state field if country is already rendered
     if (key === "country_state" || key === "state") {
       const hasCountryField = activeFields.some((f: FormField) => (f.name || f.id) === "country");
       if (hasCountryField) {
@@ -660,7 +982,7 @@ export default function DynamicRegistrationPage() {
       const currentCountry = formData.country || "India";
       const availableStates = getStatesForCountry(countryStates, currentCountry);
       return (
-        <div key={key} className="space-y-2 text-left">
+        <div key={key} className={`${spanClass} space-y-2 text-left`}>
           <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)] flex items-center justify-between">
             <span>
               {field.label || "State / Province"} {field.is_required && <span className="text-rose-500">*</span>}
@@ -693,11 +1015,11 @@ export default function DynamicRegistrationPage() {
       );
     }
 
-    // Email field: bound to authenticated login identity, permanently locked & read-only
+    // Email field: bound to authenticated login identity
     if (field.type === "email" || key === "email") {
       const emailValue = formData.email || val || "";
       return (
-        <div key={key} className="space-y-2 text-left">
+        <div key={key} className={`${spanClass} space-y-2 text-left`}>
           <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)] flex items-center justify-between">
             <span>
               {field.label || "Email Address"} <span className="text-rose-500">*</span>
@@ -724,8 +1046,99 @@ export default function DynamicRegistrationPage() {
       );
     }
 
+    // Title / Prefix
+    if (key === "title") {
+      const options = field.options && field.options.length > 0 ? field.options : TITLE_OPTIONS;
+      return (
+        <div key={key} className={`${spanClass} space-y-2 text-left`}>
+          <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)] flex items-center justify-between">
+            <span>
+              {field.label || "Title / Prefix"} {field.is_required && <span className="text-rose-500">*</span>}
+            </span>
+          </label>
+          <select
+            value={formData.title || options[0]}
+            onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+            className={`w-full h-12 px-4 rounded-xl text-sm font-semibold bg-[var(--bg-surface-2)] border-2 text-[var(--text)] transition-all cursor-pointer ${
+              error
+                ? "border-rose-500 ring-2 ring-rose-500/20"
+                : "border-[var(--border-default)] focus:border-[var(--pri)] focus:ring-4 focus:ring-[var(--pri)]/15 focus:bg-[var(--card)]"
+            }`}
+          >
+            {options.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+          {error && <span className="text-xs text-rose-500 font-bold block">{error}</span>}
+        </div>
+      );
+    }
+
+    // First Name
+    if (key === "first_name") {
+      return (
+        <div key={key} className={`${spanClass} space-y-2 text-left`}>
+          <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)] flex items-center justify-between">
+            <span>
+              {field.label || "First Name"} {field.is_required && <span className="text-rose-500">*</span>}
+            </span>
+          </label>
+          <input
+            type="text"
+            placeholder={field.placeholder || "Enter first name"}
+            value={formData.first_name ?? ""}
+            onChange={(e) =>
+              setFormData({
+                ...formData,
+                first_name: e.target.value,
+                name: `${e.target.value} ${formData.last_name || ""}`.trim(),
+              })
+            }
+            className={`w-full h-12 px-4 rounded-xl text-sm font-semibold bg-[var(--bg-surface-2)] border-2 text-[var(--text)] transition-all ${
+              error
+                ? "border-rose-500 ring-2 ring-rose-500/20"
+                : "border-[var(--border-default)] focus:border-[var(--pri)] focus:ring-4 focus:ring-[var(--pri)]/15 focus:bg-[var(--card)]"
+            }`}
+          />
+          {error && <span className="text-xs text-rose-500 font-bold block">{error}</span>}
+        </div>
+      );
+    }
+
+    // Last Name
+    if (key === "last_name") {
+      return (
+        <div key={key} className={`${spanClass} space-y-2 text-left`}>
+          <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)] flex items-center justify-between">
+            <span>
+              {field.label || "Last Name"} {field.is_required && <span className="text-rose-500">*</span>}
+            </span>
+          </label>
+          <input
+            type="text"
+            placeholder={field.placeholder || "Enter last name"}
+            value={formData.last_name ?? ""}
+            onChange={(e) =>
+              setFormData({
+                ...formData,
+                last_name: e.target.value,
+                name: `${formData.first_name || ""} ${e.target.value}`.trim(),
+              })
+            }
+            className={`w-full h-12 px-4 rounded-xl text-sm font-semibold bg-[var(--bg-surface-2)] border-2 text-[var(--text)] transition-all ${
+              error
+                ? "border-rose-500 ring-2 ring-rose-500/20"
+                : "border-[var(--border-default)] focus:border-[var(--pri)] focus:ring-4 focus:ring-[var(--pri)]/15 focus:bg-[var(--card)]"
+            }`}
+          />
+          {error && <span className="text-xs text-rose-500 font-bold block">{error}</span>}
+        </div>
+      );
+    }
+
+    // Generic Fields: select, textarea, checkbox, radio, number, date, text
     return (
-      <div key={key} className="space-y-2 text-left">
+      <div key={key} className={`${spanClass} space-y-2 text-left`}>
         <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)] flex items-center justify-between">
           <span>
             {field.label || key} {field.is_required && <span className="text-rose-500">*</span>}
@@ -774,6 +1187,124 @@ export default function DynamicRegistrationPage() {
               {field.placeholder || field.label}
             </span>
           </label>
+        ) : ["file", "image", "upload"].includes(field.type) ? (
+          (() => {
+            const isImageField = field.type === "image";
+            const uploadState = uploadStates[key];
+            const isImagePreview =
+              Boolean(val) &&
+              (isImageField ||
+                (typeof val === "object" && val?.type?.startsWith("image/")) ||
+                (typeof val === "string" && /\.(png|jpe?g|webp|gif|svg)$/i.test(val)));
+            const previewSrc =
+              typeof val === "object" ? val?.preview_url : typeof val === "string" ? val : null;
+            const fileName =
+              uploadState?.filename || (typeof val === "object" ? val?.name
+                : typeof val === "string" ? val.split("/").pop() : "Uploaded file");
+            const fileSizeFormatted =
+              typeof val === "object" && val?.size
+                ? val.size > 1024 * 1024
+                  ? `${(val.size / (1024 * 1024)).toFixed(1)} MB`
+                  : `${Math.round(val.size / 1024)} KB`
+                : null;
+
+            const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+              const files = e.target.files;
+              if (!files || files.length === 0) return;
+              void uploadManagedField(field, key, files[0]);
+            };
+
+            const handleFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
+              e.preventDefault();
+              const files = e.dataTransfer.files;
+              if (!files || files.length === 0) return;
+              void uploadManagedField(field, key, files[0]);
+            };
+
+            const configuredTypes = (field.validation?.allowed_file_types || [])
+              .map((value) => value.trim()).filter(Boolean);
+            const accept = configuredTypes.length
+              ? configuredTypes.map((value) => value.startsWith(".") ? value : `.${value}`).join(",")
+              : isImageField ? "image/*" : ".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp";
+
+            return (
+              <div className="space-y-2">
+                {uploadState?.status === "uploading" ? (
+                  <div className="p-3.5 rounded-xl bg-[var(--bg-surface-2)] border-2 border-[var(--border-default)] flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Loader2 className="h-5 w-5 shrink-0 animate-spin text-[var(--pri)]" />
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-bold text-[var(--text)]">{uploadState.filename}</p>
+                        <p className="text-[10px] font-semibold text-[var(--muted)]">
+                          Security processing {uploadState.progress}%
+                        </p>
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => removeManagedUpload(key)}
+                      className="p-1.5 rounded-lg text-[var(--muted)] hover:text-rose-500 hover:bg-rose-500/10 transition"
+                      aria-label={`Cancel upload for ${field.label}`}>
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ) : val ? (
+                  <div className="p-3.5 rounded-xl bg-[var(--bg-surface-2)] border-2 border-[var(--border-default)] flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      {isImagePreview && previewSrc ? (
+                        <img
+                          src={previewSrc}
+                          alt={fileName}
+                          className="h-12 w-12 rounded-lg object-cover border border-[var(--border-default)] shrink-0 bg-black/20"
+                        />
+                      ) : (
+                        <div className="h-10 w-10 rounded-lg bg-[var(--pri)]/10 border border-[var(--pri)]/20 text-[var(--pri)] flex items-center justify-center shrink-0">
+                          <FileText className="h-5 w-5" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-bold text-[var(--text)] truncate">{fileName}</p>
+                        {fileSizeFormatted && (
+                          <p className="text-[10px] text-[var(--muted)] font-semibold">{fileSizeFormatted}</p>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeManagedUpload(key)}
+                      className="p-1.5 rounded-lg text-[var(--muted)] hover:text-rose-500 hover:bg-rose-500/10 transition cursor-pointer shrink-0"
+                      title="Remove file"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <div
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={handleFileDrop}
+                    className={`p-5 border-2 border-dashed rounded-xl text-center transition cursor-pointer bg-[var(--bg-surface-2)]/60 relative group ${
+                      error
+                        ? "border-rose-500 ring-2 ring-rose-500/20"
+                        : "border-[var(--border-default)] hover:border-[var(--pri)] hover:bg-[var(--card)]"
+                    }`}
+                  >
+                    <input
+                      type="file"
+                      accept={accept}
+                      onChange={handleFileSelected}
+                      disabled={uploadState?.status === "uploading"}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                    />
+                    <Upload className="h-6 w-6 text-[var(--muted)] group-hover:text-[var(--pri)] mx-auto mb-1.5 transition" />
+                    <p className="text-xs font-bold text-[var(--text)]">
+                      Click or drag file here to upload
+                    </p>
+                    <p className="text-[10px] text-[var(--muted)] mt-0.5">
+                      {isImageField ? "PNG, JPG, WEBP up to 10MB" : "PDF, DOC, PNG, JPG up to 10MB"}
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          })()
         ) : (
           <input
             type={field.type || "text"}
@@ -800,6 +1331,123 @@ export default function DynamicRegistrationPage() {
         <span className="text-xs font-black uppercase tracking-widest text-[var(--muted)]">
           Loading Registration Portal...
         </span>
+      </div>
+    );
+  }
+
+  // If the participant is already registered, do NOT open the editable form
+  if (alreadyRegisteredData) {
+    return (
+      <div className="min-h-screen pb-16 bg-transparent text-[var(--text)] transition-colors duration-200 relative z-10">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 pt-12 space-y-8">
+          {/* Confirmed Registration Card (Dashboard Card Token, No Glow) */}
+          <div className="relative overflow-hidden p-6 md:p-8 rounded-[28px] border-2 border-[var(--border-default)] bg-[var(--card)] shadow-xl ring-1 ring-black/5 dark:ring-white/10 text-left space-y-6">
+            <div className="relative z-10 space-y-6">
+              {/* Header Badge */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-black uppercase tracking-wider border border-[var(--sec)]/30 bg-[var(--sec)]/10 text-[var(--sec)]">
+                  <ShieldCheck className="w-4 h-4 text-[var(--pri)]" />
+                  <span>Confirmed Registration</span>
+                </div>
+                <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-emerald-500/15 text-emerald-500 border border-emerald-500/20">
+                  Active Delegate
+                </span>
+              </div>
+
+              <div>
+                <h1 className="text-2xl sm:text-3xl font-black text-[var(--text)] tracking-tight">
+                  You are Officially Registered!
+                </h1>
+                <p className="text-xs sm:text-sm text-[var(--muted)] mt-1.5 leading-relaxed">
+                  Your delegate credentials and event registration have already been confirmed. The registration form is locked to prevent duplicate submissions and preserve your credential integrity.
+                </p>
+              </div>
+
+              {/* Delegate Pass Card */}
+              <div
+                className="p-6 rounded-2xl border-2 border-[var(--border-default)] bg-[var(--bg-surface-2)]/60 relative overflow-hidden"
+                style={{
+                  borderLeft: "5px solid var(--sec)",
+                }}
+              >
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-[var(--sec)] block">
+                      Registration Number
+                    </span>
+                    <span className="text-base sm:text-lg font-black font-mono text-[var(--text)]">
+                      {alreadyRegisteredData.regno || "CONFIRMED"}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)] block">
+                      Registration Category
+                    </span>
+                    <span
+                      className="inline-block px-2.5 py-0.5 mt-0.5 rounded-lg text-xs font-bold"
+                      style={{
+                        backgroundColor: "color-mix(in srgb, var(--sec) 15%, transparent)",
+                        color: "var(--sec)",
+                      }}
+                    >
+                      {alreadyRegisteredData.category || "Delegate"}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)] block">
+                      Delegate Name
+                    </span>
+                    <span className="text-sm font-bold text-[var(--text)] block">
+                      {alreadyRegisteredData.name || "Conference Delegate"}
+                    </span>
+                  </div>
+
+                  {alreadyRegisteredData.email && (
+                    <div>
+                      <span className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)] block">
+                        Registered Email
+                      </span>
+                      <span className="text-xs font-medium font-mono text-[var(--muted)] block truncate">
+                        {alreadyRegisteredData.email}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Quick Navigation Actions */}
+              <div className="pt-2 flex flex-col sm:flex-row items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => router.push(`/${eventId}/dashboard`)}
+                  className="w-full sm:w-auto h-12 px-6 rounded-2xl text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg cursor-pointer transition-all hover:opacity-90 bg-[var(--pri)]"
+                >
+                  <span>Open Delegate Dashboard</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => router.push(`/${eventId}/call-for-abstracts`)}
+                  className="w-full sm:w-auto h-12 px-6 rounded-2xl border border-[var(--border-default)] bg-[var(--card)] hover:border-[var(--sec)] text-[var(--text)] font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                >
+                  <FileText className="w-4 h-4 text-[var(--sec)]" />
+                  <span>Abstract Workspace</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => router.push(`/${eventId}`)}
+                  className="w-full sm:w-auto h-12 px-4 rounded-2xl text-[var(--muted)] hover:text-[var(--text)] font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <span>Event Home</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -840,7 +1488,7 @@ export default function DynamicRegistrationPage() {
         <div className="relative py-2 px-2">
           <div className="absolute top-6 left-[8%] right-[8%] h-1 bg-[var(--border-default)] rounded-full" />
           <div
-            className="absolute top-6 left-[8%] h-1 bg-gradient-to-r from-[var(--pri)] to-[var(--sec)] rounded-full transition-all duration-300"
+            className="absolute top-6 left-[8%] h-1 bg-[var(--pri)] rounded-full transition-all duration-300"
             style={{
               width: `${(currentStepIndex / Math.max(1, totalSteps - 1)) * 84}%`,
             }}
@@ -856,11 +1504,16 @@ export default function DynamicRegistrationPage() {
                   <div
                     className={`h-11 w-11 rounded-full flex items-center justify-center font-black text-xs transition-all shadow-md ${
                       isPassed
-                        ? "bg-[var(--pri)] text-white ring-4 ring-[var(--pri)]/20"
+                        ? "text-white ring-4 ring-[var(--pri)]/20"
                         : isCurrent
-                        ? "bg-[var(--pri)] text-white ring-4 ring-[var(--pri)]/30 scale-105"
+                        ? "text-white ring-4 ring-[var(--sec)]/30 scale-105"
                         : "bg-[var(--card)] border-2 border-[var(--border-default)] text-[var(--muted)]"
                     }`}
+                    style={
+                      isPassed || isCurrent
+                        ? { backgroundColor: "var(--pri)" }
+                        : {}
+                    }
                   >
                     {isPassed ? <Check className="h-5 w-5 stroke-[3]" /> : idx + 1}
                   </div>
@@ -883,7 +1536,7 @@ export default function DynamicRegistrationPage() {
 
           {/* ════ LEFT COLUMN: SOLID FORM CARD (7 COLS) ═══════════════════════ */}
           <div className="lg:col-span-7 space-y-6">
-            <div className="p-6 md:p-8 rounded-[28px] border-2 border-[var(--border-default)] bg-[var(--card)] shadow-lg space-y-6 text-left">
+            <div className="p-6 md:p-8 rounded-[28px] border-2 border-[var(--border-default)] bg-[var(--card)] shadow-xl ring-1 ring-black/5 dark:ring-white/10 space-y-6 text-left">
 
               {/* ── DYNAMIC FORM STEPS (from Form Builder) ───────────────────── */}
               {currentStep.key.startsWith("form_step_") && (() => {
@@ -891,11 +1544,6 @@ export default function DynamicRegistrationPage() {
                 const stepFields = fieldsByStep[stepIdx] || [];
                 const isFirstStep = currentStepIndex === 0;
                 const isLastFormStep = !stepsList[currentStepIndex + 1]?.key.startsWith("form_step_");
-
-                // Check if this step contains first_name / last_name fields
-                const hasFirstNameRow = stepFields.some((f) =>
-                  ["first_name", "last_name", "name"].includes(f.name || f.id)
-                );
 
                 return (
                   <motion.div
@@ -909,75 +1557,11 @@ export default function DynamicRegistrationPage() {
                       <p className="text-xs text-[var(--muted)] mt-0.5">{currentStep.description}</p>
                     </div>
 
-                    <div className="space-y-5">
-                      {/* Name row: rendered once if first_name/last_name/name fields exist in this step */}
-                      {hasFirstNameRow && (
-                        <div className="space-y-2">
-                          <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)] block">
-                            Full Name & Title <span className="text-rose-500">*</span>
-                          </label>
-                          <div className="flex gap-2.5">
-                            <div className="w-28 sm:w-32 shrink-0">
-                              <select
-                                value={formData.title || "Dr."}
-                                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                                className="w-full h-12 px-3 rounded-xl text-sm font-bold bg-[var(--bg-surface-2)] border-2 border-[var(--border-default)] text-[var(--text)] focus:border-[var(--pri)] focus:ring-4 focus:ring-[var(--pri)]/15 focus:bg-[var(--card)]"
-                              >
-                                {TITLE_OPTIONS.map((t) => (
-                                  <option key={t} value={t}>{t}</option>
-                                ))}
-                              </select>
-                            </div>
-                            <div className="flex-1">
-                              <input
-                                type="text"
-                                placeholder="First Name"
-                                value={formData.first_name ?? formData.name ?? ""}
-                                onChange={(e) =>
-                                  setFormData({
-                                    ...formData,
-                                    first_name: e.target.value,
-                                    name: `${e.target.value} ${formData.last_name || ""}`.trim(),
-                                  })
-                                }
-                                className={`w-full h-12 px-4 rounded-xl text-sm font-semibold bg-[var(--bg-surface-2)] border-2 text-[var(--text)] transition-all ${
-                                  errors.first_name || errors.name
-                                    ? "border-rose-500 ring-2 ring-rose-500/20"
-                                    : "border-[var(--border-default)] focus:border-[var(--pri)] focus:ring-4 focus:ring-[var(--pri)]/15 focus:bg-[var(--card)]"
-                                }`}
-                              />
-                            </div>
-                            <div className="flex-1">
-                              <input
-                                type="text"
-                                placeholder="Last Name"
-                                value={formData.last_name ?? ""}
-                                onChange={(e) =>
-                                  setFormData({
-                                    ...formData,
-                                    last_name: e.target.value,
-                                    name: `${formData.first_name || ""} ${e.target.value}`.trim(),
-                                  })
-                                }
-                                className="w-full h-12 px-4 rounded-xl text-sm font-semibold bg-[var(--bg-surface-2)] border-2 border-[var(--border-default)] text-[var(--text)] focus:border-[var(--pri)] focus:ring-4 focus:ring-[var(--pri)]/15 focus:bg-[var(--card)] transition-all"
-                              />
-                            </div>
-                          </div>
-                          {(errors.first_name || errors.name) && (
-                            <span className="text-xs text-rose-500 font-bold block">
-                              {errors.first_name || errors.name}
-                            </span>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Render all other fields for this step (skip the name fields already handled above) */}
-                      {stepFields
-                        .filter((f) => !hasFirstNameRow || !["title", "name", "first_name", "last_name"].includes(f.name || f.id))
-                        .map((field) => renderSingleColumnField(field))}
+                    <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+                      {stepFields.map((field) => renderGridField(field))}
 
                       {stepFields.length === 0 && (
-                        <p className="text-sm text-[var(--muted)] text-center py-6 italic">
+                        <p className="col-span-1 md:col-span-6 text-sm text-[var(--muted)] text-center py-6 italic">
                           No fields configured for this step.
                         </p>
                       )}
@@ -1000,8 +1584,8 @@ export default function DynamicRegistrationPage() {
                         <button
                           type="button"
                           onClick={handleSubmitRegistration}
-                          disabled={submitting}
-                          className="h-12 px-8 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md shadow-[var(--pri)]/20"
+                          disabled={submitting || hasPendingUploads}
+                          className="h-12 px-8 rounded-xl text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md hover:opacity-90 bg-[var(--pri)]"
                         >
                           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
                           <span>Confirm & Complete Registration</span>
@@ -1010,7 +1594,7 @@ export default function DynamicRegistrationPage() {
                         <button
                           type="button"
                           onClick={handleNext}
-                          className="h-12 px-8 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md shadow-[var(--pri)]/20"
+                          className="h-12 px-8 rounded-xl text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md hover:opacity-90 bg-[var(--pri)]"
                         >
                           <span>Continue</span>
                           <ArrowRight className="h-4 w-4" />
@@ -1104,7 +1688,7 @@ export default function DynamicRegistrationPage() {
                       <button
                         type="button"
                         onClick={handleNext}
-                        className="h-12 px-8 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md shadow-[var(--pri)]/20"
+                        className="h-12 px-8 rounded-xl text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md hover:opacity-90 bg-[var(--pri)]"
                       >
                         <span>Proceed to Payment</span>
                         <ArrowRight className="h-4 w-4" />
@@ -1113,8 +1697,8 @@ export default function DynamicRegistrationPage() {
                       <button
                         type="button"
                         onClick={handleSubmitRegistration}
-                        disabled={submitting}
-                        className="h-12 px-8 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md shadow-[var(--pri)]/20"
+                        disabled={submitting || hasPendingUploads}
+                        className="h-12 px-8 rounded-xl text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md hover:opacity-90 bg-[var(--pri)]"
                       >
                         {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
                         <span>Confirm Registration</span>
@@ -1207,11 +1791,51 @@ export default function DynamicRegistrationPage() {
                             : config?.active_gateway === "phonepe"
                             ? "Instant UPI QR and debit/credit cards"
                             : config?.active_gateway === "offline"
-                            ? "Invoice will be generated upon registration approval"
+                            ? "Transfer directly to conference bank account"
                             : "Instant simulated checkout verification"}
                         </span>
                       </div>
                     </div>
+
+                    {/* Gateway Specific Badges & Offline Instructions */}
+                    {config?.active_gateway === "offline" && config?.offline_instructions && (
+                      <div className="p-4 rounded-xl bg-[var(--card)] border border-[var(--border-default)] space-y-2">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-[var(--pri)] block">
+                          Bank Wire &amp; Payment Details
+                        </span>
+                        <pre className="text-xs font-mono text-[var(--text)] whitespace-pre-wrap leading-relaxed bg-[var(--bg-surface-2)] p-3 rounded-lg border border-[var(--border-default)]">
+                          {config.offline_instructions}
+                        </pre>
+                      </div>
+                    )}
+
+                    {config?.active_gateway === "razorpay" && (
+                      <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center gap-2">
+                        <ShieldCheck className="h-4 w-4 shrink-0" />
+                        <span>Connected to Official Razorpay Gateway (UPI, Cards, Netbanking).</span>
+                      </div>
+                    )}
+
+                    {config?.active_gateway === "stripe" && (
+                      <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-600 dark:text-indigo-400 text-xs font-semibold flex items-center gap-2">
+                        <ShieldCheck className="h-4 w-4 shrink-0" />
+                        <span>Connected to Official Stripe Global Gateway.</span>
+                      </div>
+                    )}
+
+                    {config?.active_gateway === "phonepe" && (
+                      <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-600 dark:text-purple-400 text-xs font-semibold flex items-center gap-2">
+                        <ShieldCheck className="h-4 w-4 shrink-0" />
+                        <span>Connected to PhonePe Direct UPI &amp; Cards.</span>
+                      </div>
+                    )}
+
+                    {config?.active_gateway === "simulated" && (
+                      <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-semibold flex items-center gap-2">
+                        <Info className="h-4 w-4 shrink-0" />
+                        <span>Simulation Sandbox: Registration payment is verified in test mode.</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Promo Code Input Box */}
@@ -1252,8 +1876,8 @@ export default function DynamicRegistrationPage() {
                     <button
                       type="button"
                       onClick={handleSubmitRegistration}
-                      disabled={submitting}
-                      className="h-12 px-8 rounded-xl bg-[var(--pri)] hover:opacity-95 text-[var(--primary-contrast,#ffffff)] text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-lg shadow-[var(--pri)]/25"
+                      disabled={submitting || hasPendingUploads}
+                      className="h-12 px-8 rounded-xl text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-lg hover:opacity-90 bg-[var(--pri)]"
                     >
                       {submitting ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -1323,7 +1947,7 @@ export default function DynamicRegistrationPage() {
 
           {/* ════ RIGHT COLUMN: BIG THEMED ILLUSTRATION & INFO (5 COLS - STEADY/FIXED IN GRID) ═════════ */}
           <div className="lg:col-span-5 space-y-6">
-            <div className="p-6 md:p-8 rounded-[28px] border-2 border-[var(--border-default)] bg-[var(--card)] shadow-lg space-y-6 text-center">
+            <div className="p-6 md:p-8 rounded-[28px] border-2 border-[var(--border-default)] bg-[var(--card)] shadow-xl ring-1 ring-black/5 dark:ring-white/10 space-y-6 text-center">
 
               {/* Big Themed Illustration matching Current Step */}
               <div className="py-2 flex justify-center items-center">

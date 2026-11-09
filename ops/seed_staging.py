@@ -2,7 +2,7 @@
 import asyncio
 from app.services.init_service import (
     ensure_admin_user, ensure_agenda_rooms_schema, ensure_agenda_types_defaults,
-    ensure_plans_and_features, ensure_rbac_defaults,
+    ensure_plans_and_features, ensure_rbac_defaults, ensure_system_template_defaults,
 )
 
 async def main() -> None:
@@ -11,6 +11,7 @@ async def main() -> None:
     await ensure_rbac_defaults()
     await ensure_plans_and_features()
     await ensure_admin_user()
+    await ensure_system_template_defaults()
     print('Staging seed completed.')
 
 if __name__ == '__main__':

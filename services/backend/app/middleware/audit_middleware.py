@@ -13,6 +13,8 @@ from starlette.requests import Request
 from starlette.types import ASGIApp
 
 from app.config import settings
+from app.core.client_ip import resolve_client_ip
+from app.core.log_redaction import redact_credentials
 from app.database import Base, AsyncSessionLocal
 from app.modules.audit.services.audit_service import AuditContext, AuditService
 
@@ -127,13 +129,7 @@ def _extract_jwt_claims(authorization: Optional[str]) -> Tuple[Optional[uuid.UUI
 
 
 def _get_client_ip(request: Request) -> Optional[str]:
-    """Respects proxy headers for client IP extraction."""
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return None
+    return resolve_client_ip(request)
 
 
 def get_model_by_name(name: str) -> Optional[type]:
@@ -186,7 +182,7 @@ def serialize_model(instance) -> Dict[str, Any]:
             data[col.name] = val.value
         else:
             data[col.name] = val
-    return data
+    return redact_credentials(data)
 
 
 def make_json_diff(old: Any, new: Any, path: str = "") -> List[Dict[str, Any]]:
@@ -301,13 +297,22 @@ class AuditMiddleware:
         # Capture response start status and body
         status_code = [0]
         response_body = []
+        captured_bytes = 0
+        capture_overflow = False
 
         async def send_wrapper(message: dict) -> None:
+            nonlocal captured_bytes, capture_overflow
             if message["type"] == "http.response.start":
                 status_code[0] = message.get("status", 0)
             elif message["type"] == "http.response.body":
                 body = message.get("body", b"")
-                response_body.append(body)
+                if not capture_overflow:
+                    captured_bytes += len(body)
+                    if captured_bytes <= 262144:
+                        response_body.append(body)
+                    else:
+                        response_body.clear()
+                        capture_overflow = True
             await send(message)
 
         # 2. Run request pipeline
@@ -322,7 +327,7 @@ class AuditMiddleware:
                 body_bytes = b"".join(response_body)
                 after_state = None
                 try:
-                    after_state = json.loads(body_bytes.decode("utf-8"))
+                    after_state = redact_credentials(json.loads(body_bytes.decode("utf-8")))
                 except Exception:
                     pass
 
@@ -388,6 +393,16 @@ class AuditMiddleware:
                     retention_until=_derive_retention(resource_type, method)
                 )
 
-                await AuditService.write_log(ctx)
+                if settings.environment == "testing":
+                    await AuditService.write_log(ctx)
+                else:
+                    # Category A commands persist mandatory mutation audits in
+                    # their own transaction. This middleware record is
+                    # supplemental telemetry and must not hold the response
+                    # open while a broker is slow or unavailable.
+                    from app.core.bounded_task_dispatch import admit_best_effort_celery_task
+                    from app.tasks.audit_tasks import write_audit_log
+
+                    admit_best_effort_celery_task(write_audit_log, args=(ctx.to_dict(),))
             except Exception as exc:
                 logger.warning(f"[AuditMiddleware] Processing failed ({elapsed_ms}ms): {exc}")

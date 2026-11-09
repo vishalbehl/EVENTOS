@@ -11,7 +11,7 @@ from decimal import Decimal
 from typing import Any, Mapping
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.encryption import decrypt
@@ -20,8 +20,7 @@ from app.modules.audit.models.audit_log import AuditLog
 from app.modules.billing.models.billing_domain_tables import Invoice
 from app.modules.billing.models.payment_gateway import PaymentGateway
 from app.modules.billing.models.provider_webhook_event import ProviderWebhookEvent
-from app.modules.billing.models.subscription import SubscriptionTransaction
-from app.modules.platform.models.organization import Organization
+from app.modules.billing.services.commercial_contract_service import CommercialContractService
 
 
 @dataclass(frozen=True)
@@ -125,7 +124,13 @@ class ProviderWebhookService:
             amount_minor = obj.get("amount_received") or obj.get("amount_total") or obj.get("amount", 0)
             transaction_reference = str(obj.get("id") or "")
             created = payload.get("created")
-            payment_status = "SUCCEEDED" if event_type in {"payment_intent.succeeded", "checkout.session.completed"} else "FAILED"
+            payment_status = "SUCCEEDED" if (
+                event_type == "payment_intent.succeeded"
+                or (
+                    event_type == "checkout.session.completed"
+                    and str(obj.get("payment_status") or "").lower() == "paid"
+                )
+            ) else "FAILED"
         else:
             event_id = str(payload.get("id") or payload.get("event_id") or "")
             event_type = str(payload.get("event") or "")
@@ -194,7 +199,6 @@ class ProviderWebhookService:
                 if existing.payload_hash != payload_hash:
                     cls._reject("WEBHOOK_REPLAY_CONFLICT", "Provider event ID was reused with a different payload.", 409)
                 return existing
-            organization = await db.get(Organization, event.organization_id)
             receipt = ProviderWebhookEvent(
                 gateway_id=gateway.id,
                 organization_id=event.organization_id,
@@ -211,58 +215,17 @@ class ProviderWebhookService:
             db.add(receipt)
             await db.flush()
 
-            payment = await db.scalar(select(SubscriptionTransaction).where(
-                SubscriptionTransaction.provider == gateway.provider.upper(),
-                SubscriptionTransaction.provider_transaction_id == event.transaction_reference,
-            ).with_for_update())
-            if payment and payment.organization_id != event.organization_id:
-                cls._reject("WEBHOOK_RESOURCE_NOT_FOUND", "Referenced billing resource was not found.", 404)
-            if payment and payment.invoice_id not in {None, invoice.id}:
-                cls._reject("WEBHOOK_REFERENCE_CONFLICT", "Provider transaction is linked to another invoice.", 409)
-            if payment is None:
-                payment = SubscriptionTransaction(
-                    organization_id=event.organization_id,
-                    invoice_id=invoice.id,
-                    plan_name="Provider invoice settlement",
-                    amount=event.amount,
-                    currency=event.currency,
-                    provider=gateway.provider.upper(),
-                    provider_transaction_id=event.transaction_reference,
-                    provider_event_id=event.provider_event_id,
-                    status=event.payment_status,
-                    reconciliation_status="PENDING",
-                    billing_name=organization.name if organization else "Unknown organization",
-                    billing_email=(organization.billing_email if organization else None) or "provider-webhook@invalid.local",
-                    billing_phone="Not provided",
-                )
-                db.add(payment)
-                await db.flush()
-            else:
-                payment.provider_event_id = event.provider_event_id
-                payment.status = event.payment_status
-                payment.version += 1
-
             expected_total = Decimal(str(invoice.total_amount_inr or invoice.amount or 0))
             matched = event.payment_status == "SUCCEEDED" and event.currency == invoice.currency.upper() and event.amount == expected_total
-            payment.reconciliation_status = "RECONCILED" if matched else "MISMATCH"
-            payment.reconciliation_reason = "Verified provider webhook" if matched else "Verified provider webhook did not match invoice amount, currency, or success state"
-            payment.reconciled_at = datetime.now(timezone.utc)
-            receipt.transaction_id = payment.id
             receipt.status = "PROCESSED" if matched else "REVIEW_REQUIRED"
             receipt.processed_at = datetime.now(timezone.utc)
 
             if matched:
-                reconciled = await db.scalar(select(func.coalesce(func.sum(SubscriptionTransaction.amount), 0)).where(
-                    SubscriptionTransaction.organization_id == event.organization_id,
-                    SubscriptionTransaction.invoice_id == invoice.id,
-                    SubscriptionTransaction.status.in_(["SUCCESS", "SUCCEEDED"]),
-                    SubscriptionTransaction.reconciliation_status == "RECONCILED",
-                ))
-                if Decimal(str(reconciled or 0)) >= expected_total:
-                    invoice.status = "PAID"
-                    invoice.paid_at = datetime.now(timezone.utc)
-                    invoice.status_reason = "Settled by verified provider webhook"
-                    invoice.version += 1
+                invoice.status = "PAID"
+                invoice.paid_at = datetime.now(timezone.utc)
+                invoice.status_reason = "Settled by verified provider webhook"
+                invoice.version += 1
+                await CommercialContractService(db).activate_paid_contract(invoice.id)
 
             db.add(AuditLog(
                 organization_id=event.organization_id,
@@ -276,8 +239,7 @@ class ProviderWebhookService:
                     "provider_event_id": receipt.provider_event_id,
                     "event_type": receipt.event_type,
                     "invoice_id": str(invoice.id),
-                    "transaction_id": str(payment.id),
-                    "reconciliation_status": payment.reconciliation_status,
+                    "reconciliation_status": "RECONCILED" if matched else "MISMATCH",
                 },
                 is_sensitive=True,
             ))

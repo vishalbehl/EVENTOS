@@ -6,7 +6,7 @@ import {
   Calendar, MapPin, Globe, Shield, HelpCircle, FileText,
   Sun, Moon, Laptop, LogOut, ChevronDown, Check,
   User, QrCode, Ticket, Award, Sparkles, ExternalLink, Presentation,
-  Bell, Mail, Phone, Info, LifeBuoy
+  Bell, Mail, Phone, Info, LifeBuoy, ShieldCheck
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -28,7 +28,8 @@ import {
 } from "@/components/ui/dialog";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { PortalBackground, type SvgPatternType } from "@/components/ui/portal-background";
-import { toast } from "sonner";
+import { PortalFloatingSidebar } from "@/components/navigation/PortalFloatingSidebar";
+import { toast } from "@/lib/toast";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -102,10 +103,11 @@ function getSolidColorContrastVars(solidColor: string) {
       "--muted": "#94a3b8",
       "--border-default": "rgba(255, 255, 255, 0.18)",
       "--border": "rgba(255, 255, 255, 0.18)",
-      "--card": "rgba(18, 21, 40, 0.90)",
-      "--card-solid": "#121528",
-      "--bg-surface-2": "rgba(255, 255, 255, 0.06)",
-      "--bg-surface-hover": "rgba(255, 255, 255, 0.12)",
+      "--card": "rgba(18, 21, 36, 0.95)",
+      "--card-solid": "#121524",
+      "--card-bg": "rgba(18, 21, 36, 0.95)",
+      "--bg-surface-2": "rgba(255, 255, 255, 0.07)",
+      "--bg-surface-hover": "rgba(255, 255, 255, 0.14)",
       color: "#f8fafc",
     };
   } else {
@@ -118,8 +120,9 @@ function getSolidColorContrastVars(solidColor: string) {
       "--muted": "#475569",
       "--border-default": "rgba(0, 0, 0, 0.14)",
       "--border": "rgba(0, 0, 0, 0.14)",
-      "--card": "rgba(255, 255, 255, 0.94)",
+      "--card": "#ffffff",
       "--card-solid": "#ffffff",
+      "--card-bg": "#ffffff",
       "--bg-surface-2": "rgba(0, 0, 0, 0.05)",
       "--bg-surface-hover": "rgba(0, 0, 0, 0.09)",
       color: "#0f172a",
@@ -140,11 +143,29 @@ export default function EventPortalLayout({
   const [theme, setTheme] = useState<"dark" | "light" | "system">("dark");
   const [eventData, setEventData] = useState<any>(null);
   const [participant, setParticipant] = useState<any>(null);
+  const [eventsUser, setEventsUser] = useState<any>(null);
   const [isSpeaker, setIsSpeaker] = useState(false);
+  const [isReviewer, setIsReviewer] = useState(false);
   const [faqOpen, setFaqOpen] = useState(false);
   const [termsOpen, setTermsOpen] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
   const [expandedFaqs, setExpandedFaqs] = useState<number[]>([]);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("portal_sidebar_collapsed") === "true";
+    setSidebarCollapsed(saved);
+  }, []);
+
+  const handleToggleSidebar = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("portal_sidebar_collapsed", String(next));
+      } catch {}
+      return next;
+    });
+  };
 
   const toggleFaq = (idx: number) => {
     setExpandedFaqs((prev) =>
@@ -214,6 +235,30 @@ export default function EventPortalLayout({
 
     const token = localStorage.getItem(`portal_token_${eventId}`) || localStorage.getItem(`portal_jwt_${eventId}`);
     if (token) {
+      // Sync events_users profile
+      fetch(`${API_BASE}/api/v1/portal/users/${eventId}/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((usr) => {
+          if (usr) {
+            setEventsUser(usr);
+            localStorage.setItem(`events_user_${eventId}`, JSON.stringify(usr));
+            if (usr.is_speaker) setIsSpeaker(true);
+            if (usr.is_reviewer && (usr.reviewer_status === "ACCEPTED" || usr.reviewer_status === "ACTIVE")) {
+              setIsReviewer(true);
+            }
+            if (!participant && usr.full_name) {
+              setParticipant({
+                name: usr.full_name,
+                email: usr.email,
+                role: usr.roles?.[0] || "Delegate",
+              });
+            }
+          }
+        })
+        .catch(() => {});
+
       fetch(`${API_BASE}/api/v1/portal/dashboard`, {
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -233,7 +278,12 @@ export default function EventPortalLayout({
     localStorage.removeItem(`portal_token_${eventId}`);
     localStorage.removeItem(`portal_jwt_${eventId}`);
     localStorage.removeItem(`portal_participant_${eventId}`);
+    localStorage.removeItem(`events_user_${eventId}`);
     setParticipant(null);
+    setEventsUser(null);
+    setIsSpeaker(false);
+    setIsReviewer(false);
+    window.dispatchEvent(new Event("portal-auth-change"));
     toast.success("Signed out successfully");
     startTransition(() => {
       router.push(`/${eventId}/login`);
@@ -357,7 +407,7 @@ export default function EventPortalLayout({
       )}
 
       {/* ── TOP HEADER ──────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-40 w-full border-b border-[var(--border-default)] bg-[var(--bg-base)]/90 backdrop-blur-md shrink-0">
+      <header className={`sticky top-0 z-40 w-full border-b border-[var(--border-default)] bg-[var(--bg-base)]/90 backdrop-blur-md shrink-0 transition-all duration-300 ${sidebarCollapsed ? "md:pl-16" : "md:pl-64"}`}>
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-4">
           {/* Left Brand & Event Title */}
@@ -383,6 +433,7 @@ export default function EventPortalLayout({
 
           {/* Right Header Navigation & Actions */}
           <div className="flex items-center gap-3 shrink-0">
+
             {/* Need Help Link */}
             <button
               type="button"
@@ -455,6 +506,30 @@ export default function EventPortalLayout({
                     <span>My Entry Pass</span>
                   </DropdownMenuItem>
 
+                  <DropdownMenuItem
+                    onClick={() => router.push(`/${eventId}/profile`)}
+                    className="p-2 rounded-xl text-xs font-semibold text-[var(--text)] hover:bg-[var(--bg-surface-2)] cursor-pointer flex items-center gap-2"
+                  >
+                    <User className="h-4 w-4 text-[var(--pri)]" />
+                    <span>Profile Settings</span>
+                  </DropdownMenuItem>
+
+                  <DropdownMenuItem
+                    onClick={() => router.push(`/${eventId}/certificates`)}
+                    className="p-2 rounded-xl text-xs font-semibold text-[var(--text)] hover:bg-[var(--bg-surface-2)] cursor-pointer flex items-center gap-2"
+                  >
+                    <Award className="h-4 w-4 text-amber-500" />
+                    <span>Certificates</span>
+                  </DropdownMenuItem>
+
+                  <DropdownMenuItem
+                    onClick={() => router.push(`/${eventId}/call-for-abstracts`)}
+                    className="p-2 rounded-xl text-xs font-semibold text-[var(--text)] hover:bg-[var(--bg-surface-2)] cursor-pointer flex items-center gap-2"
+                  >
+                    <FileText className="h-4 w-4 text-emerald-500" />
+                    <span>Abstract Submissions</span>
+                  </DropdownMenuItem>
+
                   {isSpeaker && (
                     <DropdownMenuItem
                       onClick={() => router.push(`/${eventId}/speaker`)}
@@ -462,6 +537,16 @@ export default function EventPortalLayout({
                     >
                       <Presentation className="h-4 w-4 text-[var(--sec)]" />
                       <span>Speaker Workspace</span>
+                    </DropdownMenuItem>
+                  )}
+
+                  {isReviewer && (
+                    <DropdownMenuItem
+                      onClick={() => router.push(`/${eventId}/review`)}
+                      className="p-2 rounded-xl text-xs font-semibold text-[var(--text)] hover:bg-[var(--bg-surface-2)] cursor-pointer flex items-center gap-2"
+                    >
+                      <ShieldCheck className="h-4 w-4 text-indigo-400" />
+                      <span>Reviewer Center</span>
                     </DropdownMenuItem>
                   )}
 
@@ -491,13 +576,20 @@ export default function EventPortalLayout({
         </div>
       </header>
 
+      {/* ── FULL-HEIGHT NAVIGATION SIDEBAR ─────────────────────────────────── */}
+      <PortalFloatingSidebar
+        eventData={eventData}
+        collapsed={sidebarCollapsed}
+        onToggle={handleToggleSidebar}
+      />
+
       {/* ── MAIN CONTENT AREA ──────────────────────────────────────────────── */}
-      <main className="flex-1 w-full relative z-10">
+      <main className={`flex-1 w-full relative z-10 transition-all duration-300 ${sidebarCollapsed ? "md:pl-16" : "md:pl-64"}`}>
         {children}
       </main>
 
       {/* ── FOOTER ─────────────────────────────────────────────────────────── */}
-      <footer className="w-full border-t border-[var(--border-default)] bg-[var(--bg-base)]/80 backdrop-blur-md py-6 px-4 sm:px-6 relative z-10 shrink-0">
+      <footer className={`w-full border-t border-[var(--border-default)] bg-[var(--bg-base)]/80 backdrop-blur-md py-6 px-4 sm:px-6 relative z-10 shrink-0 transition-all duration-300 ${sidebarCollapsed ? "md:pl-16" : "md:pl-64"}`}>
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left">
           <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
             <span>Powered by</span>

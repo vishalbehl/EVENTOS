@@ -40,6 +40,8 @@ import { useSessions } from "@/hooks/useSessions";
 import { Portal } from "@/components/ui/portal";
 import { ManageScreensDialog } from "@/components/organizer/eposters/ManageScreensDialog";
 import { CapabilityAction } from "@/lib/capabilities";
+import { TablePagination } from "@/components/organizer/common/TablePagination";
+import { useTablePagination } from "@/hooks/useTablePagination";
 import { cn, formatDateInTZ } from "@/lib/utils";
 
 export default function EPostersPage() {
@@ -132,6 +134,14 @@ export default function EPostersPage() {
     });
   }, [posters, searchQuery, statusFilter, categoryFilter, dayFilter, sessions]);
 
+  const {
+    currentPage,
+    setCurrentPage,
+    pageSize,
+    setPageSize,
+    paginatedItems: paginatedPosters,
+  } = useTablePagination(filteredPosters, 10);
+
   const handleToggleSelect = (id: string) => {
     const next = new Set(selectedPosterIds);
     if (next.has(id)) {
@@ -143,11 +153,17 @@ export default function EPostersPage() {
   };
 
   const handleSelectAll = () => {
-    if (selectedPosterIds.size === filteredPosters.length) {
-      setSelectedPosterIds(new Set());
-    } else {
-      setSelectedPosterIds(new Set(filteredPosters.map((p) => p.id)));
-    }
+    const pageIds = paginatedPosters.map((p) => p.id);
+    const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedPosterIds.has(id));
+    setSelectedPosterIds((prev) => {
+      const next = new Set(prev);
+      if (allPageSelected) {
+        pageIds.forEach((id) => next.delete(id));
+      } else {
+        pageIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
   };
 
   const handleBatchDelete = async () => {
@@ -367,7 +383,7 @@ export default function EPostersPage() {
                     className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer"
                     title="Select all"
                   >
-                    {filteredPosters.length > 0 && selectedPosterIds.size === filteredPosters.length ? (
+                    {paginatedPosters.length > 0 && paginatedPosters.every((p) => selectedPosterIds.has(p.id)) ? (
                       <CheckSquare className="size-4 text-[var(--pri)]" />
                     ) : (
                       <Square className="size-4" />
@@ -397,7 +413,7 @@ export default function EPostersPage() {
                   </td>
                 </tr>
               ) : (
-                filteredPosters.map((poster, index) => {
+                paginatedPosters.map((poster, index) => {
                   const isSelected = selectedPosterIds.has(poster.id);
                   const speakerName = getSpeakerName(poster);
                   return (
@@ -481,6 +497,14 @@ export default function EPostersPage() {
             </tbody>
           </table>
         </div>
+        <TablePagination
+          currentPage={currentPage}
+          totalItems={filteredPosters.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+          itemLabel="ePosters"
+        />
       </div>
 
       {/* ── Slide-Over Detail Drawer ── */}

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="21" failures="0" errors="0" time="5.5471565">
+    <testsuite name="test/gallery-taxonomy-filter.test.tsx" timestamp="2026-10-26T07:22:08.567Z" hostname="Vishal" tests="3" failures="0" errors="0" skipped="0" time="1.0947353">
+        <testcase classname="test/gallery-taxonomy-filter.test.tsx" name="purpose and display taxonomy &gt; filters owned taxonomy by exact category ID rather than shared purpose or display text" time="0.9072042">
+        </testcase>
+        <testcase classname="test/gallery-taxonomy-filter.test.tsx" name="purpose and display taxonomy &gt; keeps the facility&apos;s operational templates visible after taxonomy reassignment" time="0.0897812">
+        </testcase>
+        <testcase classname="test/gallery-taxonomy-filter.test.tsx" name="purpose and display taxonomy &gt; accepts the documented speaker aliases but excludes other operational purposes" time="0.0773502">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/reviewed-blueprint-correction.test.tsx" timestamp="2026-10-26T07:22:08.571Z" hostname="Vishal" tests="8" failures="0" errors="0" skipped="0" time="2.5160404">
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; preserves a selected category when a background refresh replaces its loaded page" time="1.1131485">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; sends the loaded version, selected category and reviewed document; keeps a failed draft" time="0.2924131">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; refuses malformed reviewed JSON without issuing a mutation" time="0.1495026">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; requires explicit invalid-lineage confirmation and retains it after an error" time="0.2231757">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; drops the correction draft when identity context changes" time="0.1348966">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; does not restore an old blocked version from a refresh after confirmed repair" time="0.1709052">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; keeps the draft when a successful HTTP result identifies a different record" time="0.1490076">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; does not hide a newer blocker after a confirmed older repair" time="0.2582544">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/category-a/catalogue-background-refresh.test.tsx" timestamp="2026-10-26T07:22:08.577Z" hostname="Vishal" tests="4" failures="0" errors="0" skipped="0" time="1.709996">
+        <testcase classname="test/category-a/catalogue-background-refresh.test.tsx" name="keeps other blocked blueprints visible during a slow background refresh after repair" time="0.8563832">
+        </testcase>
+        <testcase classname="test/category-a/catalogue-background-refresh.test.tsx" name="requires an explicit rubric proposal and preserves it when recorded scores prevent correction" time="0.4828216">
+        </testcase>
+        <testcase classname="test/category-a/catalogue-background-refresh.test.tsx" name="loads more blocked rubrics only when requested" time="0.1982781">
+        </testcase>
+        <testcase classname="test/category-a/catalogue-background-refresh.test.tsx" name="loads category 101 only after an explicit request and collapses duplicate rows" time="0.1566936">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/category-a/catalogue-read-controller.test.tsx" timestamp="2026-10-26T07:22:08.579Z" hostname="Vishal" tests="4" failures="0" errors="0" skipped="0" time="0.1806633">
+        <testcase classname="test/category-a/catalogue-read-controller.test.tsx" name="merges large pages in stable identity order and rejects unsafe continuations" time="0.0295566">
+        </testcase>
+        <testcase classname="test/category-a/catalogue-read-controller.test.tsx" name="suppresses duplicate reads and prevents an invalidated late page from publishing" time="0.0893963">
+        </testcase>
+        <testcase classname="test/category-a/catalogue-read-controller.test.tsx" name="a refresh aborts every older slot before publishing its own result" time="0.015064">
+        </testcase>
+        <testcase classname="test/category-a/catalogue-read-controller.test.tsx" name="enforces Retry-After without replaying and exposes safe correlation details" time="0.0298576">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/category-a/category-key-limit.test.ts" timestamp="2026-10-26T07:22:08.581Z" hostname="Vishal" tests="2" failures="0" errors="0" skipped="0" time="0.0457215">
+        <testcase classname="test/category-a/category-key-limit.test.ts" name="preserves a 51-character taxonomy key through create, update and list" time="0.0226729">
+        </testcase>
+        <testcase classname="test/category-a/category-key-limit.test.ts" name="preserves a 100-character taxonomy key through create, update and list" time="0.0030348">
+        </testcase>
+    </testsuite>
+</testsuites>

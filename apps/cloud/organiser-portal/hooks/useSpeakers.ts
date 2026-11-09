@@ -14,7 +14,6 @@ export interface SpeakerSummary {
   checked_in_at?: string | null;
   is_checked_in?: boolean;
   talks_count: number;
-  speaker_code?: string;
   qr_code_url?: string;
   track_id?: string;
   track_name?: string;
@@ -35,6 +34,11 @@ export interface SpeakerSummary {
   files_pending?: number;
   files_total?: number;
   profile_completeness?: number;
+  programme_availability?: Record<string, Array<{ start: string; end: string }>>;
+  programme_custom_fields?: Record<string, unknown>;
+  programme_travel_details?: Record<string, unknown>;
+  programme_participation?: string | null;
+  programme_readiness?: number;
 }
 
 export interface TrackItem {

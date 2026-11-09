@@ -32,6 +32,9 @@ export default function RootLayout({
                     root.classList.remove('dark');
                     root.setAttribute('data-theme', 'light');
                   }
+                  var ui = JSON.parse(localStorage.getItem('event-os-ui-storage') || '{}');
+                  var background = ui && ui.state && ui.state.organisationBackground;
+                  root.setAttribute('data-organisation-background', ['landscape', 'aurora', 'mist', 'celestial', 'dune', 'emerald', 'prism', 'solaris', 'topo', 'cyber', 'glacier', 'monochrome', 'sakura'].indexOf(background) >= 0 ? background : 'landscape');
                 } catch (e) {}
               })();
             `,

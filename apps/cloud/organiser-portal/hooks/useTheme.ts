@@ -20,6 +20,20 @@ export function useTheme() {
     applyTheme(resolved);
     setThemeState(resolved);
     setMounted(true);
+
+    const syncTheme = (event: Event) => {
+      const next = event instanceof CustomEvent && (event.detail === 'light' || event.detail === 'dark')
+        ? event.detail
+        : localStorage.getItem('eventos-theme') === 'dark' ? 'dark' : 'light';
+      applyTheme(next);
+      setThemeState(next);
+    };
+    window.addEventListener('eventos-theme-changed', syncTheme);
+    window.addEventListener('storage', syncTheme);
+    return () => {
+      window.removeEventListener('eventos-theme-changed', syncTheme);
+      window.removeEventListener('storage', syncTheme);
+    };
   }, []);
 
   const applyTheme = (t: Theme) => {
@@ -37,6 +51,7 @@ export function useTheme() {
     setThemeState(newTheme);
     localStorage.setItem('eventos-theme', newTheme);
     applyTheme(newTheme);
+    window.dispatchEvent(new CustomEvent('eventos-theme-changed', { detail: newTheme }));
   };
 
   const toggleTheme = () => {

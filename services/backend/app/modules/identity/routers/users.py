@@ -10,7 +10,7 @@ from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.dependencies import get_db, get_current_user, require_active_user, SuperAdminOnly, ActiveUser, OrganizerOrAbove
+from app.dependencies import get_db, get_current_user, require_active_user, SuperAdminOnly, ActiveUser, OrganizerOrAbove, StepUpAuth, TokenDep
 from app.modules.identity.models.user import User
 from app.modules.rbac.models.user_assignment import UserEventAssignment
 from app.modules.identity.schemas.user import (
@@ -38,6 +38,11 @@ from app.core.idempotency_service import begin_idempotent, complete_idempotent, 
 router = APIRouter(prefix="/users", tags=["users"])
 
 
+async def browser_identity_audience(token: TokenDep):
+    from app.modules.rbac.routers.access_foundation import browser_context_audience
+    await browser_context_audience(token)
+
+
 @router.get("", response_model=List[UserResponse], summary="List users (Superadmin/Organizer)")
 async def list_users(
     current_user: OrganizerOrAbove,
@@ -48,92 +53,43 @@ async def list_users(
     return await UserQueryService(db).list_users(actor=current_user, role=role)
 
 
-@router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED, summary="Create new user")
+class MembershipInvitationResult(BaseModel):
+    membership_id: uuid.UUID
+    version: int
+    invite_token: str | None = Field(default=None, repr=False)
+    expires_at: datetime
+    delivery_mode: str
+    message: str
+    replayed: bool
+
+
+@router.post("", response_model=MembershipInvitationResult, status_code=status.HTTP_201_CREATED,
+             summary="Legacy adapter: invite an organisation member", dependencies=[Depends(browser_identity_audience)])
 async def create_user(
     payload: UserCreate,
-    current_user: OrganizerOrAbove,
+    step_up: StepUpAuth,
+    reason: str = Query(..., min_length=12, max_length=1000),
+    current_user: User = Depends(require_active_user),
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
     db: AsyncSession = Depends(get_db),
-) -> UserResponse:
-    """Create a new user with a specific role and organization."""
-    operation = await begin_idempotent(
-        db, organization_id=current_user.organization_id, actor_id=current_user.id,
-        operation="identity.user.create", key=idempotency_key,
-        payload=payload.model_dump(mode="json"),
-    )
-    replay = replay_response(operation)
-    if replay:
-        await db.rollback()
-        return replay[1]
-    if current_user.role != "super_admin":
-        if payload.role in ["super_admin", "organiser"]:
-            raise HTTPException(
-                status_code=403, 
-                detail="Organizers can only create roles lower than organizer."
-            )
-
-    # Check if email exists
-    existing = await db.execute(
-        select(User).where(User.email == payload.email)
-    )
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="User with this email already exists.")
-
-    # Enforce Super Admin limits (max 3)
-    if payload.role == "super_admin":
-        count_res = await db.execute(select(func.count()).select_from(User).where(User.role == "super_admin"))
-        if count_res.scalar() >= 3:
-            raise HTTPException(status_code=400, detail="Maximum limit of 3 Super Admin accounts reached.")
-
-    # Organizers always create users within their own org; only super_admin can specify a different org
-    org_id = payload.organization_id if current_user.role == "super_admin" else current_user.organization_id
-
-    reservation = None
-    if org_id:
-        reservation = await UsageReservationService.reserve(
-            db,
-            organization_id=org_id,
-            event_id=None,
-            limit_key="max_users",
-            quantity=1,
-            unit="user",
-            idempotency_key=f"user-create:{idempotency_key}",
-            metadata={"email": payload.email, "role": payload.role},
-        )
-
-    user = User(
-        email=payload.email,
-        password_hash=auth_service.hash_password(payload.password),
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-        phone=payload.phone,
-        role=payload.role,
-        organization_id=org_id,
-        is_active=payload.is_active,
-        avatar_url=payload.avatar_url,
-    )
-    db.add(user)
-    await db.flush()
-    if reservation is not None:
-        await UsageReservationService.consume(
-            db,
-            reservation.id,
-            source="organizer_portal.users.create",
-            actor_user_id=current_user.id,
-        )
-    await db.commit()
-    await db.refresh(user)
-    
-    # Reload with assignments and event data
-    result = await db.execute(
-        select(User).options(
-            selectinload(User.assignments).selectinload(UserEventAssignment.event)
-        ).where(User.id == user.id)
-    )
-    response = UserResponse.model_validate(result.scalar_one()).model_dump(mode="json")
-    await complete_idempotent(db, operation, response_status=201, response_body=response, resource_id=user.id)
-    await db.commit()
-    return response
+) -> MembershipInvitationResult:
+    from app.core.tenant_context import TenantContextGuard
+    from app.modules.organiser.application.member_commands import OrganizationMemberCommandService
+    from app.modules.rbac.services.access_contexts import verify_direct_context
+    del step_up
+    if payload.role not in {"admin", "member", "billing_only"} or not payload.is_active:
+        raise HTTPException(422, detail={"code": "SCOPED_MEMBERSHIP_ROLE_REQUIRED",
+            "message": "Use admin, member or billing_only. Event roles are assigned separately after acceptance."})
+    platform = current_user.platform_role is not None
+    if not platform:
+        await verify_direct_context(db, current_user, payload.organization_id)
+    async with TenantContextGuard.scoped(db, payload.organization_id):
+        result = await OrganizationMemberCommandService(db, platform_administration=platform).create_invitation(
+            organization_id=payload.organization_id, actor=current_user, email=payload.email,
+            org_role=payload.role, idempotency_key=idempotency_key, reason=reason)
+    # Compatibility input password is deliberately not stored or hashed. The
+    # recipient controls their authenticated identity; this creates no access.
+    return MembershipInvitationResult(**result)
 
 
 @router.get("/cursor", response_model=CursorPage[UserResponse], summary="Cursor-paginated users")
@@ -155,7 +111,7 @@ async def get_me(current_user: User = Depends(get_current_user), db: AsyncSessio
     return user
 
 
-@router.patch("/me", response_model=UserResponse, summary="Update current user profile")
+@router.patch("/me", response_model=UserResponse, summary="Update current user profile", dependencies=[Depends(browser_identity_audience)])
 async def update_me(
     payload: UserProfileUpdate,
     current_user: User = Depends(get_current_user),
@@ -163,19 +119,24 @@ async def update_me(
     if_match: Optional[str] = Header(None, alias="If-Match"),
 ) -> UserResponse:
     """Update limited fields on the current user's profile."""
+    expected = require_if_match(if_match)
+    observed_auth_revision = current_user.auth_revision
+    target = await db.scalar(select(User).where(User.id == current_user.id,
+        User.is_active.is_(True), User.deleted_at.is_(None)).with_for_update()
+        .execution_options(populate_existing=True))
+    if target is None or target.auth_revision != observed_auth_revision:
+        raise HTTPException(401, detail={"code": "SESSION_REVOKED"})
+    if target.version != expected:
+        raise HTTPException(412, detail={"code": "VERSION_CONFLICT", "current_version": target.version})
     update_data = payload.model_dump(exclude_unset=True)
-    if if_match is not None and int(current_user.version or 1) != require_if_match(if_match):
-        raise_version_conflict(int(current_user.version or 1))
     
     if "email" in update_data and update_data["email"] != current_user.email:
-        # Check if email exists
-        existing = await db.execute(select(User).where(User.email == update_data["email"]))
-        if existing.scalar_one_or_none():
-            raise HTTPException(status_code=400, detail="User with this email already exists.")
+        raise HTTPException(409, detail={"code": "VERIFIED_EMAIL_CHANGE_REQUIRED",
+            "message": "Email changes require the verified identity workflow, not a profile edit."})
             
     for field, value in update_data.items():
-        setattr(current_user, field, value)
-    current_user.version = int(current_user.version or 1) + 1
+        setattr(target, field, value)
+    target.version += 1
     await db.commit()
     await db.refresh(current_user)
     
@@ -194,126 +155,50 @@ async def get_user(
     return user
 
 
-@router.patch("/{user_id}", response_model=UserResponse, summary="Update user")
+@router.patch("/{user_id}", response_model=UserResponse, summary="Legacy adapter: governed status or own profile", dependencies=[Depends(browser_identity_audience)])
 async def update_user(
-    user_id: uuid.UUID,
-    payload: UserUpdate,
-    current_user: OrganizerOrAbove,
-    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID, payload: UserUpdate, step_up: StepUpAuth,
+    current_user: User = Depends(require_active_user), db: AsyncSession = Depends(get_db),
     if_match: Optional[str] = Header(None, alias="If-Match"),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    reason: str | None = Query(None, min_length=12, max_length=1000),
 ) -> UserResponse:
-    operation = None
-    if idempotency_key:
-        operation = await begin_idempotent(db, organization_id=current_user.organization_id, actor_id=current_user.id,
-            operation="identity.user.update", key=idempotency_key,
-            payload={"user_id": str(user_id), "payload": payload.model_dump(mode="json"), "if_match": if_match})
-        replay = replay_response(operation)
-        if replay:
-            await db.rollback()
-            return replay[1]
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found.")
-    if if_match is not None and int(user.version or 1) != require_if_match(if_match):
-        raise_version_conflict(int(user.version or 1))
-
-    if current_user.role != "super_admin":
-        # Organisers can only edit within their own org
-        if user.organization_id != current_user.organization_id:
-            raise HTTPException(status_code=403, detail="Cannot edit users outside your organization.")
-        # Prevent editing super_admin or organiser accounts
-        if user.role in ["super_admin", "organiser"]:
-            raise HTTPException(status_code=403, detail="Organisers cannot edit super_admin or organiser accounts.")
-        # Prevent privilege escalation
-        update_data_check = payload.model_dump(exclude_unset=True)
-        if update_data_check.get("role") in ["super_admin", "organiser"]:
-            raise HTTPException(status_code=403, detail="Cannot promote users to super_admin or organiser.")
-
-    update_data = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v != ""}
-    
-    if "password" in update_data:
-        user.password_hash = auth_service.hash_password(update_data.pop("password"))
-
-    # Enforce Super Admin limits and existence
-    new_role = update_data.get("role")
-    if new_role == "super_admin" and user.role != "super_admin":
-        count_res = await db.execute(select(func.count()).select_from(User).where(User.role == "super_admin"))
-        if count_res.scalar() >= 3:
-            raise HTTPException(status_code=400, detail="Maximum limit of 3 Super Admin accounts reached.")
-    
-    if user.role == "super_admin" and new_role and new_role != "super_admin":
-        count_res = await db.execute(select(func.count()).select_from(User).where(User.role == "super_admin"))
-        if count_res.scalar() <= 1:
-            raise HTTPException(status_code=400, detail="Cannot change the role of the last remaining Super Admin.")
-
-    for field, value in update_data.items():
-        setattr(user, field, value)
-    user.version = int(user.version or 1) + 1
-    await db.commit()
-    await db.refresh(user)
-    response = UserResponse.model_validate(await UserQueryService(db).get(user_id=user.id, actor=current_user)).model_dump(mode="json")
-    if operation is not None:
-        await complete_idempotent(db, operation, response_status=200, response_body=response, resource_id=user.id)
-        await db.commit()
-    return response
+    del step_up
+    fields = payload.model_fields_set
+    if fields == {"is_active"}:
+        if payload.is_active is None:
+            raise HTTPException(422, detail={"code": "STATUS_REQUIRED"})
+        if not reason or not idempotency_key:
+            raise HTTPException(428, detail={"code": "VERSION_REASON_AND_KEY_REQUIRED"})
+        from app.modules.platform.application.identity_commands import IdentityAdminCommandService
+        await IdentityAdminCommandService(db).update_status(user_id=user_id, actor=current_user,
+            is_active=payload.is_active, reason=reason, expected=require_if_match(if_match),
+            idempotency_key=idempotency_key)
+        return await UserQueryService(db).get(user_id=user_id, actor=current_user)
+    allowed = {"first_name", "last_name", "phone", "avatar_url", "notification_preferences"}
+    if not fields <= allowed:
+        raise HTTPException(409, detail={"code": "GOVERNED_IDENTITY_OPERATION_REQUIRED",
+            "message": "Use the governed platform role, MFA or status operation; passwords and verified-email changes are not profile edits."})
+    if user_id != current_user.id:
+        raise HTTPException(404, detail={"code": "RESOURCE_NOT_FOUND"})
+    require_if_match(if_match)
+    return await update_me(UserProfileUpdate(**payload.model_dump(exclude_unset=True)),
+        current_user=current_user, db=db, if_match=if_match)
 
 
-
-@router.delete("/{user_id}", response_model=MessageResponse, summary="Delete user (Superadmin)")
+@router.delete("/{user_id}", response_model=MessageResponse, summary="Legacy adapter: deactivate identity without deleting history", dependencies=[Depends(browser_identity_audience)])
 async def delete_user(
-    user_id: uuid.UUID,
-    current_user: SuperAdminOnly,
-    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID, step_up: StepUpAuth,
+    reason: str = Query(..., min_length=12, max_length=1000),
+    current_user: User = Depends(require_active_user), db: AsyncSession = Depends(get_db),
     if_match: Optional[str] = Header(None, alias="If-Match"),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
 ) -> MessageResponse:
-    if user_id == current_user.id:
-        raise HTTPException(status_code=400, detail="Cannot delete your own account.")
-    operation = None
-    if idempotency_key:
-        operation = await begin_idempotent(db, organization_id=current_user.organization_id, actor_id=current_user.id,
-            operation="identity.user.delete", key=idempotency_key,
-            payload={"user_id": str(user_id), "if_match": if_match})
-        replay = replay_response(operation)
-        if replay:
-            await db.rollback()
-            return replay[1]
-        
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found.")
-    if if_match is not None and int(user.version or 1) != require_if_match(if_match):
-        raise_version_conflict(int(user.version or 1))
-    
-    if user.role == "super_admin":
-        count_res = await db.execute(select(func.count()).select_from(User).where(User.role == "super_admin"))
-        if count_res.scalar() <= 1:
-            raise HTTPException(status_code=400, detail="Cannot delete the last remaining Super Admin account.")
-    
-    # Preserve the user identifier for immutable audit attribution while removing
-    # authentication capability and personal profile data.
-    deleted_marker = f"deleted-{user.id}@invalid.Event.local"
-    user.email = deleted_marker
-    user.first_name = "Deleted"
-    user.last_name = "User"
-    user.phone = None
-    user.avatar_url = None
-    user.password_hash = None
-    user.is_active = False
-    user.is_2fa_enabled = False
-    user.two_factor_secret = None
-    user.deleted_at = datetime.now(timezone.utc)
-    await db.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
-    await db.execute(delete(MfaDevice).where(MfaDevice.user_id == user.id))
-    await db.commit()
-    response = {"message": "User account deactivated and personal profile data removed."}
-    if operation is not None:
-        await complete_idempotent(db, operation, response_status=200, response_body=response, resource_id=user_id)
-        await db.commit()
-    return MessageResponse(**response)
+    del step_up
+    from app.modules.platform.application.identity_commands import IdentityAdminCommandService
+    await IdentityAdminCommandService(db).update_status(user_id=user_id, actor=current_user,
+        is_active=False, reason=reason, expected=require_if_match(if_match), idempotency_key=idempotency_key)
+    return MessageResponse(message="Identity deactivated. Membership and audit history retained; no personal data was deleted.")
 
 
 class MfaCodeRequest(BaseModel):

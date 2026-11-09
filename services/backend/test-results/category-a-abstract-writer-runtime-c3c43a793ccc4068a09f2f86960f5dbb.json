@@ -1,0 +1,19 @@
+{
+  "status": "FAILED",
+  "run_id": "c3c43a793ccc4068a09f2f86960f5dbb",
+  "environment": "local_isolated_rehearsal",
+  "scope": "actual_restricted_login_direct_accepted_owner",
+  "started_at": "2026-10-27T03:27:23.245547+00:00",
+  "delegated_http_browser_concurrency_acceptance": "NOT_RUN",
+  "database": "category_a_rehearsal_20261015",
+  "organization_id": "0a62c7fc-5ee2-40fb-871c-2c74d59098cf",
+  "event_id": "29cc0223-fbb6-4a67-b65d-8215edea5a12",
+  "migration_revision": "20261022_3670",
+  "current_case": "success_replay",
+  "error_type": "EntitlementRequiredException",
+  "denial_code": "NOT_ENTITLED",
+  "denied_feature": "FEAT_ABSTRACT_SUBMISSION",
+  "independent_original_state_and_receipts_restored": true,
+  "completed_at": "2026-10-27T03:27:32.453474+00:00",
+  "probe_sha256": "602d34b0b9b12577d150d36e8c18ed9c520342357916d20fba1414c528f5c213"
+}

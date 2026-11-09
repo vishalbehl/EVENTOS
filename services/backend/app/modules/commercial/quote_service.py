@@ -56,7 +56,10 @@ def quote_snapshot(quote: CommercialQuote) -> dict:
     return {
         "quote_id": str(quote.id),
         "organization_id": str(quote.organization_id),
-        "event_id": str(quote.event_id),
+        "event_id": str(quote.event_id) if quote.event_id else None,
+        "product_family": quote.product_family,
+        "commercial_request_id": str(quote.commercial_request_id) if quote.commercial_request_id else None,
+        "price_book_version": quote.price_book_version,
         "service_request_id": str(quote.service_request_id) if quote.service_request_id else None,
         "quote_number": quote.quote_number,
         "title": quote.title,
@@ -84,6 +87,15 @@ def quote_snapshot(quote: CommercialQuote) -> dict:
                 "unit_rate": str(item.unit_rate),
                 "line_subtotal": str(item.line_subtotal),
                 "sort_order": item.sort_order,
+                "product_family": item.product_family,
+                "offer_code": item.offer_code,
+                "offer_version_id": str(item.offer_version_id) if item.offer_version_id else None,
+                "allocation_version_id": str(item.allocation_version_id) if item.allocation_version_id else None,
+                "event_id": str(item.event_id) if item.event_id else None,
+                "client_workspace_id": str(item.client_workspace_id) if item.client_workspace_id else None,
+                "commercial_request_id": str(item.commercial_request_id) if item.commercial_request_id else None,
+                "tax_rate": str(item.tax_rate) if item.tax_rate is not None else None,
+                "source_snapshot_json": item.source_snapshot_json,
             }
             for item in quote.line_items
         ],
@@ -100,6 +112,7 @@ def apply_quote_payload(quote: CommercialQuote, payload: QuotePricingInput) -> N
     quote.taxable_amount = totals["taxable_amount"]
     quote.tax_amount = totals["tax_amount"]
     quote.total_amount = totals["total_amount"]
+    existing_items = list(quote.line_items)
     quote.line_items = [
         CommercialQuoteLineItem(
             category=item.category,
@@ -110,6 +123,15 @@ def apply_quote_payload(quote: CommercialQuote, payload: QuotePricingInput) -> N
             unit_rate=item.unit_rate,
             line_subtotal=money(item.quantity * Decimal(item.duration_days) * item.unit_rate),
             sort_order=index,
+            product_family=item.product_family or (existing_items[index].product_family if index < len(existing_items) else None),
+            offer_code=item.offer_code or (existing_items[index].offer_code if index < len(existing_items) else None),
+            offer_version_id=item.offer_version_id or (existing_items[index].offer_version_id if index < len(existing_items) else None),
+            allocation_version_id=item.allocation_version_id or (existing_items[index].allocation_version_id if index < len(existing_items) else None),
+            event_id=item.event_id or (existing_items[index].event_id if index < len(existing_items) else None),
+            client_workspace_id=item.client_workspace_id or (existing_items[index].client_workspace_id if index < len(existing_items) else None),
+            commercial_request_id=item.commercial_request_id or (existing_items[index].commercial_request_id if index < len(existing_items) else None),
+            tax_rate=item.tax_rate if item.tax_rate is not None else (existing_items[index].tax_rate if index < len(existing_items) else payload.tax_rate),
+            source_snapshot_json=item.source_snapshot_json or (existing_items[index].source_snapshot_json if index < len(existing_items) else {}),
         )
         for index, item in enumerate(payload.line_items)
     ]

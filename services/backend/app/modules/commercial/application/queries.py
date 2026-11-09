@@ -161,7 +161,7 @@ class QuoteQueryService:
         return await self.db.scalar(statement)
 
     async def get_proposal(self, *, organization_id, proposal_id) -> Proposal | None:
-        statement = select(Proposal).where(
+        statement = select(Proposal).options(selectinload(Proposal.versions)).where(
             Proposal.id == proposal_id,
             Proposal.organization_id == organization_id,
         )

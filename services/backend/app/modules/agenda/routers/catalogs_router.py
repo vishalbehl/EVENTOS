@@ -28,7 +28,7 @@ async def list_session_types(
     current_user: User = Depends(get_current_user),
 ) -> List[SessionTypeResponse]:
     rows = await AgendaCatalogQueryService(db).list_session_types(
-        organization_id=current_user.organization_id
+        organization_id=current_user.request_organization_id
     )
     return [SessionTypeResponse.model_validate(row) for row in rows]
 
@@ -39,7 +39,7 @@ async def list_room_types(
     current_user: User = Depends(get_current_user),
 ) -> List[RoomTypeResponse]:
     rows = await AgendaCatalogQueryService(db).list_room_types(
-        organization_id=current_user.organization_id
+        organization_id=current_user.request_organization_id
     )
     return [RoomTypeResponse.model_validate(row) for row in rows]
 
@@ -50,6 +50,6 @@ async def list_track_types(
     current_user: User = Depends(get_current_user),
 ) -> List[TrackTypeResponse]:
     rows = await AgendaCatalogQueryService(db).list_track_types(
-        organization_id=current_user.organization_id
+        organization_id=current_user.request_organization_id
     )
     return [TrackTypeResponse.model_validate(row) for row in rows]

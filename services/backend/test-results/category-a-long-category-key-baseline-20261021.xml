@@ -1,0 +1,2369 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="10" skipped="0" tests="13" time="28.633" timestamp="2026-10-21T19:32:08.196852+05:30" hostname="Vishal"><testcase classname="tests.test_category_long_slug_transitions" name="test_reviewed_category_repair_preserves_full_legacy_key_and_blocked_history[False-50]" time="13.000" /><testcase classname="tests.test_category_long_slug_transitions" name="test_reviewed_category_repair_preserves_full_legacy_key_and_blocked_history[False-51]" time="0.881"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.StringDataRightTruncationError'&gt;: value too long for type character varying(50)&#10;[SQL: &#10;    WITH updated AS (&#10;        UPDATE design.form_templates&#10;           SET category_key=$1, version=version+1, updated_at=now()&#10;         WHERE category_id=$2 AND category_key IS DISTINCT FROM $1&#10;           AND category_key NOT IN ('abstract','registration','speaker','speaker_intake','sponsor','sponsor_application','survey')&#10;           AND organization_id IS NOT DISTINCT FROM $3&#10;         RETURNING id, version&#10;    ), lineage AS (&#10;        INSERT INTO design.form_template_reconciliations&#10;            (id,template_id,replacement_template_id,template_version,operation,status,reason,&#10;             details,actor_user_id,created_at)&#10;        SELECT gen_random_uuid(),id,NULL,version,'CATEGORY_KEY_NORMALIZATION','COMPLETED',&#10;               'Category taxonomy updated this owned template projection.',&#10;               jsonb_build_object('category_id',CAST($2 AS text),&#10;                                  'previous_version',version-1),$4,now()&#10;          FROM updated&#10;        ON CONFLICT (template_id,template_version,operation) DO NOTHING&#10;        RETURNING id&#10;    ), carried AS (&#10;        INSERT INTO design.form_template_reconciliations&#10;            (id,template_id,replacement_template_id,template_version,operation,status,reason,&#10;             details,actor_user_id,created_at)&#10;        SELECT gen_random_uuid(),updated.id,NULL,updated.version,'DOCUMENT_VALIDATION','BLOCKED',&#10;               'Blocked document remains unresolved after category normalization.',&#10;               jsonb_build_object('carried_from_version',updated.version-1,&#10;                                  'category_normalization',CAST($2 AS text)),$4,now()&#10;          FROM updated JOIN design.form_template_reconciliations previous&#10;            ON previous.template_id=updated.id AND previous.template_version=updated.version-1&#10;           AND previous.operation='DOCUMENT_VALIDATION' AND previous.status='BLOCKED'&#10;        ON CONFLICT (template_id,template_version,operation) DO NOTHING&#10;        RETURNING id&#10;    )&#10;    SELECT (SELECT count(*) FROM updated) AS reassigned,&#10;           (SELECT count(*) FROM lineage) AS lineage_recorded,&#10;           (SELECT count(*) FROM carried) AS blocked_carried&#10;]&#10;[parameters: ('803ef125e1e746248d9abc17f86b9cd0xxxxxxxxxxxxxxxxxxx', UUID('38219c1a-afdf-485c-88ef-205df9643767'), UUID('5e600515-e040-4a5f-93b1-af33bf0d69e6'), UUID('d56684fc-6118-4531-8a71-6b0e0a851a2d'))]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">self = &lt;sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_cursor object at 0x00000244137E9000&gt;
+operation = '\n    WITH updated AS (\n        UPDATE design.form_templates\n           SET category_key=$1, version=version+1, upd...   (SELECT count(*) FROM lineage) AS lineage_recorded,\n           (SELECT count(*) FROM carried) AS blocked_carried\n'
+parameters = ('803ef125e1e746248d9abc17f86b9cd0xxxxxxxxxxxxxxxxxxx', UUID('38219c1a-afdf-485c-88ef-205df9643767'), UUID('5e600515-e040-4a5f-93b1-af33bf0d69e6'), UUID('d56684fc-6118-4531-8a71-6b0e0a851a2d'))
+
+    async def _prepare_and_execute(self, operation, parameters):
+        adapt_connection = self._adapt_connection
+    
+        async with adapt_connection._execute_mutex:
+            if not adapt_connection._started:
+                await adapt_connection._start_transaction()
+    
+            if parameters is None:
+                parameters = ()
+    
+            try:
+                prepared_stmt, attributes = await adapt_connection._prepare(
+                    operation, self._invalidate_schema_cache_asof
+                )
+    
+                if attributes:
+                    self.description = [
+                        (
+                            attr.name,
+                            attr.type.oid,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        for attr in attributes
+                    ]
+                else:
+                    self.description = None
+    
+                if self.server_side:
+                    self._cursor = await prepared_stmt.cursor(*parameters)
+                    self.rowcount = -1
+                else:
+&gt;                   self._rows = deque(await prepared_stmt.fetch(*parameters))
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+&gt;   ???
+E   asyncpg.exceptions.StringDataRightTruncationError: value too long for type character varying(50)
+
+asyncpg/protocol/protocol.pyx:205: StringDataRightTruncationError
+
+The above exception was the direct cause of the following exception:
+
+self = &lt;sqlalchemy.engine.base.Connection object at 0x00000244130C4640&gt;
+dialect = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGDialect_asyncpg object at 0x0000024410256C10&gt;
+context = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGExecutionContext_asyncpg object at 0x000002441105BF00&gt;
+statement = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGCompiler_asyncpg object at 0x00000244133C1310&gt;
+parameters = [('803ef125e1e746248d9abc17f86b9cd0xxxxxxxxxxxxxxxxxxx', UUID('38219c1a-afdf-485c-88ef-205df9643767'), UUID('5e600515-e040-4a5f-93b1-af33bf0d69e6'), UUID('d56684fc-6118-4531-8a71-6b0e0a851a2d'))]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -&gt; CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+&gt;                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x0000024412FD2990&gt;&gt;
+error = StringDataRightTruncationError('value too long for type character varying(50)')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.StringDataRightTruncationError'&gt;: value too long for type character varying(50)
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: Error
+
+The above exception was the direct cause of the following exception:
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000002441109D090&gt;
+organization = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] Organization object at 0x24410fa7ed0&gt;
+super_admin = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] User object at 0x244133c1f90&gt;
+length = 51, global_category = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("length", [50, 51, 100])
+    @pytest.mark.parametrize("global_category", [False, True])
+    async def test_reviewed_category_repair_preserves_full_legacy_key_and_blocked_history(
+            db, organization, super_admin, length, global_category):
+        category = FormCategory(organization_id=None if global_category else organization.id,
+            name="Long category review", slug=f"short-{uuid.uuid4().hex}")
+        db.add(category)
+        await db.flush()
+        if global_category:
+            db.add(FormCategoryReconciliation(category_id=category.id, category_version=1,
+                operation="TAXONOMY_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id))
+        else:
+            db.add(CatalogueDocumentReconciliation(organization_id=organization.id,
+                resource_type="FORM_CATEGORY", resource_id=category.id, resource_version=1,
+                operation="DOCUMENT_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id))
+        template = FormTemplate(organization_id=organization.id, scope_type="ORGANIZATION",
+            category_id=category.id, category_key="legacy-key", name="Long category consumer",
+            slug=f"consumer-{uuid.uuid4().hex}", fields=[], settings={})
+        db.add(template)
+        await db.flush()
+        db.add(FormTemplateReconciliation(template_id=template.id, template_version=1,
+            operation="DOCUMENT_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id))
+        await db.commit()
+        category_id, template_id, slug = category.id, template.id, slug_of_length(length)
+        args = dict(resource_type="FORM_CATEGORY", resource_id=category_id, actor=super_admin,
+            payload=AggregateRepairRequest(document={"name": "Long category review", "slug": slug,
+                "description": None, "icon": "ClipboardList", "sort_order": 0},
+                reason="Reviewed full-length legacy taxonomy transition"),
+            if_match='"1"', idempotency_key=f"long-review-{uuid.uuid4()}")
+&gt;       result = await repair_aggregate_document(db, **args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_category_long_slug_transitions.py:53: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+app\modules\registration\application\aggregate_reconciliation.py:188: in repair_aggregate_document
+    templates_updated, blocked_carried = await normalize_category_template_keys(db,
+app\modules\registration\application\category_key_projection.py:142: in normalize_category_template_keys
+    counts = (await db.execute(_NORMALIZE, {**parameters, "owner_id": organization_id})).mappings().one()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:448: in execute
+    result = await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2372: in execute
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2279: in _execute_internal
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x0000024412FD2990&gt;&gt;
+error = StringDataRightTruncationError('value too long for type character varying(50)')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.StringDataRightTruncationError'&gt;: value too long for type character varying(50)
+E                   [SQL: 
+E                       WITH updated AS (
+E                           UPDATE design.form_templates
+E                              SET category_key=$1, version=version+1, updated_at=now()
+E                            WHERE category_id=$2 AND category_key IS DISTINCT FROM $1
+E                              AND category_key NOT IN ('abstract','registration','speaker','speaker_intake','sponsor','sponsor_application','survey')
+E                              AND organization_id IS NOT DISTINCT FROM $3
+E                            RETURNING id, version
+E                       ), lineage AS (
+E                           INSERT INTO design.form_template_reconciliations
+E                               (id,template_id,replacement_template_id,template_version,operation,status,reason,
+E                                details,actor_user_id,created_at)
+E                           SELECT gen_random_uuid(),id,NULL,version,'CATEGORY_KEY_NORMALIZATION','COMPLETED',
+E                                  'Category taxonomy updated this owned template projection.',
+E                                  jsonb_build_object('category_id',CAST($2 AS text),
+E                                                     'previous_version',version-1),$4,now()
+E                             FROM updated
+E                           ON CONFLICT (template_id,template_version,operation) DO NOTHING
+E                           RETURNING id
+E                       ), carried AS (
+E                           INSERT INTO design.form_template_reconciliations
+E                               (id,template_id,replacement_template_id,template_version,operation,status,reason,
+E                                details,actor_user_id,created_at)
+E                           SELECT gen_random_uuid(),updated.id,NULL,updated.version,'DOCUMENT_VALIDATION','BLOCKED',
+E                                  'Blocked document remains unresolved after category normalization.',
+E                                  jsonb_build_object('carried_from_version',updated.version-1,
+E                                                     'category_normalization',CAST($2 AS text)),$4,now()
+E                             FROM updated JOIN design.form_template_reconciliations previous
+E                               ON previous.template_id=updated.id AND previous.template_version=updated.version-1
+E                              AND previous.operation='DOCUMENT_VALIDATION' AND previous.status='BLOCKED'
+E                           ON CONFLICT (template_id,template_version,operation) DO NOTHING
+E                           RETURNING id
+E                       )
+E                       SELECT (SELECT count(*) FROM updated) AS reassigned,
+E                              (SELECT count(*) FROM lineage) AS lineage_recorded,
+E                              (SELECT count(*) FROM carried) AS blocked_carried
+E                   ]
+E                   [parameters: ('803ef125e1e746248d9abc17f86b9cd0xxxxxxxxxxxxxxxxxxx', UUID('38219c1a-afdf-485c-88ef-205df9643767'), UUID('5e600515-e040-4a5f-93b1-af33bf0d69e6'), UUID('d56684fc-6118-4531-8a71-6b0e0a851a2d'))]
+E                   (Background on this error at: https://sqlalche.me/e/20/dbapi)
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: DBAPIError</failure></testcase><testcase classname="tests.test_category_long_slug_transitions" name="test_reviewed_category_repair_preserves_full_legacy_key_and_blocked_history[False-100]" time="0.895"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.StringDataRightTruncationError'&gt;: value too long for type character varying(50)&#10;[SQL: &#10;    WITH updated AS (&#10;        UPDATE design.form_templates&#10;           SET category_key=$1, version=version+1, updated_at=now()&#10;         WHERE category_id=$2 AND category_key IS DISTINCT FROM $1&#10;           AND category_key NOT IN ('abstract','registration','speaker','speaker_intake','sponsor','sponsor_application','survey')&#10;           AND organization_id IS NOT DISTINCT FROM $3&#10;         RETURNING id, version&#10;    ), lineage AS (&#10;        INSERT INTO design.form_template_reconciliations&#10;            (id,template_id,replacement_template_id,template_version,operation,status,reason,&#10;             details,actor_user_id,created_at)&#10;        SELECT gen_random_uuid(),id,NULL,version,'CATEGORY_KEY_NORMALIZATION','COMPLETED',&#10;               'Category taxonomy updated this owned template projection.',&#10;               jsonb_build_object('category_id',CAST($2 AS text),&#10;                                  'previous_version',version-1),$4,now()&#10;          FROM updated&#10;        ON CONFLICT (template_id,template_version,operation) DO NOTHING&#10;        RETURNING id&#10;    ), carried AS (&#10;        INSERT INTO design.form_template_reconciliations&#10;            (id,template_id,replacement_template_id,template_version,operation,status,reason,&#10;             details,actor_user_id,created_at)&#10;        SELECT gen_random_uuid(),updated.id,NULL,updated.version,'DOCUMENT_VALIDATION','BLOCKED',&#10;               'Blocked document remains unresolved after category normalization.',&#10;               jsonb_build_object('carried_from_version',updated.version-1,&#10;                                  'category_normalization',CAST($2 AS text)),$4,now()&#10;          FROM updated JOIN design.form_template_reconciliations previous&#10;            ON previous.template_id=updated.id AND previous.template_version=updated.version-1&#10;           AND previous.operation='DOCUMENT_VALIDATION' AND previous.status='BLOCKED'&#10;        ON CONFLICT (template_id,template_version,operation) DO NOTHING&#10;        RETURNING id&#10;    )&#10;    SELECT (SELECT count(*) FROM updated) AS reassigned,&#10;           (SELECT count(*) FROM lineage) AS lineage_recorded,&#10;           (SELECT count(*) FROM carried) AS blocked_carried&#10;]&#10;[parameters: ('35cafaaa3fb24b788833fe9072ce834exxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', UUID('c52bbc3d-89b3-4282-8b2a-be70d5856da6'), UUID('8fdf5eef-8246-4166-859c-2e7518bbfe1b'), UUID('2e43f7a0-92c1-4267-823a-cb3daa565206'))]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">self = &lt;sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_cursor object at 0x00000244151FF280&gt;
+operation = '\n    WITH updated AS (\n        UPDATE design.form_templates\n           SET category_key=$1, version=version+1, upd...   (SELECT count(*) FROM lineage) AS lineage_recorded,\n           (SELECT count(*) FROM carried) AS blocked_carried\n'
+parameters = ('35cafaaa3fb24b788833fe9072ce834exxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', UUID('c52bbc3...3-4282-8b2a-be70d5856da6'), UUID('8fdf5eef-8246-4166-859c-2e7518bbfe1b'), UUID('2e43f7a0-92c1-4267-823a-cb3daa565206'))
+
+    async def _prepare_and_execute(self, operation, parameters):
+        adapt_connection = self._adapt_connection
+    
+        async with adapt_connection._execute_mutex:
+            if not adapt_connection._started:
+                await adapt_connection._start_transaction()
+    
+            if parameters is None:
+                parameters = ()
+    
+            try:
+                prepared_stmt, attributes = await adapt_connection._prepare(
+                    operation, self._invalidate_schema_cache_asof
+                )
+    
+                if attributes:
+                    self.description = [
+                        (
+                            attr.name,
+                            attr.type.oid,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        for attr in attributes
+                    ]
+                else:
+                    self.description = None
+    
+                if self.server_side:
+                    self._cursor = await prepared_stmt.cursor(*parameters)
+                    self.rowcount = -1
+                else:
+&gt;                   self._rows = deque(await prepared_stmt.fetch(*parameters))
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+&gt;   ???
+E   asyncpg.exceptions.StringDataRightTruncationError: value too long for type character varying(50)
+
+asyncpg/protocol/protocol.pyx:205: StringDataRightTruncationError
+
+The above exception was the direct cause of the following exception:
+
+self = &lt;sqlalchemy.engine.base.Connection object at 0x0000024413689910&gt;
+dialect = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGDialect_asyncpg object at 0x0000024410256C10&gt;
+context = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGExecutionContext_asyncpg object at 0x0000024413695040&gt;
+statement = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGCompiler_asyncpg object at 0x00000244133C1310&gt;
+parameters = [('35cafaaa3fb24b788833fe9072ce834exxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', UUID('c52bbc...-4282-8b2a-be70d5856da6'), UUID('8fdf5eef-8246-4166-859c-2e7518bbfe1b'), UUID('2e43f7a0-92c1-4267-823a-cb3daa565206'))]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -&gt; CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+&gt;                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x00000244139548C0&gt;&gt;
+error = StringDataRightTruncationError('value too long for type character varying(50)')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.StringDataRightTruncationError'&gt;: value too long for type character varying(50)
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: Error
+
+The above exception was the direct cause of the following exception:
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000024410FA7D90&gt;
+organization = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] Organization object at 0x24410fa7750&gt;
+super_admin = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] User object at 0x244133c1950&gt;
+length = 100, global_category = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("length", [50, 51, 100])
+    @pytest.mark.parametrize("global_category", [False, True])
+    async def test_reviewed_category_repair_preserves_full_legacy_key_and_blocked_history(
+            db, organization, super_admin, length, global_category):
+        category = FormCategory(organization_id=None if global_category else organization.id,
+            name="Long category review", slug=f"short-{uuid.uuid4().hex}")
+        db.add(category)
+        await db.flush()
+        if global_category:
+            db.add(FormCategoryReconciliation(category_id=category.id, category_version=1,
+                operation="TAXONOMY_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id))
+        else:
+            db.add(CatalogueDocumentReconciliation(organization_id=organization.id,
+                resource_type="FORM_CATEGORY", resource_id=category.id, resource_version=1,
+                operation="DOCUMENT_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id))
+        template = FormTemplate(organization_id=organization.id, scope_type="ORGANIZATION",
+            category_id=category.id, category_key="legacy-key", name="Long category consumer",
+            slug=f"consumer-{uuid.uuid4().hex}", fields=[], settings={})
+        db.add(template)
+        await db.flush()
+        db.add(FormTemplateReconciliation(template_id=template.id, template_version=1,
+            operation="DOCUMENT_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id))
+        await db.commit()
+        category_id, template_id, slug = category.id, template.id, slug_of_length(length)
+        args = dict(resource_type="FORM_CATEGORY", resource_id=category_id, actor=super_admin,
+            payload=AggregateRepairRequest(document={"name": "Long category review", "slug": slug,
+                "description": None, "icon": "ClipboardList", "sort_order": 0},
+                reason="Reviewed full-length legacy taxonomy transition"),
+            if_match='"1"', idempotency_key=f"long-review-{uuid.uuid4()}")
+&gt;       result = await repair_aggregate_document(db, **args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_category_long_slug_transitions.py:53: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+app\modules\registration\application\aggregate_reconciliation.py:188: in repair_aggregate_document
+    templates_updated, blocked_carried = await normalize_category_template_keys(db,
+app\modules\registration\application\category_key_projection.py:142: in normalize_category_template_keys
+    counts = (await db.execute(_NORMALIZE, {**parameters, "owner_id": organization_id})).mappings().one()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:448: in execute
+    result = await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2372: in execute
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2279: in _execute_internal
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x00000244139548C0&gt;&gt;
+error = StringDataRightTruncationError('value too long for type character varying(50)')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.StringDataRightTruncationError'&gt;: value too long for type character varying(50)
+E                   [SQL: 
+E                       WITH updated AS (
+E                           UPDATE design.form_templates
+E                              SET category_key=$1, version=version+1, updated_at=now()
+E                            WHERE category_id=$2 AND category_key IS DISTINCT FROM $1
+E                              AND category_key NOT IN ('abstract','registration','speaker','speaker_intake','sponsor','sponsor_application','survey')
+E                              AND organization_id IS NOT DISTINCT FROM $3
+E                            RETURNING id, version
+E                       ), lineage AS (
+E                           INSERT INTO design.form_template_reconciliations
+E                               (id,template_id,replacement_template_id,template_version,operation,status,reason,
+E                                details,actor_user_id,created_at)
+E                           SELECT gen_random_uuid(),id,NULL,version,'CATEGORY_KEY_NORMALIZATION','COMPLETED',
+E                                  'Category taxonomy updated this owned template projection.',
+E                                  jsonb_build_object('category_id',CAST($2 AS text),
+E                                                     'previous_version',version-1),$4,now()
+E                             FROM updated
+E                           ON CONFLICT (template_id,template_version,operation) DO NOTHING
+E                           RETURNING id
+E                       ), carried AS (
+E                           INSERT INTO design.form_template_reconciliations
+E                               (id,template_id,replacement_template_id,template_version,operation,status,reason,
+E                                details,actor_user_id,created_at)
+E                           SELECT gen_random_uuid(),updated.id,NULL,updated.version,'DOCUMENT_VALIDATION','BLOCKED',
+E                                  'Blocked document remains unresolved after category normalization.',
+E                                  jsonb_build_object('carried_from_version',updated.version-1,
+E                                                     'category_normalization',CAST($2 AS text)),$4,now()
+E                             FROM updated JOIN design.form_template_reconciliations previous
+E                               ON previous.template_id=updated.id AND previous.template_version=updated.version-1
+E                              AND previous.operation='DOCUMENT_VALIDATION' AND previous.status='BLOCKED'
+E                           ON CONFLICT (template_id,template_version,operation) DO NOTHING
+E                           RETURNING id
+E                       )
+E                       SELECT (SELECT count(*) FROM updated) AS reassigned,
+E                              (SELECT count(*) FROM lineage) AS lineage_recorded,
+E                              (SELECT count(*) FROM carried) AS blocked_carried
+E                   ]
+E                   [parameters: ('35cafaaa3fb24b788833fe9072ce834exxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', UUID('c52bbc3d-89b3-4282-8b2a-be70d5856da6'), UUID('8fdf5eef-8246-4166-859c-2e7518bbfe1b'), UUID('2e43f7a0-92c1-4267-823a-cb3daa565206'))]
+E                   (Background on this error at: https://sqlalche.me/e/20/dbapi)
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: DBAPIError</failure></testcase><testcase classname="tests.test_category_long_slug_transitions" name="test_reviewed_category_repair_preserves_full_legacy_key_and_blocked_history[True-50]" time="1.510" /><testcase classname="tests.test_category_long_slug_transitions" name="test_reviewed_category_repair_preserves_full_legacy_key_and_blocked_history[True-51]" time="0.887"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.InFailedSQLTransactionError'&gt;: current transaction is aborted, commands ignored until end of transaction block&#10;[SQL: SELECT set_config('app.current_organization_id', $1, true)]&#10;[parameters: ('bba81563-ee35-4d7c-b686-df65da27605b',)]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">self = &lt;sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_cursor object at 0x00000244139FBB20&gt;
+operation = "SELECT set_config('app.current_organization_id', $1, true)"
+parameters = ('bba81563-ee35-4d7c-b686-df65da27605b',)
+
+    async def _prepare_and_execute(self, operation, parameters):
+        adapt_connection = self._adapt_connection
+    
+        async with adapt_connection._execute_mutex:
+            if not adapt_connection._started:
+                await adapt_connection._start_transaction()
+    
+            if parameters is None:
+                parameters = ()
+    
+            try:
+                prepared_stmt, attributes = await adapt_connection._prepare(
+                    operation, self._invalidate_schema_cache_asof
+                )
+    
+                if attributes:
+                    self.description = [
+                        (
+                            attr.name,
+                            attr.type.oid,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        for attr in attributes
+                    ]
+                else:
+                    self.description = None
+    
+                if self.server_side:
+                    self._cursor = await prepared_stmt.cursor(*parameters)
+                    self.rowcount = -1
+                else:
+&gt;                   self._rows = deque(await prepared_stmt.fetch(*parameters))
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+&gt;   ???
+E   asyncpg.exceptions.InFailedSQLTransactionError: current transaction is aborted, commands ignored until end of transaction block
+
+asyncpg/protocol/protocol.pyx:205: InFailedSQLTransactionError
+
+The above exception was the direct cause of the following exception:
+
+self = &lt;sqlalchemy.engine.base.Connection object at 0x0000024413694270&gt;
+dialect = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGDialect_asyncpg object at 0x0000024410256C10&gt;
+context = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGExecutionContext_asyncpg object at 0x0000024413696140&gt;
+statement = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGCompiler_asyncpg object at 0x000002441109EAD0&gt;
+parameters = [('bba81563-ee35-4d7c-b686-df65da27605b',)]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -&gt; CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+&gt;                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x0000024413956210&gt;&gt;
+error = InFailedSQLTransactionError('current transaction is aborted, commands ignored until end of transaction block')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.InFailedSQLTransactionError'&gt;: current transaction is aborted, commands ignored until end of transaction block
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: Error
+
+The above exception was the direct cause of the following exception:
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x00000244130C6EA0&gt;
+organization = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] Organization object at 0x244133c3110&gt;
+super_admin = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] User object at 0x244130c63f0&gt;
+length = 51, global_category = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("length", [50, 51, 100])
+    @pytest.mark.parametrize("global_category", [False, True])
+    async def test_reviewed_category_repair_preserves_full_legacy_key_and_blocked_history(
+            db, organization, super_admin, length, global_category):
+        category = FormCategory(organization_id=None if global_category else organization.id,
+            name="Long category review", slug=f"short-{uuid.uuid4().hex}")
+        db.add(category)
+        await db.flush()
+        if global_category:
+            db.add(FormCategoryReconciliation(category_id=category.id, category_version=1,
+                operation="TAXONOMY_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id))
+        else:
+            db.add(CatalogueDocumentReconciliation(organization_id=organization.id,
+                resource_type="FORM_CATEGORY", resource_id=category.id, resource_version=1,
+                operation="DOCUMENT_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id))
+        template = FormTemplate(organization_id=organization.id, scope_type="ORGANIZATION",
+            category_id=category.id, category_key="legacy-key", name="Long category consumer",
+            slug=f"consumer-{uuid.uuid4().hex}", fields=[], settings={})
+        db.add(template)
+        await db.flush()
+        db.add(FormTemplateReconciliation(template_id=template.id, template_version=1,
+            operation="DOCUMENT_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id))
+        await db.commit()
+        category_id, template_id, slug = category.id, template.id, slug_of_length(length)
+        args = dict(resource_type="FORM_CATEGORY", resource_id=category_id, actor=super_admin,
+            payload=AggregateRepairRequest(document={"name": "Long category review", "slug": slug,
+                "description": None, "icon": "ClipboardList", "sort_order": 0},
+                reason="Reviewed full-length legacy taxonomy transition"),
+            if_match='"1"', idempotency_key=f"long-review-{uuid.uuid4()}")
+&gt;       result = await repair_aggregate_document(db, **args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_category_long_slug_transitions.py:53: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+app\modules\registration\application\aggregate_reconciliation.py:188: in repair_aggregate_document
+    templates_updated, blocked_carried = await normalize_category_template_keys(db,
+app\modules\registration\application\category_key_projection.py:137: in normalize_category_template_keys
+    counts = await reassign_reference_counts(db, _NORMALIZE, parameters,
+app\modules\registration\application\catalogue_retirement_scopes.py:22: in reassign_reference_counts
+    async with TenantContextGuard.scoped(db, platform_id):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\visha\AppData\Local\Programs\Python\Python313\Lib\contextlib.py:235: in __aexit__
+    await self.gen.athrow(value)
+app\core\tenant_context.py:55: in scoped
+    await TenantContextGuard.apply(session, previous)
+app\core\tenant_context.py:28: in apply
+    await session.execute(
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:448: in execute
+    result = await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2372: in execute
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2279: in _execute_internal
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x0000024413956210&gt;&gt;
+error = InFailedSQLTransactionError('current transaction is aborted, commands ignored until end of transaction block')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.InFailedSQLTransactionError'&gt;: current transaction is aborted, commands ignored until end of transaction block
+E                   [SQL: SELECT set_config('app.current_organization_id', $1, true)]
+E                   [parameters: ('bba81563-ee35-4d7c-b686-df65da27605b',)]
+E                   (Background on this error at: https://sqlalche.me/e/20/dbapi)
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: DBAPIError</failure></testcase><testcase classname="tests.test_category_long_slug_transitions" name="test_reviewed_category_repair_preserves_full_legacy_key_and_blocked_history[True-100]" time="0.747"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.InFailedSQLTransactionError'&gt;: current transaction is aborted, commands ignored until end of transaction block&#10;[SQL: SELECT set_config('app.current_organization_id', $1, true)]&#10;[parameters: ('451d1a93-f166-44c7-935c-d34032d7b4bf',)]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">self = &lt;sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_cursor object at 0x00000244153A4040&gt;
+operation = "SELECT set_config('app.current_organization_id', $1, true)"
+parameters = ('451d1a93-f166-44c7-935c-d34032d7b4bf',)
+
+    async def _prepare_and_execute(self, operation, parameters):
+        adapt_connection = self._adapt_connection
+    
+        async with adapt_connection._execute_mutex:
+            if not adapt_connection._started:
+                await adapt_connection._start_transaction()
+    
+            if parameters is None:
+                parameters = ()
+    
+            try:
+                prepared_stmt, attributes = await adapt_connection._prepare(
+                    operation, self._invalidate_schema_cache_asof
+                )
+    
+                if attributes:
+                    self.description = [
+                        (
+                            attr.name,
+                            attr.type.oid,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        for attr in attributes
+                    ]
+                else:
+                    self.description = None
+    
+                if self.server_side:
+                    self._cursor = await prepared_stmt.cursor(*parameters)
+                    self.rowcount = -1
+                else:
+&gt;                   self._rows = deque(await prepared_stmt.fetch(*parameters))
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+&gt;   ???
+E   asyncpg.exceptions.InFailedSQLTransactionError: current transaction is aborted, commands ignored until end of transaction block
+
+asyncpg/protocol/protocol.pyx:205: InFailedSQLTransactionError
+
+The above exception was the direct cause of the following exception:
+
+self = &lt;sqlalchemy.engine.base.Connection object at 0x0000024413AFD750&gt;
+dialect = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGDialect_asyncpg object at 0x0000024410256C10&gt;
+context = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGExecutionContext_asyncpg object at 0x00000244136978A0&gt;
+statement = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGCompiler_asyncpg object at 0x000002441109EAD0&gt;
+parameters = [('451d1a93-f166-44c7-935c-d34032d7b4bf',)]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -&gt; CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+&gt;                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x0000024413957200&gt;&gt;
+error = InFailedSQLTransactionError('current transaction is aborted, commands ignored until end of transaction block')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.InFailedSQLTransactionError'&gt;: current transaction is aborted, commands ignored until end of transaction block
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: Error
+
+The above exception was the direct cause of the following exception:
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000002441368A7B0&gt;
+organization = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] Organization object at 0x2441525da90&gt;
+super_admin = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] User object at 0x24413c71010&gt;
+length = 100, global_category = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("length", [50, 51, 100])
+    @pytest.mark.parametrize("global_category", [False, True])
+    async def test_reviewed_category_repair_preserves_full_legacy_key_and_blocked_history(
+            db, organization, super_admin, length, global_category):
+        category = FormCategory(organization_id=None if global_category else organization.id,
+            name="Long category review", slug=f"short-{uuid.uuid4().hex}")
+        db.add(category)
+        await db.flush()
+        if global_category:
+            db.add(FormCategoryReconciliation(category_id=category.id, category_version=1,
+                operation="TAXONOMY_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id))
+        else:
+            db.add(CatalogueDocumentReconciliation(organization_id=organization.id,
+                resource_type="FORM_CATEGORY", resource_id=category.id, resource_version=1,
+                operation="DOCUMENT_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id))
+        template = FormTemplate(organization_id=organization.id, scope_type="ORGANIZATION",
+            category_id=category.id, category_key="legacy-key", name="Long category consumer",
+            slug=f"consumer-{uuid.uuid4().hex}", fields=[], settings={})
+        db.add(template)
+        await db.flush()
+        db.add(FormTemplateReconciliation(template_id=template.id, template_version=1,
+            operation="DOCUMENT_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id))
+        await db.commit()
+        category_id, template_id, slug = category.id, template.id, slug_of_length(length)
+        args = dict(resource_type="FORM_CATEGORY", resource_id=category_id, actor=super_admin,
+            payload=AggregateRepairRequest(document={"name": "Long category review", "slug": slug,
+                "description": None, "icon": "ClipboardList", "sort_order": 0},
+                reason="Reviewed full-length legacy taxonomy transition"),
+            if_match='"1"', idempotency_key=f"long-review-{uuid.uuid4()}")
+&gt;       result = await repair_aggregate_document(db, **args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_category_long_slug_transitions.py:53: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+app\modules\registration\application\aggregate_reconciliation.py:188: in repair_aggregate_document
+    templates_updated, blocked_carried = await normalize_category_template_keys(db,
+app\modules\registration\application\category_key_projection.py:137: in normalize_category_template_keys
+    counts = await reassign_reference_counts(db, _NORMALIZE, parameters,
+app\modules\registration\application\catalogue_retirement_scopes.py:22: in reassign_reference_counts
+    async with TenantContextGuard.scoped(db, platform_id):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\visha\AppData\Local\Programs\Python\Python313\Lib\contextlib.py:235: in __aexit__
+    await self.gen.athrow(value)
+app\core\tenant_context.py:55: in scoped
+    await TenantContextGuard.apply(session, previous)
+app\core\tenant_context.py:28: in apply
+    await session.execute(
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:448: in execute
+    result = await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2372: in execute
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2279: in _execute_internal
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x0000024413957200&gt;&gt;
+error = InFailedSQLTransactionError('current transaction is aborted, commands ignored until end of transaction block')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.InFailedSQLTransactionError'&gt;: current transaction is aborted, commands ignored until end of transaction block
+E                   [SQL: SELECT set_config('app.current_organization_id', $1, true)]
+E                   [parameters: ('451d1a93-f166-44c7-935c-d34032d7b4bf',)]
+E                   (Background on this error at: https://sqlalche.me/e/20/dbapi)
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: DBAPIError</failure></testcase><testcase classname="tests.test_category_long_slug_transitions" name="test_global_retirement_preserves_full_key_without_changing_operational_purpose[50]" time="0.693" /><testcase classname="tests.test_category_long_slug_transitions" name="test_global_retirement_preserves_full_key_without_changing_operational_purpose[51]" time="0.665"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.InFailedSQLTransactionError'&gt;: current transaction is aborted, commands ignored until end of transaction block&#10;[SQL: SELECT set_config('app.current_organization_id', '', true)]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">self = &lt;sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_cursor object at 0x0000024415A08580&gt;
+operation = "SELECT set_config('app.current_organization_id', '', true)"
+parameters = ()
+
+    async def _prepare_and_execute(self, operation, parameters):
+        adapt_connection = self._adapt_connection
+    
+        async with adapt_connection._execute_mutex:
+            if not adapt_connection._started:
+                await adapt_connection._start_transaction()
+    
+            if parameters is None:
+                parameters = ()
+    
+            try:
+                prepared_stmt, attributes = await adapt_connection._prepare(
+                    operation, self._invalidate_schema_cache_asof
+                )
+    
+                if attributes:
+                    self.description = [
+                        (
+                            attr.name,
+                            attr.type.oid,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        for attr in attributes
+                    ]
+                else:
+                    self.description = None
+    
+                if self.server_side:
+                    self._cursor = await prepared_stmt.cursor(*parameters)
+                    self.rowcount = -1
+                else:
+&gt;                   self._rows = deque(await prepared_stmt.fetch(*parameters))
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+&gt;   ???
+E   asyncpg.exceptions.InFailedSQLTransactionError: current transaction is aborted, commands ignored until end of transaction block
+
+asyncpg/protocol/protocol.pyx:205: InFailedSQLTransactionError
+
+The above exception was the direct cause of the following exception:
+
+self = &lt;sqlalchemy.engine.base.Connection object at 0x00000244139576B0&gt;
+dialect = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGDialect_asyncpg object at 0x0000024410256C10&gt;
+context = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGExecutionContext_asyncpg object at 0x0000024415C58050&gt;
+statement = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGCompiler_asyncpg object at 0x000002441109D1D0&gt;
+parameters = [()]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -&gt; CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+&gt;                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x0000024415338320&gt;&gt;
+error = InFailedSQLTransactionError('current transaction is aborted, commands ignored until end of transaction block')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.InFailedSQLTransactionError'&gt;: current transaction is aborted, commands ignored until end of transaction block
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: Error
+
+The above exception was the direct cause of the following exception:
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000024413696BE0&gt;
+organization = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] Organization object at 0x2441525e850&gt;
+super_admin = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] User object at 0x24413696470&gt;
+length = 51
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("length", [50, 51, 100])
+    async def test_global_retirement_preserves_full_key_without_changing_operational_purpose(
+            db, organization, super_admin, length):
+        source = FormCategory(name="Long source category", slug=f"source-{uuid.uuid4().hex}")
+        replacement = FormCategory(name="Long target category", slug=slug_of_length(length))
+        db.add_all([source, replacement])
+        await db.flush()
+        templates = [FormTemplate(organization_id=organization.id, scope_type="ORGANIZATION",
+            category_id=source.id, category_key=key, name="Long retirement consumer",
+            slug=f"retire-{uuid.uuid4().hex}", fields=[], settings={}) for key in ("legacy-key", "registration")]
+        db.add_all(templates)
+        await db.flush()
+        db.add_all([FormTemplateReconciliation(template_id=row.id, template_version=1,
+            operation="DOCUMENT_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id) for row in templates])
+        await db.commit()
+        identities, target_id, slug = [row.id for row in templates], replacement.id, replacement.slug
+&gt;       result = await retire_global_category(db, category_id=source.id, replacement_category_id=target_id,
+            actor=super_admin, if_match='"1"', idempotency_key=f"long-retire-{uuid.uuid4()}",
+            reason="Retire with an untruncated approved category identity")
+
+tests\test_category_long_slug_transitions.py:83: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+app\modules\registration\application\category_commands.py:61: in retire_global_category
+    template_counts = await reassign_reference_counts(db, text("""
+app\modules\registration\application\catalogue_retirement_scopes.py:22: in reassign_reference_counts
+    async with TenantContextGuard.scoped(db, platform_id):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\visha\AppData\Local\Programs\Python\Python313\Lib\contextlib.py:235: in __aexit__
+    await self.gen.athrow(value)
+app\core\tenant_context.py:55: in scoped
+    await TenantContextGuard.apply(session, previous)
+app\core\tenant_context.py:24: in apply
+    await session.execute(text("SELECT set_config('app.current_organization_id', '', true)"))
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:448: in execute
+    result = await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2372: in execute
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2279: in _execute_internal
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x0000024415338320&gt;&gt;
+error = InFailedSQLTransactionError('current transaction is aborted, commands ignored until end of transaction block')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.InFailedSQLTransactionError'&gt;: current transaction is aborted, commands ignored until end of transaction block
+E                   [SQL: SELECT set_config('app.current_organization_id', '', true)]
+E                   (Background on this error at: https://sqlalche.me/e/20/dbapi)
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: DBAPIError</failure></testcase><testcase classname="tests.test_category_long_slug_transitions" name="test_global_retirement_preserves_full_key_without_changing_operational_purpose[100]" time="0.601"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.InFailedSQLTransactionError'&gt;: current transaction is aborted, commands ignored until end of transaction block&#10;[SQL: SELECT set_config('app.current_organization_id', '', true)]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">self = &lt;sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_cursor object at 0x00000244157CE4A0&gt;
+operation = "SELECT set_config('app.current_organization_id', '', true)"
+parameters = ()
+
+    async def _prepare_and_execute(self, operation, parameters):
+        adapt_connection = self._adapt_connection
+    
+        async with adapt_connection._execute_mutex:
+            if not adapt_connection._started:
+                await adapt_connection._start_transaction()
+    
+            if parameters is None:
+                parameters = ()
+    
+            try:
+                prepared_stmt, attributes = await adapt_connection._prepare(
+                    operation, self._invalidate_schema_cache_asof
+                )
+    
+                if attributes:
+                    self.description = [
+                        (
+                            attr.name,
+                            attr.type.oid,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        for attr in attributes
+                    ]
+                else:
+                    self.description = None
+    
+                if self.server_side:
+                    self._cursor = await prepared_stmt.cursor(*parameters)
+                    self.rowcount = -1
+                else:
+&gt;                   self._rows = deque(await prepared_stmt.fetch(*parameters))
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+&gt;   ???
+E   asyncpg.exceptions.InFailedSQLTransactionError: current transaction is aborted, commands ignored until end of transaction block
+
+asyncpg/protocol/protocol.pyx:205: InFailedSQLTransactionError
+
+The above exception was the direct cause of the following exception:
+
+self = &lt;sqlalchemy.engine.base.Connection object at 0x000002441533A030&gt;
+dialect = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGDialect_asyncpg object at 0x0000024410256C10&gt;
+context = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGExecutionContext_asyncpg object at 0x0000024415C598C0&gt;
+statement = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGCompiler_asyncpg object at 0x000002441109D1D0&gt;
+parameters = [()]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -&gt; CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+&gt;                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x0000024415339B80&gt;&gt;
+error = InFailedSQLTransactionError('current transaction is aborted, commands ignored until end of transaction block')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.InFailedSQLTransactionError'&gt;: current transaction is aborted, commands ignored until end of transaction block
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: Error
+
+The above exception was the direct cause of the following exception:
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000024414F9C850&gt;
+organization = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] Organization object at 0x2441525fed0&gt;
+super_admin = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] User object at 0x24414f9c050&gt;
+length = 100
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("length", [50, 51, 100])
+    async def test_global_retirement_preserves_full_key_without_changing_operational_purpose(
+            db, organization, super_admin, length):
+        source = FormCategory(name="Long source category", slug=f"source-{uuid.uuid4().hex}")
+        replacement = FormCategory(name="Long target category", slug=slug_of_length(length))
+        db.add_all([source, replacement])
+        await db.flush()
+        templates = [FormTemplate(organization_id=organization.id, scope_type="ORGANIZATION",
+            category_id=source.id, category_key=key, name="Long retirement consumer",
+            slug=f"retire-{uuid.uuid4().hex}", fields=[], settings={}) for key in ("legacy-key", "registration")]
+        db.add_all(templates)
+        await db.flush()
+        db.add_all([FormTemplateReconciliation(template_id=row.id, template_version=1,
+            operation="DOCUMENT_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id) for row in templates])
+        await db.commit()
+        identities, target_id, slug = [row.id for row in templates], replacement.id, replacement.slug
+&gt;       result = await retire_global_category(db, category_id=source.id, replacement_category_id=target_id,
+            actor=super_admin, if_match='"1"', idempotency_key=f"long-retire-{uuid.uuid4()}",
+            reason="Retire with an untruncated approved category identity")
+
+tests\test_category_long_slug_transitions.py:83: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+app\modules\registration\application\category_commands.py:61: in retire_global_category
+    template_counts = await reassign_reference_counts(db, text("""
+app\modules\registration\application\catalogue_retirement_scopes.py:22: in reassign_reference_counts
+    async with TenantContextGuard.scoped(db, platform_id):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\visha\AppData\Local\Programs\Python\Python313\Lib\contextlib.py:235: in __aexit__
+    await self.gen.athrow(value)
+app\core\tenant_context.py:55: in scoped
+    await TenantContextGuard.apply(session, previous)
+app\core\tenant_context.py:24: in apply
+    await session.execute(text("SELECT set_config('app.current_organization_id', '', true)"))
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:448: in execute
+    result = await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2372: in execute
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2279: in _execute_internal
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x0000024415339B80&gt;&gt;
+error = InFailedSQLTransactionError('current transaction is aborted, commands ignored until end of transaction block')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.InFailedSQLTransactionError'&gt;: current transaction is aborted, commands ignored until end of transaction block
+E                   [SQL: SELECT set_config('app.current_organization_id', '', true)]
+E                   (Background on this error at: https://sqlalche.me/e/20/dbapi)
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: DBAPIError</failure></testcase><testcase classname="tests.test_category_long_slug_transitions" name="test_explicit_template_category_repair_supports_existing_category_slug_limit[51]" time="0.715"><failure message="fastapi.exceptions.HTTPException: 409: {'code': 'TEMPLATE_CATEGORY_RECONCILIATION_REQUIRED'}">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x00000244136FB750&gt;
+super_admin = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] User object at 0x244136fb850&gt;
+length = 51
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("length", [51, 100])
+    async def test_explicit_template_category_repair_supports_existing_category_slug_limit(
+            db, super_admin, length):
+        category = FormCategory(name="Full length repair target", slug=slug_of_length(length))
+        template = FormTemplate(name="Explicit long reference repair", scope_type="GLOBAL",
+            slug=f"repair-{uuid.uuid4().hex}", category_key="legacy-key", fields=[], settings={})
+        db.add_all([category, template])
+        await db.flush()
+        db.add(FormTemplateReconciliation(template_id=template.id, template_version=1,
+            operation="DOCUMENT_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id))
+        await db.commit()
+        identity, target_id, slug = template.id, category.id, category.slug
+&gt;       result = await repair_catalogue_document(db, template_id=identity, actor=super_admin,
+            payload=CatalogueRepairRequest(document={"fields": [], "settings": {}}, replacement_category_id=target_id,
+                reason="Reviewed full-length category reference repair"),
+            if_match='"1"', idempotency_key=f"long-template-{uuid.uuid4()}")
+
+tests\test_category_long_slug_transitions.py:112: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x00000244136FB750&gt;
+
+    async def repair_catalogue_document(db, *, template_id, payload, actor,
+                                        if_match, idempotency_key):
+        """Apply an operator-supplied valid document to one blocked historical row."""
+        expected = require_if_match(if_match)
+        authority = await category_authority(db, actor, "PLATFORM")
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        projected = payload.document.model_dump(mode="json", exclude_none=True)
+        platform_scope, target_scope = AsyncExitStack(), AsyncExitStack()
+        try:
+            await platform_scope.enter_async_context(TenantContextGuard.scoped(db, authority))
+            receipt = await begin_idempotent(db, organization_id=authority, actor_id=actor.id,
+                operation="registration.platform.form_template.repair", key=idempotency_key,
+                payload={"template_id": str(template_id), "version": expected,
+                    "document": projected, "reason": payload.reason,
+                    **({"replacement_category_id": str(payload.replacement_category_id)}
+                       if payload.replacement_category_id is not None else {}),
+                    **({"detach_invalid_source_lineage": True} if payload.detach_invalid_source_lineage else {})})
+            replay = replay_response(receipt)
+            if replay is not None:
+                await db.commit()
+                return replay[1]
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            from .catalogue_review_queries import template_review_rows
+            targets = await template_review_rows(db, actor=actor, template_id=template_id)
+            if not targets:
+                raise HTTPException(404, detail="Template not found.")
+            owner_id = targets[0]["organization_id"]
+            if owner_id is not None:
+                await target_scope.enter_async_context(TenantContextGuard.scoped(db, owner_id))
+            owner = await db.scalar(select(Organization).where(
+                Organization.id == (owner_id or authority)).with_for_update(read=True)
+                .execution_options(populate_existing=True))
+            if owner is None or not owner.is_active or owner.suspended_at is not None or owner.archived_at is not None:
+                raise HTTPException(409, detail={"code": "ORGANIZATION_NOT_OPERATIONAL"})
+            template = await db.scalar(select(FormTemplate).where(
+                FormTemplate.id == template_id, FormTemplate.organization_id == owner_id,
+                FormTemplate.deleted_at.is_(None))
+                .with_for_update(of=FormTemplate)
+                .execution_options(shared_form_catalogue=True, populate_existing=True))
+            if template is None:
+                raise HTTPException(404, detail="Template not found.")
+            if template.scope_type not in ({"GLOBAL"} if owner_id is None else {"ORGANIZATION", "EVENT"}):
+                raise HTTPException(409, detail={"code": "TEMPLATE_SCOPE_RECONCILIATION_REQUIRED"})
+            current = int(template.version or 1)
+            if current != expected:
+                raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT",
+                    "current_version": current})
+            blocked = await db.scalar(select(FormTemplateReconciliation.id).where(
+                FormTemplateReconciliation.template_id == template.id,
+                FormTemplateReconciliation.template_version == current,
+                FormTemplateReconciliation.operation == "DOCUMENT_VALIDATION",
+                FormTemplateReconciliation.status == "BLOCKED"))
+            if blocked is None:
+                raise HTTPException(409, detail={"code": "TEMPLATE_IS_NOT_BLOCKED"})
+            if not template.is_active:
+                raise HTTPException(409, detail={"code": "TEMPLATE_RETIRED"})
+            if payload.detach_invalid_source_lineage and template.scope_type != "EVENT":
+                raise HTTPException(409, detail={"code": "LINEAGE_DETACH_REQUIRES_EVENT_TEMPLATE"})
+            lineage_detachment = None
+            previous_category_id, previous_category_key = template.category_id, template.category_key
+            selected_category_id = payload.replacement_category_id or template.category_id
+            if selected_category_id is not None:
+                category = await db.scalar(select(FormCategory).where(
+                    FormCategory.id == selected_category_id,
+                    FormCategory.is_active.is_(True),
+                    FormCategory.deleted_at.is_(None),
+                    (FormCategory.organization_id.is_(None)
+                        if template.organization_id is None
+                        else or_(FormCategory.organization_id.is_(None),
+                            FormCategory.organization_id == template.organization_id)),
+                ).with_for_update(read=True)
+                  .execution_options(shared_form_catalogue=True, populate_existing=True))
+                # Category slugs historically permit 100 characters, but the live
+                # template key contract/storage permits only 50. Never truncate or
+                # discover this incompatibility through a failed database flush.
+                if category is None or len(reassigned_category_key(template.category_key, category.slug)) &gt; 50:
+&gt;                   raise HTTPException(409, detail={
+                        "code": "TEMPLATE_CATEGORY_RECONCILIATION_REQUIRED",
+                    })
+E                   fastapi.exceptions.HTTPException: 409: {'code': 'TEMPLATE_CATEGORY_RECONCILIATION_REQUIRED'}
+
+app\modules\registration\application\template_commands.py:385: HTTPException</failure></testcase><testcase classname="tests.test_category_long_slug_transitions" name="test_explicit_template_category_repair_supports_existing_category_slug_limit[100]" time="0.685"><failure message="fastapi.exceptions.HTTPException: 409: {'code': 'TEMPLATE_CATEGORY_RECONCILIATION_REQUIRED'}">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000024413956210&gt;
+super_admin = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] User object at 0x244139565d0&gt;
+length = 100
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("length", [51, 100])
+    async def test_explicit_template_category_repair_supports_existing_category_slug_limit(
+            db, super_admin, length):
+        category = FormCategory(name="Full length repair target", slug=slug_of_length(length))
+        template = FormTemplate(name="Explicit long reference repair", scope_type="GLOBAL",
+            slug=f"repair-{uuid.uuid4().hex}", category_key="legacy-key", fields=[], settings={})
+        db.add_all([category, template])
+        await db.flush()
+        db.add(FormTemplateReconciliation(template_id=template.id, template_version=1,
+            operation="DOCUMENT_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id))
+        await db.commit()
+        identity, target_id, slug = template.id, category.id, category.slug
+&gt;       result = await repair_catalogue_document(db, template_id=identity, actor=super_admin,
+            payload=CatalogueRepairRequest(document={"fields": [], "settings": {}}, replacement_category_id=target_id,
+                reason="Reviewed full-length category reference repair"),
+            if_match='"1"', idempotency_key=f"long-template-{uuid.uuid4()}")
+
+tests\test_category_long_slug_transitions.py:112: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000024413956210&gt;
+
+    async def repair_catalogue_document(db, *, template_id, payload, actor,
+                                        if_match, idempotency_key):
+        """Apply an operator-supplied valid document to one blocked historical row."""
+        expected = require_if_match(if_match)
+        authority = await category_authority(db, actor, "PLATFORM")
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        projected = payload.document.model_dump(mode="json", exclude_none=True)
+        platform_scope, target_scope = AsyncExitStack(), AsyncExitStack()
+        try:
+            await platform_scope.enter_async_context(TenantContextGuard.scoped(db, authority))
+            receipt = await begin_idempotent(db, organization_id=authority, actor_id=actor.id,
+                operation="registration.platform.form_template.repair", key=idempotency_key,
+                payload={"template_id": str(template_id), "version": expected,
+                    "document": projected, "reason": payload.reason,
+                    **({"replacement_category_id": str(payload.replacement_category_id)}
+                       if payload.replacement_category_id is not None else {}),
+                    **({"detach_invalid_source_lineage": True} if payload.detach_invalid_source_lineage else {})})
+            replay = replay_response(receipt)
+            if replay is not None:
+                await db.commit()
+                return replay[1]
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            from .catalogue_review_queries import template_review_rows
+            targets = await template_review_rows(db, actor=actor, template_id=template_id)
+            if not targets:
+                raise HTTPException(404, detail="Template not found.")
+            owner_id = targets[0]["organization_id"]
+            if owner_id is not None:
+                await target_scope.enter_async_context(TenantContextGuard.scoped(db, owner_id))
+            owner = await db.scalar(select(Organization).where(
+                Organization.id == (owner_id or authority)).with_for_update(read=True)
+                .execution_options(populate_existing=True))
+            if owner is None or not owner.is_active or owner.suspended_at is not None or owner.archived_at is not None:
+                raise HTTPException(409, detail={"code": "ORGANIZATION_NOT_OPERATIONAL"})
+            template = await db.scalar(select(FormTemplate).where(
+                FormTemplate.id == template_id, FormTemplate.organization_id == owner_id,
+                FormTemplate.deleted_at.is_(None))
+                .with_for_update(of=FormTemplate)
+                .execution_options(shared_form_catalogue=True, populate_existing=True))
+            if template is None:
+                raise HTTPException(404, detail="Template not found.")
+            if template.scope_type not in ({"GLOBAL"} if owner_id is None else {"ORGANIZATION", "EVENT"}):
+                raise HTTPException(409, detail={"code": "TEMPLATE_SCOPE_RECONCILIATION_REQUIRED"})
+            current = int(template.version or 1)
+            if current != expected:
+                raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT",
+                    "current_version": current})
+            blocked = await db.scalar(select(FormTemplateReconciliation.id).where(
+                FormTemplateReconciliation.template_id == template.id,
+                FormTemplateReconciliation.template_version == current,
+                FormTemplateReconciliation.operation == "DOCUMENT_VALIDATION",
+                FormTemplateReconciliation.status == "BLOCKED"))
+            if blocked is None:
+                raise HTTPException(409, detail={"code": "TEMPLATE_IS_NOT_BLOCKED"})
+            if not template.is_active:
+                raise HTTPException(409, detail={"code": "TEMPLATE_RETIRED"})
+            if payload.detach_invalid_source_lineage and template.scope_type != "EVENT":
+                raise HTTPException(409, detail={"code": "LINEAGE_DETACH_REQUIRES_EVENT_TEMPLATE"})
+            lineage_detachment = None
+            previous_category_id, previous_category_key = template.category_id, template.category_key
+            selected_category_id = payload.replacement_category_id or template.category_id
+            if selected_category_id is not None:
+                category = await db.scalar(select(FormCategory).where(
+                    FormCategory.id == selected_category_id,
+                    FormCategory.is_active.is_(True),
+                    FormCategory.deleted_at.is_(None),
+                    (FormCategory.organization_id.is_(None)
+                        if template.organization_id is None
+                        else or_(FormCategory.organization_id.is_(None),
+                            FormCategory.organization_id == template.organization_id)),
+                ).with_for_update(read=True)
+                  .execution_options(shared_form_catalogue=True, populate_existing=True))
+                # Category slugs historically permit 100 characters, but the live
+                # template key contract/storage permits only 50. Never truncate or
+                # discover this incompatibility through a failed database flush.
+                if category is None or len(reassigned_category_key(template.category_key, category.slug)) &gt; 50:
+&gt;                   raise HTTPException(409, detail={
+                        "code": "TEMPLATE_CATEGORY_RECONCILIATION_REQUIRED",
+                    })
+E                   fastapi.exceptions.HTTPException: 409: {'code': 'TEMPLATE_CATEGORY_RECONCILIATION_REQUIRED'}
+
+app\modules\registration\application\template_commands.py:385: HTTPException</failure></testcase><testcase classname="tests.test_category_long_slug_transitions" name="test_template_contract_supports_100_but_rejects_101_character_keys[FormTemplateCreate]" time="0.003"><failure message="pydantic_core._pydantic_core.ValidationError: 1 validation error for FormTemplateCreate&#10;category_key&#10;  String should have at most 50 characters [type=string_too_long, input_value='xxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxx', input_type=str]&#10;    For further information visit https://errors.pydantic.dev/2.13/v/string_too_long">schema = &lt;class 'app.modules.registration.schemas.form_builder.FormTemplateCreate'&gt;
+
+    @pytest.mark.parametrize("schema", [FormTemplateCreate, FormTemplateUpdate])
+    def test_template_contract_supports_100_but_rejects_101_character_keys(schema):
+        values = {"category_key": "x" * 100}
+        if schema is FormTemplateCreate:
+            values["name"] = "Long category template"
+&gt;       assert schema.model_validate(values).category_key == "x" * 100
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       pydantic_core._pydantic_core.ValidationError: 1 validation error for FormTemplateCreate
+E       category_key
+E         String should have at most 50 characters [type=string_too_long, input_value='xxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxx', input_type=str]
+E           For further information visit https://errors.pydantic.dev/2.13/v/string_too_long
+
+tests\test_category_long_slug_transitions.py:128: ValidationError</failure></testcase><testcase classname="tests.test_category_long_slug_transitions" name="test_template_contract_supports_100_but_rejects_101_character_keys[FormTemplateUpdate]" time="2.346"><failure message="pydantic_core._pydantic_core.ValidationError: 1 validation error for FormTemplateUpdate&#10;category_key&#10;  String should have at most 50 characters [type=string_too_long, input_value='xxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxx', input_type=str]&#10;    For further information visit https://errors.pydantic.dev/2.13/v/string_too_long">schema = &lt;class 'app.modules.registration.schemas.form_builder.FormTemplateUpdate'&gt;
+
+    @pytest.mark.parametrize("schema", [FormTemplateCreate, FormTemplateUpdate])
+    def test_template_contract_supports_100_but_rejects_101_character_keys(schema):
+        values = {"category_key": "x" * 100}
+        if schema is FormTemplateCreate:
+            values["name"] = "Long category template"
+&gt;       assert schema.model_validate(values).category_key == "x" * 100
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       pydantic_core._pydantic_core.ValidationError: 1 validation error for FormTemplateUpdate
+E       category_key
+E         String should have at most 50 characters [type=string_too_long, input_value='xxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxx', input_type=str]
+E           For further information visit https://errors.pydantic.dev/2.13/v/string_too_long
+
+tests\test_category_long_slug_transitions.py:128: ValidationError</failure></testcase></testsuite></testsuites>

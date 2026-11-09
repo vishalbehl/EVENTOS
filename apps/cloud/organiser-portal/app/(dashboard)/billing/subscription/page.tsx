@@ -1,2 +1,2 @@
-import { BillingSubscriptionTab } from "@/components/organizer/workspace/billing/BillingSubscriptionTab";
-export default function Page() { return <BillingSubscriptionTab />; }
+import { redirect } from "next/navigation";
+export default function Page() { redirect("/commercial/contracts"); }

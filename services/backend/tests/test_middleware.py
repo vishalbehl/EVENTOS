@@ -5,7 +5,7 @@
 # Tests cover:
 #   - AuditMiddleware: resource extraction, action derivation
 #   - AuthMiddleware: security headers, token state injection
-#   - RateLimitMiddleware: per-path rules, in-memory window limiter
+#   - RateLimitMiddleware: registered distributed policies and compatibility alias
 #   - Middleware does not interfere with successful requests
 # =============================================================
 
@@ -18,7 +18,9 @@ from app.middleware.audit_middleware import (
     _extract_jwt_claims,
     _extract_resource_type_and_id,
 )
-from app.middleware.rate_limit import _InMemoryLimiter, _find_rule
+from app.core.rate_policy import POLICIES, RatePolicyRegistry, template_policy
+from app.middleware.rate_limit import RateLimitMiddleware
+from app.middleware.rate_limiter import RateLimiterMiddleware
 
 
 # ── AuditLogMiddleware unit tests ─────────────────────────────
@@ -118,69 +120,32 @@ class TestJWTExtraction:
 
 # ── RateLimitMiddleware unit tests ────────────────────────────
 
-class TestInMemoryLimiter:
+class TestDistributedRatePolicy:
 
-    def test_allows_requests_within_limit(self):
-        limiter = _InMemoryLimiter()
-        for _ in range(5):
-            assert limiter.is_allowed("127.0.0.1", max_requests=10, window_seconds=60) is True
+    def test_legacy_middleware_name_delegates_to_distributed_implementation(self):
+        assert issubclass(RateLimitMiddleware, RateLimiterMiddleware)
 
-    def test_blocks_requests_exceeding_limit(self):
-        limiter = _InMemoryLimiter()
-        for _ in range(10):
-            limiter.is_allowed("1.2.3.4", max_requests=10, window_seconds=60)
-        # 11th request should be blocked
-        assert limiter.is_allowed("1.2.3.4", max_requests=10, window_seconds=60) is False
+    def test_release_policy_budgets_are_registered(self):
+        assert (POLICIES["login"].capacity, POLICIES["login"].window) == (30, 300)
+        assert (POLICIES["uploads"].capacity, POLICIES["uploads"].window) == (30, 60)
+        assert (POLICIES["reads"].capacity, POLICIES["reads"].burst) == (120, 30)
+        assert (POLICIES["writes"].capacity, POLICIES["writes"].burst) == (60, 10)
 
-    def test_different_ips_are_isolated(self):
-        limiter = _InMemoryLimiter()
-        for _ in range(10):
-            limiter.is_allowed("1.1.1.1", max_requests=10, window_seconds=60)
-        # 1.1.1.1 is at limit; 2.2.2.2 should still be allowed
-        assert limiter.is_allowed("2.2.2.2", max_requests=10, window_seconds=60) is True
-        assert limiter.is_allowed("1.1.1.1", max_requests=10, window_seconds=60) is False
+    def test_template_fallback_uses_registered_families(self):
+        assert template_policy("/api/v1/auth/login", "POST") is POLICIES["login"]
+        assert template_policy("/api/v1/portal/registration/event/upload", "POST") is POLICIES["uploads"]
+        assert template_policy("/api/v1/events", "GET") is POLICIES["reads"]
+        assert template_policy("/api/v1/events", "PATCH") is POLICIES["writes"]
 
-    def test_window_resets_after_expiry(self):
-        """Use a very short window to test expiry."""
-        import time
-        limiter = _InMemoryLimiter()
-        for _ in range(3):
-            limiter.is_allowed("5.5.5.5", max_requests=3, window_seconds=1)
-
-        # At limit now
-        assert limiter.is_allowed("5.5.5.5", max_requests=3, window_seconds=1) is False
-
-        # Wait for window to expire
-        time.sleep(1.1)
-        assert limiter.is_allowed("5.5.5.5", max_requests=3, window_seconds=1) is True
-
-    def test_cleanup_stale_removes_idle_ips(self):
-        limiter = _InMemoryLimiter()
-        limiter.is_allowed("9.9.9.9", max_requests=100, window_seconds=60)
-        assert "9.9.9.9" in limiter._windows
-
-        limiter.cleanup_stale(max_idle_seconds=0)  # mark as immediately stale
-        assert "9.9.9.9" not in limiter._windows
-
-
-class TestPathRuleFinder:
-
-    def test_auth_login_path_gets_tight_limit(self):
-        rule = _find_rule("/auth/login")
-        assert rule.max_requests == 10
-        assert rule.window_seconds == 60
-
-    def test_upload_path_gets_upload_limit(self):
-        rule = _find_rule("/upload/some-token")
-        assert rule.max_requests == 5
-
-    def test_generic_path_gets_global_limit(self):
-        rule = _find_rule("/api/v1/events")
-        assert rule.max_requests == 300
-
-    def test_import_path_gets_import_limit(self):
-        rule = _find_rule("/import/excel")
-        assert rule.max_requests == 5
+    def test_route_aliases_can_share_one_operation_bucket(self):
+        registry = RatePolicyRegistry()
+        registry.register("/api/v1/forms/{form_id}", "GET", "read_form", POLICIES["reads"])
+        registry.register("/api/v1/legacy/forms/{form_id}", "GET", "read_form", POLICIES["reads"])
+        canonical = registry.resolve("/api/v1/forms/abc", "GET")
+        compatibility = registry.resolve("/api/v1/legacy/forms/abc", "GET")
+        assert canonical is not None and compatibility is not None
+        assert canonical.operation_id == compatibility.operation_id == "read_form"
+        assert canonical.policy is compatibility.policy is POLICIES["reads"]
 
 
 # ── AuthMiddleware security headers ───────────────────────────

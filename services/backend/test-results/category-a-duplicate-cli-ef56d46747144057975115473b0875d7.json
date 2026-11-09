@@ -1,0 +1,26 @@
+{
+  "status": "PASSED",
+  "run_id": "ef56d46747144057975115473b0875d7",
+  "database": "category_a_restore_20261021_ef56d4674714",
+  "environment": "local_fresh_rehearsal",
+  "applied_history_rewritten": false,
+  "applications_workers_providers": "NOT_STARTED",
+  "production_acceptance": "NOT_RUN",
+  "checks": [
+    "fresh_seed_preflight_archives_only_explicit_new_fixture_ids",
+    "fresh_history_traversed_to_3500",
+    "3510_rejects_unreviewed_duplicates_without_data_changes",
+    "full_cli_dry_run_rolls_back_all_reference_and_evidence_changes",
+    "full_cli_budget_failure_rolls_back_partial_mapping",
+    "full_cli_applies_category_registration_and_abstract_references_atomically",
+    "3510_enforces_uniqueness_after_reviewed_reconciliation",
+    "historical_cli_rejects_post_enforcement_revision"
+  ],
+  "fresh_agenda_fixture_decisions": 11,
+  "agenda_mapping_sha256": "03d3ace29430fb602d345c3c15328f8418e5e7c4164825a3c4fb02085b5bac58",
+  "mapping_sha256": "33497d9fd8d34eeab7766aaa20ec25c85bd1bdf4bca5e558dced6752309bd245",
+  "migration_revision": "20261009_3510",
+  "reference_updates": 7,
+  "database_quarantined": true,
+  "completed_at": "2026-10-21T05:28:33.242146+00:00"
+}

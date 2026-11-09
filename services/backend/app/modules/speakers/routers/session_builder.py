@@ -28,6 +28,11 @@ from app.modules.speakers.schemas.session_builder import (
     DuplicateSessionResponse,
     PublishScheduleRequest,
     PublishScheduleResponse,
+    MaterializeCandidateRequest,
+    ScheduleRevisionCreate,
+    ScheduleAnnouncementRequest,
+    ScheduleRevisionResponse,
+    SchedulePublicationSettings,
     RoomBuilderResponse,
     SessionBuilderDetail,
     SpeakerSlimResponse,
@@ -40,8 +45,15 @@ from app.modules.speakers.services.session_builder_service import (
     duplicate_session,
     get_builder_snapshot_data,
 )
+from app.modules.speakers.services.session_builder_programme_service import (
+    create_schedule_revision, materialize_accepted_abstract, restore_schedule_revision,
+)
+from app.modules.programme.models import ProgrammeSchedulePublication, ProgrammeScheduleRevision
+from app.modules.events.services.event_campaign_mutation_service import EventCampaignMutationService
+from app.modules.notifications.schemas.notification import CampaignCreate
 from app.core.dependencies.feature_gate import require_event_operation, enforce_event_operation
 from app.core.concurrency import require_if_match
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 from app.modules.agenda.application.commands import TrackCommandService
 from app.modules.agenda.application.queries import TrackQueryService
 from app.modules.analytics.services.projection_dispatch import enqueue_event_speaker_projection_refresh
@@ -105,6 +117,7 @@ async def get_builder_snapshot(
         rooms=rooms_resp,
         tracks=[TrackResponse.model_validate(t) for t in data["tracks"]],
         unscheduled_speakers=unscheduled_resp,
+        accepted_candidates=data["accepted_candidates"],
         conflicts=data["conflicts"],
         event_timezone=event_obj.timezone if event_obj else "UTC",
         event_start_date=event_obj.start_date if event_obj else None,
@@ -144,7 +157,15 @@ async def bulk_reorder(
         await db.commit()
     except ValueError as exc:
         await db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        message = str(exc)
+        if message.startswith("RESOURCE_VERSION_CONFLICT:"):
+            _, resource_id, expected, actual = message.split(":", 3)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "RESOURCE_VERSION_CONFLICT", "resource_id": resource_id,
+                        "expected_version": expected, "current_version": actual},
+            )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
     except Exception as exc:
         await db.rollback()
         raise HTTPException(
@@ -177,6 +198,7 @@ async def duplicate_session_endpoint(
     payload: DuplicateSessionRequest,
     event: CurrentEvent,
     current_user: User = Depends(get_current_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -192,7 +214,39 @@ async def duplicate_session_endpoint(
         user_id=current_user.id,
     )
 
+    key = idempotency_key or f"session-builder.duplicate:{session_id}:{uuid.uuid4()}"
     try:
+        idem = await begin_idempotent(
+            db,
+            organization_id=event.organization_id,
+            actor_id=current_user.id,
+            operation="session_builder.session.duplicate",
+            key=key,
+            payload={
+                "event_id": str(event.id),
+                "session_id": str(session_id),
+                **payload.model_dump(mode="json"),
+            },
+        )
+        if replay_response(idem):
+            existing = await db.scalar(
+                select(Session).where(
+                    Session.id == idem.resource_id,
+                    Session.event_id == event.id,
+                )
+            )
+            if existing is None:
+                raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_RESOURCE_MISSING"})
+            await db.commit()
+            return DuplicateSessionResponse(
+                id=existing.id,
+                session_code=existing.session_code,
+                name=existing.name,
+                start_time=existing.start_time,
+                end_time=existing.end_time,
+                room_id=existing.room_id,
+                message=f"Session duplicated as '{existing.name}'.",
+            )
         new_session = await duplicate_session(
             event_id=event.id,
             session_id=session_id,
@@ -201,11 +255,21 @@ async def duplicate_session_endpoint(
             include_speakers=payload.include_speakers,
             db=db,
         )
+        await complete_idempotent(
+            db,
+            idem,
+            response_status=201,
+            response_body={"resource_id": str(new_session.id)},
+            resource_id=new_session.id,
+        )
         await db.commit()
         await db.refresh(new_session)
         enqueue_event_speaker_projection_refresh(
             organization_id=event.organization_id, event_id=event.id
         )
+    except HTTPException:
+        await db.rollback()
+        raise
     except ValueError as exc:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
@@ -227,10 +291,59 @@ async def duplicate_session_endpoint(
     )
 
 
+@router.post("/candidates/{submission_id}/materialize", response_model=DuplicateSessionResponse)
+async def materialize_candidate(
+    submission_id: uuid.UUID,
+    payload: MaterializeCandidateRequest,
+    event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Turn accepted content into its one linked draft session; retries reuse it."""
+    await enforce_event_operation(db, event.organization_id, event.id, "sessions.manage", user_id=current_user.id)
+    key = idempotency_key or f"programme-candidate-materialize:{submission_id}:{payload.duration_minutes}"
+    try:
+        idem = await begin_idempotent(
+            db, organization_id=event.organization_id, actor_id=current_user.id,
+            operation="programme.abstract_candidate.materialize", key=key,
+            payload={"event_id": str(event.id), "submission_id": str(submission_id), "duration_minutes": payload.duration_minutes},
+        )
+        replay = replay_response(idem)
+        if replay:
+            existing = await db.get(Session, idem.resource_id)
+            if existing is None:
+                raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_RESOURCE_MISSING"})
+            await db.commit()
+            return DuplicateSessionResponse(
+                id=existing.id, session_code=existing.session_code, name=existing.title,
+                start_time=existing.start_time, end_time=existing.end_time, room_id=existing.room_id,
+                message="Accepted abstract is already in the waiting queue.",
+            )
+        session, created = await materialize_accepted_abstract(
+            db=db, event=event, submission_id=submission_id, duration_minutes=payload.duration_minutes,
+        )
+        await complete_idempotent(
+            db, idem, response_status=201 if created else 200,
+            response_body={"resource_id": str(session.id), "created": created}, resource_id=session.id,
+        )
+        await db.commit()
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "ABSTRACT_CANDIDATE_UNAVAILABLE", "message": str(exc)})
+    return DuplicateSessionResponse(
+        id=session.id, session_code=session.session_code, name=session.name,
+        start_time=session.start_time, end_time=session.end_time, room_id=session.room_id,
+        message="Accepted abstract added to the waiting queue." if created else "Accepted abstract is already in the waiting queue.",
+    )
+
+
 @router.post("/publish-schedule", response_model=PublishScheduleResponse)
 async def publish_schedule(
     event: CurrentEvent,
     payload: Optional[PublishScheduleRequest] = None,
+    current_user: User = Depends(get_current_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -240,6 +353,33 @@ async def publish_schedule(
     from datetime import datetime, timezone
     from sqlalchemy import update
 
+    key = idempotency_key or f"session-builder.publish:{event.id}:{uuid.uuid4()}"
+    idem = await begin_idempotent(
+        db,
+        organization_id=event.organization_id,
+        actor_id=current_user.id,
+        operation="session_builder.schedule.publish",
+        key=key,
+        payload={"event_id": str(event.id), "session_ids": [str(item) for item in (payload.session_ids if payload else [])]},
+    )
+    replay = replay_response(idem)
+    if replay:
+        await db.commit()
+        return PublishScheduleResponse.model_validate(replay[1])
+
+    conflicts = await detect_conflicts(event.id, db)
+    blocking = [item for item in conflicts if item.severity == "error"]
+    if blocking:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "SCHEDULE_CONFLICTS_BLOCK_PUBLICATION",
+                    "conflicts": [item.model_dump(mode="json") for item in blocking]},
+        )
+
+    revision = await create_schedule_revision(
+        db=db, event_id=event.id, organization_id=event.organization_id,
+        actor_id=current_user.id, label="Published schedule", reason="Publication checkpoint",
+    )
     stmt = update(Session).where(
         Session.event_id == event.id,
         Session.deleted_at.is_(None),
@@ -252,14 +392,204 @@ async def publish_schedule(
         updated_at=datetime.now(timezone.utc),
     )
     res = await db.execute(stmt)
-    await db.commit()
-
+    publication = await db.scalar(select(ProgrammeSchedulePublication).where(
+        ProgrammeSchedulePublication.event_id == event.id
+    ).with_for_update())
+    if publication is None:
+        publication = ProgrammeSchedulePublication(organization_id=event.organization_id, event_id=event.id)
+        db.add(publication)
+    publication.status = "PUBLISHED"
+    publication.published_by = current_user.id
+    publication.published_at = datetime.now(timezone.utc)
+    publication.version = (publication.version or 0) + 1
     count = res.rowcount or 0
-    return PublishScheduleResponse(
+    response = PublishScheduleResponse(
         success=True,
         published_count=count,
         message=f"Successfully published {count} sessions to the live schedule.",
+        revision_id=revision.id,
     )
+    await complete_idempotent(
+        db,
+        idem,
+        response_status=200,
+        response_body=response.model_dump(mode="json"),
+        resource_id=revision.id,
+    )
+    await db.commit()
+    return response
+
+
+@router.post("/unpublish-schedule", response_model=PublishScheduleResponse)
+async def unpublish_schedule(
+    event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a schedule from all public read paths without discarding its draft."""
+    from sqlalchemy import update
+
+    key = idempotency_key or f"session-builder.unpublish:{event.id}:{uuid.uuid4()}"
+    idem = await begin_idempotent(
+        db,
+        organization_id=event.organization_id,
+        actor_id=current_user.id,
+        operation="session_builder.schedule.unpublish",
+        key=key,
+        payload={"event_id": str(event.id)},
+    )
+    replay = replay_response(idem)
+    if replay:
+        await db.commit()
+        return PublishScheduleResponse.model_validate(replay[1])
+
+    revision = await create_schedule_revision(
+        db=db, event_id=event.id, organization_id=event.organization_id,
+        actor_id=current_user.id, label="Unpublished schedule", reason="Publication removed",
+    )
+    result = await db.execute(update(Session).where(
+        Session.event_id == event.id, Session.deleted_at.is_(None),
+    ).values(is_published=False))
+    publication = await db.scalar(select(ProgrammeSchedulePublication).where(
+        ProgrammeSchedulePublication.event_id == event.id
+    ).with_for_update())
+    if publication is not None:
+        publication.status = "DRAFT"
+        publication.published_at = None
+        publication.published_by = current_user.id
+        publication.version = (publication.version or 0) + 1
+    response = PublishScheduleResponse(success=True, published_count=result.rowcount or 0,
+        message="Schedule is no longer publicly published.", revision_id=revision.id)
+    await complete_idempotent(
+        db,
+        idem,
+        response_status=200,
+        response_body=response.model_dump(mode="json"),
+        resource_id=revision.id,
+    )
+    await db.commit()
+    return response
+
+
+@router.post("/revisions", response_model=ScheduleRevisionResponse, status_code=status.HTTP_201_CREATED)
+async def checkpoint_schedule(payload: ScheduleRevisionCreate, event: CurrentEvent,
+                              current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    revision = await create_schedule_revision(db=db, event_id=event.id, organization_id=event.organization_id,
+                                              actor_id=current_user.id, label=payload.label, reason=payload.reason)
+    await db.commit()
+    return revision
+
+
+@router.get("/revisions", response_model=list[ScheduleRevisionResponse])
+async def list_schedule_revisions(event: CurrentEvent, db: AsyncSession = Depends(get_db)):
+    return list((await db.scalars(select(ProgrammeScheduleRevision).where(
+        ProgrammeScheduleRevision.event_id == event.id,
+        ProgrammeScheduleRevision.organization_id == event.organization_id,
+    ).order_by(ProgrammeScheduleRevision.revision_number.desc()).limit(100))).all())
+
+
+@router.post("/revisions/{revision_id}/restore", response_model=ScheduleRevisionResponse)
+async def restore_revision(revision_id: uuid.UUID, event: CurrentEvent,
+                           current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    try:
+        checkpoint = await restore_schedule_revision(db=db, event_id=event.id, organization_id=event.organization_id,
+                                                     actor_id=current_user.id, revision_id=revision_id)
+        await db.commit()
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail={"code": "SCHEDULE_REVISION_NOT_FOUND", "message": str(exc)})
+    return checkpoint
+
+
+@router.put("/publication", response_model=SchedulePublicationSettings)
+async def configure_publication(payload: SchedulePublicationSettings, event: CurrentEvent,
+                                db: AsyncSession = Depends(get_db)):
+    publication = await db.scalar(select(ProgrammeSchedulePublication).where(
+        ProgrammeSchedulePublication.event_id == event.id
+    ).with_for_update())
+    if publication is None:
+        publication = ProgrammeSchedulePublication(organization_id=event.organization_id, event_id=event.id)
+        db.add(publication)
+    publication.embed_enabled, publication.json_feed_enabled = payload.embed_enabled, payload.json_feed_enabled
+    publication.version = (publication.version or 0) + 1
+    await db.commit()
+    return SchedulePublicationSettings(embed_enabled=publication.embed_enabled, json_feed_enabled=publication.json_feed_enabled)
+
+
+@router.get("/schedule-preview")
+async def schedule_preview(event: CurrentEvent, db: AsyncSession = Depends(get_db)) -> dict:
+    """Authenticated draft preview used before a schedule is published."""
+    rows = list((await db.execute(
+        select(Session, Room, Track)
+        .outerjoin(Room, Room.id == Session.room_id)
+        .outerjoin(Track, Track.id == Session.track_id)
+        .where(Session.event_id == event.id, Session.deleted_at.is_(None))
+        .order_by(Session.start_time, Session.id)
+        .limit(1000)
+    )).all())
+    publication = await db.scalar(select(ProgrammeSchedulePublication).where(
+        ProgrammeSchedulePublication.event_id == event.id,
+        ProgrammeSchedulePublication.organization_id == event.organization_id,
+    ))
+    conflicts = await detect_conflicts(event.id, db)
+    return {
+        "event_id": str(event.id),
+        "publication_status": publication.status if publication else "DRAFT",
+        "sessions": [{
+            "id": str(session.id), "code": session.session_code, "title": session.title,
+            "type": session.session_type, "starts_at": session.start_time, "ends_at": session.end_time,
+            "room": room.name if room else None, "track": track.name if track else None,
+            "published": bool(session.is_published), "status": session.status,
+        } for session, room, track in rows],
+        "conflicts": [item.model_dump(mode="json") for item in conflicts],
+        "publication_ready": not any(item.severity == "error" for item in conflicts),
+    }
+
+
+@router.post("/schedule-announcement", status_code=status.HTTP_201_CREATED)
+async def create_schedule_announcement(
+    payload: ScheduleAnnouncementRequest,
+    event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Create one durable campaign configuration for announcing the programme."""
+    key = idempotency_key or f"schedule-announcement:{event.id}:{payload.template_id}:{payload.scheduled_at}"
+    try:
+        idem = await begin_idempotent(
+            db, organization_id=event.organization_id, actor_id=current_user.id,
+            operation="programme.schedule_announcement.create", key=key,
+            payload={"event_id": str(event.id), **payload.model_dump(mode="json")},
+        )
+        replay = replay_response(idem)
+        if replay:
+            await db.commit()
+            return replay[1]
+        campaign = await EventCampaignMutationService.create(
+            db, event=event,
+            payload=CampaignCreate(
+                template_id=payload.template_id,
+                name="Published programme announcement",
+                recipient_filter=payload.recipient_filter,
+                target_type=payload.target_type,
+                scheduled_at=payload.scheduled_at,
+            ),
+            actor=current_user,
+        )
+        if payload.scheduled_at is not None:
+            campaign.status = "scheduled"
+        await complete_idempotent(
+            db, idem, response_status=201,
+            response_body={"campaign_id": str(campaign.id), "status": campaign.status, "scheduled_at": payload.scheduled_at},
+            resource_id=campaign.id,
+        )
+        await db.commit()
+        return {"campaign_id": str(campaign.id), "status": campaign.status, "scheduled_at": payload.scheduled_at}
+    except Exception:
+        await db.rollback()
+        raise
 
 
 # ── Tracks CRUD ───────────────────────────────────────────

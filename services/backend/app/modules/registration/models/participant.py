@@ -150,6 +150,7 @@ class Participant(Base, SoftDeleteMixin):
         # hidden lazy statement under load.
         stmt = select(cls).options(joinedload(cls.role_rel)).where(
             cls.event_id == event_id,
+            cls.deleted_at.is_(None),
             or_(
                 func.lower(cls.email) == lower_email,
                 cls.custom_fields["additional_emails"].contains([lower_email])

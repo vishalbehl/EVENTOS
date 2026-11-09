@@ -142,7 +142,6 @@ async def test_free_pricing_auto_paid_status(db: AsyncSession, event: Event, org
         designation="Developer",
         country="India",
         upload_token="test_upload_token_speaker1",
-        speaker_code="spk1_code"
     )
     db.add(speaker_model)
     await db.commit()

@@ -39,6 +39,7 @@ describe("organization administration contracts", () => {
       await result.current.mutateAsync({
         idempotencyKey: "provision-request-123",
         payload: {
+          organization_kind: "NORMAL",
           name: "New Tenant",
           slug: "new-tenant",
           owner_email: "owner@example.com",
@@ -55,11 +56,17 @@ describe("organization administration contracts", () => {
 
   it("loads and mutates event assignments through the selected organization", async () => {
     const paths: string[] = [];
+    const versions: Array<string | null> = [];
+    const keys: Array<string | null> = [];
+    const bodies: unknown[] = [];
     server.use(
       http.get(`${API}/platform/organisations/org-123/members`, () => HttpResponse.json([])),
-      http.put(`${API}/platform/organisations/org-123/members/member-1/events/event-1`, ({ request }) => {
+      http.put(`${API}/platform/organisations/org-123/members/member-1/events/event-1`, async ({ request }) => {
         paths.push(new URL(request.url).pathname);
-        return HttpResponse.json({ assignment_id: "assignment-1", event_id: "event-1", permissions: {} });
+        versions.push(request.headers.get("if-match"));
+        keys.push(request.headers.get("idempotency-key"));
+        bodies.push(await request.json());
+        return HttpResponse.json({ assignment_id: "assignment-1", event_id: "event-1", permissions: { "EVENTS:VIEW": true }, version: 5 });
       }),
     );
     const wrapper = createWrapper();
@@ -72,9 +79,14 @@ describe("organization administration contracts", () => {
         memberId: "member-1",
         eventId: "event-1",
         assigned: true,
+        version: 4,
         reason: "Approved event workspace assignment",
       });
     });
     expect(paths).toEqual(["/api/v1/platform/organisations/org-123/members/member-1/events/event-1"]);
+    expect(versions).toEqual(["4"]);
+    expect(keys[0]).toEqual(expect.any(String));
+    expect(keys[0]?.length).toBeGreaterThanOrEqual(16);
+    expect(bodies).toEqual([{ permissions: { "EVENTS:VIEW": true }, reason: "Approved event workspace assignment" }]);
   });
 });

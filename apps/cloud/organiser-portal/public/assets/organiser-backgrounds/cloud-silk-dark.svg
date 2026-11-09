@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1200" viewBox="0 0 1920 1200" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="170" y1="20" x2="1740" y2="1180" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#090C14"/><stop offset=".38" stop-color="#111624"/><stop offset=".72" stop-color="#161E2E"/><stop offset="1" stop-color="#0E1420"/>
+    </linearGradient>
+    <filter id="blur"><feGaussianBlur stdDeviation="55"/></filter>
+    <pattern id="grid" width="120" height="120" patternUnits="userSpaceOnUse"><path d="M120 0H0V120" stroke="#4B5F7D" stroke-opacity=".06"/></pattern>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#sky)"/>
+  <ellipse cx="520" cy="270" rx="520" ry="240" fill="#475569" fill-opacity=".22" filter="url(#blur)"/>
+  <ellipse cx="1450" cy="330" rx="550" ry="280" fill="#334155" fill-opacity=".24" filter="url(#blur)"/>
+  <path d="M0 760C204 662 374 714 531 628C697 537 827 628 985 552C1152 471 1278 559 1442 493C1606 426 1749 462 1920 395V1200H0V760Z" fill="#182230" fill-opacity=".82"/>
+  <path d="M0 934C189 856 352 891 509 814C672 734 813 817 970 739C1132 658 1270 744 1435 678C1600 612 1740 650 1920 579V1200H0V934Z" fill="#131C28" fill-opacity=".86"/>
+  <path d="M0 1052C226 984 401 1004 571 939C746 871 896 944 1067 879C1244 812 1397 879 1570 827C1694 790 1810 784 1920 754V1200H0V1052Z" fill="#0F1620" fill-opacity=".92"/>
+  <rect width="1920" height="1200" fill="url(#grid)"/>
+</svg>
+

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1200" viewBox="0 0 1920 1200" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="140" y1="20" x2="1780" y2="1180" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#05050E"/><stop offset=".28" stop-color="#0E0A22"/><stop offset=".65" stop-color="#1A0D2E"/><stop offset="1" stop-color="#0A1026"/>
+    </linearGradient>
+    <linearGradient id="cyberWaveA" x1="960" y1="440" x2="960" y2="1080" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#281440"/><stop offset="1" stop-color="#161536"/>
+    </linearGradient>
+    <linearGradient id="cyberWaveB" x1="960" y1="600" x2="960" y2="1200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1A153A"/><stop offset="1" stop-color="#0B0E20"/>
+    </linearGradient>
+    <filter id="softGlow"><feGaussianBlur stdDeviation="55"/></filter>
+    <pattern id="cyberGrid" width="128" height="128" patternUnits="userSpaceOnUse">
+      <path d="M128 0H0V128" stroke="#8B5CF6" stroke-opacity=".08"/>
+      <path d="M0 64H128" stroke="#EC4899" stroke-opacity=".05"/>
+    </pattern>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#sky)"/>
+  <ellipse cx="600" cy="220" rx="520" ry="240" fill="#F43F5E" fill-opacity=".2" filter="url(#softGlow)"/>
+  <ellipse cx="1460" cy="240" rx="480" ry="250" fill="#06B6D4" fill-opacity=".2" filter="url(#softGlow)"/>
+  <circle cx="960" cy="200" r="260" fill="#8B5CF6" fill-opacity=".22" filter="url(#softGlow)"/>
+  <path d="M0 650C160 580 300 630 470 560C650 480 800 570 980 490C1160 420 1320 500 1500 440C1670 380 1800 420 1920 370V1200H0V650Z" fill="url(#cyberWaveA)" fill-opacity=".9"/>
+  <path d="M0 810C170 730 330 790 510 710C700 630 860 720 1040 640C1230 560 1400 650 1590 580C1740 530 1840 560 1920 520V1200H0V810Z" fill="#181432" fill-opacity=".88"/>
+  <path d="M0 950C190 870 370 920 560 840C750 760 920 850 1110 770C1310 690 1480 780 1680 700C1810 650 1870 670 1920 640V1200H0V950Z" fill="url(#cyberWaveB)" fill-opacity=".98"/>
+  <rect width="1920" height="1200" fill="url(#cyberGrid)"/>
+</svg>
+

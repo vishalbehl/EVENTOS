@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="26.002" timestamp="2026-10-21T10:55:52.775490+05:30" hostname="Vishal"><testcase classname="tests.test_duplicate_cli_authority_ordering" name="test_duplicate_maintenance_authority_orders_with_revocation[False]" time="19.402"><failure message="Failed: Competing catalogue transaction did not wait">committed_session_factory = async_sessionmaker(class_='AsyncSession', autocommit=False, bind=&lt;sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x000001C0D36FCED0&gt;, autoflush=False, expire_on_commit=False)
+race_fixture = {'actor_id': UUID('f6a3bb78-e6a3-4327-8141-349d014d2586'), 'category_key': 'race-0-e38facd6', 'platform_id': UUID('4147bdd3-c586-4393-8914-6d7c5f3702f3'), 'replacement_category': UUID('19dad503-9c2a-4661-b0f5-18b48b9e9a51'), ...}
+maintenance_first = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("maintenance_first", [False, True])
+    async def test_duplicate_maintenance_authority_orders_with_revocation(
+            committed_session_factory, race_fixture, maintenance_first):
+        data, task = race_fixture, None
+        try:
+            async with committed_session_factory() as first, committed_session_factory() as second:
+                if maintenance_first:
+                    await authorise(first, data["actor_id"])
+                    pid = await second.scalar(text("SELECT pg_backend_pid()"))
+                    task = asyncio.create_task(revoke(second, data))
+                else:
+                    await revoke(first, data)
+                    pid = await second.scalar(text("SELECT pg_backend_pid()"))
+                    task = asyncio.create_task(authorise(second, data["actor_id"]))
+&gt;               await wait_for_blocker(first, pid, task)
+
+tests\test_duplicate_cli_authority_ordering.py:42: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_catalogue_retirement_concurrency.py:96: in wait_for_blocker
+    await asyncio.wait_for(observed(), 10)
+C:\Users\visha\AppData\Local\Programs\Python\Python313\Lib\asyncio\tasks.py:507: in wait_for
+    return await fut
+           ^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    async def observed():
+        while not await observer.scalar(text("SELECT cardinality(pg_blocking_pids(:pid))&gt;0"), {"pid": pid}):
+            if task.done():
+                task.result()
+&gt;               pytest.fail("Competing catalogue transaction did not wait")
+E               Failed: Competing catalogue transaction did not wait
+
+tests\test_catalogue_retirement_concurrency.py:94: Failed</failure></testcase><testcase classname="tests.test_duplicate_cli_authority_ordering" name="test_duplicate_maintenance_authority_orders_with_revocation[True]" time="4.231"><failure message="Failed: Competing catalogue transaction did not wait">committed_session_factory = async_sessionmaker(class_='AsyncSession', autocommit=False, bind=&lt;sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x000001C0D36FCED0&gt;, autoflush=False, expire_on_commit=False)
+race_fixture = {'actor_id': UUID('63e07e4a-0b8e-4a74-8f4c-119ab8dc19df'), 'category_key': 'race-0-34176b05', 'platform_id': UUID('18f4e714-34a5-4d04-8ab9-1f52ddb7d7b1'), 'replacement_category': UUID('bce0480d-ed68-4e07-b61b-ad02e138d116'), ...}
+maintenance_first = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("maintenance_first", [False, True])
+    async def test_duplicate_maintenance_authority_orders_with_revocation(
+            committed_session_factory, race_fixture, maintenance_first):
+        data, task = race_fixture, None
+        try:
+            async with committed_session_factory() as first, committed_session_factory() as second:
+                if maintenance_first:
+                    await authorise(first, data["actor_id"])
+                    pid = await second.scalar(text("SELECT pg_backend_pid()"))
+                    task = asyncio.create_task(revoke(second, data))
+                else:
+                    await revoke(first, data)
+                    pid = await second.scalar(text("SELECT pg_backend_pid()"))
+                    task = asyncio.create_task(authorise(second, data["actor_id"]))
+&gt;               await wait_for_blocker(first, pid, task)
+
+tests\test_duplicate_cli_authority_ordering.py:42: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_catalogue_retirement_concurrency.py:96: in wait_for_blocker
+    await asyncio.wait_for(observed(), 10)
+C:\Users\visha\AppData\Local\Programs\Python\Python313\Lib\asyncio\tasks.py:507: in wait_for
+    return await fut
+           ^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    async def observed():
+        while not await observer.scalar(text("SELECT cardinality(pg_blocking_pids(:pid))&gt;0"), {"pid": pid}):
+            if task.done():
+                task.result()
+&gt;               pytest.fail("Competing catalogue transaction did not wait")
+E               Failed: Competing catalogue transaction did not wait
+
+tests\test_catalogue_retirement_concurrency.py:94: Failed</failure></testcase></testsuite></testsuites>

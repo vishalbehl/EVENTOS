@@ -1,1 +1,0 @@
-# ePoster Public Assets

@@ -1,7 +1,7 @@
 "use client";
 // Quota control: max_registrations is enforced by the API before creation.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLimitAccess } from "@/lib/capabilities";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -21,6 +21,7 @@ import { CapabilityAction } from "@/lib/capabilities";
 import { cn } from "@/lib/utils";
 import { COUNTRY_DIAL_CODES, getDialCodeForCountry } from "@/lib/country-dial-codes";
 import { fetchCountryStates, CountryStateEntry, getStatesForCountry, fallbackCountryStates } from "@/lib/country-states";
+import { uploadAndWaitForScan, requiresNewUploadAttempt } from "@/services/scan-gated-upload-service";
 
 interface AddParticipantModalProps {
   isOpen: boolean;
@@ -91,6 +92,7 @@ export default function AddParticipantModal({
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<any>(null);
   const [countryStates, setCountryStates] = useState<CountryStateEntry[]>(fallbackCountryStates);
+  const uploadRetryReceipts = useRef(new Map<string, { fingerprint: string; key: string }>());
 
   const activeFields = useMemo(() => fields.filter((field) => field.is_active), [fields]);
 
@@ -150,15 +152,26 @@ export default function AddParticipantModal({
 
   const handleFileUpload = async (field: FormField, file?: File | null) => {
     if (!file) return;
-    const data = new FormData();
-    data.append("file", file);
+    let requestReceiptKey: string | undefined;
     try {
-      const result = await apiClient.post<any>(`/portal/registration/${eventId}/upload`, data, {
-        headers: { "Content-Type": undefined } as any,
+      const fingerprint = [eventId, field.id, file.name, file.size, file.lastModified, file.type].join(":");
+      let receipt = uploadRetryReceipts.current.get(field.id);
+      if (!receipt || receipt.fingerprint !== fingerprint) {
+        receipt = { fingerprint, key: crypto.randomUUID() };
+        uploadRetryReceipts.current.set(field.id, receipt);
+      }
+      requestReceiptKey = receipt.key;
+      const result = await uploadAndWaitForScan({
+        eventId,
+        file,
+        fieldName: field.id,
+        idempotencyKey: receipt.key,
       });
-      setValue(field.id, result.url);
+      setValue(field.id, result.managed_url);
+      uploadRetryReceipts.current.delete(field.id);
       toast.success(`${field.label} uploaded.`);
     } catch (err: any) {
+      if (requiresNewUploadAttempt(err) && uploadRetryReceipts.current.get(field.id)?.key === requestReceiptKey) uploadRetryReceipts.current.delete(field.id);
       toast.error(err.message || `Failed to upload ${field.label}.`);
     }
   };

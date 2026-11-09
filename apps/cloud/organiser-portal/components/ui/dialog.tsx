@@ -21,7 +21,7 @@ const DialogOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 bg-black/75 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      "cc-premium-overlay fixed inset-0 z-50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className
     )}
     {...props}
@@ -40,13 +40,13 @@ const DialogContent = React.forwardRef<
         ref={ref}
         aria-describedby={props["aria-describedby"] ?? undefined}
         className={cn(
-          "cc-scroll-region pointer-events-auto relative w-full max-w-lg max-h-[calc(100dvh-2.5rem)] overflow-y-auto rounded-[var(--radius-overlay)] border border-[var(--border-default)] bg-[var(--popover)] p-6 text-[var(--text-primary)] cc-overlay-shadow duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 my-auto",
+          "cc-premium-dialog cc-scroll-region pointer-events-auto relative w-full max-w-lg max-h-[calc(100dvh-2.5rem)] overflow-y-auto p-6 text-[var(--text-primary)] duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 my-auto",
           className
         )}
         {...props}
       >
         {children}
-        <DialogPrimitive.Close className="absolute right-3 top-3 grid size-9 place-items-center rounded-md border border-transparent text-[var(--text-secondary)] hover:border-[var(--border-default)] hover:bg-[var(--bg-surface-2)] hover:text-[var(--text-primary)] focus-visible:outline-none disabled:pointer-events-none">
+        <DialogPrimitive.Close className="absolute right-3 top-3 grid size-9 place-items-center rounded-full border border-white/60 bg-white/45 text-[var(--text-secondary)] shadow-sm backdrop-blur-md hover:bg-white/75 hover:text-[var(--text-primary)] focus-visible:outline-none disabled:pointer-events-none dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10">
           <X className="h-4 w-4" />
           <span className="sr-only">Close</span>
         </DialogPrimitive.Close>

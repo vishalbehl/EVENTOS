@@ -17,13 +17,8 @@ interface Props {
 const PARTICIPANT_FILTERS = [
   { value: 'all', label: 'All Participants' },
   { value: 'paid', label: 'Paid Delegates' },
-  { value: 'unpaid', label: 'Unpaid / Pending Payment' },
+  { value: 'unpaid', label: 'Unpaid' },
   { value: 'pending', label: 'Pending Status' },
-  { value: 'role_delegate', label: 'Role: Delegate' },
-  { value: 'role_vip', label: 'Role: VIP' },
-  { value: 'role_speaker', label: 'Role: Speaker' },
-  { value: 'role_faculty', label: 'Role: Faculty' },
-  { value: 'role_organizer', label: 'Role: Organizer' },
 ]
 
 export default function RegistrationCampaignBuilder({ eventId, onCreated }: Props) {
@@ -112,7 +107,7 @@ export default function RegistrationCampaignBuilder({ eventId, onCreated }: Prop
                 <form id="reg-campaign-form" onSubmit={handleSubmit} className="space-y-5">
                   <Field label="Campaign Name" icon={<Send className="w-4 h-4" />}>
                     <input
-                      required value={formData.name}
+                      required maxLength={150} value={formData.name}
                       onChange={e => setFormData({ ...formData, name: e.target.value })}
                       placeholder="e.g., Welcome Confirmation"
                       className="w-full bg-transparent border-0 text-lg font-bold text-[var(--text)] focus:ring-0 p-0"

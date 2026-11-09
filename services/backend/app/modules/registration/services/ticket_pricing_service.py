@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import math
 from typing import Any, Optional
 from dateutil.parser import isoparse
 from fastapi import HTTPException
@@ -33,12 +34,15 @@ class TicketPricingService:
         event: Event,
         pricing_data: dict[str, Any],
         tier_schedules: Optional[dict[str, dict[str, Any]]] = None,
+        *,
+        resolved_pairs: Optional[dict[str, tuple[str, str]]] = None,
+        replace_configuration: bool = False,
     ) -> dict[str, float]:
         normalized: dict[tuple[str, str], float] = {}
         for key, raw_price in pricing_data.items():
             if "_" not in key or raw_price in (None, ""):
                 continue
-            role_name, tier_name = key.split("_", 1)
+            role_name, tier_name = resolved_pairs[key] if resolved_pairs is not None else key.split("_", 1)
             role_name, tier_name = role_name.strip(), tier_name.strip()
             if not role_name or not tier_name:
                 raise HTTPException(status_code=422, detail=f"Invalid pricing key: {key}")
@@ -46,7 +50,7 @@ class TicketPricingService:
                 price = float(raw_price)
             except (ValueError, TypeError) as exc:
                 raise HTTPException(status_code=422, detail=f"Invalid price for {key}") from exc
-            if price < 0:
+            if not math.isfinite(price) or price < 0:
                 raise HTTPException(status_code=422, detail="Ticket prices cannot be negative")
             normalized[(role_name, tier_name)] = price
 
@@ -63,13 +67,13 @@ class TicketPricingService:
                 await db.delete(row)
                 
         for (role, tier), price in normalized.items():
-            tier_sched = schedules.get(tier) or existing_schedules.get(tier) or {}
+            tier_sched = schedules.get(tier, {}) if replace_configuration else schedules.get(tier) or existing_schedules.get(tier) or {}
             avail_from = _parse_dt(tier_sched.get("available_from") or tier_sched.get("start_time"))
             avail_until = _parse_dt(
                 tier_sched.get("available_until")
                 or tier_sched.get("end_time")
                 or tier_sched.get("last_date")
-                or existing_cutoffs.get(tier)
+                or (None if replace_configuration else existing_cutoffs.get(tier))
             )
 
             if (role, tier) in by_key:
@@ -88,10 +92,10 @@ class TicketPricingService:
                 )
                 db.add(new_row)
 
-        # Update event.registration_settings with tier_schedules and tier_cutoffs
+        # Update event.registration_settings with tier_schedules, tier_cutoffs, and tiers
         settings = dict(event.registration_settings or {})
-        combined_schedules = dict(settings.get("tier_schedules", {}))
-        combined_cutoffs = dict(settings.get("tier_cutoffs", {}))
+        combined_schedules = {} if replace_configuration else dict(settings.get("tier_schedules", {}))
+        combined_cutoffs = {} if replace_configuration else dict(settings.get("tier_cutoffs", {}))
 
         for tier, sched in schedules.items():
             combined_schedules[tier] = {
@@ -103,6 +107,13 @@ class TicketPricingService:
 
         settings["tier_schedules"] = combined_schedules
         settings["tier_cutoffs"] = combined_cutoffs
+
+        matrix_tiers = list(dict.fromkeys(tier for (_, tier) in normalized.keys()))
+        if matrix_tiers:
+            existing_tiers = settings.get("tiers", []) or []
+            merged_tiers = list(dict.fromkeys(existing_tiers + matrix_tiers))
+            settings["tiers"] = merged_tiers
+
         event.registration_settings = settings
 
         await db.flush()

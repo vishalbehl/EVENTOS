@@ -5,6 +5,19 @@ import re
 from app.config import settings
 import app.models
 from app.core.task_policy import policy_for
+from celery.signals import worker_init
+
+
+@worker_init.connect
+def verify_worker_database_role(**_kwargs):
+    if settings.REQUIRE_RLS_SAFE_RUNTIME_ROLE:
+        from app.core.database_security import enforce_runtime_database_login
+        try:
+            enforce_runtime_database_login(settings.DATABASE_URL_SYNC)
+        except Exception:
+            # Celery's robust signal dispatch can swallow ordinary exceptions.
+            # Exit before queue consumption; do not print connection credentials.
+            raise SystemExit("Worker database security admission failed") from None
 
 
 _DEFAULT_POLICY = policy_for("default")
@@ -52,6 +65,18 @@ celery_app.conf.update(
     },
     task_time_limit=3600,  # 1 hour
     beat_schedule={
+        "recover-registration-upload-dispatches": {
+            "task": "app.tasks.program_upload_recovery.recover",
+            "schedule": 60.0,
+        },
+        "recover-catalogue-reconciliation-runs": {
+            "task": "app.tasks.catalogue_reconciliation.recover_runs",
+            "schedule": 60.0,
+        },
+        "recover-lifecycle-dispatches": {
+            "task": "app.tasks.lifecycle_dispatch.recover",
+            "schedule": 60.0,
+        },
         "flush-api-usage-every-5-minutes": {
             "task": "app.tasks.platform_tasks.flush_api_usage",
             "schedule": 300.0,  # every 5 minutes
@@ -79,6 +104,10 @@ celery_app.conf.update(
             "task": "app.tasks.recover_import_dispatches",
             "schedule": 300.0,
         },
+        "recover-abandoned-storage-attempts": {
+            "task": "app.tasks.recover_abandoned_uploads",
+            "schedule": 300.0,
+        },
     },
     # The API still publishes compatibility tasks by their legacy names. Keep
     # those messages in a separate namespace so the backend application
@@ -90,6 +119,8 @@ celery_app.conf.update(
         "app.tasks.process_durable_upload": {"queue": "files"},
         "app.tasks.process_import_upload": {"queue": "imports"},
         "app.tasks.recover_import_dispatches": {"queue": "imports"},
+        "app.tasks.recover_abandoned_uploads": {"queue": "reconciliation"},
+        "app.tasks.catalogue_reconciliation.*": {"queue": "reconciliation"},
         "app.tasks.scan_asset_for_viruses": {"queue": "files"},
         "app.tasks.analytics_projection_tasks.refresh_event_registration_summary": {"queue": "reports"},
         "app.tasks.attendance_projection_tasks.refresh_event_attendance_summary": {"queue": "reports"},
@@ -102,6 +133,7 @@ celery_app.conf.update(
         "app.tasks.workflow_jobs.*": {"queue": "notifications"},
         "app.tasks.organization_console_tasks.reconcile_organization_usage": {"queue": "reconciliation"},
         "app.tasks.organization_console_tasks.execute_lifecycle_job": {"queue": "reconciliation"},
+        "app.tasks.lifecycle_dispatch.recover": {"queue": "reconciliation"},
         "app.tasks.organization_console_rollout_tasks.*": {"queue": "reconciliation"},
         "app.tasks.validate_presentation": {"queue": "files"},
         "app.tasks.validate_poster": {"queue": "files"},
@@ -120,18 +152,26 @@ celery_app.conf.update(
 # Autodiscover tasks in app.tasks package
 celery_app.autodiscover_tasks(["app.tasks"])
 celery_app.conf.imports = tuple(celery_app.conf.imports or ()) + (
+    "app.tasks.program_upload_recovery",
+    "app.tasks.lifecycle_dispatch",
     "app.tasks.organization_console_tasks",
     "app.tasks.organization_console_rollout_tasks",
     "app.tasks.workflow_jobs",
     "app.tasks.operations_jobs",
     "app.tasks.analytics_projection_tasks",
     "app.tasks.queue_probe",
+    "app.tasks.catalogue_reconciliation",
     "app.tasks.venue_ops_events",
     "app.modules.notifications.tasks.email_tasks",
+    "app.modules.notifications.tasks.channel_delivery_tasks",
 )
 # Import the compatibility re-export package after the Celery instance exists
 # so task decorators register both legacy and canonical names at startup.
 import app.tasks  # noqa: E402,F401
+# This task module must be imported after `app.tasks` completes: importing it
+# from the compatibility re-export package creates a route/worker bootstrap
+# cycle, while importing it here registers its canonical Celery name eagerly.
+import app.modules.notifications.tasks.channel_delivery_tasks  # noqa: E402,F401
 
 # ── Celery Worker Multi-Tenancy Signal Handlers ─────────────────
 import uuid
@@ -148,7 +188,7 @@ import json
 def on_task_publish(headers=None, body=None, **kwargs):
     org_id = tenant_org_id.get()
     if org_id:
-        if headers is not None:
+        if headers is not None and "tenant_org_id" not in headers:
             headers["tenant_org_id"] = str(org_id)
 
 _tenant_tokens = {}
@@ -176,14 +216,17 @@ def on_task_prerun(task_id, task, args, kwargs, **signature):
         if headers is None and hasattr(request, "get"):
             headers = request.get("headers", None)
 
-    if headers and isinstance(headers, dict):
-        org_id_str = headers.get("tenant_org_id")
-        if org_id_str:
-            try:
-                org_id = uuid.UUID(org_id_str)
-                _tenant_tokens[task_id] = tenant_org_id.set(org_id)
-            except ValueError:
-                pass
+    # Every task gets a fresh selector. Explicit empty headers mean a global
+    # discovery task, not permission to inherit the previous/eager parent's
+    # customer context. Protected workers still validate their explicit payload.
+    organization_id = None
+    org_id_str = headers.get("tenant_org_id") if isinstance(headers, dict) else None
+    if org_id_str:
+        try:
+            organization_id = uuid.UUID(str(org_id_str))
+        except (TypeError, ValueError):
+            pass
+    _tenant_tokens[task_id] = tenant_org_id.set(organization_id)
 
 @task_postrun.connect
 def on_task_postrun(task_id, task, args, kwargs, retval, state, **signature):

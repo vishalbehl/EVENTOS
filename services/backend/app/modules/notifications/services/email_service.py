@@ -41,7 +41,7 @@ def render_template(template_body: str, variables: dict) -> str:
     return re.sub(r"\{\{(.+?)\}\}", _replacer, template_body)
 
 
-def build_speaker_variables(speaker, session, event: Union[str, object], upload_url=None, session_speakers=None, posters=None, rejection_reason=None):
+def build_speaker_variables(speaker, session, event: Union[str, object], upload_url=None, session_speakers=None, posters=None, rejection_reason=None, presentation_files=None):
     """
     Build the standard template variable dict for speaker emails.
     Supports both legacy {{ConferenceName}} and new {{EventName}} standards.
@@ -79,7 +79,6 @@ def build_speaker_variables(speaker, session, event: Union[str, object], upload_
             upload_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{event_id}/{token}" if token else ""
 
     qr_url = getattr(speaker, "qr_code_url", "") or ""
-    speaker_code = getattr(speaker, "speaker_code", "") or ""
 
     # Correctly resolve single-session variables using schema start_time and room.name
     session_name = ""
@@ -255,8 +254,8 @@ def build_speaker_variables(speaker, session, event: Union[str, object], upload_
     # Resolve Rejection Reason
     rejection_reason_val = rejection_reason
     if not rejection_reason_val:
-        files = []
-        if hasattr(speaker, "__dict__") and "presentation_files" in speaker.__dict__:
+        files = presentation_files if presentation_files is not None else []
+        if presentation_files is None and hasattr(speaker, "__dict__") and "presentation_files" in speaker.__dict__:
             files = speaker.presentation_files
         if files:
             for f in files:
@@ -271,8 +270,8 @@ def build_speaker_variables(speaker, session, event: Union[str, object], upload_
     rejected_rows_html = []
     rejected_rows_text = []
 
-    speaker_files = []
-    if hasattr(speaker, "__dict__") and "presentation_files" in speaker.__dict__:
+    speaker_files = presentation_files if presentation_files is not None else []
+    if presentation_files is None and hasattr(speaker, "__dict__") and "presentation_files" in speaker.__dict__:
         speaker_files = speaker.presentation_files
 
     if speaker_files:
@@ -368,7 +367,6 @@ def build_speaker_variables(speaker, session, event: Union[str, object], upload_
         "SpeakerName": f"{getattr(speaker, 'first_name', '')} {getattr(speaker, 'last_name', '')}".strip() or "Speaker",
         "SpeakerFirstName": getattr(speaker, "first_name", "") or "",
         "SpeakerEmail": getattr(speaker, "email", "") or "",
-        "SpeakerCode": speaker_code,
         "EventName": event_name,
         "ConferenceName": event_name,  # Backward compatibility
         "SessionName": session_name,
@@ -388,8 +386,6 @@ def build_speaker_variables(speaker, session, event: Union[str, object], upload_
         "Deadline": deadline_str,
         "Affiliation": getattr(speaker, "affiliation", "") or "",
         "Country": getattr(speaker, "country", "") or "",
-        "AccessCode": speaker_code,
-        "ACCESS_CODE": speaker_code,
         "UPLOAD DEADLINE": deadline_str,
         "MAX_FILE_SIZE": max_file_size_val,
     }
@@ -436,6 +432,14 @@ def build_participant_variables(participant, event: Union[str, object]):
 _EMAIL_CLAIM_LEASE = timedelta(minutes=10)
 
 
+async def _reject_campaign_preflight(db, log, code):
+    from app.modules.notifications.services.campaign_attempt_history import record_campaign_outcome
+    await record_campaign_outcome(db, log, status="failed", diagnostic_code=code)
+    log.status = "failed"
+    log.error_message = code
+    await db.commit()
+
+
 async def claim_campaign_recipient(
     db: AsyncSession,
     *,
@@ -445,34 +449,86 @@ async def claim_campaign_recipient(
     subject: str,
     speaker_id: Optional[uuid.UUID] = None,
     participant_id: Optional[uuid.UUID] = None,
+    campaign=None,
+    organization_id: Optional[uuid.UUID] = None,
+    dispatch_id: Optional[uuid.UUID] = None,
+    worker_token: Optional[uuid.UUID] = None,
 ) -> Optional[uuid.UUID]:
     """Claim one campaign recipient before external email delivery.
 
-    The unique index closes concurrent insert races. A recent ``sending`` row
-    belongs to another active worker; an old one is reclaimed after a crash.
+    A timed-out provider attempt is not proof of non-delivery. Never reclaim
+    an uncertain attempt automatically, even after the claim lease expires.
     """
     now = datetime.now(timezone.utc)
+    from types import SimpleNamespace
+    from app.modules.notifications.services.campaign_authority import reauthorize_dispatch
+    from app.modules.notifications.services.campaign_snapshot_service import validate_snapshot_recipient
+    if campaign is None or campaign.id != campaign_id or campaign.event_id != event_id:
+        raise HTTPException(403, detail={"code": "CAMPAIGN_DISPATCH_AUTHORITY_REQUIRED"})
+    await reauthorize_dispatch(db, campaign, organization_id, dispatch_id)
+    if (speaker_id is None) == (participant_id is None):
+        raise HTTPException(422, detail={"code": "CAMPAIGN_RECIPIENT_REQUIRED"})
+    await validate_snapshot_recipient(db, campaign, organization_id, dispatch_id,
+        SimpleNamespace(id=speaker_id or participant_id, email=to_email))
+    from app.modules.communications.models.email_campaign import EmailCampaign
+    if worker_token is None:
+        raise HTTPException(403, detail={"code": "CAMPAIGN_WORKER_IDENTITY_REQUIRED"})
+    current_dispatch = await db.scalar(select(EmailCampaign.id).where(
+        EmailCampaign.id == campaign_id, EmailCampaign.event_id == event_id,
+        EmailCampaign.send_dispatch_id == dispatch_id,
+        EmailCampaign.worker_token == worker_token,
+        EmailCampaign.worker_lease_until > func.clock_timestamp(),
+    ).with_for_update())
+    if current_dispatch is None:
+        raise HTTPException(403, detail={"code": "CAMPAIGN_DISPATCH_REVOKED"})
+    from app.modules.platform.models.organization_console import UsageReservation
+    live_reservation = await db.scalar(select(UsageReservation.id).where(
+        UsageReservation.organization_id == organization_id,
+        UsageReservation.event_id == event_id, UsageReservation.status == "RESERVED",
+        UsageReservation.metric_key == "max_emails_per_event",
+        UsageReservation.metadata_json["campaign_id"].as_string() == str(campaign_id),
+        UsageReservation.metadata_json["dispatch_id"].as_string() == str(dispatch_id),
+    ).with_for_update())
+    if live_reservation is None:
+        raise HTTPException(409, detail={"code": "CAMPAIGN_RESERVATION_UNAVAILABLE"})
     existing = await db.scalar(
         select(EmailLog)
-        .where(EmailLog.campaign_id == campaign_id, EmailLog.to_email == to_email)
+        .where(EmailLog.campaign_id == campaign_id, EmailLog.event_id == event_id,
+               EmailLog.to_email == to_email)
         .with_for_update()
     )
     if existing:
-        if existing.status == "sent":
+        if existing.status in {"sent", "delivered"}:
             return None
-        if existing.status == "sending" and existing.sent_at + _EMAIL_CLAIM_LEASE > now:
-            return None
+        if existing.status == "delivery_unknown":
+            raise HTTPException(503, detail={"code": "CAMPAIGN_DELIVERY_RECONCILIATION_REQUIRED"})
+        if existing.status == "sending":
+            if existing.sent_at + _EMAIL_CLAIM_LEASE > now:
+                return None
+            existing.status = "delivery_unknown"
+            existing.error_message = "PROVIDER_OUTCOME_UNCONFIRMED"
+            if existing.current_attempt_id is not None:
+                from app.modules.notifications.services.campaign_attempt_history import record_campaign_outcome
+                await record_campaign_outcome(db, existing, status="delivery_unknown",
+                    diagnostic_code="PROVIDER_OUTCOME_UNCONFIRMED")
+            await db.commit()
+            raise HTTPException(503, detail={"code": "CAMPAIGN_DELIVERY_RECONCILIATION_REQUIRED"})
         existing.status = "sending"
+        existing.send_dispatch_id = dispatch_id
+        existing.provider_message_id = None
         existing.subject = subject
         existing.speaker_id = speaker_id
         existing.participant_id = participant_id
         existing.error_message = None
         existing.sent_at = now
+        from app.modules.notifications.services.campaign_attempt_history import begin_campaign_attempt
+        await begin_campaign_attempt(db, existing, organization_id, dispatch_id, speaker_id or participant_id)
         await db.commit()
         return existing.id
 
     claim = EmailLog(
         campaign_id=campaign_id,
+        send_dispatch_id=dispatch_id,
         event_id=event_id,
         speaker_id=speaker_id,
         participant_id=participant_id,
@@ -485,10 +541,18 @@ async def claim_campaign_recipient(
     db.add(claim)
     try:
         await db.flush()
+        from app.modules.notifications.services.campaign_attempt_history import begin_campaign_attempt
+        await begin_campaign_attempt(db, claim, organization_id, dispatch_id, speaker_id or participant_id)
         await db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await db.rollback()
-        return None
+        original = exc.orig
+        cause = getattr(original, "__cause__", None)
+        sqlstate = getattr(original, "sqlstate", None) or getattr(cause, "sqlstate", None)
+        constraint = getattr(getattr(original, "diag", None), "constraint_name", None) or getattr(cause, "constraint_name", None)
+        if sqlstate == "23505" and constraint == "uq_email_logs_campaign_recipient":
+            return None
+        raise  # ownership/history failures are not harmless duplicate deliveries
     return claim.id
 
 
@@ -505,6 +569,7 @@ async def send_email(
     log_id: Optional[uuid.UUID] = None,
     db: Optional[AsyncSession] = None,
     raise_on_failure: bool = False,
+    meter_usage: bool = True,
 ) -> Optional[str]:
     """
     Send a single email with standardized processing:
@@ -513,6 +578,31 @@ async def send_email(
     3. Send email via configured provider (SMTP or Resend)
     """
     event = None
+    if campaign_id is not None:
+        if db is None or event_id is None or log_id is None:
+            raise HTTPException(403, detail={"code": "CAMPAIGN_ATTEMPT_REQUIRED"})
+        claimed_log = await db.scalar(select(EmailLog).where(EmailLog.id == log_id,
+            EmailLog.campaign_id == campaign_id, EmailLog.event_id == event_id,
+            EmailLog.to_email == to_email, EmailLog.status == "sending"))
+        if claimed_log is None:
+            raise HTTPException(409, detail={"code": "CAMPAIGN_ATTEMPT_UNAVAILABLE"})
+        from app.modules.notifications.services.campaign_attempt_history import require_campaign_attempt
+        await require_campaign_attempt(db, claimed_log)
+        await db.commit()  # never retain validation transaction across provider I/O
+    from app.modules.notifications.services.email_resource_policy import (
+        byte_size, RENDERED_BYTES, INLINE_IMAGE_BYTES, INLINE_TOTAL_BYTES, INLINE_IMAGE_COUNT,
+    )
+    try:
+        byte_size(html_body, RENDERED_BYTES)
+        if text_body is not None:
+            byte_size(text_body, RENDERED_BYTES)
+        byte_size(subject, 2_000)
+        if len(subject) > 500 or len(to_email) > 320 or any(char in subject + to_email for char in "\r\n"):
+            raise HTTPException(422, detail={"code": "EMAIL_HEADER_INVALID"})
+    except HTTPException as exc:
+        if campaign_id is not None:
+            await _reject_campaign_preflight(db, claimed_log, exc.detail["code"])
+        raise
     if event_id and db:
         from app.modules.events.models.event import Event
 
@@ -534,6 +624,7 @@ async def send_email(
     from email.mime.text import MIMEText
     from email.mime.image import MIMEImage
     import base64
+    import binascii
 
     # Extract base64 images and convert them to CID attachments
     inline_images = []
@@ -542,15 +633,34 @@ async def send_email(
         mime_type = match.group(1)
         b64_data = match.group(2)
         cid = f"img_{uuid.uuid4().hex[:12]}@eventos.local"
+        if len(inline_images) >= INLINE_IMAGE_COUNT or len(b64_data) > ((INLINE_IMAGE_BYTES + 2) // 3) * 4:
+            raise HTTPException(422, detail={"code": "EMAIL_INLINE_IMAGE_LIMIT_EXCEEDED"})
+        if mime_type.lower() not in {"image/png", "image/jpeg", "image/gif"}:
+            raise HTTPException(422, detail={"code": "EMAIL_INLINE_IMAGE_TYPE_UNSUPPORTED"})
         try:
-            image_bytes = base64.b64decode(b64_data)
-            subtype = mime_type.split("/")[-1] if "/" in mime_type else "jpeg"
-            inline_images.append((cid, subtype, image_bytes))
-            return f'src="cid:{cid}"'
-        except Exception:
-            return match.group(0)
+            image_bytes = base64.b64decode(b64_data, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise HTTPException(422, detail={"code": "EMAIL_INLINE_IMAGE_INVALID"}) from exc
+        signatures = {
+            "image/png": (b"\x89PNG\r\n\x1a\n",),
+            "image/jpeg": (b"\xff\xd8\xff",),
+            "image/gif": (b"GIF87a", b"GIF89a"),
+        }
+        if not image_bytes.startswith(signatures[mime_type.lower()]):
+            raise HTTPException(422, detail={"code": "EMAIL_INLINE_IMAGE_INVALID"})
+        if len(image_bytes) > INLINE_IMAGE_BYTES or sum(len(item[2]) for item in inline_images) + len(image_bytes) > INLINE_TOTAL_BYTES:
+            raise HTTPException(422, detail={"code": "EMAIL_INLINE_IMAGE_LIMIT_EXCEEDED"})
+        subtype = mime_type.lower().split("/")[-1]
+        inline_images.append((cid, subtype, image_bytes))
+        return f'src="cid:{cid}"'
 
-    final_html = re.sub(r'src=["\']data:([^;]+);base64,([^"\']+)["\']', _replace_src_data, final_html, flags=re.I)
+    try:
+        final_html = re.sub(r'src=["\']data:([^;]+);base64,([^"\']+)["\']', _replace_src_data, final_html, flags=re.I)
+        byte_size(final_html, RENDERED_BYTES)
+    except HTTPException as exc:
+        if campaign_id is not None:
+            await _reject_campaign_preflight(db, claimed_log, exc.detail["code"])
+        raise
 
     # Resolve SMTP Configuration (Environment settings fallback to Database system settings)
     smtp_host = settings.SMTP_HOST
@@ -573,7 +683,7 @@ async def send_email(
                 smtp_user = db_smtp["smtp_user"]
                 smtp_password = db_smtp["smtp_password"]
         except Exception as exc:
-            logger.debug("Failed to read system settings for SMTP: {}", exc)
+            logger.debug("SMTP configuration read unavailable: {}", type(exc).__name__)
 
     resend_enabled = bool(
         settings.RESEND_API_KEY
@@ -581,6 +691,9 @@ async def send_email(
         and settings.RESEND_API_KEY.lower() not in {"disable", "none", "false"}
     )
     smtp_enabled = bool(smtp_user and smtp_password)
+
+    if db is not None:
+        await db.commit()  # configuration reads must not retain a transaction during provider I/O
 
     provider_message_id = None
     error_message = None
@@ -624,10 +737,10 @@ async def send_email(
                 timeout=15.0,
             )
             provider_message_id = f"smtp_{uuid.uuid4().hex[:8]}"
-            logger.info(f"Email sent via SMTP to {to_email} | msg_id={provider_message_id}")
+            logger.info("Email accepted by SMTP: log={}", log_id)
         except Exception as exc:
-            status = "failed"
-            error_message = f"SMTP Delivery Error ({type(exc).__name__}): {exc}"
+            status = "delivery_unknown" if campaign_id else "failed"
+            error_message = f"SMTP_OUTCOME_UNCONFIRMED:{type(exc).__name__}"
             logger.error("Email provider delivery failed: {}", error_message)
             if raise_on_failure:
                 raise RuntimeError(error_message) from exc
@@ -656,24 +769,28 @@ async def send_email(
                 )
             if resp.is_success:
                 data = resp.json()
-                provider_message_id = data.get("id") or f"resend_{uuid.uuid4().hex[:8]}"
-                logger.info(f"Email sent via Resend to {to_email} | msg_id={provider_message_id}")
+                provider_message_id = data.get("id")
+                if not isinstance(provider_message_id, str) or not provider_message_id:
+                    provider_message_id = None
+                    status = "delivery_unknown" if campaign_id else "failed"
+                    error_message = "PROVIDER_ACCEPTANCE_RECEIPT_UNAVAILABLE"
+                logger.info("Email provider response recorded: log={} status={}", log_id, status)
             else:
-                status = "failed"
-                error_message = f"Resend API Error {resp.status_code}: {resp.text[:300]}"
+                status = "delivery_unknown" if campaign_id and resp.status_code >= 500 else "failed"
+                error_message = f"PROVIDER_HTTP_{resp.status_code}"
                 logger.error("Resend delivery failed: {}", error_message)
                 if raise_on_failure:
                     raise RuntimeError(error_message)
         except Exception as exc:
-            status = "failed"
-            error_message = f"Resend Request Error ({type(exc).__name__}): {exc}"
+            status = "delivery_unknown" if campaign_id else "failed"
+            error_message = f"PROVIDER_OUTCOME_UNCONFIRMED:{type(exc).__name__}"
             logger.error("Resend request error: {}", error_message)
             if raise_on_failure:
                 raise RuntimeError(error_message) from exc
     else:
-        logger.warning("No email provider configured (neither SMTP nor Resend API key). Simulating email send in development.")
-        provider_message_id = f"simulated_{uuid.uuid4().hex[:8]}"
-        status = "sent"
+        logger.warning("Email provider configuration is unavailable")
+        status = "failed"
+        error_message = "EMAIL_PROVIDER_UNAVAILABLE"
 
     # Every event email is logged, including system/campaign messages without a
     # speaker or participant foreign key.
@@ -692,15 +809,25 @@ async def send_email(
                 css_inlined=True,
             )
             db.add(log)
+        if campaign_id is not None:
+            from app.modules.notifications.services.campaign_attempt_history import record_campaign_outcome
+            await record_campaign_outcome(db, log, status=status,
+                provider_receipt=provider_message_id, diagnostic_code=error_message)
         log.status = status
         log.provider_message_id = provider_message_id
         log.error_message = error_message
         log.sent_at = datetime.now(timezone.utc)
         await db.flush()
-        if event is not None:
+        if event is not None and meter_usage:
             from app.modules.platform.services.metering_service import MeteringService
             metric_key = "emails" if status in {"queued", "sent", "delivered"} else "email_failures"
-            await MeteringService.record(db, organization_id=event.organization_id, event_id=event_id, metric_key=metric_key, quantity=1, unit="count", source="notifications.email_service", idempotency_key=f"email:{log.id}:{status}", metadata={"email_log_id": str(log.id), "status": status, "campaign_id": str(campaign_id) if campaign_id else None})
+            if metric_key == "emails":
+                # Charge the accepted recipient once. Delivery-status changes
+                # and provider retries reuse this stable key, so queued -> sent
+                # -> delivered cannot consume multiple commercial credits.
+                await MeteringService.record(db, organization_id=event.organization_id, event_id=event_id, metric_key=metric_key, quantity=1, unit="count", source="notifications.email_service", idempotency_key=f"email:{log.id}:accepted", metadata={"email_log_id": str(log.id), "status": status, "campaign_id": str(campaign_id) if campaign_id else None})
+            else:
+                await MeteringService.record(db, organization_id=event.organization_id, event_id=event_id, metric_key=metric_key, quantity=1, unit="count", source="notifications.email_service", idempotency_key=f"email:{log.id}:{status}", metadata={"email_log_id": str(log.id), "status": status, "campaign_id": str(campaign_id) if campaign_id else None})
 
     return provider_message_id
 

@@ -23,6 +23,7 @@ import { useDeleteRoom } from "@/hooks/useRooms";
 import { useSessionBuilderStore } from "@/store/useSessionBuilderStore";
 import { BuilderCreateRoomDialog } from "./BuilderCreateRoomDialog";
 import { RegisterSpeakerDialog } from "../../speakers/RegisterSpeakerDialog";
+import { useMaterializeAbstractCandidate } from "@/hooks/useSessionBuilder";
 
 type PaletteTab = "queue" | "rooms" | "speakers" | "services";
 
@@ -53,10 +54,12 @@ export function LeftPalette({ onNewSession }: LeftPaletteProps) {
   const rooms = useSessionBuilderStore((state) => state.rooms);
   const tracks = useSessionBuilderStore((state) => state.tracks);
   const unscheduledSpeakers = useSessionBuilderStore((state) => state.unscheduledSpeakers);
+  const acceptedCandidates = useSessionBuilderStore((state) => state.acceptedCandidates);
   const setSelectedSessionId = useSessionBuilderStore((state) => state.setSelectedSessionId);
   const moveSession = useSessionBuilderStore((state) => state.moveSession);
   const deleteRoomInStore = useSessionBuilderStore((state) => state.deleteRoom);
   const deleteRoom = useDeleteRoom();
+  const materializeCandidate = useMaterializeAbstractCandidate(eventIdStr);
 
   const unscheduledSessions = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -71,7 +74,7 @@ export function LeftPalette({ onNewSession }: LeftPaletteProps) {
   }, [search, sessions, trackId]);
 
   const tabs: Array<{ id: PaletteTab; label: string; icon: typeof Layers3; count?: number }> = [
-    { id: "queue", label: "Queue", icon: Layers3, count: sessions.filter((session) => !session.room_id).length },
+    { id: "queue", label: "Queue", icon: Layers3, count: sessions.filter((session) => !session.room_id).length + acceptedCandidates.length },
     { id: "rooms", label: "Rooms", icon: MapPin, count: rooms.length },
     { id: "speakers", label: "People", icon: Users, count: unscheduledSpeakers.length },
     { id: "services", label: "Blocks", icon: Coffee },
@@ -176,6 +179,24 @@ export function LeftPalette({ onNewSession }: LeftPaletteProps) {
           </div>
 
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+            {acceptedCandidates.length ? (
+              <section className="mb-3 rounded-lg border border-violet-500/25 bg-violet-500/[0.045] p-2.5">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-violet-700 dark:text-violet-300">Accepted abstracts · {acceptedCandidates.length}</p>
+                  <span className="text-[9px] text-[var(--text-tertiary)]">Add when ready</span>
+                </div>
+                <div className="space-y-2">
+                  {acceptedCandidates.map((candidate) => (
+                    <article key={candidate.id} className="rounded-md border border-violet-500/20 bg-[var(--card)] p-2.5">
+                      <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-violet-600 dark:text-violet-300">{candidate.code} · {candidate.abstract_type}</p>
+                      <h3 className="mt-1 line-clamp-2 text-[11px] font-bold text-[var(--text-primary)]">{candidate.title}</h3>
+                      <p className="mt-1 truncate text-[9px] text-[var(--text-secondary)]">{candidate.presenter_name || "Presenter to confirm"}{candidate.topic ? ` · ${candidate.topic}` : ""}</p>
+                      <Button size="sm" variant="outline" disabled={materializeCandidate.isPending} onClick={() => materializeCandidate.mutate({ submissionId: candidate.id })} className="mt-2 h-7 w-full text-[10px] font-bold">Add to queue</Button>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            ) : null}
             {unscheduledSessions.length ? unscheduledSessions.map((session) => (
               <article
                 key={session.id}

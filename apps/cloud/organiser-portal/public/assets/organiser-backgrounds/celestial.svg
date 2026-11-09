@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1200" viewBox="0 0 1920 1200" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="120" y1="30" x2="1800" y2="1170" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FAF8FF"/><stop offset=".35" stop-color="#F2ECFA"/><stop offset=".7" stop-color="#E3E8F8"/><stop offset="1" stop-color="#D7E0F2"/>
+    </linearGradient>
+    <linearGradient id="cosmicRibbonA" x1="960" y1="460" x2="960" y2="1100" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D9D2EE" stop-opacity=".75"/><stop offset="1" stop-color="#B8C8E6" stop-opacity=".92"/>
+    </linearGradient>
+    <linearGradient id="cosmicRibbonB" x1="960" y1="620" x2="960" y2="1200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C5D3E8"/><stop offset="1" stop-color="#93B3DC"/>
+    </linearGradient>
+    <filter id="softGlow"><feGaussianBlur stdDeviation="60"/></filter>
+    <pattern id="celestialGrid" width="128" height="128" patternUnits="userSpaceOnUse">
+      <path d="M128 0H0V128" stroke="#7A8CA8" stroke-opacity=".06"/>
+      <circle cx="64" cy="64" r="1" fill="#7A8CA8" fill-opacity=".25"/>
+    </pattern>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#sky)"/>
+  <ellipse cx="640" cy="240" rx="580" ry="260" fill="#E8D5F5" fill-opacity=".65" filter="url(#softGlow)"/>
+  <ellipse cx="1400" cy="280" rx="480" ry="240" fill="#DBEAFE" fill-opacity=".55" filter="url(#softGlow)"/>
+  <circle cx="980" cy="180" r="220" fill="#FCE7F3" fill-opacity=".45" filter="url(#softGlow)"/>
+  <path d="M0 690C220 590 380 640 560 560C740 480 880 570 1060 500C1240 430 1380 510 1560 450C1720 390 1820 420 1920 370V1200H0V690Z" fill="url(#cosmicRibbonA)"/>
+  <path d="M0 840C190 770 340 810 520 730C700 650 850 730 1020 660C1200 590 1340 660 1520 600C1700 540 1820 580 1920 520V1200H0V840Z" fill="#C0D1E6" fill-opacity=".75"/>
+  <path d="M0 980C210 900 370 940 560 860C750 780 900 860 1090 790C1280 720 1430 800 1620 730C1760 680 1850 710 1920 670V1200H0V980Z" fill="url(#cosmicRibbonB)"/>
+  <rect width="1920" height="1200" fill="url(#celestialGrid)"/>
+</svg>
+

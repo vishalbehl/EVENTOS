@@ -13,7 +13,7 @@ from fastapi import HTTPException
 
 from app.config import settings
 from app.modules.audit.models.audit_log import AuditLog
-from app.modules.billing.models.subscription import ActivityTimeline
+from app.modules.billing.models.commercial_support import ActivityTimeline
 from app.modules.files.models.file import Asset, AssetVersion, VirusScan
 from app.modules.identity.models.user import User
 from app.modules.presentations.services.upload_service import create_presigned_upload, get_object_metadata

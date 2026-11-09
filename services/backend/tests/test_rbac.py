@@ -7,6 +7,7 @@ from httpx import AsyncClient
 
 from app.modules.rbac.models.rbac import Role, Permission, RolePermission, UserRoleAssignment, ScopedPermission
 from app.modules.identity.models.user import User
+from app.modules.rbac.models.organization_member import OrganizationMember
 from app.modules.rbac.services.rbac_service import RBACService
 
 @pytest.mark.asyncio
@@ -18,8 +19,8 @@ async def test_rbac_inheritance(db: AsyncSession, organization):
     await db.commit()
 
     # 2. Create roles
-    parent_role = Role(name="Parent", description="Parent role")
-    child_role = Role(name="Child", description="Child role")
+    parent_role = Role(name="Parent", description="Parent role", organization_id=organization.id)
+    child_role = Role(name="Child", description="Child role", organization_id=organization.id)
     db.add_all([parent_role, child_role])
     await db.commit()
 
@@ -39,10 +40,13 @@ async def test_rbac_inheritance(db: AsyncSession, organization):
     )
     db.add(user)
     await db.commit()
+    db.add(OrganizationMember(organization_id=organization.id, user_id=user.id,
+        org_role="member", accepted_at=datetime.now(timezone.utc)))
 
     assignment = UserRoleAssignment(
         user_id=user.id,
         role_id=child_role.id,
+        organization_id=organization.id,
         assigned_by=user.id
     )
     db.add(assignment)
@@ -64,10 +68,10 @@ async def test_rbac_inheritance(db: AsyncSession, organization):
     assert "SESSIONS:CREATE" in perms
 
 @pytest.mark.asyncio
-async def test_scoped_permission_override(db: AsyncSession, organization):
+async def test_scoped_permission_override(db: AsyncSession, organization, event):
     # 1. Create permission and role
     p = Permission(code="SESSIONS:DELETE", name="Delete Sessions", module="SESSIONS")
-    role = Role(name="Deleter", description="Can delete")
+    role = Role(name="Deleter", description="Can delete", organization_id=organization.id)
     db.add_all([p, role])
     await db.commit()
 
@@ -85,8 +89,10 @@ async def test_scoped_permission_override(db: AsyncSession, organization):
     )
     db.add(user)
     await db.commit()
+    db.add(OrganizationMember(organization_id=organization.id, user_id=user.id,
+        org_role="member", accepted_at=datetime.now(timezone.utc)))
 
-    assignment = UserRoleAssignment(user_id=user.id, role_id=role.id, assigned_by=user.id)
+    assignment = UserRoleAssignment(user_id=user.id, role_id=role.id, assigned_by=user.id, organization_id=organization.id)
     db.add(assignment)
     await db.commit()
 
@@ -94,7 +100,7 @@ async def test_scoped_permission_override(db: AsyncSession, organization):
     assert await RBACService.validate_access(db, user.id, "SESSIONS:DELETE") is True
 
     # 4. Apply scoped override (DENY for specific event)
-    event_id = uuid.uuid4()
+    event_id = event.id
     override = ScopedPermission(
         user_id=user.id,
         permission_id=p.id,
@@ -122,7 +128,8 @@ async def test_rbac_middleware_enforcement(client: AsyncClient, db: AsyncSession
         first_name="Stale",
         last_name="User",
         role="session_manager",
-        organization_id=organization.id
+        organization_id=organization.id,
+        auth_revision=1,
     )
     token = create_access_token(stale_user)
     

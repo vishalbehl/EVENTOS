@@ -26,7 +26,6 @@ const DUMMY_DATA: Record<string, string> = {
     Affiliation: 'MIT Center for Quantum Tech',
     Country: 'USA',
     Deadline: '20 May 2026',
-    AccessCode: 'QCS-8472-CH',
     RejectionReason: 'Font size on slide 3 is too small and background image has compression artifacts.',
     RejectedReason: 'Font size on slide 3 is too small and background image has compression artifacts.',
     QRCodeURL: 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=SarahChen-MIT',

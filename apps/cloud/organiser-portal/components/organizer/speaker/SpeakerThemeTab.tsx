@@ -7,8 +7,10 @@ import {
   ExternalLink, Trash2, Star, HelpCircle, ChevronRight, Code2,
   MapPin, Globe, ArrowDownToLine
 } from 'lucide-react'
-import { useEvent } from '@/hooks/useEvents'
-import { useAuthStore } from '@/store/use-auth-store'
+import { useUpdateEvent } from '@/hooks/useEvents'
+import { useEventEditSession } from '@/hooks/useEventEditSession'
+import { ScopedEventEditor } from '@/components/organizer/events/ScopedEventEditor'
+import { apiClient } from '@/lib/api-client'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -128,9 +130,25 @@ const THEMES = [
 ]
 
 export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
-  const { data: event, refetch } = useEvent(eventId)
-  const token = useAuthStore(s => s.accessToken)
+  return <ScopedEventEditor eventId={eventId}><SpeakerThemeEditor eventId={eventId} /></ScopedEventEditor>
+}
+
+function SpeakerThemeEditor({ eventId }: { eventId: string }) {
+  const edit = useEventEditSession(eventId)
+  const event = edit.event
+  const [loadedEvent, setLoadedEvent] = useState<typeof event>()
+  const updateEvent = useUpdateEvent(eventId, edit.version)
+  const saveSettings = async (payload: Record<string, unknown>, preserveDirty = true) => {
+    if (!edit.ready || updateEvent.isPending) throw new Error('Reload event settings before saving.')
+    const saved = await updateEvent.mutateAsync(payload)
+    if (!edit.complete(saved, preserveDirty)) throw new Error('Access context changed.')
+  }
+  const refetch = async () => {
+    const saved = await apiClient.get<import('@/types/backend').EventResponse>(`/events/${eventId}`)
+    edit.complete(saved, true)
+  }
   const themeAccess = useOperationAccess('branding.theme.manage')
+  const colorAccess = useOperationAccess('branding.colors.manage')
   const logoAccess = useOperationAccess('branding.logo.manage')
   const speakerAccess = useOperationAccess('speakers.manage')
 
@@ -184,28 +202,17 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
       const formData = new FormData()
       formData.append('file', file)
       formData.append('field', 'template_file')
-      const res = await fetch(
-        `${apiBase}/api/v1/events/${eventId}/speaker-branding/upload`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Idempotency-Key": crypto.randomUUID(),
-          },
-          body: formData,
-        }
-      )
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err.detail || 'Upload failed')
-      }
-      const data = await res.json()
+      const data = await apiClient.post<any>(`/events/${eventId}/speaker-branding/upload`, formData, {
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+      })
+      if (!edit.isCurrent()) return
       const ps = data.profile_settings as Record<string, any>
       setTemplateUrl(ps.template_url || null)
       setTemplateFilename(ps.template_filename || null)
       toast.success('Template file uploaded and saved!')
-      refetch()
+      await refetch()
     } catch (err: any) {
+      if (!edit.isCurrent()) return
       toast.error(err.message || 'Upload failed.')
     } finally {
       setUploadingTemplate(false)
@@ -218,17 +225,17 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
     setDirtyMeta(true)
   }
 
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
   const speakerPortalUrl = typeof window !== 'undefined'
     ? `${window.location.origin.replace(':3000', ':3002').replace(':3001', ':3002')}/${eventId}/login`
     : `http://localhost:3002/${eventId}/login`
 
   // Load speaker branding on event load
   useEffect(() => {
+    if (edit.dirty) return
     if (!event) {
-      setHeaderImages(["/header/1.jpg", "/header/2.jpg", "/header/3.jpg"])
-      setFooterSupportEmails(["support@eventos.com"])
-      setFooterSupportPhones(["011-123456789"])
+      setHeaderImages([])
+      setFooterSupportEmails([])
+      setFooterSupportPhones([])
       return
     }
     const ss = (event as any).speaker_settings as Record<string, any> | null
@@ -236,13 +243,13 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
     setLogoUrl(bs.logo_url || '')
     
     const loadedBanners = bs.header_images || (bs.banner_url ? [bs.banner_url] : [])
-    setHeaderImages(loadedBanners.length > 0 ? loadedBanners : ["/header/1.jpg", "/header/2.jpg", "/header/3.jpg"])
+    setHeaderImages(loadedBanners)
     
     const loadedEmails = bs.footer_support_emails || []
-    setFooterSupportEmails(loadedEmails.length > 0 ? loadedEmails : ["support@eventos.com"])
+    setFooterSupportEmails(loadedEmails)
     
     const loadedPhones = bs.footer_support_phones || []
-    setFooterSupportPhones(loadedPhones.length > 0 ? loadedPhones : ["011-123456789"])
+    setFooterSupportPhones(loadedPhones)
     
     setFooterWebsites(bs.footer_websites || [])
     setFooterLocations(bs.footer_locations || [])
@@ -282,6 +289,7 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
     }
 
     setDirtyMeta(false)
+    setLoadedEvent(event)
   }, [event])
 
   // ── Fetch from Registration ──────────────────────────────────
@@ -293,7 +301,6 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
       return
     }
     setFetching(true)
-    setTimeout(() => {
       // Import branding settings only (layout and theme presets)
       setLogoUrl(regBranding.logo_url || '')
       setHeaderImages(regBranding.header_images || (regBranding.banner_url ? [regBranding.banner_url] : []))
@@ -308,7 +315,6 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
       setFetching(false)
       setDirtyMeta(true)
       toast.success('Registration layout & theme settings imported! Review and save to apply.')
-    }, 600)
   }
 
   // ── Upload helpers ────────────────────────────────────────────
@@ -320,22 +326,11 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      const res = await fetch(
-        `${apiBase}/api/v1/events/${eventId}/speaker-branding/upload?field=${field}`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Idempotency-Key": crypto.randomUUID(),
-          },
-          body: formData,
-        }
-      )
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err.detail || 'Upload failed')
-      }
-      const data = await res.json()
+      formData.append('field', field)
+      const data = await apiClient.post<any>(`/events/${eventId}/speaker-branding/upload`, formData, {
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+      })
+      if (!edit.isCurrent()) return
       const bs = data.branding_settings as Record<string, any>
       if (field === 'logo') {
         setLogoUrl(bs.logo_url || '')
@@ -344,8 +339,9 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
         setHeaderImages(bs.header_images || [])
         toast.success('Header image uploaded and saved!')
       }
-      refetch()
+      await refetch()
     } catch (err: any) {
+      if (!edit.isCurrent()) return
       toast.error(err.message || 'Upload failed.')
     } finally {
       setUploadingLogo(false)
@@ -360,29 +356,11 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
     setHeaderImages(next)
 
     try {
-      const currentSpeakerSettings = ((event as any).speaker_settings as Record<string, any> | null) || {}
-      const branding = {
-        ...currentSpeakerSettings.branding,
-        header_images: next,
-        banner_url: next[0] || null,
-      }
-      const res = await fetch(`${apiBase}/api/v1/events/${eventId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          speaker_settings: {
-            ...currentSpeakerSettings,
-            branding: branding,
-          },
-        }),
-      })
-      if (!res.ok) throw new Error('Failed to remove image')
-      refetch()
+      await saveSettings({ speaker_settings: { branding: { header_images: next, banner_url: next[0] || null } } })
+      if (!edit.isCurrent()) return
       toast.success('Image removed.')
     } catch {
+      if (!edit.isCurrent()) return
       toast.error('Failed to remove image from server.')
       setHeaderImages(headerImages) // rollback
     }
@@ -397,28 +375,11 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
     setHeaderImages(next)
 
     try {
-      const currentSpeakerSettings = ((event as any).speaker_settings as Record<string, any> | null) || {}
-      const branding = {
-        ...currentSpeakerSettings.branding,
-        header_images: next,
-        banner_url: next[0] || null,
-      }
-      await fetch(`${apiBase}/api/v1/events/${eventId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          speaker_settings: {
-            ...currentSpeakerSettings,
-            branding: branding,
-          },
-        }),
-      })
-      refetch()
+      await saveSettings({ speaker_settings: { branding: { header_images: next, banner_url: next[0] || null } } })
+      if (!edit.isCurrent()) return
       toast.success('Image URL added and saved!')
     } catch {
+      if (!edit.isCurrent()) return
       toast.error('Failed to save image URL.')
     }
   }
@@ -441,7 +402,7 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
 
   // ── Save ─────────────────────────────────────────────────────
   const handleSave = async () => {
-    if (!themeAccess.enabled || !logoAccess.enabled || !speakerAccess.enabled) {
+    if (!themeAccess.enabled || !colorAccess.enabled || !logoAccess.enabled || !speakerAccess.enabled) {
       toast.error('Theme update is unavailable for this event contract or role.')
       return
     }
@@ -454,7 +415,6 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
 
     setSaving(true)
     try {
-      const currentSpeakerSettings = ((event as any).speaker_settings as Record<string, any> | null) || {}
       const brandingPayload = {
         theme: selectedTheme,
         logo_url: logoUrl || null,
@@ -466,32 +426,16 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
         footer_show_logo: footerShowLogo,
         footer_terms: footerTerms,
       }
-      await fetch(`${apiBase}/api/v1/events/${eventId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          speaker_settings: {
-            ...currentSpeakerSettings,
-            branding: brandingPayload,
-            terms_and_conditions: termsAndConditions,
-            faqs: faqs,
-            include_default_faqs: includeDefaultFaqs,
-            profile_settings: {
-              enabled_methods: profileMethods,
-              template_url: templateUrl,
-              template_filename: templateFilename,
-            }
-          },
-        }),
-      })
+      await saveSettings({ speaker_settings: {
+        branding: brandingPayload, terms_and_conditions: termsAndConditions, faqs,
+        include_default_faqs: includeDefaultFaqs,
+        profile_settings: { enabled_methods: profileMethods, template_url: templateUrl, template_filename: templateFilename },
+      } }, false)
+      if (!edit.isCurrent()) return
       toast.success('Speaker portal theme settings saved!')
       setDirtyMeta(false)
-      refetch()
-    } catch {
-      toast.error('Failed to save branding settings.')
+    } catch (error: any) {
+      if (edit.isCurrent()) toast.error(error.message || 'Failed to save branding settings. Your edits are retained.')
     } finally {
       setSaving(false)
     }
@@ -531,8 +475,10 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
 
   const activeTheme = THEMES.find(t => t.id === selectedTheme) || THEMES[0]
 
+  if (!edit.ready || (!edit.dirty && loadedEvent !== event)) return <p role="status">{edit.error || 'Loading event settings…'}</p>
   return (
-    <div className="space-y-6 w-full max-w-7xl mx-auto text-left">
+    <fieldset disabled={saving || updateEvent.isPending || uploadingLogo || uploadingHeader || uploadingTemplate || edit.reloading} onChangeCapture={edit.markDirty} onClickCapture={edit.markDirty} className="space-y-6 w-full max-w-7xl mx-auto text-left">
+      <button type="button" onClick={() => void edit.reload()}>Discard changes and reload current settings</button>
       {/* Header */}
       <div className="flex items-center justify-between gap-4 shrink-0">
         <div>
@@ -1450,6 +1396,6 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
           </button>
         </div>
       )}
-    </div>
+    </fieldset>
   )
 }

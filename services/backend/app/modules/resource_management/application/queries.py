@@ -5,8 +5,9 @@ from __future__ import annotations
 import uuid
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.modules.rbac.services.event_scope import owned_event_scope
 
 from app.modules.operations_planning.models import Project
 from app.modules.resource_management.models import EquipmentAssignment, StaffAssignment
@@ -28,7 +29,7 @@ class ResourceQueryService:
         project = await self.db.scalar(
             select(Project.id).where(
                 Project.id == project_id,
-                Project.organization_id == organization_id,
+                and_(Project.organization_id == organization_id, owned_event_scope(self.db, Project.event_id, organization_id)),
             )
         )
         return project is not None
@@ -43,7 +44,7 @@ class ResourceQueryService:
         project = await self.db.scalar(
             select(Project.id).where(
                 Project.id == project_id,
-                Project.organization_id == organization_id,
+                and_(Project.organization_id == organization_id, owned_event_scope(self.db, Project.event_id, organization_id)),
             )
         )
         if project is None:

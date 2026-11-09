@@ -1,0 +1,313 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="234" time="369.539" timestamp="2026-10-21T18:57:47.622374+05:30" hostname="Vishal"><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_projection_rejects_invalid_page_before_database_work[OVERSIZED]" time="11.139" /><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_projection_rejects_invalid_page_before_database_work[DUPLICATE]" time="0.004" /><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_projection_rejects_invalid_page_before_database_work[FOREIGN_OWNER]" time="0.004" /><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_one_category_projects_205_references_only_in_committed_template_pages[GLOBAL]" time="4.305" /><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_one_category_projects_205_references_only_in_committed_template_pages[ORGANIZATION]" time="4.325" /><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_one_category_projects_205_references_only_in_committed_template_pages[GLOBAL_CATEGORY_OWNED_TEMPLATES]" time="4.055" /><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_projection_never_treats_missing_or_invalid_taxonomy_as_approval[MISSING]" time="1.291" /><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_projection_never_treats_missing_or_invalid_taxonomy_as_approval[STALE]" time="1.386" /><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_projection_never_treats_missing_or_invalid_taxonomy_as_approval[BLOCKED]" time="1.341" /><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_projection_never_treats_missing_or_invalid_taxonomy_as_approval[RETIRED]" time="1.172" /><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_projection_never_treats_missing_or_invalid_taxonomy_as_approval[FOREIGN]" time="1.194" /><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_projection_never_treats_missing_or_invalid_taxonomy_as_approval[TOO_LONG]" time="1.257" /><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_projection_never_treats_missing_or_invalid_taxonomy_as_approval[PURPOSE_COLLISION]" time="1.165" /><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_template_projection_and_lineage_roll_back_with_failed_checkpoint_audit" time="7.113" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[VALID-global_template]" time="1.835" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[VALID-owned_template]" time="2.046" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[VALID-manual_template]" time="1.754" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[VALID-global_category]" time="2.108" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[VALID-owned_category]" time="2.184" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[VALID-registration]" time="2.134" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[VALID-abstract]" time="2.222" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[BLOCKED-global_template]" time="2.185" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[BLOCKED-owned_template]" time="1.912" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[BLOCKED-manual_template]" time="1.642" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[BLOCKED-global_category]" time="1.693" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[BLOCKED-owned_category]" time="2.570" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[BLOCKED-registration]" time="1.943" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[BLOCKED-abstract]" time="1.755" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_evidence_lookup_pairs_each_identity_with_its_own_version[global_template]" time="0.972" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_evidence_lookup_pairs_each_identity_with_its_own_version[owned_template]" time="0.841" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_evidence_lookup_pairs_each_identity_with_its_own_version[manual_template]" time="0.798" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_manual_reconciliation_rejects_unbounded_or_ambiguous_page_size[True]" time="0.005" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_manual_reconciliation_rejects_unbounded_or_ambiguous_page_size[0]" time="0.006" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_manual_reconciliation_rejects_unbounded_or_ambiguous_page_size[-1]" time="0.004" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_manual_reconciliation_rejects_unbounded_or_ambiguous_page_size[101]" time="0.005" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_manual_reconciliation_rejects_unbounded_or_ambiguous_page_size[1.5]" time="0.004" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_manual_reconciliation_rejects_unbounded_or_ambiguous_page_size[100]" time="0.005" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[foreign-owned_worker]" time="1.613" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[foreign-global_worker]" time="1.469" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[foreign-manual]" time="1.329" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[retired-owned_worker]" time="1.556" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[retired-global_worker]" time="1.925" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[retired-manual]" time="1.887" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[key_mismatch-owned_worker]" time="2.507" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[key_mismatch-global_worker]" time="2.183" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[key_mismatch-manual]" time="2.046" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_event_reference_is_rechecked" time="1.254" /><testcase classname="tests.test_template_reference_revalidation" name="test_valid_reference_batch_is_constant_query_and_preserves_approval" time="0.858" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[foreign-REGISTRATION_FORM]" time="2.052" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[foreign-ABSTRACT_FORM]" time="1.903" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[retired-REGISTRATION_FORM]" time="2.051" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[retired-ABSTRACT_FORM]" time="2.016" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[other_event-REGISTRATION_FORM]" time="1.969" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[other_event-ABSTRACT_FORM]" time="2.197" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[conflicting_events-REGISTRATION_FORM]" time="2.834" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[conflicting_events-ABSTRACT_FORM]" time="2.842" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[wrong_kind-REGISTRATION_FORM]" time="2.778" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[wrong_kind-ABSTRACT_FORM]" time="2.176" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[parent_category-REGISTRATION_FORM]" time="2.598" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[parent_category-ABSTRACT_FORM]" time="2.176" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[valid-REGISTRATION_FORM]" time="2.482" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[valid-ABSTRACT_FORM]" time="1.931" /><testcase classname="tests.test_aggregate_reference_validation" name="test_reviewed_registration_detachment_preserves_valid_category_and_history" time="2.553" /><testcase classname="tests.test_historical_template_schema_revalidation" name="test_live_schema_rechecked_without_overwriting_old_approval[settings-owned_worker]" time="1.729" /><testcase classname="tests.test_historical_template_schema_revalidation" name="test_live_schema_rechecked_without_overwriting_old_approval[settings-event_worker]" time="2.012" /><testcase classname="tests.test_historical_template_schema_revalidation" name="test_live_schema_rechecked_without_overwriting_old_approval[settings-global_worker]" time="1.626" /><testcase classname="tests.test_historical_template_schema_revalidation" name="test_live_schema_rechecked_without_overwriting_old_approval[settings-manual]" time="1.715" /><testcase classname="tests.test_historical_template_schema_revalidation" name="test_live_schema_rechecked_without_overwriting_old_approval[field-owned_worker]" time="1.726" /><testcase classname="tests.test_historical_template_schema_revalidation" name="test_live_schema_rechecked_without_overwriting_old_approval[field-event_worker]" time="1.852" /><testcase classname="tests.test_historical_template_schema_revalidation" name="test_live_schema_rechecked_without_overwriting_old_approval[field-global_worker]" time="1.850" /><testcase classname="tests.test_historical_template_schema_revalidation" name="test_live_schema_rechecked_without_overwriting_old_approval[field-manual]" time="1.314" /><testcase classname="tests.test_catalogue_worker_target_lifecycle" name="test_legacy_page_rejects_already_archived_target[target-before-platform]" time="1.240" /><testcase classname="tests.test_catalogue_worker_target_lifecycle" name="test_legacy_page_rejects_already_archived_target[target-after-platform]" time="1.030" /><testcase classname="tests.test_catalogue_worker_target_lifecycle" name="test_legacy_tenant_page_cannot_use_platform_as_customer_target[target-before-platform]" time="0.794" /><testcase classname="tests.test_catalogue_worker_target_lifecycle" name="test_legacy_tenant_page_cannot_use_platform_as_customer_target[target-after-platform]" time="0.871" /><testcase classname="tests.test_catalogue_worker_target_lifecycle" name="test_cached_active_target_does_not_waive_committed_archive[target-before-platform]" time="1.025" /><testcase classname="tests.test_catalogue_worker_target_lifecycle" name="test_cached_active_target_does_not_waive_committed_archive[target-after-platform]" time="1.059" /><testcase classname="tests.test_catalogue_worker_target_lifecycle" name="test_legacy_page_orders_with_target_archive[target-before-platform-False]" time="1.228" /><testcase classname="tests.test_catalogue_worker_target_lifecycle" name="test_legacy_page_orders_with_target_archive[target-before-platform-True]" time="1.601" /><testcase classname="tests.test_catalogue_worker_target_lifecycle" name="test_legacy_page_orders_with_target_archive[target-after-platform-False]" time="1.145" /><testcase classname="tests.test_catalogue_worker_target_lifecycle" name="test_legacy_page_orders_with_target_archive[target-after-platform-True]" time="1.298" /><testcase classname="tests.test_platform_catalogue_mutation_revocation" name="test_platform_catalogue_command_revocation_ordering[False-create]" time="1.279" /><testcase classname="tests.test_platform_catalogue_mutation_revocation" name="test_platform_catalogue_command_revocation_ordering[False-template]" time="0.875" /><testcase classname="tests.test_platform_catalogue_mutation_revocation" name="test_platform_catalogue_command_revocation_ordering[False-category]" time="0.951" /><testcase classname="tests.test_platform_catalogue_mutation_revocation" name="test_platform_catalogue_command_revocation_ordering[False-repair]" time="0.969" /><testcase classname="tests.test_platform_catalogue_mutation_revocation" name="test_platform_catalogue_command_revocation_ordering[True-create]" time="1.384" /><testcase classname="tests.test_platform_catalogue_mutation_revocation" name="test_platform_catalogue_command_revocation_ordering[True-template]" time="1.543" /><testcase classname="tests.test_platform_catalogue_mutation_revocation" name="test_platform_catalogue_command_revocation_ordering[True-category]" time="1.280" /><testcase classname="tests.test_platform_catalogue_mutation_revocation" name="test_platform_catalogue_command_revocation_ordering[True-repair]" time="1.444" /><testcase classname="tests.test_duplicate_cli_authority_ordering" name="test_duplicate_maintenance_authority_orders_with_revocation[historical-False]" time="0.923" /><testcase classname="tests.test_duplicate_cli_authority_ordering" name="test_duplicate_maintenance_authority_orders_with_revocation[historical-True]" time="0.722" /><testcase classname="tests.test_duplicate_cli_authority_ordering" name="test_duplicate_maintenance_authority_orders_with_revocation[platform-False]" time="0.668" /><testcase classname="tests.test_duplicate_cli_authority_ordering" name="test_duplicate_maintenance_authority_orders_with_revocation[platform-True]" time="0.660" /><testcase classname="tests.test_duplicate_cli_authority_ordering" name="test_duplicate_maintenance_authority_orders_with_revocation[worker-False]" time="0.947" /><testcase classname="tests.test_duplicate_cli_authority_ordering" name="test_duplicate_maintenance_authority_orders_with_revocation[worker-True]" time="0.819" /><testcase classname="tests.test_duplicate_cli_authority_ordering" name="test_duplicate_maintenance_missing_revision_fails_without_implicit_repair" time="0.542" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes0]" time="0.005" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes1]" time="0.004" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes2]" time="0.004" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes3]" time="0.004" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes4]" time="0.003" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes5]" time="0.003" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes6]" time="0.004" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes7]" time="0.004" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_operational_identity_fails_closed[changes8]" time="0.004" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_equivalent_event_marker_spellings_have_same_identity" time="0.003" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_incompatible_mapping_rejected_before_any_write[changes0]" time="0.004" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_incompatible_mapping_rejected_before_any_write[changes1]" time="0.005" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_replacement_parent_rejected_before_any_write[retired]" time="0.003" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_replacement_parent_rejected_before_any_write[deleted]" time="0.003" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_replacement_parent_rejected_before_any_write[foreign]" time="0.005" /><testcase classname="tests.test_duplicate_catalogue_identity_unit" name="test_invalid_replacement_parent_rejected_before_any_write[missing]" time="0.004" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[purpose]" time="0.622" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[scope]" time="0.642" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[event]" time="0.542" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[conflicting_markers]" time="0.516" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[missing_markers]" time="0.601" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[malformed_marker]" time="0.746" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[foreign_event_owner]" time="0.793" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[retired_parent]" time="0.538" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[owned_parent_for_global]" time="0.618" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[valid_global]" time="0.604" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[valid_event]" time="0.528" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_category_mapping_rejects_invalid_owned_references[global_template]" time="0.531" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_category_mapping_rejects_invalid_owned_references[foreign_event]" time="0.502" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_category_mapping_rejects_invalid_owned_references[valid_owned]" time="0.452" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_category_mapping_rejects_invalid_owned_references[valid_global]" time="0.522" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_abstract_reference_reassignment_preserves_json_and_lineage" time="0.492" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_exhausted_reference_budget_changes_nothing[template]" time="0.534" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_exhausted_reference_budget_changes_nothing[category]" time="0.549" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_parallel_catalogue_receipts_do_not_deadlock_owner_serialization" time="1.689" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_owner_serialization_still_blocks_lifecycle_changes" time="0.669" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_taxonomy_repair_before_waiting_writer_rejects_cached_key" time="1.872" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_waiting_taxonomy_repair_preserves_preceding_writer_and_lineage" time="1.747" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_retirement_before_waiting_writer_rejects_stale_reference[template]" time="1.716" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_retirement_before_waiting_writer_rejects_stale_reference[category]" time="1.552" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_writer_before_retirement_is_preserved_and_reassigned[template]" time="1.583" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_writer_before_retirement_is_preserved_and_reassigned[category]" time="1.456" /><testcase classname="tests.test_reviewed_aggregate_retirement_races" name="test_retirement_before_reviewed_repair[template-registration]" time="2.503" /><testcase classname="tests.test_reviewed_aggregate_retirement_races" name="test_retirement_before_reviewed_repair[template-abstract]" time="2.913" /><testcase classname="tests.test_reviewed_aggregate_retirement_races" name="test_retirement_before_reviewed_repair[category-registration]" time="2.853" /><testcase classname="tests.test_reviewed_aggregate_retirement_races" name="test_retirement_before_reviewed_repair[category-abstract]" time="2.978" /><testcase classname="tests.test_reviewed_aggregate_retirement_races" name="test_reviewed_repair_before_retirement[template-registration]" time="3.190" /><testcase classname="tests.test_reviewed_aggregate_retirement_races" name="test_reviewed_repair_before_retirement[template-abstract]" time="2.994" /><testcase classname="tests.test_reviewed_aggregate_retirement_races" name="test_reviewed_repair_before_retirement[category-registration]" time="3.238" /><testcase classname="tests.test_reviewed_aggregate_retirement_races" name="test_reviewed_repair_before_retirement[category-abstract]" time="2.896" /><testcase classname="tests.test_reviewed_template_retirement_races" name="test_retirement_precedes_reviewed_global_template_repair[template]" time="1.642" /><testcase classname="tests.test_reviewed_template_retirement_races" name="test_retirement_precedes_reviewed_global_template_repair[category]" time="1.777" /><testcase classname="tests.test_reviewed_template_retirement_races" name="test_reviewed_global_template_repair_precedes_retirement[template]" time="1.985" /><testcase classname="tests.test_reviewed_template_retirement_races" name="test_reviewed_global_template_repair_precedes_retirement[category]" time="1.874" /><testcase classname="tests.test_catalogue_checkpoint_concurrency" name="test_two_claimers_skip_uncommitted_checkpoint_claim" time="1.366" /><testcase classname="tests.test_catalogue_checkpoint_concurrency" name="test_parallel_duplicate_waits_then_cannot_consume_next_page" time="1.609" /><testcase classname="tests.test_catalogue_checkpoint_concurrency" name="test_platform_revocation_orders_against_page_checkpoint[False]" time="1.844" /><testcase classname="tests.test_catalogue_checkpoint_concurrency" name="test_platform_revocation_orders_against_page_checkpoint[True]" time="1.572" /><testcase classname="tests.test_catalogue_durable_pages" name="test_global_then_205_owned_categories_survive_missing_continuation_publish" time="4.623" /><testcase classname="tests.test_catalogue_durable_pages" name="test_checkpoint_audit_failure_rolls_back_flushed_page_and_cursor" time="2.631" /><testcase classname="tests.test_catalogue_durable_pages" name="test_lost_initial_message_reclaims_generation_and_rejects_old_message" time="1.149" /><testcase classname="tests.test_catalogue_durable_pages" name="test_legacy_dispatched_run_is_not_reported_complete" time="0.427" /><testcase classname="tests.test_catalogue_durable_pages" name="test_committed_platform_revocation_stops_page_execution" time="0.896" /><testcase classname="tests.test_catalogue_durable_pages" name="test_database_rejects_invalid_work_ownership_stage_and_completion[owner]" time="0.448" /><testcase classname="tests.test_catalogue_durable_pages" name="test_database_rejects_invalid_work_ownership_stage_and_completion[stage]" time="0.444" /><testcase classname="tests.test_catalogue_durable_pages" name="test_database_rejects_invalid_work_ownership_stage_and_completion[counter]" time="0.585" /><testcase classname="tests.test_catalogue_durable_pages" name="test_database_rejects_invalid_work_ownership_stage_and_completion[fake_completion]" time="0.555" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_stale_or_unversioned_fanout_cannot_overwrite_recovered_generation[start-None]" time="0.633" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_stale_or_unversioned_fanout_cannot_overwrite_recovered_generation[start-1]" time="0.618" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_stale_or_unversioned_fanout_cannot_overwrite_recovered_generation[complete-None]" time="0.673" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_stale_or_unversioned_fanout_cannot_overwrite_recovered_generation[complete-1]" time="0.636" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_stale_or_unversioned_fanout_cannot_overwrite_recovered_generation[fail-None]" time="0.781" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_stale_or_unversioned_fanout_cannot_overwrite_recovered_generation[fail-1]" time="0.682" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_expired_running_generation_failure_is_terminal_and_audited[actor_missing]" time="0.604" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_expired_running_generation_failure_is_terminal_and_audited[exhausted]" time="0.661" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_reclaim_audit_failure_rolls_back_generation_and_can_recover" time="0.685" /><testcase classname="tests.test_catalogue_dispatch_generation" name="test_independent_recovery_claimers_do_not_duplicate_running_reclaim" time="1.042" /><testcase classname="tests.test_catalogue_dispatch_messages" name="test_untracked_legacy_tasks_cannot_mutate_or_publish[tenant_page]" time="0.015" /><testcase classname="tests.test_catalogue_dispatch_messages" name="test_untracked_legacy_tasks_cannot_mutate_or_publish[global_categories]" time="0.004" /><testcase classname="tests.test_catalogue_dispatch_messages" name="test_untracked_legacy_tasks_cannot_mutate_or_publish[global_templates]" time="0.004" /><testcase classname="tests.test_catalogue_dispatch_messages" name="test_untracked_legacy_tasks_cannot_mutate_or_publish[fanout]" time="0.005" /><testcase classname="tests.test_catalogue_dispatch_messages" name="test_untracked_legacy_tasks_cannot_mutate_or_publish[fanout_cursor]" time="0.004" /><testcase classname="tests.test_catalogue_dispatch_messages" name="test_recovery_publishes_committed_generation_and_keeps_broker_failure_pending" time="0.004" /><testcase classname="tests.test_catalogue_dispatch_messages" name="test_next_fanout_page_preserves_generation_and_one_hundred_tenant_bound" time="0.004" /><testcase classname="tests.test_catalogue_dispatch_messages" name="test_stale_fanout_stops_before_discovery_or_publishing" time="0.003" /><testcase classname="tests.test_catalogue_worker_context" name="test_reconciliation_pages_over_one_hundred_without_loss_or_duplicate_evidence" time="1.632" /><testcase classname="tests.test_catalogue_worker_context" name="test_committed_dispatch_recovers_after_lease_and_preserves_context" time="1.412" /><testcase classname="tests.test_catalogue_worker_context" name="test_reconciliation_uses_target_and_restores_inherited_context[platform]" time="1.073" /><testcase classname="tests.test_catalogue_worker_context" name="test_reconciliation_uses_target_and_restores_inherited_context[customer]" time="1.074" /><testcase classname="tests.test_catalogue_worker_context" name="test_global_taxonomy_duplicate_count_includes_global_rows" time="0.707" /><testcase classname="tests.test_catalogue_worker_context" name="test_started_fanout_crash_is_reclaimable_after_its_lease" time="0.515" /><testcase classname="tests.test_catalogue_worker_context" name="test_started_fanout_holds_a_lease_covering_its_hard_timeout" time="0.588" /><testcase classname="tests.test_catalogue_worker_retirement_races" name="test_retirement_before_global_normalisation_worker[template]" time="1.966" /><testcase classname="tests.test_catalogue_worker_retirement_races" name="test_retirement_before_global_normalisation_worker[category]" time="2.134" /><testcase classname="tests.test_catalogue_worker_retirement_races" name="test_global_normalisation_worker_before_retirement[template]" time="2.083" /><testcase classname="tests.test_catalogue_worker_retirement_races" name="test_global_normalisation_worker_before_retirement[category]" time="1.641" /><testcase classname="tests.test_owned_category_worker_retirement_races" name="test_owned_category_projection_retirement[False-template-copy]" time="4.844" /><testcase classname="tests.test_owned_category_worker_retirement_races" name="test_owned_category_projection_retirement[False-category-copy]" time="5.644" /><testcase classname="tests.test_owned_category_worker_retirement_races" name="test_owned_category_projection_retirement[True-template-copy]" time="4.648" /><testcase classname="tests.test_owned_category_worker_retirement_races" name="test_owned_category_projection_retirement[True-category-copy]" time="4.895" /><testcase classname="tests.test_owned_aggregate_worker_retirement_races" name="test_owned_aggregate_worker_retirement_ordering[False-template-registration]" time="2.912" /><testcase classname="tests.test_owned_aggregate_worker_retirement_races" name="test_owned_aggregate_worker_retirement_ordering[False-template-abstract]" time="3.761" /><testcase classname="tests.test_owned_aggregate_worker_retirement_races" name="test_owned_aggregate_worker_retirement_ordering[False-category-registration]" time="2.834" /><testcase classname="tests.test_owned_aggregate_worker_retirement_races" name="test_owned_aggregate_worker_retirement_ordering[False-category-abstract]" time="2.693" /><testcase classname="tests.test_owned_aggregate_worker_retirement_races" name="test_owned_aggregate_worker_retirement_ordering[True-template-registration]" time="2.669" /><testcase classname="tests.test_owned_aggregate_worker_retirement_races" name="test_owned_aggregate_worker_retirement_ordering[True-template-abstract]" time="3.365" /><testcase classname="tests.test_owned_aggregate_worker_retirement_races" name="test_owned_aggregate_worker_retirement_ordering[True-category-registration]" time="2.546" /><testcase classname="tests.test_owned_aggregate_worker_retirement_races" name="test_owned_aggregate_worker_retirement_ordering[True-category-abstract]" time="2.751" /><testcase classname="tests.test_owned_template_worker_retirement_races" name="test_owned_template_worker_retirement[False-template-ORGANIZATION-copy]" time="2.315" /><testcase classname="tests.test_owned_template_worker_retirement_races" name="test_owned_template_worker_retirement[False-template-EVENT-copy]" time="4.443" /><testcase classname="tests.test_owned_template_worker_retirement_races" name="test_owned_template_worker_retirement[False-category-ORGANIZATION-copy]" time="3.280" /><testcase classname="tests.test_owned_template_worker_retirement_races" name="test_owned_template_worker_retirement[False-category-EVENT-copy]" time="5.268" /><testcase classname="tests.test_owned_template_worker_retirement_races" name="test_owned_template_worker_retirement[True-template-ORGANIZATION-copy]" time="2.699" /><testcase classname="tests.test_owned_template_worker_retirement_races" name="test_owned_template_worker_retirement[True-template-EVENT-copy]" time="4.209" /><testcase classname="tests.test_owned_template_worker_retirement_races" name="test_owned_template_worker_retirement[True-category-ORGANIZATION-copy]" time="2.580" /><testcase classname="tests.test_owned_template_worker_retirement_races" name="test_owned_template_worker_retirement[True-category-EVENT-copy]" time="4.401" /><testcase classname="tests.test_catalogue_reference_discovery" name="test_reference_discovery_is_bounded_and_requires_platform_identity_and_context" time="0.490" /><testcase classname="tests.test_category_worker_retirement_races" name="test_category_projection_worker_retirement[False-template]" time="2.359" /><testcase classname="tests.test_category_worker_retirement_races" name="test_category_projection_worker_retirement[False-category]" time="2.975" /><testcase classname="tests.test_category_worker_retirement_races" name="test_category_projection_worker_retirement[True-template]" time="2.706" /><testcase classname="tests.test_category_worker_retirement_races" name="test_category_projection_worker_retirement[True-category]" time="1.969" /><testcase classname="tests.test_manual_catalogue_page_retirement_races" name="test_manual_catalogue_page_retirement[False-template]" time="2.240"><failure message="AssertionError: assert {'blocked': 0...ormalized': 0} == {'blocked': 0...ormalized': 0}&#10;  &#10;  Omitting 3 identical items, use -vv to show&#10;  Differing items:&#10;  {'checked': 3} != {'checked': 2}&#10;  Use -v to get more diff">committed_session_factory = async_sessionmaker(class_='AsyncSession', autocommit=False, bind=&lt;sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x0000018ACC9E8950&gt;, autoflush=False, expire_on_commit=False)
+race_fixture = {'actor_id': UUID('d7eabd7b-39a6-4453-80b8-9a04c6ab5781'), 'category_key': 'race-0-1ab8edd9', 'platform_id': UUID('083fe8c2-0a04-4311-8e66-0538101d6022'), 'replacement_category': UUID('f50024cd-5952-4da9-8cfe-cabbd671e5ca'), ...}
+kind = 'template', page_first = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["template", "category"])
+    @pytest.mark.parametrize("page_first", [False, True])
+    async def test_manual_catalogue_page_retirement(committed_session_factory, race_fixture, kind, page_first):
+        data, task = {**race_fixture, "page_key": f"manual-page-{uuid.uuid4()}"}, None
+        await prepare(committed_session_factory, data)
+        async with committed_session_factory() as census:
+            async with TenantContextGuard.scoped(census, data["platform_id"]):
+                eligible = set((await census.scalars(select(FormTemplate.id).where(
+                    FormTemplate.deleted_at.is_(None), FormTemplate.scope_type.in_(("GLOBAL", "ORGANIZATION")))
+                    .execution_options(shared_form_catalogue=True))).all())
+                assert {data["source_template"], data["replacement_template"]} &lt;= eligible
+                assert len(eligible) &lt;= 50
+        try:
+            async with committed_session_factory() as retiring, committed_session_factory() as outer:
+                if not page_first:
+                    async with TenantContextGuard.scoped(retiring, data["platform_id"]):
+                        actor = await retiring.get(User, data["actor_id"])
+                        await (lock_template_retirement(retiring) if kind == "template" else lock_category_retirement(retiring))
+                        pid = await outer.scalar(text("SELECT pg_backend_pid()"))
+                        task = asyncio.create_task(page(outer, data))
+                        await wait_for_blocker(retiring, pid, task)
+                        assert (await retire(retiring, actor, data, kind))["status"] == "RETIRED"
+                        result = await asyncio.wait_for(task, 15)
+                else:
+                    connection = await outer.connection()
+                    async with AsyncSession(bind=connection, expire_on_commit=False,
+                            join_transaction_mode="create_savepoint") as normalizing:
+                        result = await page(normalizing, data)
+                        pid = await retiring.scalar(text("SELECT pg_backend_pid()"))
+    
+                        async def retirement():
+                            async with TenantContextGuard.scoped(retiring, data["platform_id"]):
+                                actor = await retiring.get(User, data["actor_id"])
+                                if kind == "category":
+                                    return await retire(retiring, actor, data, kind)
+                                return await retire_global_template(retiring, actor=actor,
+                                    template_id=data["source_template"], replacement_template_id=data["replacement_template"],
+                                    if_match='"2"', idempotency_key=f"manual-page-retire-{uuid.uuid4()}",
+                                    reason="Retire the loaded normalized catalogue version")
+    
+                        task = asyncio.create_task(retirement())
+                        await wait_for_blocker(normalizing, pid, task)
+                        await normalizing.close()
+                        await outer.commit()
+                        assert (await asyncio.wait_for(task, 15))["status"] == "RETIRED"
+            assert result == {"checked": len(eligible), "normalized": 1, "blocked": 0, "next_cursor": None}
+            async with committed_session_factory() as db:
+                receipt = await db.scalar(select(IdempotencyRecord).where(IdempotencyRecord.idempotency_key == data["page_key"]))
+                assert receipt.status == "COMPLETED" and receipt.actor_id == data["actor_id"]
+                audits = list((await db.scalars(select(AuditLog).where(AuditLog.correlation_id == receipt.id))).all())
+                assert len(audits) == 1 and audits[0].action_type == "FORM_TEMPLATE_RECONCILE_PAGE"
+                assert audits[0].row_hash == compute_audit_hash(audits[0])
+                # Committed replay must not normalize or audit again.
+                assert await page(db, data) == result
+                assert len((await db.scalars(select(AuditLog).where(AuditLog.correlation_id == receipt.id))).all()) == 1
+                source = await db.get(FormTemplate, data["source_template"], populate_existing=True)
+                assert source.version == 3 and source.is_active == (kind == "category")
+                assert source.fields[0]["is_active"] is True
+                if kind == "category":
+                    assert source.category_id == data["replacement_category"]
+                    parent = await db.get(FormCategory, source.category_id)
+                    assert parent.is_active
+                data["page_key"] = f"manual-revalidate-{uuid.uuid4()}"
+                again = await page(db, data)
+&gt;               assert again == {"checked": len(eligible), "normalized": 0, "blocked": 0, "next_cursor": None}
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               AssertionError: assert {'blocked': 0...ormalized': 0} == {'blocked': 0...ormalized': 0}
+E                 
+E                 Omitting 3 identical items, use -vv to show
+E                 Differing items:
+E                 {'checked': 3} != {'checked': 2}
+E                 Use -v to get more diff
+
+tests\test_manual_catalogue_page_retirement_races.py:93: AssertionError</failure></testcase><testcase classname="tests.test_manual_catalogue_page_retirement_races" name="test_manual_catalogue_page_retirement[False-category]" time="2.558"><failure message="AssertionError: assert {'blocked': 0...ormalized': 0} == {'blocked': 0...ormalized': 0}&#10;  &#10;  Omitting 3 identical items, use -vv to show&#10;  Differing items:&#10;  {'checked': 3} != {'checked': 2}&#10;  Use -v to get more diff">committed_session_factory = async_sessionmaker(class_='AsyncSession', autocommit=False, bind=&lt;sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x0000018ACC9E8950&gt;, autoflush=False, expire_on_commit=False)
+race_fixture = {'actor_id': UUID('76f361c5-2ea4-4c27-8162-a1014620acbf'), 'category_key': 'race-0-0060876c', 'platform_id': UUID('f6ca4128-a5a1-4fb7-9993-6f002b4223cc'), 'replacement_category': UUID('f7907dbf-23af-4c30-9ec8-39eb30642c5d'), ...}
+kind = 'category', page_first = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["template", "category"])
+    @pytest.mark.parametrize("page_first", [False, True])
+    async def test_manual_catalogue_page_retirement(committed_session_factory, race_fixture, kind, page_first):
+        data, task = {**race_fixture, "page_key": f"manual-page-{uuid.uuid4()}"}, None
+        await prepare(committed_session_factory, data)
+        async with committed_session_factory() as census:
+            async with TenantContextGuard.scoped(census, data["platform_id"]):
+                eligible = set((await census.scalars(select(FormTemplate.id).where(
+                    FormTemplate.deleted_at.is_(None), FormTemplate.scope_type.in_(("GLOBAL", "ORGANIZATION")))
+                    .execution_options(shared_form_catalogue=True))).all())
+                assert {data["source_template"], data["replacement_template"]} &lt;= eligible
+                assert len(eligible) &lt;= 50
+        try:
+            async with committed_session_factory() as retiring, committed_session_factory() as outer:
+                if not page_first:
+                    async with TenantContextGuard.scoped(retiring, data["platform_id"]):
+                        actor = await retiring.get(User, data["actor_id"])
+                        await (lock_template_retirement(retiring) if kind == "template" else lock_category_retirement(retiring))
+                        pid = await outer.scalar(text("SELECT pg_backend_pid()"))
+                        task = asyncio.create_task(page(outer, data))
+                        await wait_for_blocker(retiring, pid, task)
+                        assert (await retire(retiring, actor, data, kind))["status"] == "RETIRED"
+                        result = await asyncio.wait_for(task, 15)
+                else:
+                    connection = await outer.connection()
+                    async with AsyncSession(bind=connection, expire_on_commit=False,
+                            join_transaction_mode="create_savepoint") as normalizing:
+                        result = await page(normalizing, data)
+                        pid = await retiring.scalar(text("SELECT pg_backend_pid()"))
+    
+                        async def retirement():
+                            async with TenantContextGuard.scoped(retiring, data["platform_id"]):
+                                actor = await retiring.get(User, data["actor_id"])
+                                if kind == "category":
+                                    return await retire(retiring, actor, data, kind)
+                                return await retire_global_template(retiring, actor=actor,
+                                    template_id=data["source_template"], replacement_template_id=data["replacement_template"],
+                                    if_match='"2"', idempotency_key=f"manual-page-retire-{uuid.uuid4()}",
+                                    reason="Retire the loaded normalized catalogue version")
+    
+                        task = asyncio.create_task(retirement())
+                        await wait_for_blocker(normalizing, pid, task)
+                        await normalizing.close()
+                        await outer.commit()
+                        assert (await asyncio.wait_for(task, 15))["status"] == "RETIRED"
+            assert result == {"checked": len(eligible), "normalized": 1, "blocked": 0, "next_cursor": None}
+            async with committed_session_factory() as db:
+                receipt = await db.scalar(select(IdempotencyRecord).where(IdempotencyRecord.idempotency_key == data["page_key"]))
+                assert receipt.status == "COMPLETED" and receipt.actor_id == data["actor_id"]
+                audits = list((await db.scalars(select(AuditLog).where(AuditLog.correlation_id == receipt.id))).all())
+                assert len(audits) == 1 and audits[0].action_type == "FORM_TEMPLATE_RECONCILE_PAGE"
+                assert audits[0].row_hash == compute_audit_hash(audits[0])
+                # Committed replay must not normalize or audit again.
+                assert await page(db, data) == result
+                assert len((await db.scalars(select(AuditLog).where(AuditLog.correlation_id == receipt.id))).all()) == 1
+                source = await db.get(FormTemplate, data["source_template"], populate_existing=True)
+                assert source.version == 3 and source.is_active == (kind == "category")
+                assert source.fields[0]["is_active"] is True
+                if kind == "category":
+                    assert source.category_id == data["replacement_category"]
+                    parent = await db.get(FormCategory, source.category_id)
+                    assert parent.is_active
+                data["page_key"] = f"manual-revalidate-{uuid.uuid4()}"
+                again = await page(db, data)
+&gt;               assert again == {"checked": len(eligible), "normalized": 0, "blocked": 0, "next_cursor": None}
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               AssertionError: assert {'blocked': 0...ormalized': 0} == {'blocked': 0...ormalized': 0}
+E                 
+E                 Omitting 3 identical items, use -vv to show
+E                 Differing items:
+E                 {'checked': 3} != {'checked': 2}
+E                 Use -v to get more diff
+
+tests\test_manual_catalogue_page_retirement_races.py:93: AssertionError</failure></testcase><testcase classname="tests.test_manual_catalogue_page_retirement_races" name="test_manual_catalogue_page_retirement[True-template]" time="2.139"><failure message="AssertionError: assert {'blocked': 0...ormalized': 0} == {'blocked': 0...ormalized': 0}&#10;  &#10;  Omitting 3 identical items, use -vv to show&#10;  Differing items:&#10;  {'checked': 3} != {'checked': 2}&#10;  Use -v to get more diff">committed_session_factory = async_sessionmaker(class_='AsyncSession', autocommit=False, bind=&lt;sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x0000018ACC9E8950&gt;, autoflush=False, expire_on_commit=False)
+race_fixture = {'actor_id': UUID('ac3fa67d-f2dd-4859-9d94-a47d5a790d67'), 'category_key': 'race-0-cbb3486b', 'platform_id': UUID('2d755431-c470-4565-a8cd-5ee0dc9e3dc5'), 'replacement_category': UUID('09e630b0-c909-4688-8206-7ff4c2f8d6a2'), ...}
+kind = 'template', page_first = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["template", "category"])
+    @pytest.mark.parametrize("page_first", [False, True])
+    async def test_manual_catalogue_page_retirement(committed_session_factory, race_fixture, kind, page_first):
+        data, task = {**race_fixture, "page_key": f"manual-page-{uuid.uuid4()}"}, None
+        await prepare(committed_session_factory, data)
+        async with committed_session_factory() as census:
+            async with TenantContextGuard.scoped(census, data["platform_id"]):
+                eligible = set((await census.scalars(select(FormTemplate.id).where(
+                    FormTemplate.deleted_at.is_(None), FormTemplate.scope_type.in_(("GLOBAL", "ORGANIZATION")))
+                    .execution_options(shared_form_catalogue=True))).all())
+                assert {data["source_template"], data["replacement_template"]} &lt;= eligible
+                assert len(eligible) &lt;= 50
+        try:
+            async with committed_session_factory() as retiring, committed_session_factory() as outer:
+                if not page_first:
+                    async with TenantContextGuard.scoped(retiring, data["platform_id"]):
+                        actor = await retiring.get(User, data["actor_id"])
+                        await (lock_template_retirement(retiring) if kind == "template" else lock_category_retirement(retiring))
+                        pid = await outer.scalar(text("SELECT pg_backend_pid()"))
+                        task = asyncio.create_task(page(outer, data))
+                        await wait_for_blocker(retiring, pid, task)
+                        assert (await retire(retiring, actor, data, kind))["status"] == "RETIRED"
+                        result = await asyncio.wait_for(task, 15)
+                else:
+                    connection = await outer.connection()
+                    async with AsyncSession(bind=connection, expire_on_commit=False,
+                            join_transaction_mode="create_savepoint") as normalizing:
+                        result = await page(normalizing, data)
+                        pid = await retiring.scalar(text("SELECT pg_backend_pid()"))
+    
+                        async def retirement():
+                            async with TenantContextGuard.scoped(retiring, data["platform_id"]):
+                                actor = await retiring.get(User, data["actor_id"])
+                                if kind == "category":
+                                    return await retire(retiring, actor, data, kind)
+                                return await retire_global_template(retiring, actor=actor,
+                                    template_id=data["source_template"], replacement_template_id=data["replacement_template"],
+                                    if_match='"2"', idempotency_key=f"manual-page-retire-{uuid.uuid4()}",
+                                    reason="Retire the loaded normalized catalogue version")
+    
+                        task = asyncio.create_task(retirement())
+                        await wait_for_blocker(normalizing, pid, task)
+                        await normalizing.close()
+                        await outer.commit()
+                        assert (await asyncio.wait_for(task, 15))["status"] == "RETIRED"
+            assert result == {"checked": len(eligible), "normalized": 1, "blocked": 0, "next_cursor": None}
+            async with committed_session_factory() as db:
+                receipt = await db.scalar(select(IdempotencyRecord).where(IdempotencyRecord.idempotency_key == data["page_key"]))
+                assert receipt.status == "COMPLETED" and receipt.actor_id == data["actor_id"]
+                audits = list((await db.scalars(select(AuditLog).where(AuditLog.correlation_id == receipt.id))).all())
+                assert len(audits) == 1 and audits[0].action_type == "FORM_TEMPLATE_RECONCILE_PAGE"
+                assert audits[0].row_hash == compute_audit_hash(audits[0])
+                # Committed replay must not normalize or audit again.
+                assert await page(db, data) == result
+                assert len((await db.scalars(select(AuditLog).where(AuditLog.correlation_id == receipt.id))).all()) == 1
+                source = await db.get(FormTemplate, data["source_template"], populate_existing=True)
+                assert source.version == 3 and source.is_active == (kind == "category")
+                assert source.fields[0]["is_active"] is True
+                if kind == "category":
+                    assert source.category_id == data["replacement_category"]
+                    parent = await db.get(FormCategory, source.category_id)
+                    assert parent.is_active
+                data["page_key"] = f"manual-revalidate-{uuid.uuid4()}"
+                again = await page(db, data)
+&gt;               assert again == {"checked": len(eligible), "normalized": 0, "blocked": 0, "next_cursor": None}
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               AssertionError: assert {'blocked': 0...ormalized': 0} == {'blocked': 0...ormalized': 0}
+E                 
+E                 Omitting 3 identical items, use -vv to show
+E                 Differing items:
+E                 {'checked': 3} != {'checked': 2}
+E                 Use -v to get more diff
+
+tests\test_manual_catalogue_page_retirement_races.py:93: AssertionError</failure></testcase><testcase classname="tests.test_manual_catalogue_page_retirement_races" name="test_manual_catalogue_page_retirement[True-category]" time="2.089"><failure message="AssertionError: assert {'blocked': 0...ormalized': 0} == {'blocked': 0...ormalized': 0}&#10;  &#10;  Omitting 3 identical items, use -vv to show&#10;  Differing items:&#10;  {'checked': 3} != {'checked': 2}&#10;  Use -v to get more diff">committed_session_factory = async_sessionmaker(class_='AsyncSession', autocommit=False, bind=&lt;sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x0000018ACC9E8950&gt;, autoflush=False, expire_on_commit=False)
+race_fixture = {'actor_id': UUID('0d79d488-6ccb-4061-ba96-7da7a6bd3d94'), 'category_key': 'race-0-35fc5a07', 'platform_id': UUID('81728d13-d8b3-4da0-a9a8-16feec028b70'), 'replacement_category': UUID('e9589169-b15c-4c5f-89b8-1d075713a6e8'), ...}
+kind = 'category', page_first = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["template", "category"])
+    @pytest.mark.parametrize("page_first", [False, True])
+    async def test_manual_catalogue_page_retirement(committed_session_factory, race_fixture, kind, page_first):
+        data, task = {**race_fixture, "page_key": f"manual-page-{uuid.uuid4()}"}, None
+        await prepare(committed_session_factory, data)
+        async with committed_session_factory() as census:
+            async with TenantContextGuard.scoped(census, data["platform_id"]):
+                eligible = set((await census.scalars(select(FormTemplate.id).where(
+                    FormTemplate.deleted_at.is_(None), FormTemplate.scope_type.in_(("GLOBAL", "ORGANIZATION")))
+                    .execution_options(shared_form_catalogue=True))).all())
+                assert {data["source_template"], data["replacement_template"]} &lt;= eligible
+                assert len(eligible) &lt;= 50
+        try:
+            async with committed_session_factory() as retiring, committed_session_factory() as outer:
+                if not page_first:
+                    async with TenantContextGuard.scoped(retiring, data["platform_id"]):
+                        actor = await retiring.get(User, data["actor_id"])
+                        await (lock_template_retirement(retiring) if kind == "template" else lock_category_retirement(retiring))
+                        pid = await outer.scalar(text("SELECT pg_backend_pid()"))
+                        task = asyncio.create_task(page(outer, data))
+                        await wait_for_blocker(retiring, pid, task)
+                        assert (await retire(retiring, actor, data, kind))["status"] == "RETIRED"
+                        result = await asyncio.wait_for(task, 15)
+                else:
+                    connection = await outer.connection()
+                    async with AsyncSession(bind=connection, expire_on_commit=False,
+                            join_transaction_mode="create_savepoint") as normalizing:
+                        result = await page(normalizing, data)
+                        pid = await retiring.scalar(text("SELECT pg_backend_pid()"))
+    
+                        async def retirement():
+                            async with TenantContextGuard.scoped(retiring, data["platform_id"]):
+                                actor = await retiring.get(User, data["actor_id"])
+                                if kind == "category":
+                                    return await retire(retiring, actor, data, kind)
+                                return await retire_global_template(retiring, actor=actor,
+                                    template_id=data["source_template"], replacement_template_id=data["replacement_template"],
+                                    if_match='"2"', idempotency_key=f"manual-page-retire-{uuid.uuid4()}",
+                                    reason="Retire the loaded normalized catalogue version")
+    
+                        task = asyncio.create_task(retirement())
+                        await wait_for_blocker(normalizing, pid, task)
+                        await normalizing.close()
+                        await outer.commit()
+                        assert (await asyncio.wait_for(task, 15))["status"] == "RETIRED"
+            assert result == {"checked": len(eligible), "normalized": 1, "blocked": 0, "next_cursor": None}
+            async with committed_session_factory() as db:
+                receipt = await db.scalar(select(IdempotencyRecord).where(IdempotencyRecord.idempotency_key == data["page_key"]))
+                assert receipt.status == "COMPLETED" and receipt.actor_id == data["actor_id"]
+                audits = list((await db.scalars(select(AuditLog).where(AuditLog.correlation_id == receipt.id))).all())
+                assert len(audits) == 1 and audits[0].action_type == "FORM_TEMPLATE_RECONCILE_PAGE"
+                assert audits[0].row_hash == compute_audit_hash(audits[0])
+                # Committed replay must not normalize or audit again.
+                assert await page(db, data) == result
+                assert len((await db.scalars(select(AuditLog).where(AuditLog.correlation_id == receipt.id))).all()) == 1
+                source = await db.get(FormTemplate, data["source_template"], populate_existing=True)
+                assert source.version == 3 and source.is_active == (kind == "category")
+                assert source.fields[0]["is_active"] is True
+                if kind == "category":
+                    assert source.category_id == data["replacement_category"]
+                    parent = await db.get(FormCategory, source.category_id)
+                    assert parent.is_active
+                data["page_key"] = f"manual-revalidate-{uuid.uuid4()}"
+                again = await page(db, data)
+&gt;               assert again == {"checked": len(eligible), "normalized": 0, "blocked": 0, "next_cursor": None}
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               AssertionError: assert {'blocked': 0...ormalized': 0} == {'blocked': 0...ormalized': 0}
+E                 
+E                 Omitting 3 identical items, use -vv to show
+E                 Differing items:
+E                 {'checked': 3} != {'checked': 2}
+E                 Use -v to get more diff
+
+tests\test_manual_catalogue_page_retirement_races.py:93: AssertionError</failure></testcase><testcase classname="tests.test_category_key_scope" name="test_category_key_updates_are_owned_and_preserve_blocked_lineage[False-worker]" time="1.026" /><testcase classname="tests.test_category_key_scope" name="test_category_key_updates_are_owned_and_preserve_blocked_lineage[False-reviewed_repair]" time="0.999" /><testcase classname="tests.test_category_key_scope" name="test_category_key_updates_are_owned_and_preserve_blocked_lineage[True-worker]" time="1.328" /><testcase classname="tests.test_category_key_scope" name="test_category_key_updates_are_owned_and_preserve_blocked_lineage[True-reviewed_repair]" time="1.093" /><testcase classname="tests.test_category_key_scope" name="test_owned_category_projection_requires_current_owner_context" time="0.536" /><testcase classname="tests.test_category_key_scope" name="test_category_repair_does_not_bypass_lifecycle[retired_global_category]" time="0.638" /><testcase classname="tests.test_category_key_scope" name="test_category_repair_does_not_bypass_lifecycle[inactive_owner]" time="1.099" /><testcase classname="tests.test_category_key_scope" name="test_existing_current_blockers_remain_counted_on_reconciliation_retry[FORM_CATEGORY]" time="1.579" /><testcase classname="tests.test_category_key_scope" name="test_existing_current_blockers_remain_counted_on_reconciliation_retry[FORM_TEMPLATE]" time="1.267" /><testcase classname="tests.test_category_key_scope" name="test_existing_current_blockers_remain_counted_on_reconciliation_retry[REGISTRATION_FORM]" time="1.156" /><testcase classname="tests.test_category_key_scope" name="test_existing_current_blockers_remain_counted_on_reconciliation_retry[ABSTRACT_FORM]" time="1.184" /><testcase classname="tests.test_category_key_scope" name="test_existing_current_blockers_remain_counted_on_reconciliation_retry[GLOBAL_CATEGORY]" time="1.302" /><testcase classname="tests.test_category_key_scope" name="test_existing_current_blockers_remain_counted_on_reconciliation_retry[GLOBAL_TEMPLATE]" time="3.190" /></testsuite></testsuites>

@@ -1,0 +1,18 @@
+{
+  "status": "FAILED",
+  "run_id": "0d02253bd328433587a7035199f2f4bb",
+  "database": "category_a_restore_20261020_0d02253bd328",
+  "environment": "local_fresh_rehearsal",
+  "applied_history_rewritten": false,
+  "applications_workers_providers": "NOT_STARTED",
+  "production_acceptance": "NOT_RUN",
+  "checks": [
+    "fresh_seed_preflight_archives_only_explicit_new_fixture_ids",
+    "fresh_history_traversed_to_3500"
+  ],
+  "fresh_agenda_fixture_decisions": 11,
+  "agenda_mapping_sha256": "22897f36f8a1870c749362bb67fc170e8ab6d637c96874fb52731aa61eccd3d7",
+  "error_type": "IntegrityError",
+  "database_quarantined": true,
+  "completed_at": "2026-10-20T16:58:18.323471+00:00"
+}

@@ -64,14 +64,14 @@ def test_consumption_query_requires_both_tenant_and_grant_scope():
     assert "grant_consumptions.grant_id" in compiled
 
 
-def test_active_subscription_query_is_projected_tenant_scoped_and_bounded():
+def test_active_contract_query_is_projected_tenant_scoped_and_bounded():
     db = CaptureDb()
     service = BillingActivationQueryService(db)
     organization_id = uuid.uuid4()
-    asyncio.run(service.list_active_subscriptions(organization_id, limit=20))
+    asyncio.run(service.list_active_contracts(organization_id, limit=20))
     compiled = str(db.statement.compile(compile_kwargs={"literal_binds": False}))
-    assert "commerce.organization_subscriptions.organization_id" in compiled
-    assert "commerce.organization_subscriptions.plan_id" in compiled
+    assert "commerce.billing_accounts.owner_organization_id" in compiled
+    assert "commerce.plan_contracts.status" in compiled
     assert db.statement._limit_clause.value == 20
 
 

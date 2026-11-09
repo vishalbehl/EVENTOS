@@ -1,0 +1,12 @@
+{
+  "purpose": "isolated_delegated_runtime_acceptance",
+  "database": "category_a_restore_20261020_e9f5cc0038c5",
+  "organization_id": "ff02b672-3dc1-4f6a-bc57-6367cb117d9d",
+  "actor_id": "9440fcd7-0728-428d-ae05-a8e8cb7c14a3",
+  "event_id": "de9e4252-cd86-4e7f-8319-72012b3a5850",
+  "source_ids": {
+    "REGISTRATION": "0ef9ad42-4b5a-46ab-a62d-efc8f25c85d5",
+    "SURVEY": "fb4b7d30-a386-47fb-ac87-47bf1c73bf71",
+    "SPEAKER_INTAKE": "d6ae701a-f2a2-471f-8550-00920200ea94"
+  }
+}

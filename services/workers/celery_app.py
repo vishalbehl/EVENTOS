@@ -14,12 +14,22 @@
 
 from celery import Celery, Task
 from celery.utils.log import get_task_logger
-from celery.signals import task_prerun, task_success, task_failure, task_retry
+from celery.signals import task_prerun, task_success, task_failure, task_retry, worker_init
 from kombu import Exchange, Queue
 
 from workers.config import settings
 from workers.lib.dead_letter import record_dead_letter, sanitize_failure_text
 from workers.task_policy import legacy_queue_for, policy_for_task, task_annotations
+
+
+@worker_init.connect
+def verify_worker_database_role(**_kwargs):
+    if settings.REQUIRE_RLS_SAFE_RUNTIME_ROLE:
+        from app.core.database_security import enforce_runtime_database_login
+        try:
+            enforce_runtime_database_login(settings.DATABASE_URL_SYNC)
+        except Exception:
+            raise SystemExit("Legacy worker database security admission failed") from None
 
 # ── App instance ──────────────────────────────────────────────
 class PolicyTask(Task):

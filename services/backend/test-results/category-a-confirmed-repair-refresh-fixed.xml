@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="8" failures="0" errors="0" time="3.3605398">
+    <testsuite name="test/reviewed-blueprint-correction.test.tsx" timestamp="2026-10-17T14:12:56.669Z" hostname="Vishal" tests="8" failures="0" errors="0" skipped="0" time="3.3605398">
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; preserves a selected category when a background refresh replaces its loaded page" time="1.3242327">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; sends the loaded version, selected category and reviewed document; keeps a failed draft" time="0.419417">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; refuses malformed reviewed JSON without issuing a mutation" time="0.2471951">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; requires explicit invalid-lineage confirmation and retains it after an error" time="0.3194241">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; drops the correction draft when identity context changes" time="0.1820753">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; does not restore an old blocked version from a refresh after confirmed repair" time="0.217589">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; keeps the draft when a successful HTTP result identifies a different record" time="0.242007">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; does not hide a newer blocker after a confirmed older repair" time="0.3886361">
+        </testcase>
+    </testsuite>
+</testsuites>

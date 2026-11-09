@@ -37,7 +37,13 @@ def validate_file_signature(data: bytes, mime_type: str) -> None:
     """Reject objects whose leading bytes contradict their declared type."""
     signatures = {
         "application/pdf": data.startswith(b"%PDF-"),
+        "image/jpeg": data.startswith(b"\xff\xd8\xff"),
+        "image/png": data.startswith(b"\x89PNG\r\n\x1a\n"),
+        "image/gif": data.startswith((b"GIF87a", b"GIF89a")),
+        "image/webp": len(data) >= 12 and data.startswith(b"RIFF") and data[8:12] == b"WEBP",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation": data.startswith(b"PK\x03\x04"),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": data.startswith(b"PK\x03\x04"),
+        "application/msword": data.startswith(b"\xd0\xcf\x11\xe0"),
         "application/vnd.ms-powerpoint": data.startswith(b"\xd0\xcf\x11\xe0"),
         "application/vnd.apple.keynote": data.startswith(b"PK\x03\x04"),
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": data.startswith(b"PK\x03\x04"),

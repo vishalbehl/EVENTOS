@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="6" skipped="0" tests="6" time="32.924" timestamp="2026-10-20T22:35:15.155371+05:30" hostname="Vishal"><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[member-id]" time="24.853"><failure message="AttributeError: property 'request_organization_id' of 'User' object has no setter">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001BB72156270&gt;
+organization = &lt;Organization id=3e5a9d7c-a004-4446-961a-8baa62433161 slug=test-org-66eda818&gt;
+organizer = &lt;User id=083af848-218b-4152-9c4c-c86b3d1fe09f email=organizer-0b469b@test.com role=organiser&gt;
+identifier = 'id', restriction = 'member'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("identifier", ["id", "slug"])
+    @pytest.mark.parametrize("restriction", ["member", "unentitled_owner"])
+    async def test_global_template_detail_requires_same_action_as_list(db, organization, organizer,
+            identifier, restriction):
+        actor = organizer
+        if restriction == "member":
+            actor = User(organization_id=organization.id, email=f"catalogue-member-{uuid.uuid4().hex}@example.test",
+                first_name="Catalogue", last_name="Member", role="organiser", is_active=True)
+            db.add(actor)
+            await db.flush()
+            db.add(UserOrganizationMembership(organization_id=organization.id, user_id=actor.id,
+                org_role="member", accepted_at=datetime.now(timezone.utc), is_active=True))
+        source = FormTemplate(name="Shared catalogue admission fixture", slug=f"route-catalogue-{uuid.uuid4().hex}",
+            scope_type="GLOBAL", category_key="registration", fields=[], settings={})
+        db.add(source)
+        await db.commit()
+&gt;       actor.request_organization_id = organization.id
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: property 'request_organization_id' of 'User' object has no setter
+
+tests\test_catalogue_customer_route_admission.py:40: AttributeError</failure></testcase><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[member-slug]" time="0.588"><failure message="AttributeError: property 'request_organization_id' of 'User' object has no setter">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001BB72BA6E90&gt;
+organization = &lt;Organization id=fd06cb65-06bd-4e2e-8bcd-5bef62059116 slug=test-org-b359078f&gt;
+organizer = &lt;User id=06dc3b8d-d6bc-4767-99ec-3a9c54b0513d email=organizer-29a186@test.com role=organiser&gt;
+identifier = 'slug', restriction = 'member'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("identifier", ["id", "slug"])
+    @pytest.mark.parametrize("restriction", ["member", "unentitled_owner"])
+    async def test_global_template_detail_requires_same_action_as_list(db, organization, organizer,
+            identifier, restriction):
+        actor = organizer
+        if restriction == "member":
+            actor = User(organization_id=organization.id, email=f"catalogue-member-{uuid.uuid4().hex}@example.test",
+                first_name="Catalogue", last_name="Member", role="organiser", is_active=True)
+            db.add(actor)
+            await db.flush()
+            db.add(UserOrganizationMembership(organization_id=organization.id, user_id=actor.id,
+                org_role="member", accepted_at=datetime.now(timezone.utc), is_active=True))
+        source = FormTemplate(name="Shared catalogue admission fixture", slug=f"route-catalogue-{uuid.uuid4().hex}",
+            scope_type="GLOBAL", category_key="registration", fields=[], settings={})
+        db.add(source)
+        await db.commit()
+&gt;       actor.request_organization_id = organization.id
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: property 'request_organization_id' of 'User' object has no setter
+
+tests\test_catalogue_customer_route_admission.py:40: AttributeError</failure></testcase><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[unentitled_owner-id]" time="0.596"><failure message="AttributeError: property 'request_organization_id' of 'User' object has no setter">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001BB72BA7250&gt;
+organization = &lt;Organization id=9f8aea25-4f17-49ec-bb74-3022ae0c0ef3 slug=test-org-42791770&gt;
+organizer = &lt;User id=6a1e5bf4-db91-419e-9813-29e33dfcbfa6 email=organizer-bfabd2@test.com role=organiser&gt;
+identifier = 'id', restriction = 'unentitled_owner'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("identifier", ["id", "slug"])
+    @pytest.mark.parametrize("restriction", ["member", "unentitled_owner"])
+    async def test_global_template_detail_requires_same_action_as_list(db, organization, organizer,
+            identifier, restriction):
+        actor = organizer
+        if restriction == "member":
+            actor = User(organization_id=organization.id, email=f"catalogue-member-{uuid.uuid4().hex}@example.test",
+                first_name="Catalogue", last_name="Member", role="organiser", is_active=True)
+            db.add(actor)
+            await db.flush()
+            db.add(UserOrganizationMembership(organization_id=organization.id, user_id=actor.id,
+                org_role="member", accepted_at=datetime.now(timezone.utc), is_active=True))
+        source = FormTemplate(name="Shared catalogue admission fixture", slug=f"route-catalogue-{uuid.uuid4().hex}",
+            scope_type="GLOBAL", category_key="registration", fields=[], settings={})
+        db.add(source)
+        await db.commit()
+&gt;       actor.request_organization_id = organization.id
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: property 'request_organization_id' of 'User' object has no setter
+
+tests\test_catalogue_customer_route_admission.py:40: AttributeError</failure></testcase><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[unentitled_owner-slug]" time="0.488"><failure message="AttributeError: property 'request_organization_id' of 'User' object has no setter">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001BB74D209D0&gt;
+organization = &lt;Organization id=43955f98-0526-445b-9028-6641a1f0c9f6 slug=test-org-b255e62e&gt;
+organizer = &lt;User id=b5ea8257-168f-4e90-8eb0-3782c913dac7 email=organizer-32f4b0@test.com role=organiser&gt;
+identifier = 'slug', restriction = 'unentitled_owner'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("identifier", ["id", "slug"])
+    @pytest.mark.parametrize("restriction", ["member", "unentitled_owner"])
+    async def test_global_template_detail_requires_same_action_as_list(db, organization, organizer,
+            identifier, restriction):
+        actor = organizer
+        if restriction == "member":
+            actor = User(organization_id=organization.id, email=f"catalogue-member-{uuid.uuid4().hex}@example.test",
+                first_name="Catalogue", last_name="Member", role="organiser", is_active=True)
+            db.add(actor)
+            await db.flush()
+            db.add(UserOrganizationMembership(organization_id=organization.id, user_id=actor.id,
+                org_role="member", accepted_at=datetime.now(timezone.utc), is_active=True))
+        source = FormTemplate(name="Shared catalogue admission fixture", slug=f"route-catalogue-{uuid.uuid4().hex}",
+            scope_type="GLOBAL", category_key="registration", fields=[], settings={})
+        db.add(source)
+        await db.commit()
+&gt;       actor.request_organization_id = organization.id
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: property 'request_organization_id' of 'User' object has no setter
+
+tests\test_catalogue_customer_route_admission.py:40: AttributeError</failure></testcase><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_selected_event_detail_remains_available[id]" time="0.671"><failure message="AttributeError: property 'request_organization_id' of 'User' object has no setter">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001BB74D216E0&gt;
+event = &lt;Event id=587ad37e-3666-442f-a636-c6fd1cf7fe51 short_code=TC9300 status=active&gt;
+organizer = &lt;User id=db03c97a-f4ec-4a97-9a2a-9e55fde3cd01 email=organizer-9f8a4e@test.com role=organiser&gt;
+identifier = 'id'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("identifier", ["id", "slug"])
+    async def test_global_template_selected_event_detail_remains_available(db, event, organizer, identifier):
+        await activate_event_for_test(db, event)
+        source = FormTemplate(name="Selected-event shared source", slug=f"event-route-{uuid.uuid4().hex}",
+            scope_type="GLOBAL", category_key="registration", fields=[], settings={})
+        db.add(source)
+        await db.commit()
+&gt;       organizer.request_organization_id = event.organization_id
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: property 'request_organization_id' of 'User' object has no setter
+
+tests\test_catalogue_customer_route_admission.py:69: AttributeError</failure></testcase><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_selected_event_detail_remains_available[slug]" time="3.857"><failure message="AttributeError: property 'request_organization_id' of 'User' object has no setter">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001BB74C52450&gt;
+event = &lt;Event id=771bf648-81ea-47a7-9f65-d6c109807ff5 short_code=TCAC14 status=active&gt;
+organizer = &lt;User id=320990d8-4819-49fd-bc06-b1c39fee6bfd email=organizer-1bfdcc@test.com role=organiser&gt;
+identifier = 'slug'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("identifier", ["id", "slug"])
+    async def test_global_template_selected_event_detail_remains_available(db, event, organizer, identifier):
+        await activate_event_for_test(db, event)
+        source = FormTemplate(name="Selected-event shared source", slug=f"event-route-{uuid.uuid4().hex}",
+            scope_type="GLOBAL", category_key="registration", fields=[], settings={})
+        db.add(source)
+        await db.commit()
+&gt;       organizer.request_organization_id = event.organization_id
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: property 'request_organization_id' of 'User' object has no setter
+
+tests\test_catalogue_customer_route_admission.py:69: AttributeError</failure></testcase></testsuite></testsuites>

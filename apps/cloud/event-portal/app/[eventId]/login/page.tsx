@@ -1,14 +1,14 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   ArrowRight, ShieldCheck, AlertCircle,
   Loader2, Sparkles, Calendar, MapPin,
   FileText, Users, Layers, ArrowLeft, Presentation, Mic, Download
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { ThemedIllustration } from "@/components/ui/themed-illustration";
 
@@ -125,6 +125,8 @@ function formatDateRange(startDateStr?: string, endDateStr?: string): string {
 export default function LoginPage() {
   const { eventId } = useParams<{ eventId: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectParam = searchParams?.get("redirect");
 
   const [eventData, setEventData] = useState<any>(null);
   const [step, setStep] = useState<Step>("identifier");
@@ -137,13 +139,18 @@ export default function LoginPage() {
   const [devOtp, setDevOtp] = useState<string | null>(null);
   const [programModalOpen, setProgramModalOpen] = useState(false);
 
-  // If already logged in, redirect to dashboard
+  // If already logged in, redirect to destination
   useEffect(() => {
     const token = localStorage.getItem(`portal_token_${eventId}`);
     if (token) {
-      router.replace(`/${eventId}/dashboard`);
+      const dest = redirectParam
+        ? redirectParam.startsWith("/")
+          ? redirectParam
+          : `/${eventId}/${redirectParam}`
+        : `/${eventId}/dashboard`;
+      router.replace(dest);
     }
-  }, [eventId, router]);
+  }, [eventId, router, redirectParam]);
 
   // Fetch Event Info
   useEffect(() => {
@@ -221,7 +228,6 @@ export default function LoginPage() {
       }
     } catch (err: any) {
       setError(err.message);
-      toast.error(err.message);
     } finally {
       setLoading(false);
     }
@@ -268,18 +274,32 @@ export default function LoginPage() {
       localStorage.setItem(`portal_token_${eventId}`, jwtToken);
       localStorage.setItem(`portal_jwt_${eventId}`, jwtToken);
       localStorage.setItem(`portal_participant_${eventId}`, JSON.stringify(participantObj));
+      if (data.user) {
+        localStorage.setItem(`events_user_${eventId}`, JSON.stringify(data.user));
+      }
       if (participantObj.regno) {
         localStorage.setItem(`portal_registered_${eventId}`, "true");
       } else {
         localStorage.removeItem(`portal_registered_${eventId}`);
       }
 
-      toast.success("Welcome back! Loading your pass...");
-      router.push(`/${eventId}/dashboard`);
+      window.dispatchEvent(new Event("portal-auth-change"));
+      toast.success("Welcome back! Access granted.");
+
+      // If a specific redirect is requested (e.g. from a protected page), honour it.
+      // Otherwise always send to /welcome so first-time users see the workspace selection screen.
+      // The /welcome page handles its own "already seen" skip-to-dashboard logic.
+      if (redirectParam) {
+        const targetDest = redirectParam.startsWith("/")
+          ? redirectParam
+          : `/${eventId}/${redirectParam}`;
+        router.push(targetDest);
+      } else {
+        router.push(`/${eventId}/welcome`);
+      }
     } catch (err: any) {
       setError(err.message);
       setOtp("");
-      toast.error(err.message);
     } finally {
       setLoading(false);
     }
@@ -438,16 +458,12 @@ export default function LoginPage() {
               initial={{ opacity: 0, scale: 0.97 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.35, delay: 0.1 }}
-              className="w-full max-w-[400px] sm:max-w-[430px] rounded-[28px] p-6 sm:p-7 md:p-8 bg-[var(--card)]/95 border border-[var(--border-default)] backdrop-blur-2xl shadow-2xl relative overflow-hidden text-left"
+              className="w-full max-w-[400px] sm:max-w-[430px] rounded-[28px] p-6 sm:p-7 md:p-8 bg-[var(--card)] border-2 border-[var(--border-default)] shadow-xl ring-1 ring-black/5 dark:ring-white/10 relative overflow-hidden text-left"
             >
               {/* Top Accent Stripe */}
               <div
                 className="absolute top-0 left-0 right-0 h-1.5 bg-[var(--sec)]"
               />
-
-              {/* Ambient Dual-Tone Glow Bubbles */}
-              <div className="absolute -top-16 -right-16 w-36 h-36 bg-[var(--sec)]/15 rounded-full blur-3xl pointer-events-none" />
-              <div className="absolute -bottom-16 -left-16 w-36 h-36 bg-[var(--pri)]/15 rounded-full blur-3xl pointer-events-none" />
 
               {/* Header Badge & Enlarged ID Card Illustration */}
               <div className="text-center space-y-1 mb-4 relative z-10">

@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import invalidate_organization
-from app.core.dependencies.feature_gate import enforce_org_operation
+from app.core.dependencies.feature_gate import enforce_platform_org_operation as enforce_org_operation
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.platform.models.organization_console import OrganizationBrandProfile
 

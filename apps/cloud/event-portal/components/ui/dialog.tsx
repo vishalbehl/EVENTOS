@@ -42,8 +42,8 @@ const DialogContent = React.forwardRef<
         )}
         {...props}
       >
-        {/* Top Brand Theme Gradient Stripe */}
-        <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-[var(--pri)] to-[var(--sec)] pointer-events-none" />
+        {/* Top Brand Theme Stripe */}
+        <div className="absolute top-0 left-0 right-0 h-1.5 bg-[var(--pri)] pointer-events-none" />
         {children}
         <DialogPrimitive.Close className="absolute right-4 top-4 grid size-8 place-items-center rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface-2)] text-[var(--muted)] hover:border-[var(--pri)]/50 hover:text-[var(--text)] focus-visible:outline-none disabled:pointer-events-none transition-all cursor-pointer">
           <X className="h-4 w-4" />

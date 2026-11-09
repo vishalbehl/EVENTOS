@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="16" failures="0" errors="0" time="1.0936678">
+    <testsuite name="test/category-a/scan-gated-upload-clients.test.ts" timestamp="2026-10-16T17:51:37.568Z" hostname="Vishal" tests="10" failures="0" errors="0" skipped="0" time="0.0385369">
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; returns only after READY and removes completed timer listeners" time="0.017739">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; never accepts a quarantined object as a finished upload" time="0.0030674">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; rejects mismatched status identity even if it claims READY" time="0.0015372">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; rejects a cross-origin status address before sending the capability" time="0.0013805">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; cancels a pending poll without retaining listeners or retrying the upload" time="0.0049589">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; returns only after READY and removes completed timer listeners" time="0.0027535">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; never accepts a quarantined object as a finished upload" time="0.0008701">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; rejects mismatched status identity even if it claims READY" time="0.0006988">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; rejects a cross-origin status address before sending the capability" time="0.00144">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; cancels a pending poll without retaining listeners or retrying the upload" time="0.0014267">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/category-a/session-action-gates.test.tsx" timestamp="2026-10-16T17:51:37.573Z" hostname="Vishal" tests="6" failures="0" errors="0" skipped="0" time="1.0551309">
+        <testcase classname="test/category-a/session-action-gates.test.tsx" name="Session action boundaries &gt; blocks creation for loading access, including direct form submit" time="0.5205592">
+        </testcase>
+        <testcase classname="test/category-a/session-action-gates.test.tsx" name="Session action boundaries &gt; blocks creation for denied access, including direct form submit" time="0.084347">
+        </testcase>
+        <testcase classname="test/category-a/session-action-gates.test.tsx" name="Session action boundaries &gt; blocks creation for quota access, including direct form submit" time="0.1095248">
+        </testcase>
+        <testcase classname="test/category-a/session-action-gates.test.tsx" name="Session action boundaries &gt; preserves entered values when access is revoked and rechecks the submit handler" time="0.0999193">
+        </testcase>
+        <testcase classname="test/category-a/session-action-gates.test.tsx" name="Session action boundaries &gt; allows an admitted create request" time="0.1121441">
+        </testcase>
+        <testcase classname="test/category-a/session-action-gates.test.tsx" name="Session action boundaries &gt; disables quick-edit writes for a read-only user" time="0.124858">
+        </testcase>
+    </testsuite>
+</testsuites>

@@ -1,0 +1,14 @@
+{
+  "status": "FAILED",
+  "environment": "local_isolated_rehearsal",
+  "run_id": "2bcd5a0402b44db99006dea4d9590277",
+  "source_database": "category_a_rehearsal_20261015",
+  "restored_database": "category_a_restore_20261020_2bcd5a0402b4",
+  "started_at": "2026-10-20T10:37:48.418940+00:00",
+  "backup_sha256": "5fe2c8b1c87d757864fa5f9ec92cde842054a710f9319aa03dc72f02e0a2fc9c",
+  "failed_stage": "data_schema_comparison",
+  "error_type": "AssertionError",
+  "private_dump_may_be_retained": "/tmp/category_a_restore_2bcd5a0402b44db99006dea4d9590277.dump",
+  "restored_database_may_exist": true,
+  "probe_sha256": "61e0059cfa6c5012cf20f8ba4ff294ca379a413a539f35d39fd36eeb75b4c98c"
+}

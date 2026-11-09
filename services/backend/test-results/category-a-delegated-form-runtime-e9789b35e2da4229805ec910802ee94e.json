@@ -1,0 +1,40 @@
+{
+  "status": "FAILED",
+  "error_type": "MissingGreenlet",
+  "failure_sites": [
+    {
+      "file": "base.py",
+      "line": 1988,
+      "function": "_exec_single_context"
+    },
+    {
+      "file": "base.py",
+      "line": 2368,
+      "function": "_handle_dbapi_exception"
+    },
+    {
+      "file": "base.py",
+      "line": 1969,
+      "function": "_exec_single_context"
+    },
+    {
+      "file": "default.py",
+      "line": 952,
+      "function": "do_execute"
+    },
+    {
+      "file": "asyncpg.py",
+      "line": 585,
+      "function": "execute"
+    },
+    {
+      "file": "_concurrency_py3k.py",
+      "line": 123,
+      "function": "await_only"
+    }
+  ],
+  "database": "category_a_restore_20261020_9918f35b8827",
+  "organization_id": "2313a12f-48cb-49f5-b5f2-24b7c24de666",
+  "scope": "EVENT",
+  "probe_sha256": "6d7aa86663419fe3d66af8e9488ff3303821a406e8507d219d323a0996e020d3"
+}

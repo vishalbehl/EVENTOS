@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="37" time="51.945" timestamp="2026-10-21T18:39:23.864307+05:30" hostname="Vishal"><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_one_category_projects_205_references_only_in_committed_template_pages[GLOBAL]" time="11.393"><failure message="assert 0 == 100">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001C1DDF11FD0&gt;
+organization = &lt;Organization id=2a07635d-e12d-482d-b014-d67d9991daf8 slug=test-org-74f63d97&gt;
+super_admin = &lt;User id=1d8b42fc-b6ed-48a5-b9f2-e7697c508cd2 email=admin-cfe86d@test.com role=super_admin&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001C1E08BA850&gt;
+scope = 'GLOBAL'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("scope", ["GLOBAL", "ORGANIZATION", "GLOBAL_CATEGORY_OWNED_TEMPLATES"])
+    async def test_one_category_projects_205_references_only_in_committed_template_pages(
+            db, organization, super_admin, monkeypatch, scope):
+        owner = None if scope == "GLOBAL" else organization.id
+        category_owner = organization.id if scope == "ORGANIZATION" else None
+        category = FormCategory(organization_id=category_owner, name="Bounded taxonomy",
+            slug=f"bounded-{uuid.uuid4().hex}")
+        db.add(category)
+        await db.flush()
+        start = (1 &lt;&lt; 128) - 4096
+        rows = [FormTemplate(id=uuid.UUID(int=start + index), organization_id=owner,
+            scope_type="GLOBAL" if owner is None else "ORGANIZATION", category_id=category.id,
+            category_key="registration" if index == 204 else "legacy-taxonomy-key",
+            name=f"Bounded projection {index}", slug=f"projection-{uuid.uuid4().hex}",
+            fields=[], settings={}, version=1) for index in range(205)]
+        db.add_all(rows)
+        await db.flush()
+        db.add_all([FormTemplateReconciliation(template_id=row.id, template_version=1,
+            operation="DOCUMENT_VALIDATION", status="BLOCKED" if index == 0 else "VALID",
+            actor_user_id=super_admin.id) for index, row in enumerate(rows)])
+        await db.commit()
+        category_id, category_slug = category.id, category.slug
+        identities = [row.id for row in rows]
+    
+        @asynccontextmanager
+        async def sessions():
+            try:
+                yield db
+            except Exception:
+                await db.rollback()
+                raise
+    
+        monkeypatch.setattr(worker, "AsyncSessionLocal", sessions)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            if category_owner is None:
+                await worker._global_category_page(super_admin.id, None)
+            else:
+                await worker._process_page(organization.id, super_admin.id, "FORM_CATEGORY", None)
+        async with TenantContextGuard.scoped(db, owner or super_admin.organization_id):
+            assert await db.scalar(select(func.count()).select_from(FormTemplate).where(
+                FormTemplate.id.in_(identities), FormTemplate.version != 1)) == 0
+        cursor = uuid.UUID(int=start - 1)
+        observed = []
+        for expected_changed in (100, 200, 204):
+            async with TenantContextGuard.scoped(db, super_admin.organization_id):
+                if owner is None:
+                    result = await worker._global_template_page(super_admin.id, cursor)
+                else:
+                    result = await worker._process_page(organization.id, super_admin.id,
+                        "FORM_TEMPLATE", cursor)
+            observed.append((result["checked"], result["normalized"], result["blocked"]))
+            async with TenantContextGuard.scoped(db, owner or super_admin.organization_id):
+                changed = await db.scalar(select(func.count()).select_from(FormTemplate).where(
+                    FormTemplate.id.in_(identities), FormTemplate.version == 2,
+                    FormTemplate.category_key == category_slug))
+&gt;               assert changed == expected_changed
+E               assert 0 == 100
+
+tests\test_catalogue_bounded_category_projection.py:70: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_one_category_projects_205_references_only_in_committed_template_pages[ORGANIZATION]" time="2.866" /><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_one_category_projects_205_references_only_in_committed_template_pages[GLOBAL_CATEGORY_OWNED_TEMPLATES]" time="2.791" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[VALID-global_template]" time="1.252" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[VALID-owned_template]" time="1.200" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[VALID-manual_template]" time="1.172" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[VALID-global_category]" time="1.215" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[VALID-owned_category]" time="1.297" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[VALID-registration]" time="1.309" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[VALID-abstract]" time="1.262" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[BLOCKED-global_template]" time="1.169" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[BLOCKED-owned_template]" time="1.348" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[BLOCKED-manual_template]" time="1.355" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[BLOCKED-global_category]" time="1.371" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[BLOCKED-owned_category]" time="1.482" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[BLOCKED-registration]" time="1.273" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[BLOCKED-abstract]" time="1.248" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_evidence_lookup_pairs_each_identity_with_its_own_version[global_template]" time="0.666" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_evidence_lookup_pairs_each_identity_with_its_own_version[owned_template]" time="0.981" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_evidence_lookup_pairs_each_identity_with_its_own_version[manual_template]" time="0.621" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_manual_reconciliation_rejects_unbounded_or_ambiguous_page_size[True]" time="0.002" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_manual_reconciliation_rejects_unbounded_or_ambiguous_page_size[0]" time="0.003" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_manual_reconciliation_rejects_unbounded_or_ambiguous_page_size[-1]" time="0.003" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_manual_reconciliation_rejects_unbounded_or_ambiguous_page_size[101]" time="0.003" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_manual_reconciliation_rejects_unbounded_or_ambiguous_page_size[1.5]" time="0.003" /><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_manual_reconciliation_rejects_unbounded_or_ambiguous_page_size[100]" time="0.003" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[foreign-owned_worker]" time="1.201" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[foreign-global_worker]" time="0.970" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[foreign-manual]" time="0.952" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[retired-owned_worker]" time="1.163" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[retired-global_worker]" time="1.040" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[retired-manual]" time="0.972" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[key_mismatch-owned_worker]" time="1.709" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[key_mismatch-global_worker]" time="1.425" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[key_mismatch-manual]" time="1.233" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_event_reference_is_rechecked" time="0.686" /><testcase classname="tests.test_template_reference_revalidation" name="test_valid_reference_batch_is_constant_query_and_preserves_approval" time="2.309" /></testsuite></testsuites>

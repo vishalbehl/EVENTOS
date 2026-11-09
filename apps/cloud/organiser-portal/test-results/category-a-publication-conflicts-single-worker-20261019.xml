@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="10" failures="0" errors="0" time="0.4968272">
+    <testsuite name="test/category-a/publication-conflict-messages.test.ts" timestamp="2026-10-19T05:37:53.845Z" hostname="Vishal" tests="7" failures="0" errors="0" skipped="0" time="0.0095724">
+        <testcase classname="test/category-a/publication-conflict-messages.test.ts" name="publication conflict messages &gt; shows safe guidance for FORM_TEMPLATE_RECONCILIATION_REQUIRED" time="0.0038898">
+        </testcase>
+        <testcase classname="test/category-a/publication-conflict-messages.test.ts" name="publication conflict messages &gt; shows safe guidance for FORM_CATEGORY_RECONCILIATION_REQUIRED" time="0.0005713">
+        </testcase>
+        <testcase classname="test/category-a/publication-conflict-messages.test.ts" name="publication conflict messages &gt; shows safe guidance for FORM_DOCUMENT_RECONCILIATION_REQUIRED" time="0.0004598">
+        </testcase>
+        <testcase classname="test/category-a/publication-conflict-messages.test.ts" name="publication conflict messages &gt; shows safe guidance for MANAGED_ASSET_NOT_SCAN_READY" time="0.0004205">
+        </testcase>
+        <testcase classname="test/category-a/publication-conflict-messages.test.ts" name="publication conflict messages &gt; shows safe guidance for MANAGED_FORM_ASSET_TYPE_INVALID" time="0.0003216">
+        </testcase>
+        <testcase classname="test/category-a/publication-conflict-messages.test.ts" name="publication conflict messages &gt; does not treat object-prototype keys as message mappings" time="0.0005118">
+        </testcase>
+        <testcase classname="test/category-a/publication-conflict-messages.test.ts" name="publication conflict messages &gt; preserves existing error and validation messages" time="0.0006592">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/category-a/scoped-form-conflict-recovery.test.tsx" timestamp="2026-10-19T05:37:53.854Z" hostname="Vishal" tests="3" failures="0" errors="0" skipped="0" time="0.4872548">
+        <testcase classname="test/category-a/scoped-form-conflict-recovery.test.tsx" name="scoped form reconciliation conflicts &gt; retains draft, version and receipt for explicit retry after FORM_TEMPLATE_RECONCILIATION_REQUIRED" time="0.3270355">
+        </testcase>
+        <testcase classname="test/category-a/scoped-form-conflict-recovery.test.tsx" name="scoped form reconciliation conflicts &gt; retains draft, version and receipt for explicit retry after ABSTRACT_TEMPLATE_RECONCILIATION_REQUIRED" time="0.0965109">
+        </testcase>
+        <testcase classname="test/category-a/scoped-form-conflict-recovery.test.tsx" name="scoped form reconciliation conflicts &gt; uses a new receipt when the operator changes the rejected document" time="0.0605724">
+        </testcase>
+    </testsuite>
+</testsuites>

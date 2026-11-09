@@ -37,9 +37,9 @@ from app.modules.billing.services.usage_reservation_service import UsageReservat
 from app.modules.billing.services.capability_service import CapabilityService
 from app.modules.platform.models.organization_console import UsageReservation
 from app.core.tenant_context import TenantContextGuard
-from app.core.upload_service import UploadService
 from app.modules.files.models.file import DurableUpload
 from app.modules.speakers.application.queries import SpeakerQueryService
+from app.modules.registration.dependencies.portal_auth import PortalUser, get_portal_user
 
 router = APIRouter(prefix="/portal", tags=["portal"])
 
@@ -122,7 +122,6 @@ class SpeakerPortalAuthResponse(BaseModel):
     allow_override: bool = False
     talks: List[PortalTalk]
     posters: List[PortalPoster] = []
-    speaker_code: Optional[str] = None
     qr_code_url: Optional[str] = None
     theme_color: Optional[str] = None
     upload_token: Optional[str] = None
@@ -149,6 +148,7 @@ class SpeakerPortalAuthResponse(BaseModel):
     registration_mode_enabled: bool = True
     abstract_submission_enabled: bool = False
     abstract_submission_reason: Optional[str] = "RESOLUTION_UNAVAILABLE"
+    intake_form: Optional[dict] = None
 
 
 class SpeakerPortalConfigResponse(BaseModel):
@@ -323,12 +323,12 @@ async def _build_portal_talk(ss: SessionSpeaker, event: Event) -> PortalTalk:
         preview_url=preview_url,
         thumbnail_url=thumbnail_url,
         external_url=external_url,
-        abstract_text=ss.abstract_text,
-        abstract_keywords=ss.abstract_keywords or [],
-        abstract_status=ss.abstract_status,
-        abstract_version=ss.abstract_version,
-        abstract_submitted_at=ss.abstract_submitted_at,
-        abstract_review_notes=ss.abstract_review_notes,
+        abstract_text=getattr(ss, "abstract_text", None),
+        abstract_keywords=getattr(ss, "abstract_keywords", None) or [],
+        abstract_status=getattr(ss, "abstract_status", "DRAFT") or "DRAFT",
+        abstract_version=getattr(ss, "abstract_version", 1) or 1,
+        abstract_submitted_at=getattr(ss, "abstract_submitted_at", None),
+        abstract_review_notes=getattr(ss, "abstract_review_notes", None),
     )
 
 
@@ -354,15 +354,19 @@ async def _build_portal_poster(p: Poster, event: Event) -> PortalPoster:
         except Exception as e:
             logger.error(f"Failed to generate presigned URLs for poster file {p.id}: {e}")
 
-    if p.thumbnail_url:
+    # Check for thumbnail
+    thumb_path = None
+    if hasattr(p, "thumbnail_url") and p.thumbnail_url:
+        thumb_path = p.thumbnail_url
+    if thumb_path:
         try:
             thumbnail_url = await asyncio.to_thread(
                 upload_service.create_presigned_download,
                 bucket=settings.S3_BUCKET_THUMBNAILS,
-                storage_path=p.thumbnail_url,
+                storage_path=thumb_path,
             )
         except Exception as e:
-            logger.error(f"Failed to generate presigned download URL for poster thumbnail {p.id}: {e}")
+            logger.error(f"Failed to generate thumbnail URL for poster: {e}")
 
     return PortalPoster(
         id=p.id,
@@ -375,79 +379,55 @@ async def _build_portal_poster(p: Poster, event: Event) -> PortalPoster:
         rejection_reason=p.rejection_reason,
         download_url=download_url,
         preview_url=preview_url,
-        thumbnail_url=thumbnail_url
+        thumbnail_url=thumbnail_url,
     )
 
 
-async def _resolve_abstract_access(
-    db: AsyncSession,
-    event: Event,
-) -> tuple[bool, Optional[str]]:
+async def _resolve_abstract_access(db: AsyncSession, event: Event) -> tuple[bool, Optional[str]]:
+    """Resolve whether abstract submission is enabled for the speaker in this event."""
     try:
-        capability = await CapabilityService.resolve_event(
-            db,
-            event.organization_id,
-            event.id,
+        from app.modules.abstracts.models import AbstractCall
+        call = await db.scalar(
+            select(AbstractCall).where(
+                AbstractCall.event_id == event.id,
+            )
         )
-    except Exception:
+        if call is not None:
+            if call.status == "OPEN":
+                now = datetime.now(timezone.utc)
+                if call.opens_at and now < call.opens_at:
+                    return False, "CALL_NOT_YET_OPEN"
+                if call.closes_at and now > call.closes_at:
+                    return False, "CALL_CLOSED"
+                return True, None
+            elif call.status == "DRAFT":
+                return False, "CALL_DRAFT"
+            elif call.status == "CLOSED":
+                return False, "CALL_CLOSED"
+            elif call.status == "PUBLISHED":
+                return False, "CALL_PUBLISHED"
+
+        speaker_settings = event.speaker_settings or {}
+        if speaker_settings.get("abstract_submission_enabled"):
+            return True, None
+
+        return False, "NO_OPEN_CALL"
+    except Exception as e:
+        logger.error(f"Error resolving abstract access for event {event.id}: {e}")
         return False, "RESOLUTION_UNAVAILABLE"
-    feature = capability.get("features", {}).get("FEAT_ABSTRACT_SUBMISSION")
-    if not feature:
-        return False, "NOT_ENTITLED"
-    return bool(feature.get("enabled")), feature.get("reason_code")
 
 
-@router.get("/auth/{event_id}/{token_or_code}", response_model=SpeakerPortalAuthResponse)
-async def speaker_portal_auth(
-    event_id: uuid.UUID,
-    token_or_code: str,
-    db: AsyncSession = Depends(get_db)
+async def _build_speaker_portal_auth_response(
+    speaker: Speaker,
+    event: Event,
+    db: AsyncSession,
 ) -> SpeakerPortalAuthResponse:
-    """
-    Authenticate a speaker using their upload_token or speaker_code.
-    Returns speaker, event, and talk info.
-    """
-    # Try by token first, scoped to event_id
-    q = select(Speaker).where(
-        Speaker.event_id == event_id,
-        (Speaker.upload_token == token_or_code) | (Speaker.speaker_code == token_or_code.upper())
-    ).options(
-        selectinload(Speaker.event),
-        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session).selectinload(Session.room),
-        selectinload(Speaker.presentation_files).selectinload(PresentationFile.validation),
-        selectinload(Speaker.srr_checkins),
-        selectinload(Speaker.posters)
-    )
-    
-    result = await db.execute(q)
-    speaker = result.scalar_one_or_none()
-    
-    if not speaker:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid access token or code."
-        )
-
-    event = speaker.event
-    
-    if not event.speaker_mode_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Speaker portal is currently closed."
-        )
-    await enforce_event_operation(
-        db,
-        event.organization_id,
-        event.id,
-        "speakers.manage",
-    )
-        
     talks = []
-    for ss in speaker.session_speakers:
+    for ss in (speaker.session_speakers or []):
         talks.append(await _build_portal_talk(ss, event))
 
     posters = []
-    for p in speaker.posters:
+    for p in (speaker.posters or []):
         posters.append(await _build_portal_poster(p, event))
 
     # Fetch active announcements only when the event owns the capability.
@@ -466,7 +446,7 @@ async def speaker_portal_auth(
             "type": ann.priority,
             "is_pinned": ann.is_pinned,
             "created_at": ann.created_at.isoformat(),
-            "attachments": ann.attachments or []
+            "attachments": ann.attachments or [],
         }
         for ann in active_anns
     ]
@@ -510,7 +490,7 @@ async def speaker_portal_auth(
             from app.modules.registration.models.participant import Participant
             part_stmt = select(Participant).where(
                 Participant.event_id == event.id,
-                Participant.email == speaker.email.lower()
+                Participant.email == speaker.email.lower(),
             ).limit(1)
             part_res = await db.execute(part_stmt)
             part = part_res.scalar_one_or_none()
@@ -526,13 +506,17 @@ async def speaker_portal_auth(
         "enabled_methods": {
             "form": True,
             "template": True,
-            "cv": True
+            "cv": True,
         },
         "template_url": None,
-        "template_filename": None
+        "template_filename": None,
     }
 
     abstract_enabled, abstract_reason = await _resolve_abstract_access(db, event)
+    from app.core.tenant_context import TenantContextGuard
+    await TenantContextGuard.apply(db, event.organization_id)
+    from app.modules.registration.application.operational_binding_commands import get_operational_form_projection
+    intake_form = await get_operational_form_projection(db, event=event, purpose="SPEAKER_INTAKE")
     return SpeakerPortalAuthResponse(
         speaker_id=speaker.id,
         first_name=speaker.first_name,
@@ -552,7 +536,6 @@ async def speaker_portal_auth(
         allow_override=speaker.allow_override,
         talks=talks,
         posters=posters,
-        speaker_code=speaker.speaker_code,
         qr_code_url=speaker.qr_code_url,
         theme_color=event.theme_color,
         upload_token=speaker.upload_token,
@@ -574,11 +557,110 @@ async def speaker_portal_auth(
         state=state_val,
         event_state=event.state,
         event_country=event.country,
-        srr_checked_in=len(speaker.srr_checkins) > 0,
+        srr_checked_in=len(speaker.srr_checkins or []) > 0,
         registration_mode_enabled=event.registration_mode_enabled,
         abstract_submission_enabled=abstract_enabled,
         abstract_submission_reason=abstract_reason,
+        intake_form=intake_form,
     )
+
+
+@router.get("/speakers/me", response_model=SpeakerPortalAuthResponse)
+async def get_speaker_portal_me(
+    portal_user: PortalUser = Depends(get_portal_user),
+    db: AsyncSession = Depends(get_db),
+) -> SpeakerPortalAuthResponse:
+    """Return the authenticated speaker's full workspace data using portal JWT session."""
+    q = select(Speaker).where(
+        Speaker.event_id == portal_user.event_id,
+        Speaker.email == portal_user.email.lower(),
+        Speaker.deleted_at.is_(None),
+    ).options(
+        selectinload(Speaker.event),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session).selectinload(Session.room),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session).selectinload(Session.track),
+        selectinload(Speaker.presentation_files).selectinload(PresentationFile.validation),
+        selectinload(Speaker.srr_checkins),
+        selectinload(Speaker.posters),
+    )
+    result = await db.execute(q)
+    speaker = result.scalar_one_or_none()
+
+    if not speaker:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Speaker profile not found for current user in this event.",
+        )
+
+    event = speaker.event
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "speakers.manage",
+    )
+    return await _build_speaker_portal_auth_response(speaker, event, db)
+
+
+@router.get("/auth/{event_id}/{token_or_code}", response_model=SpeakerPortalAuthResponse)
+async def speaker_portal_auth(
+    event_id: uuid.UUID,
+    token_or_code: str,
+    db: AsyncSession = Depends(get_db)
+) -> SpeakerPortalAuthResponse:
+    """
+    Authenticate a speaker using their upload_token.
+    Returns speaker, event, and talk info.
+    """
+    # Try by token first, scoped to event_id
+    q = select(Speaker).where(
+        Speaker.event_id == event_id,
+        Speaker.upload_token == token_or_code,
+        Speaker.deleted_at.is_(None),
+    ).options(
+        selectinload(Speaker.event),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session).selectinload(Session.room),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session).selectinload(Session.track),
+        selectinload(Speaker.presentation_files).selectinload(PresentationFile.validation),
+        selectinload(Speaker.srr_checkins),
+        selectinload(Speaker.posters),
+    )
+
+    result = await db.execute(q)
+    speaker = result.scalar_one_or_none()
+
+    if not speaker:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid access token or code."
+        )
+
+    event = speaker.event
+
+    if not event.speaker_mode_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Speaker portal is currently closed."
+        )
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "speakers.manage",
+    )
+
+    # Log portal access
+    from app.modules.venue.models.venue_activity_log import VenueActivityLog
+    db.add(VenueActivityLog(
+        event_id=event.id,
+        speaker_id=speaker.id,
+        action="portal_access",
+        action_category="PORTAL",
+        details={"source": "portal", "user_agent": "browser"}
+    ))
+    await db.commit()
+
+    return await _build_speaker_portal_auth_response(speaker, event, db)
 
 
 # ── Upload ────────────────────────────────────────────────────
@@ -608,7 +690,6 @@ async def _get_abstract_slot(
         .where(
             (Speaker.upload_token == token)
             | (Speaker.upload_token == token_hash)
-            | (Speaker.speaker_code == token.upper())
         )
         .options(selectinload(Speaker.event))
     )
@@ -861,7 +942,7 @@ async def portal_request_upload_url(
 ) -> PresignedUploadResponse:
     """Speaker-facing upload URL request. Requires valid token."""
     speaker_q = select(Speaker).where(
-        (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
+        Speaker.upload_token == token
     ).options(selectinload(Speaker.event))
     speaker_res = await db.execute(speaker_q)
     speaker = speaker_res.scalar_one_or_none()
@@ -1080,7 +1161,7 @@ async def portal_confirm_upload(
 ) -> PresentationFileResponse:
     """Speaker-facing confirm upload. Requires valid token."""
     speaker_q = select(Speaker).where(
-        (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
+        Speaker.upload_token == token
     ).options(selectinload(Speaker.event))
     speaker_res = await db.execute(speaker_q)
     speaker = speaker_res.scalar_one_or_none()
@@ -1209,7 +1290,7 @@ async def portal_poster_upload_url(
 ) -> PresignedPosterUploadResponse:
     """Speaker-facing poster upload URL request. Requires valid token."""
     speaker_q = select(Speaker).where(
-        (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
+        Speaker.upload_token == token
     ).options(selectinload(Speaker.event))
     speaker_res = await db.execute(speaker_q)
     speaker = speaker_res.scalar_one_or_none()
@@ -1389,7 +1470,7 @@ async def portal_confirm_poster_upload(
 ) -> PortalPoster:
     """Speaker-facing confirm poster upload."""
     speaker_q = select(Speaker).where(
-        (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
+        Speaker.upload_token == token
     ).options(selectinload(Speaker.event))
     speaker_res = await db.execute(speaker_q)
     speaker = speaker_res.scalar_one_or_none()
@@ -1504,7 +1585,7 @@ async def download_speaker_qr(
     from app.modules.registration.services import qr_service
     try:
         img_bytes = qr_service.generate_speaker_badge_qr(
-            speaker.id, speaker.full_name, event.name, speaker.speaker_code, reg_no=reg_no
+            speaker.id, speaker.full_name, event.name, reg_no=reg_no
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate QR card: {e}")
@@ -1806,7 +1887,7 @@ async def get_profile_template(
     Generate and download a pre-filled profile template (docx/pptx).
     """
     speaker_q = select(Speaker).where(
-        (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
+        Speaker.upload_token == token
     ).options(
         selectinload(Speaker.event),
         selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session)
@@ -1878,7 +1959,7 @@ async def upload_profile_template(
     Upload a filled DOCX/PPTX profile template. Extracts details and profile photo.
     """
     speaker_q = select(Speaker).where(
-        (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
+        Speaker.upload_token == token
     ).options(
         selectinload(Speaker.event),
         selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session),
@@ -1953,10 +2034,12 @@ async def upload_profile_template(
                 data=photo_bytes,
                 content_type="image/png",
             )
-            if settings.STORAGE_MODE == "local":
-                speaker.photo_url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{photo_path}"
-            else:
-                speaker.photo_url = f"{settings.S3_ENDPOINT_URL}/{bucket}/{photo_path}"
+            speaker.photo_url = await asyncio.to_thread(
+                upload_service.create_presigned_download,
+                bucket=bucket,
+                storage_path=photo_path,
+                inline=True,
+            )
         except Exception as e:
             logger.error(f"Failed to upload profile photo from template: {e}")
 
@@ -2024,7 +2107,6 @@ async def upload_profile_template(
         allow_override=speaker.allow_override,
         talks=talks,
         posters=posters,
-        speaker_code=speaker.speaker_code,
         qr_code_url=speaker.qr_code_url,
         theme_color=speaker.event.theme_color,
         upload_token=speaker.upload_token,
@@ -2048,7 +2130,7 @@ async def upload_profile_cv(
     Extract data from a PDF CV and return the parsed values.
     """
     speaker_q = select(Speaker).where(
-        (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
+        Speaker.upload_token == token
     ).options(selectinload(Speaker.event))
     speaker_res = await db.execute(speaker_q)
     speaker = speaker_res.scalar_one_or_none()
@@ -2086,7 +2168,7 @@ async def upload_profile_photo(
     Upload a speaker profile photo (e.g. from the cropping component).
     """
     speaker_q = select(Speaker).where(
-        (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
+        Speaker.upload_token == token
     ).options(selectinload(Speaker.event))
     speaker_res = await db.execute(speaker_q)
     speaker = speaker_res.scalar_one_or_none()
@@ -2112,10 +2194,12 @@ async def upload_profile_photo(
                 data=contents,
                 content_type=file.content_type or "image/png",
             )
-            if settings.STORAGE_MODE == "local":
-                photo_url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{photo_path}"
-            else:
-                photo_url = f"{settings.S3_ENDPOINT_URL}/{bucket}/{photo_path}"
+            photo_url = await asyncio.to_thread(
+                upload_service.create_presigned_download,
+                bucket=bucket,
+                storage_path=photo_path,
+                inline=True,
+            )
 
             # The token was resolved to an event before tenant context is
             # established; the storage write and profile mutation stay inside
@@ -2139,7 +2223,7 @@ async def update_speaker_profile(
     Update speaker profile fields directly. Validates bio word counts.
     """
     speaker_q = select(Speaker).where(
-        (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
+        Speaker.upload_token == token
     ).options(
         selectinload(Speaker.event),
         selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session).selectinload(Session.room),
@@ -2245,7 +2329,6 @@ async def update_speaker_profile(
         allow_override=speaker.allow_override,
         talks=talks,
         posters=posters,
-        speaker_code=speaker.speaker_code,
         qr_code_url=speaker.qr_code_url,
         theme_color=speaker.event.theme_color,
         upload_token=speaker.upload_token,
@@ -2297,7 +2380,7 @@ async def portal_save_talk_external_link(
 
     if not speaker:
         speaker_q = select(Speaker).where(
-            (Speaker.upload_token == effective_token) | (Speaker.speaker_code == effective_token.upper())
+            Speaker.upload_token == effective_token
         ).options(selectinload(Speaker.event))
         speaker_res = await db.execute(speaker_q)
         speaker = speaker_res.scalar_one_or_none()
@@ -2324,7 +2407,6 @@ async def portal_save_talk_external_link(
     return await _build_portal_talk(ss, speaker.event)
 
 
-@router.get("/speakers/me", response_model=SpeakerPortalAuthResponse)
 async def get_current_speaker_profile(
     token: Optional[str] = None,
     authorization: Optional[str] = Header(None),
@@ -2362,10 +2444,10 @@ async def get_current_speaker_profile(
     except Exception:
         pass
 
-    # 2. If not decoded or not matched, lookup by upload_token or speaker_code
+    # 2. If not decoded or not matched, lookup by upload_token
     if not speaker:
         speaker_q = select(Speaker).where(
-            (Speaker.upload_token == raw_token) | (Speaker.speaker_code == raw_token.upper())
+            Speaker.upload_token == raw_token
         ).options(
             selectinload(Speaker.event),
             selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session).selectinload(Session.room),
@@ -2428,7 +2510,6 @@ async def get_current_speaker_profile(
         allow_override=speaker.allow_override,
         talks=talks,
         posters=posters,
-        speaker_code=speaker.speaker_code,
         qr_code_url=speaker.qr_code_url,
         theme_color=speaker.event.theme_color,
         upload_token=speaker.upload_token,

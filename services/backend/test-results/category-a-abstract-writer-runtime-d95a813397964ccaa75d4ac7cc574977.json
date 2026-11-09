@@ -1,0 +1,11 @@
+{
+  "status": "FAILED",
+  "run_id": "d95a813397964ccaa75d4ac7cc574977",
+  "environment": "local_isolated_rehearsal",
+  "scope": "actual_restricted_login_direct_accepted_owner",
+  "started_at": "2026-10-27T03:28:19.767940+00:00",
+  "delegated_http_browser_concurrency_acceptance": "NOT_RUN",
+  "error_type": "OperationalError",
+  "completed_at": "2026-10-27T03:28:19.819966+00:00",
+  "probe_sha256": "602d34b0b9b12577d150d36e8c18ed9c520342357916d20fba1414c528f5c213"
+}

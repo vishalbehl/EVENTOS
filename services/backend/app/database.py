@@ -6,7 +6,7 @@
 # SQLAlchemy engines so the rest of the codebase can use either.
 # =============================================================
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from sqlalchemy import DateTime, ForeignKey
@@ -45,16 +45,26 @@ TABLE_SCHEMAS = {
 
     # commerce
     "activation_transfer_policies": "commerce",
+    "billing_accounts": "commerce",
+    "account_organizations": "commerce",
+    "plans": "commerce",
+    "plan_versions": "commerce",
+    "plan_prices": "commerce",
+    "plan_entitlements": "commerce",
+    "plan_requests": "commerce",
+    "pricing_drafts": "commerce",
+    "plan_contracts": "commerce",
+    "contract_items": "commerce",
+    "contract_changes": "commerce",
+    "allocations": "commerce",
+    "allocation_transfers": "commerce",
+    "usage_entries": "commerce",
 
     # business
     "activities": "business",
 
     # venue
     "activity_logs": "venue",
-
-    # commerce
-    "addon_features": "commerce",
-    "addons": "commerce",
 
     # analytics
     "adoption_metrics": "analytics",
@@ -141,12 +151,6 @@ TABLE_SCHEMAS = {
     # events
     "capacity_rules": "events",
 
-    # business
-    "commercial_access_requests": "business",
-
-    # commerce
-    "commercial_template_versions": "commerce",
-
     # communications
     "communication_deliveries": "communications",
     "communication_delivery_batches": "communications",
@@ -163,7 +167,6 @@ TABLE_SCHEMAS = {
     "connections": "integrations",
 
     # business
-    "contracts": "business",
 
     # automation
     "conversations": "automation",
@@ -179,7 +182,6 @@ TABLE_SCHEMAS = {
     "currency_rates": "commerce",
 
     # business
-    "customer_health": "business",
 
     # analytics
     "dashboard_metrics": "analytics",
@@ -220,6 +222,9 @@ TABLE_SCHEMAS = {
 
     # communications
     "email_campaigns": "communications",
+    "campaign_recipient_snapshots": "communications",
+    "campaign_attempts": "communications",
+    "campaign_attempt_outcomes": "communications",
 
     # design
     "email_components": "design",
@@ -410,9 +415,6 @@ TABLE_SCHEMAS = {
     # communications
     "org_notification_preferences": "communications",
 
-    # commerce
-    "organization_addons": "commerce",
-
     # platform
     "organization_apps": "platform",
 
@@ -450,9 +452,6 @@ TABLE_SCHEMAS = {
 
     # platform
     "organization_settings": "platform",
-
-    # commerce
-    "organization_subscriptions": "commerce",
 
     # command_center_access
     "organization_team_events": "organizer_access",
@@ -518,9 +517,6 @@ TABLE_SCHEMAS = {
     # business
     "pipeline_stages": "business",
 
-    # commerce
-    "plan_features": "commerce",
-
     # platform
     "platform_flag_definitions": "platform",
     "platform_flag_mutations": "platform",
@@ -585,11 +581,11 @@ TABLE_SCHEMAS = {
     "push_notifications": "communications",
 
     # business
-    "quote_approval_steps": "business",
-    "quote_approval_workflows": "business",
-    "quote_line_items": "business",
-    "quote_revisions": "business",
-    "quotes": "business",
+    "quote_approval_steps": "commerce",
+    "quote_approvals": "commerce",
+    "quote_items": "commerce",
+    "quote_versions": "commerce",
+    "quotes": "commerce",
 
     # developer
     "rate_limits": "developer",
@@ -610,7 +606,6 @@ TABLE_SCHEMAS = {
     "registrations": "registration",
 
     # business
-    "renewals": "business",
 
     # commerce
     "revenue_forecasts": "commerce",
@@ -703,9 +698,6 @@ TABLE_SCHEMAS = {
     "storage_locations": "content",
 
     # commerce
-    "subscription_analytics": "commerce",
-    "subscription_plans": "commerce",
-    "subscription_transactions": "billing",
 
     # support
     "support_agents": "support",
@@ -969,10 +961,20 @@ def _do_orm_execute(execute_state):
         logger.debug("tenant_filter_applied org_id={}", org_id)
 
     for model in _tenant_models():
+        # A shared form catalogue permits only immutable global rows plus this
+        # tenant's rows; it is not a tenant-filter bypass.
+        catalogue = execute_state.execution_options.get("shared_form_catalogue", False)
+        owned = model.organization_id == org_id
+        if getattr(model, "__tablename__", None) == "user_roles":
+            owned = or_(owned, model.organization_id.is_(None))
+        elif catalogue and model.__table__.fullname == "design.form_templates":
+            owned = or_(owned, and_(model.organization_id.is_(None), model.scope_type == "GLOBAL"))
+        elif catalogue and model.__table__.fullname == "design.form_categories":
+            owned = or_(owned, model.organization_id.is_(None))
         execute_state.statement = execute_state.statement.options(
             with_loader_criteria(
                 model,
-                model.organization_id == org_id,
+                owned,
                 include_aliases=True,
                 propagate_to_loaders=True,
             )

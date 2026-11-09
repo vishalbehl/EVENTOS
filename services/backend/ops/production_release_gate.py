@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -9,6 +10,38 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).parents[1]))
 from app.config import Settings
 from ops.validate_migration_chain import heads, revisions
+from ops.category_a_release_gate import validate_evidence
+
+
+def operations_runbook() -> Path:
+    """Locate consolidated documentation without weakening mandatory gate checks.
+
+    The repository ``docs`` directory is canonical. CI/container environments
+    may set CONF_PLATFORM_DOCUMENTATION_ROOT when mounting it elsewhere.
+    The original path remains compatible with an operator-authorised restoration.
+    """
+    legacy = Path(__file__).with_name("production_operations_runbook.md")
+    if legacy.is_file():
+        return legacy
+    checkout = Path(__file__).resolve().parents[3]
+    root = Path(os.environ.get("CONF_PLATFORM_DOCUMENTATION_ROOT") or
+                str(checkout / "docs")).resolve()
+    manifest = root / "relocation-manifest.json"
+    try:
+        if manifest.stat().st_size > 1024 * 1024:
+            return legacy
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        entries = [row for row in payload["documents"]
+                   if row["source"] == "services/backend/ops/production_operations_runbook.md"]
+        if len(entries) != 1:
+            return legacy
+        target = (root / entries[0]["target"]).resolve()
+        if not target.is_relative_to(root):
+            return legacy
+        return target
+    except (OSError, ValueError, TypeError, KeyError):
+        # A missing/malformed bundle is a missing mandatory artifact, never a pass.
+        return legacy
 
 
 def validate(settings: Settings | None = None) -> list[str]:
@@ -17,11 +50,13 @@ def validate(settings: Settings | None = None) -> list[str]:
     migration_heads = heads(revisions())
     if len(migration_heads) != 1:
         failures.append(f"migration graph must have exactly one head: {sorted(migration_heads)}")
-    for artifact in ("production_operations_runbook.md", "load_test.py"):
-        artifact_path = Path(__file__).with_name(artifact)
+    runbook = operations_runbook()
+    for artifact, artifact_path in (
+        ("production_operations_runbook.md", runbook),
+        ("load_test.py", Path(__file__).with_name("load_test.py")),
+    ):
         if not artifact_path.is_file() or artifact_path.stat().st_size == 0:
             failures.append(f"required operations artifact is missing: {artifact}")
-    runbook = Path(__file__).with_name("production_operations_runbook.md")
     try:
         runbook_text = runbook.read_text(encoding="utf-8").lower()
         for required_term in ("pg_stat_statements", "restore", "rollback", "dead-letter"):
@@ -30,6 +65,8 @@ def validate(settings: Settings | None = None) -> list[str]:
     except OSError:
         pass
     if cfg.environment == "production":
+        failures.extend(validate_evidence(os.environ.get("CATEGORY_A_EVIDENCE_PATH"),
+            expected_revision=next(iter(migration_heads)) if len(migration_heads) == 1 else None))
         for name in ("DATABASE_URL_SYNC", "DATABASE_URL_ASYNC", "REDIS_URL", "REDIS_CACHE_URL", "REDIS_LOCK_URL", "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND"):
             if not getattr(cfg, name, ""):
                 failures.append(f"{name} is required")

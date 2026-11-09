@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="20" failures="0" errors="0" time="1.4057442">
+    <testsuite name="test/category-a/form-builder-selected-event.test.ts" timestamp="2026-10-20T10:28:19.815Z" hostname="Vishal" tests="2" failures="0" errors="0" skipped="0" time="0.1266018">
+        <testcase classname="test/category-a/form-builder-selected-event.test.ts" name="retains the selected event for every registration-builder template read" time="0.1134539">
+        </testcase>
+        <testcase classname="test/category-a/form-builder-selected-event.test.ts" name="encodes source identity and transmits event scope to the canonical read endpoint" time="0.0077388">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/category-a/registration-editor-load.test.ts" timestamp="2026-10-20T10:28:19.829Z" hostname="Vishal" tests="13" failures="0" errors="0" skipped="0" time="0.0544074">
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (401)" time="0.0175647">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (403)" time="0.0013626">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (404)" time="0.000825">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (409)" time="0.0021856">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (429)" time="0.0037503">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (503)" time="0.0011353">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="retains intentionally empty server fields, with no synthetic default or reset" time="0.0021916">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="uses a verified selected blueprint and the loaded aggregate version" time="0.0044875">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="preserves the active aggregate when its original source was selected" time="0.0041552">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="keeps a valid current form editable but explicitly disables an unavailable reset" time="0.0051249">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="rejects conflicting event markers instead of treating another copy as active" time="0.0029119">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="rejects a non-registration or retired target" time="0.0013278">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="does not publish a response completed after its scope became obsolete" time="0.0013649">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/category-a/registration-editor-unavailable.test.tsx" timestamp="2026-10-20T10:28:19.850Z" hostname="Vishal" tests="5" failures="0" errors="0" skipped="0" time="1.224735">
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="never opens a substitute editor after a required source fails (403)" time="0.7738821">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="never opens a substitute editor after a required source fails (404)" time="0.068911">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="never opens a substitute editor after a required source fails (503)" time="0.0462">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="shows an intentionally empty server form without a fabricated default or reset" time="0.1828837">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="keeps a valid copy editable when its historical root is unavailable, without resetting from a fixture" time="0.1435831">
+        </testcase>
+    </testsuite>
+</testsuites>

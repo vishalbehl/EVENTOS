@@ -1,4 +1,4 @@
-import { apiClient } from '@/lib/api-client';
+import { apiClient, sessionChangedError } from '@/lib/api-client';
 import { useAuthStore, User } from '@/store/use-auth-store';
 
 export interface LoginResponse {
@@ -18,19 +18,21 @@ function isPlatformAdministrator(user: User): boolean {
   return user.platform_role === 'SUPER_ADMIN' || user.is_platform_admin === true || user.role === 'super_admin';
 }
 
-let restorePromise: Promise<boolean> | null = null;
+let restorePromise: { revision: number; promise: Promise<boolean> } | null = null;
 
 export const authService = {
   /**
    * Authenticate with email and password
    */
   login: async (credentials: LoginCredentials, rememberMe = false): Promise<LoginResponse> => {
+    const revision = useAuthStore.getState().beginAuthTransition();
     const data = await apiClient.post<LoginResponse>('/auth/command-center/login', {
       email: credentials.email,
       password: credentials.password,
       totp_code: credentials.mfa_code,
       remember_me: rememberMe,
     }, { withCredentials: true });
+    if (useAuthStore.getState().sessionRevision !== revision) throw sessionChangedError();
 
     if (!isPlatformAdministrator(data.user)) {
       try {
@@ -41,7 +43,7 @@ export const authService = {
       } catch {
         // Local denial remains fail-closed even if server-side revocation is temporarily unavailable.
       } finally {
-        useAuthStore.getState().logout();
+        if (useAuthStore.getState().sessionRevision === revision) useAuthStore.getState().logout();
       }
       throw new Error('Administrator privileges are required for Command Center.');
     }
@@ -60,7 +62,9 @@ export const authService = {
    * Fetch current user profile
    */
   getMe: async (): Promise<User> => {
+    const revision = useAuthStore.getState().sessionRevision;
     const data = await apiClient.get<User>('/auth/me');
+    if (useAuthStore.getState().sessionRevision !== revision) throw sessionChangedError();
     useAuthStore.getState().updateUser(data);
     return data;
   },
@@ -69,12 +73,13 @@ export const authService = {
    * Clear local session and notify backend
    */
   logout: async () => {
+    const token = useAuthStore.getState().accessToken;
+    useAuthStore.getState().logout();
     try {
-      await apiClient.post('/auth/command-center/logout', undefined, { withCredentials: true });
-    } catch (error) {
-      console.error('Logout request failed', error);
-    } finally {
-      useAuthStore.getState().logout();
+      await apiClient.post('/auth/command-center/logout', undefined, { withCredentials: true,
+        ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}) });
+    } catch {
+      // Do not log credentials/headers or clear a newer session on late failure.
     }
   },
 
@@ -82,28 +87,30 @@ export const authService = {
    * Refresh JWT tokens
    */
   refresh: async (): Promise<LoginResponse> => {
-    const data = await apiClient.post<LoginResponse>('/auth/command-center/refresh', undefined, { withCredentials: true });
-    useAuthStore.getState().setAuth(data.user, data.access_token, undefined, useAuthStore.getState().rememberMe);
-    return data;
+    return apiClient.refreshSession();
   },
 
   restore: async (): Promise<boolean> => {
     const current = useAuthStore.getState();
     if (current.isAuthenticated && current.accessToken && current.user) return true;
-    if (restorePromise) return restorePromise;
+    const revision = current.sessionRevision;
+    if (restorePromise && restorePromise.revision === revision) return restorePromise.promise;
 
-    restorePromise = (async () => {
+    const work = (async () => {
       try {
         await authService.refresh();
-        return true;
+        const latest = useAuthStore.getState();
+        return Boolean(latest.isAuthenticated && latest.accessToken && latest.user);
       } catch {
-        useAuthStore.getState().logout();
-        return false;
-      } finally {
-        restorePromise = null;
+        if (useAuthStore.getState().sessionRevision === revision) useAuthStore.getState().logout();
+        const latest = useAuthStore.getState();
+        return Boolean(latest.isAuthenticated && latest.accessToken && latest.user);
       }
     })();
-
-    return restorePromise;
+    const promise: Promise<boolean> = work.finally(() => {
+      if (restorePromise?.promise === promise) restorePromise = null;
+    });
+    restorePromise = { revision, promise };
+    return promise;
   },
 };

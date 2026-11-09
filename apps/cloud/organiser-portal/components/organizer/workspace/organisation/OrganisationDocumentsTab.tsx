@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
@@ -21,6 +21,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { apiClient, apiGet } from "@/lib/api-client";
+import { usePortalQueryScope } from "@/hooks/useAccessBootstrap";
 import { DataTable, Panel, StatusBadge } from "../OrganiserPrimitives";
 import { OrganisationPage } from "./shared";
 
@@ -49,6 +50,8 @@ type Revision = {
 
 export function OrganisationDocumentsTab() {
   const qc = useQueryClient();
+  const scope = usePortalQueryScope();
+  const receipts = useRef(new Map<string, string>());
   const [page, setPage] = useState(1),
     [pageSize, setPageSize] = useState(10);
   const [open, setOpen] = useState(false),
@@ -59,14 +62,14 @@ export function OrganisationDocumentsTab() {
     [type, setType] = useState("LEGAL"),
     [expiry, setExpiry] = useState("");
   const query = useQuery({
-    queryKey: ["organisation", "documents", page, pageSize],
+    queryKey: ["organisation", ...scope, "documents", page, pageSize],
     queryFn: () =>
       apiGet<{ items: Doc[]; total: number }>(
         `/organiser/documents?page=${page}&page_size=${pageSize}`,
       ),
   });
   const history = useQuery({
-    queryKey: ["organisation", "document-history", historyDocument?.id],
+    queryKey: ["organisation", ...scope, "document-history", historyDocument?.id],
     queryFn: () =>
       apiGet<{ items: Revision[] }>(
         `/organiser/documents/${historyDocument!.id}/history`,
@@ -90,15 +93,20 @@ export function OrganisationDocumentsTab() {
       const path = replacement
         ? `/organiser/documents/${replacement.id}/replace?${params}`
         : `/organiser/documents?${params}`;
+      const signature = `upload:${replacement?.id || "new"}:${replacement?.version || 0}:${file!.name}:${file!.size}:${file!.lastModified}:${type}:${expiry}`;
+      const receipt = receipts.current.get(signature) || crypto.randomUUID();
+      receipts.current.set(signature, receipt);
       return apiClient.post(path, body, {
         headers: {
           "Content-Type": "multipart/form-data",
+          "Idempotency-Key": receipt,
           ...(replacement ? { "If-Match": String(replacement.version) } : {}),
         },
       });
     },
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ["organisation", "documents"] });
+      receipts.current.clear();
+      await qc.invalidateQueries({ queryKey: ["organisation", ...scope, "documents"] });
       toast.success(
         replacement
           ? "Replacement queued for security scanning."
@@ -109,12 +117,17 @@ export function OrganisationDocumentsTab() {
     onError: (cause: any) => toast.error(cause?.message || "Upload failed."),
   });
   const archive = useMutation({
-    mutationFn: (document: Doc) =>
-      apiClient.delete(`/organiser/documents/${document.id}`, {
-        headers: { "If-Match": String(document.version) },
-      }),
+    mutationFn: (document: Doc) => {
+      const signature = `archive:${document.id}:${document.version}`;
+      const receipt = receipts.current.get(signature) || crypto.randomUUID();
+      receipts.current.set(signature, receipt);
+      return apiClient.delete(`/organiser/documents/${document.id}`, {
+        headers: { "If-Match": String(document.version), "Idempotency-Key": receipt },
+      });
+    },
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ["organisation", "documents"] });
+      receipts.current.clear();
+      await qc.invalidateQueries({ queryKey: ["organisation", ...scope, "documents"] });
       setArchiveDocument(null);
       toast.success("Document archived.");
     },

@@ -1,10 +1,28 @@
-import { useEffect } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { useAuthStore } from '@/store/use-auth-store';
 import { socketService } from '@/lib/socket';
 import { toast } from 'sonner';
+import { realtimeNotification } from '../../../../packages/utils/realtime-notification';
 
 export function useSocket(eventId?: string) {
   const { accessToken, isAuthenticated } = useAuthStore();
+  const status = useSyncExternalStore(socketService.subscribe, socketService.getStatus, socketService.getStatus);
+
+  useEffect(() => {
+    if (status.state === 'throttled' || status.state === 'unavailable' || status.state === 'denied') {
+      const seconds = status.retryAt ? Math.max(1, Math.ceil((status.retryAt - Date.now()) / 1000)) : null;
+      toast(status.state === 'denied' ? 'Live updates access denied'
+        : status.state === 'throttled' ? 'Live updates are throttled' : 'Live updates are unavailable', {
+        id: 'realtime-connection-status',
+        description: seconds ? `Reconnecting in at least ${seconds} seconds. Saved forms are unchanged.`
+          : status.state === 'denied' ? 'Review your access or sign in again. No actions were retried.'
+          : 'Reconnect attempts have stopped. Refresh when the service is available.',
+        duration: 8000,
+      });
+    } else if (status.state === 'connected' || status.state === 'idle') {
+      toast.dismiss('realtime-connection-status');
+    }
+  }, [status]);
 
   useEffect(() => {
     // 1. Only connect if we have a valid session
@@ -20,16 +38,15 @@ export function useSocket(eventId?: string) {
     if (!socket) return;
 
     // 3. Join the specific event room if provided
-    if (eventId) {
-      socketService.joinEvent(eventId);
-      socketService.joinVenueOps(eventId);
-    }
+    const releaseEvent = eventId ? socketService.joinEvent(eventId) : undefined;
+    const releaseVenue = eventId ? socketService.joinVenueOps(eventId) : undefined;
 
     // 4. Attach event listeners
-    const handleNotification = (data: any) => {
-      console.log('Real-time notification:', data);
-      toast(data.title || 'System Notification', {
-        description: data.message,
+    const handleNotification = (data: unknown) => {
+      const copy = realtimeNotification(data);
+      if (!copy || socketService.socket !== socket) return;
+      toast(copy.title, {
+        description: copy.desc,
         duration: 5000,
       });
     };
@@ -43,10 +60,11 @@ export function useSocket(eventId?: string) {
     
     // 5. Cleanup: Remove listeners on unmount or when deps change
     return () => {
+      releaseEvent?.();
+      releaseVenue?.();
       socket.off('notification', handleNotification);
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
-      socketService.disconnect();
     };
   }, [isAuthenticated, accessToken, eventId]);
 }

@@ -265,7 +265,7 @@ export function SuperAdminHeader() {
                     {[
                       { title: "Dashboard Overview", url: "/dashboard/overview", icon: LayoutDashboard },
                       { title: "Organizations Registry", url: "/organizations", icon: Building2 },
-                      { title: "Commercial Subscriptions", url: "/business/subscription/add-ons", icon: CreditCard },
+                      { title: "Cloud Commercial", url: "/business/pricing/cloud-plans", icon: CreditCard },
                       { title: "Security Users", url: "/identity-security/users", icon: User },
                       { title: "Operations Jobs Monitor", url: "/operations-center/jobs", icon: Cpu },
                       { title: "General Settings", url: "/platform-settings/general", icon: Settings },

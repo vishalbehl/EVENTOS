@@ -1,0 +1,54 @@
+{
+  "organization_id": "0a62c7fc-5ee2-40fb-871c-2c74d59098cf",
+  "apply": false,
+  "records": [
+    {
+      "upload_id": "05a869cb-efe4-4cf0-936e-a3ab40a535e3",
+      "status": "OWNERSHIP_OR_ACCOUNTING_CONFLICT"
+    },
+    {
+      "upload_id": "0817f136-7eb4-4c0e-b8dc-9ec160322460",
+      "status": "ELIGIBLE"
+    },
+    {
+      "upload_id": "1b04f008-ddfd-4018-807d-50b1bda54dbc",
+      "status": "ELIGIBLE"
+    },
+    {
+      "upload_id": "392922bd-aec0-46b3-b2e9-e4cd25beaf04",
+      "status": "ELIGIBLE"
+    },
+    {
+      "upload_id": "56c7307a-bd1b-4d0c-83ec-ab45fd8a500a",
+      "status": "ELIGIBLE"
+    },
+    {
+      "upload_id": "769239da-9161-4bb0-b03b-1ac86ff0bbcf",
+      "status": "ELIGIBLE"
+    },
+    {
+      "upload_id": "c8422df2-c877-4c8d-a849-98a640e6129c",
+      "status": "ELIGIBLE"
+    },
+    {
+      "upload_id": "d60b0193-e0be-4f49-a80c-cea872399b0d",
+      "status": "ELIGIBLE"
+    },
+    {
+      "upload_id": "f6ff103b-aaf1-4b2b-a938-71f0ad476b4d",
+      "status": "ELIGIBLE"
+    },
+    {
+      "upload_id": "f8494593-10e1-4dd5-8874-83f434de02ee",
+      "status": "ELIGIBLE"
+    },
+    {
+      "upload_id": "f8e40745-4eeb-4d3d-9b26-b0fa0f31d546",
+      "status": "ELIGIBLE"
+    }
+  ],
+  "next_cursor": null,
+  "retry_page": false,
+  "database": "category_a_rehearsal_20261015",
+  "build_id": "33b3f156-dirty-historical-upload-fences"
+}

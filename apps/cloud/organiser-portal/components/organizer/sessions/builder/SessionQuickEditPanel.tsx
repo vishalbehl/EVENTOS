@@ -8,16 +8,22 @@ import { useDuplicateSession, useRemoveSpeakerFromSession } from "@/hooks/useSes
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { cn, toDateTimeLocalString, fromDateTimeLocalString } from "@/lib/utils";
+import { cn, toDateTimeLocalString, fromDateTimeLocalString, getFallbackTimezone, getTimezoneAbbrev } from "@/lib/utils";
 import { apiPost, apiPatch, apiDelete } from "@/lib/api-client";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useOperationAccess } from "@/lib/capabilities";
 
 interface SessionQuickEditPanelProps {
   eventId: string;
 }
 
 export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
+  const sessionAccess = useOperationAccess("sessions.manage");
+  const roomAccess = useOperationAccess("venue.rooms.manage");
+  const editingAllowed = sessionAccess.enabled && !sessionAccess.loading;
+  const denialReason = sessionAccess.loading ? "Checking session access…"
+    : `Session editing unavailable: ${sessionAccess.reason?.replaceAll("_", " ").toLowerCase() || "access unavailable"}`;
   const queryClient = useQueryClient();
   const isQuickEditOpen = useSessionBuilderStore((s) => s.isQuickEditOpen);
   const toggleQuickEdit = useSessionBuilderStore((s) => s.toggleQuickEdit);
@@ -27,11 +33,12 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
   const updateSession = useSessionBuilderStore((s) => s.updateSession);
   const deleteSession = useSessionBuilderStore((s) => s.deleteSession);
   const { mutate: removeSpeakerFromSession } = useRemoveSpeakerFromSession(eventId);
-  const eventTimezone = useSessionBuilderStore((s) => s.eventTimezone);
+  const currentSession = sessions.find((s) => s.id === selectedSessionId);
+  const storeTz = useSessionBuilderStore((s) => s.eventTimezone);
+  const activeTz = currentSession?.event_timezone || storeTz || getFallbackTimezone();
+  const tzAbbrev = getTimezoneAbbrev(activeTz);
 
   const duplicateMutation = useDuplicateSession(eventId);
-
-  const currentSession = sessions.find((s) => s.id === selectedSessionId);
 
   const [form, setForm] = useState<Partial<BuilderSession>>({});
   const [activeTab, setActiveTab] = useState<"overview" | "talks" | "speakers" | "files">("overview");
@@ -46,6 +53,7 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
   if (!isQuickEditOpen || !currentSession) return null;
 
   const handleSave = async () => {
+    if (!editingAllowed || saving) return;
     if (selectedSessionId && form) {
       setSaving(true);
       try {
@@ -56,17 +64,16 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
           if (matchingRoom) {
             finalRoomId = matchingRoom.id;
           } else {
-            try {
-              const newRoom = await apiPost<any>(`/events/${eventId}/rooms`, {
-                name: form.room_name.trim(),
-                room_type: "ROOM",
-                capacity: 50,
-                screen_count: 1
-              });
-              finalRoomId = newRoom.id;
-            } catch (e) {
-              console.error("Failed to create room", e);
+            if (!roomAccess.enabled || roomAccess.loading) {
+              throw new Error("Creating a new room requires room-management access. Select an existing room.");
             }
+            const newRoom = await apiPost<any>(`/events/${eventId}/rooms`, {
+              name: form.room_name.trim(),
+              room_type: "ROOM",
+              capacity: 50,
+              screen_count: 1
+            });
+            finalRoomId = newRoom.id;
           }
         } else {
           finalRoomId = null;
@@ -84,7 +91,12 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
         };
 
         if (!selectedSessionId.startsWith("temp_")) {
-          await apiPatch(`/events/${eventId}/sessions/${selectedSessionId}`, payload);
+          await apiPatch(`/events/${eventId}/sessions/${selectedSessionId}`, payload, {
+            headers: {
+              "If-Match": String(currentSession.version || form.version || 1),
+              "Idempotency-Key": `session-builder-edit:${selectedSessionId}:${currentSession.version || form.version || 1}`,
+            },
+          });
         }
 
         updateSession(selectedSessionId, { ...form, room_id: finalRoomId, room_name: form.room_name });
@@ -101,6 +113,7 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
   };
 
   const handleDelete = async () => {
+    if (!editingAllowed || saving) return;
     if (selectedSessionId && confirm("Are you sure you want to delete this session?")) {
       try {
         if (!selectedSessionId.startsWith("temp_")) {
@@ -118,8 +131,13 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
   };
 
   const handleDuplicate = () => {
+    if (!editingAllowed || saving || duplicateMutation.isPending) return;
     if (selectedSessionId) {
-      duplicateMutation.mutate({ sessionId: selectedSessionId, offsetMinutes: 60 });
+      duplicateMutation.mutate({
+        sessionId: selectedSessionId,
+        offsetMinutes: 60,
+        idempotencyKey: `session-builder-duplicate:${eventId}:${selectedSessionId}:${crypto.randomUUID()}`,
+      });
       toggleQuickEdit(false);
     }
   };
@@ -246,20 +264,26 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="font-semibold text-[var(--text-secondary)] block mb-1 uppercase text-[10px] tracking-wider">Start Time</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="font-semibold text-[var(--text-secondary)] uppercase text-[10px] tracking-wider">Start Time</label>
+                      <span className="text-[9px] font-mono text-[var(--pri)] bg-[var(--pri)]/10 px-1 py-0.2 rounded font-bold">{tzAbbrev}</span>
+                    </div>
                     <Input
                       type="datetime-local"
-                      value={form.start_time ? toDateTimeLocalString(form.start_time, eventTimezone).slice(0, 16) : ""}
-                      onChange={(e) => setForm({ ...form, start_time: fromDateTimeLocalString(e.target.value, eventTimezone) })}
+                      value={form.start_time ? toDateTimeLocalString(form.start_time, activeTz) : ""}
+                      onChange={(e) => setForm({ ...form, start_time: fromDateTimeLocalString(e.target.value, activeTz) })}
                       className="rounded-md font-mono text-xs bg-[var(--card)] border-[var(--border-default)] text-[var(--text-primary)] [color-scheme:dark]"
                     />
                   </div>
                   <div>
-                    <label className="font-semibold text-[var(--text-secondary)] block mb-1 uppercase text-[10px] tracking-wider">End Time</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="font-semibold text-[var(--text-secondary)] uppercase text-[10px] tracking-wider">End Time</label>
+                      <span className="text-[9px] font-mono text-[var(--pri)] bg-[var(--pri)]/10 px-1 py-0.2 rounded font-bold">{tzAbbrev}</span>
+                    </div>
                     <Input
                       type="datetime-local"
-                      value={form.end_time ? toDateTimeLocalString(form.end_time, eventTimezone).slice(0, 16) : ""}
-                      onChange={(e) => setForm({ ...form, end_time: fromDateTimeLocalString(e.target.value, eventTimezone) })}
+                      value={form.end_time ? toDateTimeLocalString(form.end_time, activeTz) : ""}
+                      onChange={(e) => setForm({ ...form, end_time: fromDateTimeLocalString(e.target.value, activeTz) })}
                       className="rounded-md font-mono text-xs bg-[var(--card)] border-[var(--border-default)] text-[var(--text-primary)] [color-scheme:dark]"
                     />
                   </div>
@@ -328,7 +352,10 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
                         <Button
                           size="icon"
                           variant="ghost"
-                          onClick={() => removeSpeakerFromSession({ sessionId: currentSession.id, speakerId: spk.id })}
+                          disabled={!editingAllowed || saving}
+                          onClick={() => {
+                            if (editingAllowed && !saving) removeSpeakerFromSession({ sessionId: currentSession.id, speakerId: spk.id });
+                          }}
                           className="h-6 w-6 text-[var(--text-secondary)] hover:text-rose-400 hover:bg-rose-500/10 rounded-md"
                           title="Remove speaker"
                         >
@@ -354,12 +381,14 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
           </div>
 
           {/* Footer Actions */}
+          {!editingAllowed && <p role="status" className="px-3.5 text-xs text-[var(--text-secondary)]">{denialReason}</p>}
           <div className="p-3.5 border-t border-[var(--border-default)] flex items-center justify-between bg-[var(--surface-subtle)]">
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
                 size="sm"
                 onClick={handleDelete}
+                disabled={!editingAllowed || saving}
                 className="h-8 px-2.5 rounded-md text-xs font-medium border-[var(--border-default)] text-rose-400 hover:bg-rose-500/10 hover:border-rose-500/30"
               >
                 <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
@@ -368,13 +397,14 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
                 variant="outline"
                 size="sm"
                 onClick={handleDuplicate}
+                disabled={!editingAllowed || saving || duplicateMutation.isPending}
                 className="h-8 px-2.5 rounded-md text-xs font-medium border-[var(--border-default)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
               >
                 <Copy className="h-3.5 w-3.5 mr-1" /> Duplicate
               </Button>
             </div>
             <Button
-              disabled={saving}
+              disabled={saving || !editingAllowed}
               onClick={handleSave}
               className="h-8 px-3.5 bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-black font-semibold text-xs tracking-wide rounded-md shadow-xs border-0 flex items-center gap-1.5"
             >

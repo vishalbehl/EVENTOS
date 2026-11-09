@@ -1,0 +1,30 @@
+{
+  "status": "PASSED",
+  "database": "category_a_restore_20261021_46fdd2242fb6",
+  "run_id": "46fdd2242fb64995942101adcbef516b",
+  "environment": "local_backup_derived_rehearsal",
+  "applied_history_rewritten": false,
+  "production_acceptance": "NOT_RUN",
+  "short_key_rollback": {
+    "short_key_downgrade_preserved_data": true,
+    "re_expansion": {
+      "retained_tables": 434,
+      "retained_rows": 850,
+      "rows_and_sequences_unchanged": true,
+      "security_indexes_and_other_columns_unchanged": true,
+      "only_column_limit_changed": true,
+      "metadata_only_table_expansion": true
+    }
+  },
+  "runtime_artifact": "category-a-durable-fixture-46fdd2242fb64995942101adcbef516b-runtime.json",
+  "runtime_status": "PASSED",
+  "runtime_stage": "independent_completion_read",
+  "long_key_rollback": {
+    "long_key_downgrade_refused": true,
+    "all_data_metadata_revision_and_sequences_unchanged": true
+  },
+  "migration_revision": "20261021_3660",
+  "actual_restricted_login": true,
+  "database_quarantined": true,
+  "temporary_login_removed": true
+}

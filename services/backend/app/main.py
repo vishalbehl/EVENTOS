@@ -29,7 +29,13 @@ from app.middleware.audit_middleware import AuditMiddleware
 from app.middleware.auth_middleware import AuthMiddleware
 from app.middleware.rate_limit import limiter, rate_limit_exceeded_handler
 from app.middleware.rate_limiter import RateLimiterMiddleware
-from app.services.init_service import ensure_admin_user, ensure_agenda_rooms_schema, ensure_agenda_types_defaults
+from app.services.init_service import (
+    ensure_admin_user,
+    ensure_agenda_rooms_schema,
+    ensure_agenda_types_defaults,
+    ensure_rbac_defaults,
+    ensure_system_template_defaults,
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -42,30 +48,47 @@ async def lifespan(app: FastAPI):
 
             async with AsyncSessionLocal() as security_session:
                 await enforce_runtime_database_security(security_session)
-        await ensure_admin_user()
-        await ensure_agenda_rooms_schema()
-        await ensure_agenda_types_defaults()
+            # Legacy synchronous operations must not silently retain a privileged
+            # connection while the async API login passes its own inspection.
+            import asyncio
+            from app.core.database_security import enforce_runtime_database_login
+            await asyncio.to_thread(enforce_runtime_database_login, settings.DATABASE_URL_SYNC)
+        if settings.ENABLE_DEVELOPMENT_BOOTSTRAP:
+            await ensure_admin_user()
+            await ensure_rbac_defaults()
+            await ensure_system_template_defaults()
+            await ensure_agenda_rooms_schema()
+            await ensure_agenda_types_defaults()
 
-        # Keep catalogue data aligned with the immutable code-owned
-        # route/operation manifest. An active unknown key could otherwise be
-        # sold without any backend enforcement destination.
+            # Explicit legacy local bootstrap only. Production catalogue
+            # reconciliation belongs to an approved deployment/bootstrap step.
+            from app.database import AsyncSessionLocal
+            from app.modules.billing.services.capability_service import CapabilityService
+            async with AsyncSessionLocal() as capability_session:
+                catalogue_result = await CapabilityService.sync_catalogue(capability_session)
+                if catalogue_result["unknown_active"]:
+                    raise RuntimeError(
+                        "Active feature catalogue keys are missing enforcement bindings: "
+                        + ", ".join(catalogue_result["unknown_active"])
+                    )
+                await capability_session.commit()
+                logger.info(
+                    "Capability catalogue validated: {} registered, {} created, {} updated",
+                    catalogue_result["registered"],
+                    len(catalogue_result["created"]),
+                    len(catalogue_result["updated"]),
+                )
+        
+        # Keep the existing fail-closed binding check without requiring a
+        # privileged runtime write or silently replacing stored catalogue data.
         from app.database import AsyncSessionLocal
         from app.modules.billing.services.capability_service import CapabilityService
-        async with AsyncSessionLocal() as capability_session:
-            catalogue_result = await CapabilityService.sync_catalogue(capability_session)
-            if catalogue_result["unknown_active"]:
-                raise RuntimeError(
-                    "Active feature catalogue keys are missing enforcement bindings: "
-                    + ", ".join(catalogue_result["unknown_active"])
-                )
-            await capability_session.commit()
-            logger.info(
-                "Capability catalogue validated: {} registered, {} created, {} updated",
-                catalogue_result["registered"],
-                len(catalogue_result["created"]),
-                len(catalogue_result["updated"]),
-            )
-        
+        async with AsyncSessionLocal() as catalogue_session:
+            unknown_active = await CapabilityService.validate_existing_catalogue(catalogue_session)
+            if unknown_active:
+                raise RuntimeError("Active feature catalogue keys are missing enforcement bindings: "
+                    + ", ".join(unknown_active))
+
         # ── Initialize System Timezone Cache ───────────────────
         from app.database import AsyncSessionLocal
         from app.services.timezone_service import fetch_system_timezone_async
@@ -167,19 +190,24 @@ async def entitlement_required_exception_handler(request, exc):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
-    logger.error(f"Request validation failed: {exc.errors()}")
-    from fastapi.encoders import jsonable_encoder
+    # Pydantic error input/context may contain credentials or full request bodies.
+    # Never log or echo them, including nested credential-validation failures.
+    errors = exc.errors()
+    logger.warning("Request validation failed; error_count={}", len(errors))
+    safe = [{"type": str(error.get("type", "validation_error")),
+        "loc": list(error.get("loc", ()))[:8], "msg": "Invalid request field."}
+        for error in errors[:100]]
     return JSONResponse(
         status_code=422,
-        content={"detail": jsonable_encoder(exc.errors())},
+        content={"detail": safe},
     )
 
 @app.exception_handler(ResponseValidationError)
 async def response_validation_exception_handler(request, exc):
-    logger.error(f"Response validation failed: {exc.errors()}")
+    logger.error("Response validation failed; error_count={}", len(exc.errors()))
     return JSONResponse(
         status_code=500,
-        detail="Internal Server Error: Response validation failed."
+        content={"detail": "Internal Server Error: Response validation failed."},
     )
 
 # ── Middleware stack (order matters — outermost is registered last) ──
@@ -212,6 +240,9 @@ app.add_middleware(TenantContextMiddleware)
 app.add_middleware(RateLimiterMiddleware)
 app.add_middleware(IPAllowlistMiddleware)
 app.add_middleware(AuthMiddleware)
+from app.middleware.access_rate_limit import IngressRateLimitMiddleware
+from app.middleware.access_body_limit import AccessBodyLimitMiddleware
+app.add_middleware(AccessBodyLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -220,10 +251,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Ingress also bounds unauthenticated preflight attempts; CORS is not admission.
+app.add_middleware(IngressRateLimitMiddleware)
 
 from app.config import settings
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)
+from app.core.rate_policy import bind_rate_operations
 
 @app.get("/metrics", include_in_schema=False)
 def metrics() -> Response:
@@ -256,6 +290,35 @@ async def readiness() -> JSONResponse:
         logger.warning(f"Readiness database check failed: {exc}")
         checks["database"] = "failed"
         status_code = 503
+
+    if settings.is_production:
+        try:
+            from pathlib import Path
+            from alembic.config import Config
+            from alembic.script import ScriptDirectory
+            from sqlalchemy import text
+            from app.database import AsyncSessionLocal
+
+            backend_root = Path(__file__).resolve().parents[1]
+            alembic_config = Config(str(backend_root / "alembic.ini"))
+            packaged_heads = set(
+                ScriptDirectory.from_config(alembic_config).get_heads()
+            )
+            async with AsyncSessionLocal() as session:
+                database_heads = set(
+                    (
+                        await session.execute(
+                            text("SELECT version_num FROM public.alembic_version")
+                        )
+                    ).scalars()
+                )
+            if len(packaged_heads) != 1 or database_heads != packaged_heads:
+                raise RuntimeError("database migration revision does not match the application build")
+            checks["migration"] = "ok"
+        except Exception as exc:
+            logger.warning("Readiness migration check failed: {}", type(exc).__name__)
+            checks["migration"] = "failed"
+            status_code = 503
 
     try:
         import redis.asyncio as redis
@@ -292,5 +355,6 @@ async def ws_dashboard_fallback(websocket: WebSocket, event_id: uuid.UUID):
 from app.modules.venue.services.websocket_service import sio
 import socketio
 
+bind_rate_operations(app)
 fastapi_app = app
 app = socketio.ASGIApp(sio, other_asgi_app=fastapi_app)

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="4" failures="0" errors="0" time="2.3133942">
+    <testsuite name="test/reviewed-blueprint-correction.test.tsx" timestamp="2026-10-17T08:52:54.507Z" hostname="Vishal" tests="4" failures="0" errors="0" skipped="0" time="2.3133942">
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; sends the loaded version, selected category and reviewed document; keeps a failed draft" time="1.4406196">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; refuses malformed reviewed JSON without issuing a mutation" time="0.3227893">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; requires explicit invalid-lineage confirmation and retains it after an error" time="0.3312483">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; drops the correction draft when identity context changes" time="0.1924035">
+        </testcase>
+    </testsuite>
+</testsuites>

@@ -1,0 +1,13 @@
+{
+  "purpose": "isolated_abstract_runtime_acceptance",
+  "database": "category_a_restore_20261027_547583bf502b",
+  "organization_id": "1ef90253-81fa-40c9-b972-f6eca851f4cc",
+  "actor_id": "927df86f-cb50-4958-b7f8-cc2706c24ccc",
+  "event_id": "482e4f45-ad67-42d4-ae15-b7aed441252b",
+  "source_ids": {
+    "valid": "f8eff841-d9a6-42d8-8f80-ca6e58e44d83",
+    "wrong_purpose": "2d1ebaa5-96bd-4bcf-b691-03115c8b9335",
+    "retired": "406035be-428b-4bc7-9548-e879b65d196a",
+    "stale": "f8507ca9-d5da-4953-9c69-d86b26892843"
+  }
+}

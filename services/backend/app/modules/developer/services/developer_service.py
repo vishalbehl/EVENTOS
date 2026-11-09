@@ -4,6 +4,7 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from sqlalchemy import select, and_, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.developer.models.developer_registry import ApiKey, OAuthClient
@@ -123,26 +124,12 @@ class DeveloperService:
         # Log endpoint usage
         if endpoint:
             period_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            usage_stmt = select(ApiUsageMetric).where(
-                and_(
-                    ApiUsageMetric.organization_id == api_key.organization_id,
-                    ApiUsageMetric.endpoint == endpoint,
-                    ApiUsageMetric.period_start == period_start,
-                )
-            )
-            usage_res = await db.execute(usage_stmt)
-            usage = usage_res.scalar_one_or_none()
-            if not usage:
-                usage = ApiUsageMetric(
-                    organization_id=api_key.organization_id,
-                    endpoint=endpoint,
-                    call_count=1,
-                    period_start=period_start,
-                )
-                db.add(usage)
-            else:
-                usage.call_count += 1
-                usage.recorded_at = datetime.now(timezone.utc)
+            table = ApiUsageMetric.__table__
+            await db.execute(insert(table).values(id=uuid.uuid4(),
+                organization_id=api_key.organization_id, endpoint=endpoint,
+                period_start=period_start, call_count=1, recorded_at=datetime.now(timezone.utc)
+            ).on_conflict_do_update(index_elements=["organization_id", "period_start", "endpoint"],
+                set_={"call_count": table.c.call_count + 1, "recorded_at": datetime.now(timezone.utc)}))
                 
         await UsageReservationService.consume(db, reservation.id, source="DEVELOPER_API_AUTH")
         await db.commit()

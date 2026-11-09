@@ -7,6 +7,7 @@ import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 import type { WebsiteProjectData, WebsiteBuilderStudioProps } from '@eventos/website-builder-studio/studio';
 import { EVENT_TEMPLATES } from '@eventos/website-builder-studio';
 import { platformWebsiteTemplates, type WebsiteTemplateDraftRecord } from '@/services/website-template-builder-service';
+import { PageContainer } from '@/components/super-admin/ui/PageContainer';
 
 // Dynamically import WebsiteBuilderStudio with SSR disabled for GrapesJS DOM compatibility
 const WebsiteBuilderStudio = dynamic<WebsiteBuilderStudioProps>(
@@ -139,16 +140,16 @@ function BuilderInner() {
 
   if (loading) {
     return (
-      <div className="w-full h-full min-h-[600px] flex items-center justify-center bg-background text-foreground">
+      <PageContainer className="p-0"><div className="w-full h-full min-h-[600px] flex items-center justify-center bg-background text-foreground">
         <Loader2 className="h-8 w-8 text-primary animate-spin" />
         <span className="ml-3 font-semibold text-muted-foreground">Loading Website Studio...</span>
-      </div>
+      </div></PageContainer>
     );
   }
 
   if (loadError || !initialData) {
     return (
-      <div className="grid min-h-[500px] place-items-center bg-background px-6 text-foreground">
+      <PageContainer className="p-0"><div className="grid min-h-[500px] place-items-center bg-background px-6 text-foreground">
         <section className="w-full max-w-md border border-border bg-card p-6 shadow-sm rounded-xl">
           <AlertTriangle className="mb-4 h-6 w-6 text-amber-500" aria-hidden="true" />
           <h1 className="text-lg font-semibold">Website draft unavailable</h1>
@@ -162,12 +163,12 @@ function BuilderInner() {
             Retry
           </button>
         </section>
-      </div>
+      </div></PageContainer>
     );
   }
 
   return (
-    <div className="relative w-full h-[calc(100vh-130px)] min-h-[600px] flex flex-col overflow-hidden rounded-[14px] border border-[var(--border)] bg-[var(--base)] text-[var(--text)]">
+    <PageContainer className="p-0"><div className="relative w-full h-[calc(100vh-130px)] min-h-[600px] flex flex-col overflow-hidden rounded-[14px] border border-[var(--border)] bg-[var(--base)] text-[var(--text)]">
       <WebsiteBuilderStudio
         mode="GLOBAL_ADMIN"
         initialData={initialData}
@@ -177,7 +178,7 @@ function BuilderInner() {
         onSearchImages={platformWebsiteTemplates.searchOpenverse}
         onBack={handleBack}
       />
-    </div>
+    </div></PageContainer>
   );
 }
 
@@ -185,10 +186,10 @@ export default function DeveloperWebsiteBuilderPage() {
   return (
     <Suspense
       fallback={
-        <div className="w-full h-full min-h-[600px] flex items-center justify-center bg-background text-foreground">
+        <PageContainer className="p-0"><div className="w-full h-full min-h-[600px] flex items-center justify-center bg-background text-foreground">
           <Loader2 className="h-8 w-8 text-primary animate-spin" />
           <span className="ml-3 font-semibold text-muted-foreground">Loading Studio...</span>
-        </div>
+        </div></PageContainer>
       }
     >
       <BuilderInner />

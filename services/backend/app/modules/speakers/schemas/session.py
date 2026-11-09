@@ -161,7 +161,7 @@ class SessionResponse(BaseModel):
     updated_at: datetime
     version: int = 1
     room_name: Optional[str] = None
-    event_timezone: str = "UTC"
+    event_timezone: str = "Asia/Kolkata"
     session_speakers: List[SessionSpeakerResponse] = []
     posters: List[PosterResponse] = []
 
@@ -251,7 +251,7 @@ class SessionSummary(BaseModel):
     cme_eligible: bool = False
     status: str
     room_name: Optional[str] = None
-    event_timezone: str = "UTC"
+    event_timezone: str = "Asia/Kolkata"
     speaker_count: Optional[int] = None
     readiness_pct: Optional[float] = None
     speakers: Optional[List[Dict[str, Any]]] = None

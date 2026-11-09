@@ -1,0 +1,14 @@
+{
+  "status": "FAILED",
+  "database": "category_a_restore_20261021_c3b55172caf7",
+  "run_id": "c3b55172caf74c3d95bf91b922c99f91",
+  "environment": "local_backup_derived_rehearsal",
+  "applied_history_rewritten": false,
+  "production_acceptance": "NOT_RUN",
+  "runtime_artifact": "category-a-durable-fixture-c3b55172caf74c3d95bf91b922c99f91-runtime.json",
+  "runtime_status": "FAILED",
+  "runtime_stage": "create_revocation_first",
+  "error_type": "AssertionError",
+  "database_quarantined": true,
+  "temporary_login_removed": true
+}

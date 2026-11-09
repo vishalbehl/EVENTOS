@@ -7,8 +7,10 @@ import {
   ExternalLink, Trash2, Star, HelpCircle, ChevronRight, Code2, SplitSquareHorizontal,
   MapPin, Globe
 } from 'lucide-react'
-import { useEvent } from '@/hooks/useEvents'
-import { useAuthStore } from '@/store/use-auth-store'
+import { useUpdateEvent } from '@/hooks/useEvents'
+import { useEventEditSession } from '@/hooks/useEventEditSession'
+import { ScopedEventEditor } from '@/components/organizer/events/ScopedEventEditor'
+import { apiClient } from '@/lib/api-client'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -129,8 +131,24 @@ const THEMES = [
 const PORTAL_FONTS = ['Inter', 'Roboto', 'Open Sans', 'Montserrat', 'Poppins', 'Lato']
 
 export default function ThemeTab({ eventId }: { eventId: string }) {
-  const { data: event, refetch } = useEvent(eventId)
-  const token = useAuthStore(s => s.accessToken)
+  return <ScopedEventEditor eventId={eventId}><ThemeTabEditor eventId={eventId} /></ScopedEventEditor>
+}
+
+function ThemeTabEditor({ eventId }: { eventId: string }) {
+  const edit = useEventEditSession(eventId)
+  const event = edit.event
+  const [loadedEvent, setLoadedEvent] = useState<typeof event>()
+  const updateEvent = useUpdateEvent(eventId, edit.version)
+  const saveSettings = async (payload: Record<string, unknown>, preserveDirty = true) => {
+    if (!edit.ready || updateEvent.isPending) throw new Error('Reload event settings before saving.')
+    const saved = await updateEvent.mutateAsync(payload)
+    if (!edit.complete(saved, preserveDirty)) throw new Error('Access context changed.')
+    return saved
+  }
+  const refetch = async () => {
+    const saved = await apiClient.get<import('@/types/backend').EventResponse>(`/events/${eventId}`)
+    edit.complete(saved, true)
+  }
   const themeAccess = useOperationAccess('branding.theme.manage')
   const colorAccess = useOperationAccess('branding.colors.manage')
   const fontAccess = useOperationAccess('branding.fonts.manage')
@@ -176,6 +194,7 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
     : `http://localhost:3003/${eventId}/register`
 
   useEffect(() => {
+    if (!event || edit.dirty) return
     if (event?.branding_settings) {
       const bs = event.branding_settings as Record<string, any>
       setLogoUrl(bs.logo_url || '')
@@ -221,6 +240,7 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
       setIncludeDefaultFaqs(true)
     }
     setDirtyMeta(false)
+    setLoadedEvent(event)
   }, [event])
 
   // ── Authenticated branding upload ────────────────────────────────
@@ -237,21 +257,10 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
       form.append('file', file)
       form.append('field', field)
 
-      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
-      const res = await fetch(`${apiBase}/api/v1/events/${eventId}/branding/upload`, {
-        method: 'POST',
-        headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          "Idempotency-Key": crypto.randomUUID(),
-        },
-        body: form,
+      const data = await apiClient.post<any>(`/events/${eventId}/branding/upload`, form, {
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
       })
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err.detail || 'Upload failed')
-      }
-      const data = await res.json()
+      if (!edit.isCurrent()) return
 
       // Update local state from the server-persisted branding_settings
       const bs = data.branding_settings as Record<string, any>
@@ -263,8 +272,9 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
         toast.success('Header image uploaded and saved!')
       }
       // Refresh react-query cache so command center reflects changes
-      refetch()
+      await refetch()
     } catch (err: any) {
+      if (!edit.isCurrent()) return
       toast.error(err.message || 'Failed to upload image.')
     } finally {
       setUploadingLogo(false)
@@ -279,26 +289,11 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
     setHeaderImages(next)
 
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
-      const currentBranding = (event?.branding_settings as Record<string, any>) || {}
-      const res = await fetch(`${apiBase}/api/v1/events/${eventId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          branding_settings: {
-            ...currentBranding,
-            header_images: next,
-            banner_url: next[0] || null,
-          },
-        }),
-      })
-      if (!res.ok) throw new Error('Failed to remove image')
-      refetch()
+      await saveSettings({ branding_settings: { header_images: next, banner_url: next[0] || null } })
+      if (!edit.isCurrent()) return
       toast.success('Image removed.')
     } catch {
+      if (!edit.isCurrent()) return
       toast.error('Failed to remove image from server.')
       setHeaderImages(headerImages) // rollback
     }
@@ -335,48 +330,22 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
 
     setSaving(true)
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
-      const currentBranding = (event?.branding_settings as Record<string, any>) || {}
-      const currentRegSettings = (event?.registration_settings as Record<string, any>) || {}
-
-      const res = await fetch(`${apiBase}/api/v1/events/${eventId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      await saveSettings({
+        branding_settings: {
+          logo_url: logoUrl || null, header_images: headerImages, banner_url: headerImages[0] || null,
+          footer_terms: footerTerms, footer_support_email: footerSupportEmail,
+          footer_support_phone: footerSupportPhone, footer_support_emails: footerSupportEmails,
+          footer_support_phones: footerSupportPhones, footer_websites: footerWebsites,
+          footer_locations: footerLocations, footer_show_logo: footerShowLogo,
+          theme: selectedTheme, font_family: fontFamily,
         },
-        body: JSON.stringify({
-          branding_settings: {
-            ...currentBranding,
-            logo_url: logoUrl || null,
-            header_images: headerImages,
-            banner_url: headerImages[0] || null,
-            footer_terms: footerTerms,
-            footer_support_email: footerSupportEmail,
-            footer_support_phone: footerSupportPhone,
-            footer_support_emails: footerSupportEmails,
-            footer_support_phones: footerSupportPhones,
-            footer_websites: footerWebsites,
-            footer_locations: footerLocations,
-            footer_show_logo: footerShowLogo,
-            theme: selectedTheme,
-            font_family: fontFamily,
-          },
-          registration_settings: {
-            ...currentRegSettings,
-            terms_and_conditions: termsAndConditions,
-            faqs: faqs,
-            include_default_faqs: includeDefaultFaqs
-          }
-        }),
-      })
-
-      if (!res.ok) throw new Error('Save failed')
-      await refetch()
+        registration_settings: { terms_and_conditions: termsAndConditions, faqs, include_default_faqs: includeDefaultFaqs },
+      }, false)
+      if (!edit.isCurrent()) return
       setDirtyMeta(false)
       toast.success('Theme & branding settings saved! Changes will appear on the portal.')
     } catch (err: any) {
-      toast.error('Failed to save settings.')
+      if (edit.isCurrent()) toast.error(err.message || 'Failed to save settings. Your edits are retained.')
     } finally {
       setSaving(false)
     }
@@ -424,33 +393,21 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
 
     // Auto-persist
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
-      const currentBranding = (event?.branding_settings as Record<string, any>) || {}
-      await fetch(`${apiBase}/api/v1/events/${eventId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          branding_settings: {
-            ...currentBranding,
-            header_images: next,
-            banner_url: next[0] || null,
-          },
-        }),
-      })
-      refetch()
+      await saveSettings({ branding_settings: { header_images: next, banner_url: next[0] || null } })
+      if (!edit.isCurrent()) return
       toast.success('Image URL added and saved!')
     } catch {
+      if (!edit.isCurrent()) return
       toast.error('Failed to save image URL.')
     }
   }
 
   const currentTheme = THEMES.find(t => t.id === selectedTheme) || THEMES[0]
 
+  if (!edit.ready || (!edit.dirty && loadedEvent !== event)) return <p role="status">{edit.error || 'Loading event settings…'}</p>
   return (
-    <div className="space-y-6 w-full max-w-7xl mx-auto text-left">
+    <fieldset disabled={saving || updateEvent.isPending || uploadingLogo || uploadingHeader || edit.reloading} onChangeCapture={edit.markDirty} onClickCapture={edit.markDirty} className="space-y-6 w-full max-w-7xl mx-auto text-left">
+      <button type="button" onClick={() => void edit.reload()}>Discard changes and reload current settings</button>
 
       {/* ── Header: Title + Preview + Save ── */}
       <div className="flex items-center justify-between gap-4 shrink-0">
@@ -1191,6 +1148,6 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
           </button>
         </div>
       )}
-    </div>
+    </fieldset>
   )
 }

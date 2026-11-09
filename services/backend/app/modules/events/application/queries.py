@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import load_only
+from sqlalchemy.orm import load_only, selectinload
 
 from app.modules.events.models.event import Event
 from app.modules.events.infrastructure.repositories import EventRepository
@@ -25,6 +25,7 @@ class EventQueryService:
         return (
             Event.id,
             Event.organization_id,
+            Event.operational_workspace_id,
             Event.name,
             Event.short_code,
             Event.location,
@@ -42,8 +43,24 @@ class EventQueryService:
             Event.status,
             Event.is_maintenance,
             Event.is_read_only,
+            # EventSummary exposes fallback support values from this JSON column.
+            Event.organizer_details,
             Event.created_at,
             Event.updated_at,
+        )
+
+    @classmethod
+    def _summary_options(cls) -> tuple:
+        """Load every EventSummary dependency before response serialization.
+
+        ``registration_settings``, ``theme_color``, ``logo_url``, and
+        ``banner_url`` are compatibility properties backed by
+        ``portal_theme_setting``.  Pydantic must not be allowed to trigger
+        that relationship lazily from an async response.
+        """
+        return (
+            load_only(*cls._summary_columns()),
+            selectinload(Event.portal_theme_setting),
         )
 
     async def list_offset(
@@ -61,7 +78,7 @@ class EventQueryService:
         bounded_size = bounded_page_size(page_size, default=20, maximum=100)
         statement = (
             select(Event)
-            .options(load_only(*self._summary_columns()))
+            .options(*self._summary_options())
             .where(Event.organization_id == organization_id)
         )
         if allowed_event_ids is not None:
@@ -86,7 +103,11 @@ class EventQueryService:
         allowed_event_ids: Any | None = None,
     ) -> CursorPage[Event]:
         """Return a stable page; ``allowed_event_ids`` is a verified scope."""
-        statement: Select = select(Event).where(Event.organization_id == organization_id)
+        statement: Select = (
+            select(Event)
+            .options(*self._summary_options())
+            .where(Event.organization_id == organization_id)
+        )
         if allowed_event_ids is not None:
             statement = statement.where(Event.id.in_(allowed_event_ids))
         if status:

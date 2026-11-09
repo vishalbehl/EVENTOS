@@ -1,9 +1,9 @@
-import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api-client";
 import { hasPermission, PermissionCode } from "@/lib/permissions";
 import { useMemo } from "react";
 import { useAuthStore } from "@/store/use-auth-store";
-import { queryKeys } from "@/lib/query-keys";
+const NO_PERMISSIONS: string[] = [];
 
 /**
  * Conference Platform — Permission Hook
@@ -15,19 +15,22 @@ import { queryKeys } from "@/lib/query-keys";
 
 export function usePermissions(eventId?: string) {
   const { isAuthenticated, accessToken, user } = useAuthStore();
-  const { data, isLoading, error } = useQuery({
-    queryKey: queryKeys.permissions.effective(user?.organization_id, eventId),
-    queryFn: () => {
+  const { data, isLoading, isFetching, error, refetch } = useQuery({
+    queryKey: ["permissions", user?.id, user?.organization_id, eventId],
+    queryFn: ({ signal }) => {
       const url = eventId ? `/me/permissions?event_id=${eventId}` : '/me/permissions';
-      return apiGet<{ permissions: string[] }>(url);
+      return apiGet<{ permissions: string[]; organization_id: string; policy_revision: number }>(url, { signal });
     },
     enabled: isAuthenticated && !!accessToken,
-    // Context-sensitive permissions don't change often, but we want them ready
-    staleTime: 1000 * 60, // 1 minute
-    placeholderData: keepPreviousData,
+    // Revalidate on mount/focus; cached permissions are not authority.
+    staleTime: 0,
+    retry: false,
+    refetchOnWindowFocus: true,
   });
 
-  const permissions = data?.permissions || [];
+  // Hide cached allows while checking current authority or after an error.
+  const permissions = !isFetching && !error && isAuthenticated && !!accessToken &&
+    !!data && data.organization_id === user?.organization_id ? data.permissions : NO_PERMISSIONS;
 
   const checkPermission = useMemo(() => {
     return (code: PermissionCode) => hasPermission(permissions, code);
@@ -37,7 +40,10 @@ export function usePermissions(eventId?: string) {
     permissions,
     checkPermission,
     isLoading,
-    error
+    isFetching,
+    policyRevision: data?.policy_revision,
+    error,
+    refetch,
   };
 }
 

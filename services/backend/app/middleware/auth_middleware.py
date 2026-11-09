@@ -21,7 +21,6 @@
 from __future__ import annotations
 
 import time
-from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional, Any
 
@@ -33,6 +32,9 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from app.config import settings
+from app.core.distributed_rate_limit import identity_key
+from app.core.client_ip import resolve_client_ip
+from app.core.rate_policy import request_operation
 
 
 # ── Public paths (never require auth at middleware level) ─────
@@ -55,11 +57,9 @@ _PUBLIC_PATH_PREFIXES = (
 )
 
 
-# ── Simple in-memory 401 rate tracker ────────────────────────
-# Tracks consecutive 401s per IP for anomaly logging.
-# For production use Redis with TTL instead.
-_auth_fail_counts: dict[str, int] = defaultdict(int)
-_AUTH_FAIL_ALERT_THRESHOLD = 10   # log a warning after this many failures from same IP
+# ── Expiring shared 401 anomaly diagnostics ──────────────────
+# Diagnostics only; ingress/account admission policies enforce abuse limits.
+_AUTH_FAIL_ALERT_THRESHOLD = 10
 
 
 # ── Security headers ──────────────────────────────────────────
@@ -104,17 +104,20 @@ class AuthMiddleware:
                 status = message.get("status")
                 if status == 401:
                     ip = self._get_ip(request)
-                    _auth_fail_counts[ip] += 1
-                    count = _auth_fail_counts[ip]
-                    if count >= _AUTH_FAIL_ALERT_THRESHOLD and count % _AUTH_FAIL_ALERT_THRESHOLD == 0:
-                        logger.warning(
-                            f"Auth anomaly: {count} consecutive 401s from IP {ip} "
-                            f"path={request.url.path}"
-                        )
-                elif status and status < 400:
-                    ip = self._get_ip(request)
-                    if ip in _auth_fail_counts:
-                        del _auth_fail_counts[ip]
+                    from app.redis import coordination_client
+                    try:
+                        async with coordination_client.pipeline(transaction=True) as pipe:
+                            key = f"access-rate:auth-failures:{identity_key(ip)}"
+                            pipe.incr(key)
+                            pipe.expire(key, 900)
+                            count, _ = await pipe.execute()
+                        if count >= _AUTH_FAIL_ALERT_THRESHOLD and count % _AUTH_FAIL_ALERT_THRESHOLD == 0:
+                            logger.warning("Authentication failures: count={} identity={} operation={}",
+                                count, identity_key(ip), request_operation(request).operation_id)
+                    except Exception as exc:
+                        # Diagnostic counters are not admission or adaptive
+                        # account challenges. Admission already fails closed.
+                        logger.warning("Authentication telemetry unavailable: {}", type(exc).__name__)
 
             await send(message)
 
@@ -134,6 +137,8 @@ class AuthMiddleware:
         request.state.user_role = None
         request.state.org_id = None
         request.state.token_valid = False
+        request.state.credential_digest = None
+        request.state.api_usage_accounted = False
 
         # 1. API Key authentication via custom header
         api_key = request.headers.get("X-API-Key")
@@ -160,6 +165,7 @@ class AuthMiddleware:
                     request.state.user_role = payload.get("role")
                     request.state.org_id = _uuid.UUID(org) if org else None
                     request.state.token_valid = True
+                    request.state.credential_digest = identity_key(token)
                     return
                 except (JWTError, ValueError):
                     # If JWT fails, check if it's a developer OAuth2 access token in the database
@@ -187,26 +193,29 @@ class AuthMiddleware:
                             request.state.user_id = oauth_token.user_id
                             request.state.user_role = "developer"
                             request.state.token_valid = True
+                            request.state.credential_digest = identity_key(token)
                             return
 
         # 3. Handle API Key validation if one was specified
         if api_key:
             from app.database import AsyncSessionLocal
             from app.modules.developer.services.developer_service import DeveloperService
+            from app.core.rate_policy import request_operation
             async with AsyncSessionLocal() as db:
                 resolved_org_id = await DeveloperService.validate_api_key(
-                    db, api_key, endpoint=request.url.path
+                    db, api_key, endpoint=request_operation(request).operation_id
                 )
                 if resolved_org_id:
+                    # API-key admission already commits its reservation/usage.
+                    # Do not meter that same request again after its response.
+                    request.state.api_usage_accounted = True
                     request.state.org_id = resolved_org_id
                     request.state.user_id = None
                     request.state.user_role = "developer"
                     request.state.token_valid = True
+                    request.state.credential_digest = identity_key(api_key)
                     return
 
     @staticmethod
     def _get_ip(request: Request) -> str:
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-        return request.client.host if request.client else "unknown"
+        return resolve_client_ip(request) or "unknown"

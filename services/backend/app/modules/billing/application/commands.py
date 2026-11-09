@@ -22,7 +22,6 @@ from app.modules.platform.models.platform_domain_tables import (
     PlatformFlagMutation,
     PlatformFlagOverride,
 )
-from app.modules.billing.services.activation_service import ActivationService
 
 
 class PlatformFlagCommandService:
@@ -402,84 +401,3 @@ class PlatformFlagCommandService:
                 raise HTTPException(status_code=404, detail={"code": "EVENT_NOT_FOUND"})
         if payload.user_id and not await db.get(User, payload.user_id):
             raise HTTPException(status_code=404, detail={"code": "USER_NOT_FOUND"})
-
-
-class BillingActivationCommandService:
-    """Own activation mutations while preserving the mature domain service."""
-
-    @staticmethod
-    async def activate(
-        db: AsyncSession,
-        *,
-        organization_id: uuid.UUID,
-        event_id: uuid.UUID,
-        subscription_id: uuid.UUID | None,
-        grant_id: uuid.UUID | None,
-        activation_policy: str,
-        idempotency_key: str,
-        actor_id: uuid.UUID,
-    ):
-        try:
-            result = await ActivationService.activate_event(
-                db,
-                organization_id=organization_id,
-                event_id=event_id,
-                subscription_id=subscription_id,
-                grant_id=grant_id,
-                activation_policy=activation_policy,
-                idempotency_key=idempotency_key,
-                actor_id=actor_id,
-            )
-            await db.commit()
-            return result
-        except Exception:
-            await db.rollback()
-            raise
-
-    @staticmethod
-    async def deactivate(
-        db: AsyncSession,
-        *,
-        organization_id: uuid.UUID,
-        event_id: uuid.UUID,
-        idempotency_key: str,
-        actor_id: uuid.UUID,
-    ):
-        try:
-            result = await ActivationService.deactivate_event(
-                db,
-                organization_id=organization_id,
-                event_id=event_id,
-                idempotency_key=idempotency_key,
-                actor_id=actor_id,
-            )
-            await db.commit()
-            return result
-        except Exception:
-            await db.rollback()
-            raise
-
-    @staticmethod
-    async def transfer(
-        db: AsyncSession,
-        *,
-        organization_id: uuid.UUID,
-        source_event_id: uuid.UUID,
-        target_event_id: uuid.UUID,
-        idempotency_key: str,
-        actor_id: uuid.UUID,
-    ):
-        try:
-            result = await ActivationService.transfer_activation(
-                db,
-                organization_id=organization_id,
-                source_event_id=source_event_id,
-                target_event_id=target_event_id,
-                idempotency_key=idempotency_key,
-                actor_id=actor_id,
-            )
-            await db.commit()
-            return result
-        except Exception:
-            await db.rollback()
-            raise

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional, Dict, Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, Integer, Index
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, Integer, Index, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -40,6 +40,7 @@ class Permission(Base):
 
 class RolePermission(Base):
     __tablename__ = "role_permissions"
+    __table_args__ = (UniqueConstraint("role_id", "permission_id", name="uq_role_permission_pair"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizer_access.user_roles.id", ondelete="CASCADE"))
@@ -50,6 +51,14 @@ class RolePermission(Base):
 
 class UserRoleAssignment(Base):
     __tablename__ = "user_role_assignments"
+    __table_args__ = (
+        Index("ix_role_assignment_subject_event", "user_id", "event_id", "organization_id"),
+        Index("uq_active_org_role_assignment", "organization_id", "user_id", "role_id", unique=True,
+              postgresql_where=text("organization_id IS NOT NULL AND event_id IS NULL AND revoked_at IS NULL")),
+        Index("uq_active_event_role_assignment", "organization_id", "user_id", "role_id", "event_id", unique=True,
+              postgresql_where=text("organization_id IS NOT NULL AND event_id IS NOT NULL AND revoked_at IS NULL")),
+        Index("ix_active_assignment_page", "organization_id", "id", postgresql_where=text("revoked_at IS NULL")),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="CASCADE"), index=True)
@@ -59,6 +68,8 @@ class UserRoleAssignment(Base):
     
     assigned_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id"))
     assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     role: Mapped["Role"] = relationship("Role", back_populates="assignments")
     
@@ -93,6 +104,7 @@ class ScopedPermission(Base):
 
 class UserAccessNode(Base):
     __tablename__ = "user_access_nodes"
+    __table_args__ = (Index("ix_access_node_subject_scope", "user_id", "node_type", "node_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="CASCADE"), index=True)
@@ -118,6 +130,7 @@ class AccessTemplate(Base):
 
 class RoleInheritanceMap(Base):
     __tablename__ = "role_inheritance_maps"
+    __table_args__ = (UniqueConstraint("child_role_id", "parent_role_id", name="uq_role_inheritance_pair"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     parent_role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizer_access.user_roles.id", ondelete="CASCADE"))

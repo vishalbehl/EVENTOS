@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   Calendar,
   Copy,
+  Grid2X2,
+  List,
   MapPin,
   Plus,
   RotateCcw,
@@ -15,6 +17,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useOrganiserNeedsAttention } from "@/hooks/useOrganiserDashboard";
+import { useAccessBootstrap } from "@/hooks/useAccessBootstrap";
+import { accessContextCacheKey, useAuthStore } from "@/store/use-auth-store";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -45,6 +49,7 @@ import {
 
 type EventRow = {
   id: string;
+  version: number;
   name: string;
   short_code: string;
   start_date: string;
@@ -56,6 +61,7 @@ type EventRow = {
   source_status: string;
   registrations: number;
   readiness_pct: number;
+  banner_url?: string | null;
 };
 type EventPage = {
   items: EventRow[];
@@ -85,11 +91,33 @@ export function EventsListTab({
     | "completed";
 }) {
   const queryClient = useQueryClient();
+  const access = useAccessBootstrap();
+  const user = useAuthStore(state => state.user);
+  const activeContext = useAuthStore(state => state.activeContext);
+  const isContextSwitching = useAuthStore(state => state.isContextSwitching);
+  const contextKey = accessContextCacheKey(activeContext, user?.organization_id);
+  const hasAction = (action: string) => access.data?.actions.some(granted => granted.toUpperCase() === action) ?? false;
+  const canCreate = hasAction("EVENTS:CREATE");
+  const canEdit = hasAction("EVENTS:EDIT");
+  const canDelete = hasAction("EVENTS:DELETE");
+  const retryKeys = useRef(new Map<string, string>());
+  const retryKey = (signature: string) => {
+    const current = retryKeys.current.get(signature);
+    if (current) return current;
+    const next = crypto.randomUUID();
+    retryKeys.current.set(signature, next);
+    return next;
+  };
   const [selectedStatus, setSelectedStatus] = useState<string>(status || "all");
+  useEffect(() => {
+    setSelectedStatus(status || "all");
+    setPage(1);
+  }, [status]);
   const [search, setSearch] = useState("");
   const [year, setYear] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [viewMode, setViewMode] = useState<"list" | "grid">(() => typeof window !== "undefined" && localStorage.getItem("organiser-events-view") === "grid" ? "grid" : "list");
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [lifecycle, setLifecycle] = useState<{
@@ -100,7 +128,8 @@ export function EventsListTab({
   const [lifecycleReason, setLifecycleReason] = useState("");
   const { data: attention = [] } = useOrganiserNeedsAttention();
   const events = useQuery({
-    queryKey: ["organiser-events", selectedStatus, search, year, page, pageSize],
+    queryKey: ["organiser-events", user?.id, contextKey, selectedStatus, search, year, page, pageSize],
+    enabled: Boolean(user) && !isContextSwitching,
     queryFn: () => {
       const params = new URLSearchParams({
         page: String(page),
@@ -123,13 +152,16 @@ export function EventsListTab({
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: ["organiser-events"] });
   const duplicate = useMutation({
-    mutationFn: (event: EventRow) =>
-      apiClient.post(
+    mutationFn: (event: EventRow) => {
+      if (!canCreate) throw new Error("Your current access does not allow event creation.");
+      return apiClient.post(
         `/organiser/events/${event.id}/duplicate`,
         {},
-        { headers: { "Idempotency-Key": crypto.randomUUID() } },
-      ),
-    onSuccess: async () => {
+        { headers: { "Idempotency-Key": retryKey(`duplicate:${event.id}`) } },
+      );
+    },
+    onSuccess: async (_, event) => {
+      retryKeys.current.delete(`duplicate:${event.id}`);
       await refresh();
       setDuplicateEvent(null);
       toast.success("Event duplicated as a draft.");
@@ -138,45 +170,70 @@ export function EventsListTab({
       toast.error(error?.message || "Event could not be duplicated."),
   });
   const archive = useMutation({
-    mutationFn: ({ event, reason }: { event: EventRow; reason: string }) =>
-      apiClient.delete(`/events/${event.id}`, {
+    mutationFn: ({ event, reason }: { event: EventRow; reason: string }) => {
+      if (!canDelete) throw new Error("Your current access does not allow event archival.");
+      return apiClient.delete(`/events/${event.id}`, {
         headers: {
-          "Idempotency-Key": crypto.randomUUID(),
+          "Idempotency-Key": retryKey(`archive:${event.id}:${reason}`),
+          "If-Match": String(event.version),
           "X-Change-Reason": reason,
         },
-      }),
-    onSuccess: async () => {
+      });
+    },
+    onSuccess: async (_, variables) => {
+      retryKeys.current.delete(`archive:${variables.event.id}:${variables.reason}`);
       await refresh();
       setLifecycle(null);
       setLifecycleReason("");
       toast.success("Event archived and remains recoverable.");
     },
-    onError: (error: any) =>
-      toast.error(error?.message || "Event could not be archived."),
+    onError: async (error: any) => {
+      if (error?.status === 412) {
+        setLifecycle(null);
+        setLifecycleReason("");
+        await refresh();
+        toast.error("This event changed elsewhere. The list has been refreshed.");
+        return;
+      }
+      toast.error(error?.message || "Event could not be archived.");
+    },
   });
   const restore = useMutation({
-    mutationFn: ({ event, reason }: { event: EventRow; reason: string }) =>
-      apiClient.post(
+    mutationFn: ({ event, reason }: { event: EventRow; reason: string }) => {
+      if (!canEdit) throw new Error("Your current access does not allow event restoration.");
+      return apiClient.post(
         `/organiser/events/${event.id}/restore`,
         {},
         {
           headers: {
-            "Idempotency-Key": crypto.randomUUID(),
+            "Idempotency-Key": retryKey(`restore:${event.id}:${reason}`),
+            "If-Match": String(event.version),
             "X-Change-Reason": reason,
           },
         },
-      ),
-    onSuccess: async () => {
+      );
+    },
+    onSuccess: async (_, variables) => {
+      retryKeys.current.delete(`restore:${variables.event.id}:${variables.reason}`);
       await refresh();
       setLifecycle(null);
       setLifecycleReason("");
       toast.success("Event restored as a draft for review.");
     },
-    onError: (error: any) =>
-      toast.error(error?.message || "Event could not be restored."),
+    onError: async (error: any) => {
+      if (error?.status === 412) {
+        setLifecycle(null);
+        setLifecycleReason("");
+        await refresh();
+        toast.error("This event changed elsewhere. The list has been refreshed.");
+        return;
+      }
+      toast.error(error?.message || "Event could not be restored.");
+    },
   });
   const importEvents = useMutation({
     mutationFn: async () => {
+      if (!canCreate) throw new Error("Your current access does not allow event imports.");
       if (!importFile) throw new Error("Select a CSV file.");
       const body = new FormData();
       body.append("file", importFile);
@@ -186,12 +243,13 @@ export function EventsListTab({
         {
           headers: {
             "Content-Type": "multipart/form-data",
-            "Idempotency-Key": crypto.randomUUID(),
+            "Idempotency-Key": retryKey(`import:${importFile.name}:${importFile.size}:${importFile.lastModified}`),
           },
         },
       );
     },
     onSuccess: async (result) => {
+      if (importFile) retryKeys.current.delete(`import:${importFile.name}:${importFile.size}:${importFile.lastModified}`);
       await refresh();
       setImportOpen(false);
       setImportFile(null);
@@ -202,7 +260,7 @@ export function EventsListTab({
     onError: (error: any) =>
       toast.error(error?.message || "Events could not be imported."),
   });
-  const data = events.data;
+  const data = isContextSwitching ? undefined : events.data;
   const summary = data?.summary;
   const years = Array.from(
     { length: 7 },
@@ -213,18 +271,21 @@ export function EventsListTab({
     <OrganiserPage
       title="Events"
       description="Create, manage and monitor all your events in one place."
+      tabs={<PageTabs active={selectedStatus === "active" ? "Ongoing" : selectedStatus === "drafts" ? "Drafts" : selectedStatus.charAt(0).toUpperCase() + selectedStatus.slice(1)} tabs={[
+        { label: "All", href: "/events" },
+        { label: "Upcoming", href: "/events?status=upcoming" },
+        { label: "Ongoing", href: "/events?status=active" },
+        { label: "Completed", href: "/events?status=completed" },
+        { label: "Drafts", href: "/events?status=drafts" },
+        { label: "Archived", href: "/events?status=archived" },
+      ]} />}
       actions={
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setImportOpen(true)}>
+          <Button variant="outline" disabled={!canCreate} title={!canCreate ? "Event creation permission is required" : undefined} onClick={() => setImportOpen(true)}>
             <Upload className="mr-2 h-4 w-4" />
             Import events
           </Button>
-          <Button asChild>
-            <Link href="/events/new">
-              <Plus className="mr-2 h-4 w-4" />
-              Create event
-            </Link>
-          </Button>
+          {canCreate ? <Button asChild><Link href="/events/new"><Plus className="mr-2 h-4 w-4" />Create event</Link></Button> : <Button disabled title="Event creation permission is required"><Plus className="mr-2 h-4 w-4" />Create event</Button>}
         </div>
       }
       attention={<NeedsAttentionPane items={attention} />}
@@ -237,25 +298,21 @@ export function EventsListTab({
           icon={<Calendar className="h-5 w-5" />}
         />
         <MetricCard
-          label="Active"
+          label="Upcoming"
+          value={summary?.upcoming ?? "Unavailable"}
+          tone="blue"
+          icon={<Calendar className="h-5 w-5" />}
+        />
+        <MetricCard
+          label="Ongoing"
           value={summary?.live ?? "Unavailable"}
           tone="green"
           icon={<Calendar className="h-5 w-5" />}
         />
         <MetricCard
-          label="Upcoming"
-          value={summary?.upcoming ?? "Unavailable"}
-          tone="amber"
-          icon={<Calendar className="h-5 w-5" />}
-        />
-        <MetricCard
-          label={selectedStatus === "archived" ? "Archived" : "Drafts"}
-          value={
-            selectedStatus === "archived"
-              ? (summary?.archived ?? "Unavailable")
-              : (summary?.draft ?? "Unavailable")
-          }
-          tone="rose"
+          label="Completed"
+          value={summary?.completed ?? "Unavailable"}
+          tone="purple"
           icon={<Calendar className="h-5 w-5" />}
         />
       </div>
@@ -339,6 +396,10 @@ export function EventsListTab({
               </SelectItem>
             </SelectContent>
           </Select>
+          <div className="ml-auto flex rounded-full border border-[var(--org-border)] bg-[var(--org-surface)] p-1" aria-label="Event view">
+            <button type="button" aria-label="Grid view" aria-pressed={viewMode === "grid"} onClick={() => { setViewMode("grid"); localStorage.setItem("organiser-events-view", "grid"); }} className={`grid size-8 place-items-center rounded-full ${viewMode === "grid" ? "bg-black text-white dark:bg-white dark:text-black" : ""}`}><Grid2X2 className="size-4" /></button>
+            <button type="button" aria-label="List view" aria-pressed={viewMode === "list"} onClick={() => { setViewMode("list"); localStorage.setItem("organiser-events-view", "list"); }} className={`grid size-8 place-items-center rounded-full ${viewMode === "list" ? "bg-black text-white dark:bg-white dark:text-black" : ""}`}><List className="size-4" /></button>
+          </div>
           <Select
             value={year || "all"}
             onValueChange={(val) => {
@@ -359,6 +420,75 @@ export function EventsListTab({
             </SelectContent>
           </Select>
         </div>
+        {viewMode === "grid" ? (
+          <div className="p-4">
+            {(data?.items || []).length ? (
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {(data?.items || []).map((event) => (
+                  <article key={event.id} className="overflow-hidden rounded-[var(--org-card-radius)] border border-[var(--org-border)] bg-[var(--org-surface)] shadow-[var(--org-card-shadow)]">
+                    <div className="relative h-36 bg-gradient-to-br from-[var(--org-purple)] to-[var(--org-blue)]">
+                      {event.banner_url ? (
+                        <img src={event.banner_url} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="grid h-full place-items-center text-2xl font-extrabold tracking-[0.16em] text-white/90">
+                          {event.short_code.slice(0, 3)}
+                        </div>
+                      )}
+                      <div className="absolute right-3 top-3"><StatusBadge status={event.status} /></div>
+                    </div>
+                    <div className="space-y-4 p-4">
+                      <div>
+                        <p className="text-base font-extrabold text-[var(--org-text)]">{event.name}</p>
+                        <p className="mt-1 text-xs text-[var(--op-muted)]">{event.short_code}</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-xs text-[var(--op-muted)]">
+                        <span>{new Date(event.start_date).toLocaleDateString()} – {new Date(event.end_date).toLocaleDateString()}</span>
+                        <span className="inline-flex items-center justify-end gap-1 text-right"><MapPin className="size-3.5" />{event.venue || "Venue not set"}</span>
+                        <span><strong className="text-[var(--org-text)]">{event.registrations.toLocaleString()}</strong> registrations</span>
+                        <span className="text-right"><strong className="text-[var(--org-text)]">{event.readiness_pct}%</strong> ready</span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-[var(--org-track)]">
+                        <div className="h-full rounded-full bg-[var(--org-purple)]" style={{ width: `${Math.max(0, Math.min(100, event.readiness_pct))}%` }} />
+                      </div>
+                      <div className="flex items-center gap-2 border-t border-[var(--org-border)] pt-3">
+                        <Button asChild size="sm" className="flex-1"><Link href={`/events/${event.id}/dashboard`}>Open event</Link></Button>
+                        {event.source_status?.toLowerCase() !== "archived" && (
+                          <Button size="icon" variant="outline" aria-label={`Duplicate ${event.name}`} title={!canCreate ? "Event creation permission is required" : undefined} disabled={!canCreate || duplicate.isPending} onClick={() => setDuplicateEvent(event)}><Copy className="size-3.5" /></Button>
+                        )}
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          aria-label={`${event.source_status?.toLowerCase() === "archived" ? "Restore" : "Archive"} ${event.name}`}
+                          disabled={event.source_status?.toLowerCase() === "archived" ? !canEdit : !canDelete}
+                          title={event.source_status?.toLowerCase() === "archived" ? (!canEdit ? "Event edit permission is required" : undefined) : (!canDelete ? "Event delete permission is required" : undefined)}
+                          onClick={() => {
+                            setLifecycle({ event, action: event.source_status?.toLowerCase() === "archived" ? "restore" : "archive" });
+                            setLifecycleReason("");
+                          }}
+                        >
+                          {event.source_status?.toLowerCase() === "archived" ? <RotateCcw className="size-3.5" /> : <Archive className="size-3.5" />}
+                        </Button>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="py-16 text-center text-sm text-[var(--op-muted)]">
+                {events.isError ? "Events are unavailable from the authoritative API." : events.isLoading ? "Loading events..." : "No events match these filters."}
+              </div>
+            )}
+            {(data?.total || 0) > pageSize && (
+              <div className="mt-5 flex items-center justify-between border-t border-[var(--org-border)] pt-4 text-xs text-[var(--op-muted)]">
+                <span>Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, data?.total || 0)} of {data?.total || 0}</span>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Previous</Button>
+                  <Button variant="outline" size="sm" disabled={page * pageSize >= (data?.total || 0)} onClick={() => setPage((value) => value + 1)}>Next</Button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
         <DataTable
           columns={[
             "Event",
@@ -384,8 +514,8 @@ export function EventsListTab({
           }
           rows={(data?.items || []).map((event) => [
             <div key="event" className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-md bg-[var(--op-primary)] text-xs font-extrabold text-white">
-                {event.short_code.slice(0, 3)}
+              <div className="flex h-11 w-16 items-center justify-center overflow-hidden rounded-xl bg-[var(--org-purple)] text-xs font-extrabold text-white">
+                {event.banner_url ? <img src={event.banner_url} alt="" className="h-full w-full object-cover" /> : event.short_code.slice(0, 3)}
               </div>
               <div>
                 <p className="font-bold">{event.name}</p>
@@ -413,24 +543,25 @@ export function EventsListTab({
               <Button asChild size="sm" variant="outline">
                 <Link href={`/events/${event.id}/dashboard`}>Open</Link>
               </Button>
-              {status !== "archived" && (
+              {event.source_status?.toLowerCase() !== "archived" && (
                 <Button
                   size="icon"
                   variant="outline"
-                  title="Duplicate event"
                   aria-label={`Duplicate ${event.name}`}
-                  disabled={duplicate.isPending}
+                  disabled={!canCreate || duplicate.isPending}
+                  title={!canCreate ? "Event creation permission is required" : "Duplicate event"}
                   onClick={() => setDuplicateEvent(event)}
                 >
                   <Copy className="h-3.5 w-3.5" />
                 </Button>
               )}
-              {status === "archived" ? (
+              {event.source_status?.toLowerCase() === "archived" ? (
                 <Button
                   size="icon"
                   variant="outline"
-                  title="Restore event"
+                  title={!canEdit ? "Event edit permission is required" : "Restore event"}
                   aria-label={`Restore ${event.name}`}
+                  disabled={!canEdit || restore.isPending}
                   onClick={() => {
                     setLifecycle({ event, action: "restore" });
                     setLifecycleReason("");
@@ -442,13 +573,13 @@ export function EventsListTab({
                 <Button
                   size="icon"
                   variant="outline"
-                  title="Archive event"
                   aria-label={`Archive ${event.name}`}
-                  disabled={archive.isPending}
+                  title={!canDelete ? "Event delete permission is required" : "Archive event"}
                   onClick={() => {
                     setLifecycle({ event, action: "archive" });
                     setLifecycleReason("");
                   }}
+                  disabled={!canDelete || archive.isPending}
                 >
                   <Archive className="h-3.5 w-3.5" />
                 </Button>
@@ -456,6 +587,7 @@ export function EventsListTab({
             </div>,
           ])}
         />
+        )}
       </Panel>
       <Dialog open={importOpen} onOpenChange={setImportOpen}>
         <DialogContent className="max-w-lg">
@@ -484,7 +616,7 @@ export function EventsListTab({
             </Button>
             <Button
               onClick={() => importEvents.mutate()}
-              disabled={!importFile || importEvents.isPending}
+              disabled={!canCreate || !importFile || importEvents.isPending}
             >
               {importEvents.isPending ? "Importing..." : "Import events"}
             </Button>
@@ -525,7 +657,8 @@ export function EventsListTab({
               disabled={
                 lifecycleReason.trim().length < 12 ||
                 archive.isPending ||
-                restore.isPending
+                restore.isPending ||
+                (lifecycle?.action === "restore" ? !canEdit : !canDelete)
               }
               onClick={() => {
                 if (!lifecycle) return;
@@ -564,7 +697,7 @@ export function EventsListTab({
               Cancel
             </Button>
             <Button
-              disabled={!duplicateEvent || duplicate.isPending}
+              disabled={!canCreate || !duplicateEvent || duplicate.isPending}
               onClick={() => duplicateEvent && duplicate.mutate(duplicateEvent)}
             >
               {duplicate.isPending ? "Duplicating..." : "Create draft copy"}

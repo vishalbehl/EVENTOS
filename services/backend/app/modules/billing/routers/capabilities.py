@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.dependencies import ActiveUser, StepUpAuth, get_db
+from app.dependencies import ActiveUser, StepUpAuth, TokenDep, get_db
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.billing.capability_registry import registry_coverage
 from app.modules.billing.services.capability_service import CapabilityService
@@ -24,7 +24,11 @@ from app.modules.identity.models.user import User
 from app.modules.platform.models.platform_domain_tables import PlatformFlagDefinition, PlatformFlagMutation, PlatformFlagOverride
 from app.modules.platform.models.feature import FeatureCatalog
 from app.modules.platform.models.organization import Organization
-from app.modules.billing.models.subscription import PlanFeature, AddonFeature
+from app.modules.billing.models.cloud_commercial import (
+    CommercialOffer,
+    CommercialOfferEntitlement,
+    CommercialOfferVersion,
+)
 from app.modules.superadmin.dependencies import require_super_admin
 
 
@@ -203,27 +207,42 @@ async def _validate_flag_scope(
 
 
 @router.get("/events/{event_id}/capabilities")
-async def event_capabilities(event_id: uuid.UUID, response: Response, user: ActiveUser, db: AsyncSession = Depends(get_db)):
-    event = await db.get(Event, event_id)
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-    platform_actor = bool(user.role == "super_admin" or user.platform_role == "SUPER_ADMIN" or user.is_platform_admin)
-    if not platform_actor and event.organization_id != user.organization_id:
-        raise HTTPException(status_code=404, detail="Event not found")
-    try:
-        result = await CapabilityService.resolve_event(db, event.organization_id, event.id, user_id=user.id, environment=settings.environment.upper())
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+async def event_capabilities(event_id: uuid.UUID, response: Response, user: ActiveUser,
+                             token: TokenDep, db: AsyncSession = Depends(get_db)):
+    from app.modules.rbac.services.event_scope import customer_event
+    from app.modules.rbac.services.permission_service import get_user_permissions
+    # A customer endpoint is not a platform inspection alias. Current accepted
+    # membership, active owned workspace and event action are all required.
+    event = await customer_event(db, user, event_id, token)
+    from app.core.tenant_context import TenantContextGuard
+    async with TenantContextGuard.scoped(db, event.organization_id):
+        if token.access_mode == "DIRECT" and "EVENTS:VIEW" not in await get_user_permissions(
+            db, user.id, event_id=event.id, organization_id=event.organization_id
+        ):
+            raise HTTPException(403, detail={"code": "PERMISSION_DENIED"})
+        try:
+            result = await CapabilityService.resolve_event(db, event.organization_id, event.id, user_id=user.id, environment=settings.environment.upper())
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     response.headers["ETag"] = f'"{result["resolution_version"]}"'
-    response.headers["Cache-Control"] = "private, max-age=30, must-revalidate"
+    response.headers["Cache-Control"] = "no-store"
     return result
 
 
 @router.get("/organizations/current/capabilities")
-async def current_organization_capabilities(user: ActiveUser, db: AsyncSession = Depends(get_db)):
-    if not user.organization_id:
+async def current_organization_capabilities(response: Response, user: ActiveUser, token: TokenDep,
+                                            db: AsyncSession = Depends(get_db)):
+    if not token.active_organization_id:
         raise HTTPException(status_code=409, detail={"code": "ORGANIZATION_CONTEXT_REQUIRED"})
-    return await CapabilityService.resolve_organization(db, user.organization_id, user_id=user.id, environment=settings.environment.upper())
+    from app.core.tenant_context import TenantContextGuard
+    from app.modules.rbac.services.access_contexts import selected_request_context
+    response.headers["Cache-Control"] = "no-store"
+    async with selected_request_context(db, user, token, event_id=token.active_event_id):
+        async with TenantContextGuard.scoped(db, token.active_organization_id):
+            return await CapabilityService.resolve_organization(
+                db, token.active_organization_id, user_id=user.id,
+                environment=settings.environment.upper(),
+            )
 
 
 @admin_router.get("/coverage")
@@ -232,8 +251,18 @@ async def capability_coverage(db: AsyncSession = Depends(get_db)):
     catalogue = {row.key: row for row in (await db.scalars(select(FeatureCatalog))).all()}
     flag_keys = set((await db.scalars(select(PlatformFlagDefinition.flag_key))).all())
     registered = set(registry["features"]) | set(registry["catalog_limit_keys"])
-    plan_counts = dict((await db.execute(select(FeatureCatalog.key, func.count(PlanFeature.id)).outerjoin(PlanFeature, PlanFeature.feature_id == FeatureCatalog.id).group_by(FeatureCatalog.key))).all())
-    addon_counts = dict((await db.execute(select(FeatureCatalog.key, func.count(AddonFeature.id)).outerjoin(AddonFeature, AddonFeature.feature_id == FeatureCatalog.id).group_by(FeatureCatalog.key))).all())
+    plan_counts = dict((await db.execute(
+        select(CommercialOfferEntitlement.entitlement_key, func.count(CommercialOfferEntitlement.id))
+        .join(CommercialOfferVersion, CommercialOfferVersion.id == CommercialOfferEntitlement.offer_version_id)
+        .group_by(CommercialOfferEntitlement.entitlement_key)
+    )).all())
+    addon_counts = dict((await db.execute(
+        select(CommercialOfferEntitlement.entitlement_key, func.count(CommercialOfferEntitlement.id))
+        .join(CommercialOfferVersion, CommercialOfferVersion.id == CommercialOfferEntitlement.offer_version_id)
+        .join(CommercialOffer, CommercialOffer.id == CommercialOfferVersion.offer_id)
+        .where(CommercialOffer.product_family == "VENUE_ADDON")
+        .group_by(CommercialOfferEntitlement.entitlement_key)
+    )).all())
     registry["items"] = [
         {
             "key": key,

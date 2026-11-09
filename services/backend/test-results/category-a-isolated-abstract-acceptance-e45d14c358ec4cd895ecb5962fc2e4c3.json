@@ -1,0 +1,21 @@
+{
+  "status": "PASSED",
+  "environment": "local_isolated_rehearsal",
+  "run_id": "e45d14c358ec4cd895ecb5962fc2e4c3",
+  "scenario": "delegated",
+  "scope": "EVENT",
+  "database": "category_a_restore_20261020_e45d14c358ec",
+  "backup_database": "category_a_restore_20261020_4eeff58ce5f1",
+  "backup_evidence_sha256": "68ddc0cff7625306cb388b92b85d7c2ed0e3ad54bfc6b3a3aa8e8936f1b78042",
+  "started_at": "2026-10-20T11:12:46.240898+00:00",
+  "application_workers_providers": "NOT_STARTED",
+  "production_acceptance": "NOT_RUN",
+  "fixture_artifact": "category-a-abstract-fixture-e45d14c358ec4cd895ecb5962fc2e4c3.json",
+  "runtime_artifact": "category-a-delegated-form-runtime-23c90ea03b13463ebe820383c89f1a2c.json",
+  "runtime_artifact_sha256": "477d59277b961c1b088c89f791d85f36fad99c79d77f4af3124cb60251da1a9b",
+  "runtime_status": "PASSED",
+  "checks_verified": 16,
+  "final_clone_quarantined": true,
+  "completed_at": "2026-10-20T11:13:11.382681+00:00",
+  "probe_sha256": "b32d0b480eda1209dc79202d37bb985e6eb0545660ad2e75565441422d64879d"
+}

@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.operations_planning.models import Milestone, Project, ProjectTask
+from app.modules.rbac.services.event_scope import owned_event_scope
 
 
 class ProjectRepository:
@@ -15,7 +16,10 @@ class ProjectRepository:
         self.db = db
 
     def scoped_statement(self, *, organization_id: uuid.UUID, event_id: uuid.UUID | None = None):
-        statement = select(Project).where(Project.organization_id == organization_id)
+        statement = select(Project).where(
+            Project.organization_id == organization_id,
+            owned_event_scope(self.db, Project.event_id, organization_id),
+        )
         if event_id is not None:
             statement = statement.where(Project.event_id == event_id)
         return statement
@@ -67,6 +71,7 @@ class ProjectTaskRepository:
             .where(
                 ProjectTask.project_id == project_id,
                 Project.organization_id == organization_id,
+                owned_event_scope(self.db, Project.event_id, organization_id),
             )
         )
 
@@ -90,6 +95,7 @@ class ProjectTaskRepository:
             .where(
                 ProjectTask.id == task_id,
                 Project.organization_id == organization_id,
+                owned_event_scope(self.db, Project.event_id, organization_id),
             )
         )
         if for_update:
@@ -123,6 +129,7 @@ class MilestoneRepository:
             .where(
                 Milestone.project_id == project_id,
                 Project.organization_id == organization_id,
+                owned_event_scope(self.db, Project.event_id, organization_id),
             )
         )
 

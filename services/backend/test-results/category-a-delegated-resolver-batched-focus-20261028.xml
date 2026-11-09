@@ -1,0 +1,1 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="0" skipped="0" tests="1" time="39.935" timestamp="2026-10-28T08:37:05.301510+05:30" hostname="Vishal"><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[event_scope-SURVEY]" time="39.242" /></testsuite></testsuites>

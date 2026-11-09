@@ -30,6 +30,8 @@ interface AuthState {
   loginTime: number | null;
   lastActivity: number | null;
   hasHydrated: boolean;
+  sessionRevision: number;
+  beginAuthTransition: () => number;
   
   // Impersonation Support
   originalUser: User | null;
@@ -49,7 +51,7 @@ interface AuthState {
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       user: null,
       accessToken: null,
       refreshToken: null,
@@ -58,6 +60,12 @@ export const useAuthStore = create<AuthState>()(
       loginTime: null,
       lastActivity: null,
       hasHydrated: false,
+      sessionRevision: 0,
+      beginAuthTransition: () => {
+        const revision = get().sessionRevision + 1;
+        set({ sessionRevision: revision });
+        return revision;
+      },
       
       originalUser: null,
       originalAccessToken: null,
@@ -66,17 +74,24 @@ export const useAuthStore = create<AuthState>()(
       impersonatedUserName: null,
 
       setAuth: (user, accessToken, refreshToken, rememberMe = false) => 
-        set({ 
+        set((state) => ({
+          sessionRevision: state.sessionRevision + 1,
           user, 
           accessToken, 
           refreshToken: refreshToken || null, 
           isAuthenticated: true,
           rememberMe,
+          originalUser: null,
+          originalAccessToken: null,
+          originalRefreshToken: null,
+          impersonatedOrgName: null,
+          impersonatedUserName: null,
           loginTime: Date.now(),
           lastActivity: Date.now()
-        }),
+        })),
       logout: () => 
-        set({ 
+        set((state) => ({
+          sessionRevision: state.sessionRevision + 1,
           user: null, 
           accessToken: null, 
           refreshToken: null, 
@@ -89,7 +104,7 @@ export const useAuthStore = create<AuthState>()(
           originalRefreshToken: null,
           impersonatedOrgName: null,
           impersonatedUserName: null
-        }),
+        })),
       updateUser: (userData) => 
         set((state) => ({
           user: state.user ? { ...state.user, ...userData as User } : null
@@ -102,6 +117,7 @@ export const useAuthStore = create<AuthState>()(
       
       startImpersonation: (impersonatedUser, token, orgName, userName) => {
         set((state) => ({
+          sessionRevision: state.sessionRevision + 1,
           originalUser: state.originalUser || state.user,
           originalAccessToken: state.originalAccessToken || state.accessToken,
           originalRefreshToken: state.originalRefreshToken || state.refreshToken,
@@ -116,6 +132,7 @@ export const useAuthStore = create<AuthState>()(
       },
       stopImpersonation: () => {
         set((state) => ({
+          sessionRevision: state.sessionRevision + 1,
           user: state.originalUser,
           accessToken: state.originalAccessToken,
           refreshToken: state.originalRefreshToken,
@@ -132,7 +149,7 @@ export const useAuthStore = create<AuthState>()(
     {
       name: 'obsidian-auth-storage',
       partialize: (state) => {
-        const { hasHydrated, ...rest } = state;
+        const { hasHydrated, sessionRevision, beginAuthTransition, ...rest } = state;
         const isImpersonating = Boolean(state.originalAccessToken);
         const safeState = {
           ...rest,
@@ -157,6 +174,12 @@ export const useAuthStore = create<AuthState>()(
           loginTime: null,
           lastActivity: null,
         };
+      },
+      merge: (persisted, current) => {
+        // Old storage must not restore credentials or rewind in-memory ordering.
+        const saved = persisted && typeof persisted === 'object'
+          ? persisted as Record<string, unknown> : {};
+        return { ...current, rememberMe: typeof saved.rememberMe === 'boolean' ? saved.rememberMe : current.rememberMe };
       },
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);

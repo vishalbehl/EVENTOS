@@ -19,99 +19,45 @@ from app.modules.identity.services.auth_service import hash_password
 
 
 async def ensure_registration_entitlement(db, event: Event) -> None:
-    """Give the primary load event the same real entitlement path as staging."""
-    from app.modules.billing.models.subscription import (
-        OrganizationSubscription,
-        PlanFeature,
-        SubscriptionPlan,
+    """Give the primary load event a canonical commercial event contract."""
+    from app.modules.billing.models.cloud_commercial import (
+        CommercialAccount, CommercialAccountWorkspace, CommercialContract,
+        CommercialContractItem, CommercialOffer, CommercialOfferEntitlement,
+        CommercialOfferPrice, CommercialOfferVersion,
     )
     from app.modules.billing.services.activation_service import ActivationService
-    from app.modules.billing.services.capability_service import CapabilityService
-    from app.modules.platform.models.feature import FeatureCatalog
 
     live_activation = await db.scalar(
         select(text("1")).select_from(text("commerce.event_activations")).where(
-            text("event_id = :event_id AND organization_id = :organization_id AND activation_status IN ('PENDING','ACTIVE','SUSPENDED','EXPIRED','TRANSFER_PENDING')")
+            text("event_id = :event_id AND organization_id = :organization_id AND status IN ('PENDING','ACTIVE','SUSPENDED','EXPIRED','TRANSFER_PENDING')")
         ),
         {"event_id": str(event.id), "organization_id": str(event.organization_id)},
     )
     if live_activation:
         return
-
-    await CapabilityService.sync_catalogue(db)
-    plan = await db.scalar(
-        select(SubscriptionPlan).where(SubscriptionPlan.name == "Local Load Test Plan")
-    )
-    if plan is None:
-        plan = SubscriptionPlan(
-            name="Local Load Test Plan",
-            max_events=100,
-            max_event_team_members=100,
-            max_registrations=200000,
-            max_speakers=10000,
-            max_sessions=10000,
-            max_rooms=1000,
-            max_ticket_categories=1000,
-            max_badge_templates=1000,
-            max_certificate_templates=1000,
-            max_emails_per_event=1000000,
-            storage_quota_mb=102400,
-            is_active=True,
-        )
-        db.add(plan)
+    account = await db.scalar(select(CommercialAccount).where(CommercialAccount.owner_organization_id == event.organization_id))
+    if account is None:
+        account = CommercialAccount(owner_organization_id=event.organization_id, account_type="ORGANIZER", status="ACTIVE", currency="INR", country="IN")
+        db.add(account)
         await db.flush()
-
-    features = (await db.scalars(select(FeatureCatalog).where(FeatureCatalog.is_active.is_(True)))).all()
-    existing_feature_ids = set(
-        (await db.scalars(select(PlanFeature.feature_id).where(PlanFeature.plan_id == plan.id))).all()
-    )
-    for feature in features:
-        if feature.id in existing_feature_ids:
-            continue
-        value_type = (feature.value_type or "BOOLEAN").upper()
-        if value_type in {"TIER", "ENUM"}:
-            value = (feature.allowed_values or [True])[-1]
-        elif value_type == "LIMIT":
-            value = 200000
-        else:
-            value = True
-        db.add(PlanFeature(
-            plan_id=plan.id,
-            feature_id=feature.id,
-            enabled=True,
-            value_type=value_type,
-            entitlement_value={"value": value},
-            scope_type=feature.scope_type,
-            enforcement_mode=feature.enforcement_mode,
-        ))
+        db.add(CommercialAccountWorkspace(commercial_account_id=account.id, organization_id=event.organization_id, workspace_role="OWNER", status="ACTIVE"))
+    offer = await db.scalar(select(CommercialOffer).where(CommercialOffer.code == "LOAD_TEST_EVENT"))
+    if offer is None:
+        offer = CommercialOffer(code="LOAD_TEST_EVENT", product_family="EVENT", name="Load Test Event", display_name="Load Test Event", scope_type="EVENT", lifecycle_status="PUBLISHED", is_quote_only=False)
+        db.add(offer)
+        await db.flush()
+        version = CommercialOfferVersion(offer_id=offer.id, version_number=1, effective_from=datetime.now(timezone.utc), version_status="PUBLISHED", change_reason="Load fixture")
+        db.add(version)
+        await db.flush()
+        db.add(CommercialOfferPrice(offer_version_id=version.id, billing_interval="PER_EVENT", pricing_unit="EVENT", amount=0, currency="INR", tax_mode="EXCLUSIVE"))
+        db.add(CommercialOfferEntitlement(offer_version_id=version.id, entitlement_key="max_registrations", scope_type="EVENT", value_type="QUANTITY", quantity=200000, unit_type="REGISTRATION", consumption_model="LIMIT", hard_ceiling=True))
+    version = await db.scalar(select(CommercialOfferVersion).where(CommercialOfferVersion.offer_id == offer.id).order_by(CommercialOfferVersion.version_number.desc()))
+    contract = CommercialContract(commercial_account_id=account.id, contract_type="EVENT", status="ACTIVE", starts_at=datetime.now(timezone.utc), billing_interval="PER_EVENT", currency="INR", price_book_version="load-fixture", auto_renew=False)
+    db.add(contract)
     await db.flush()
-
-    subscription = await db.scalar(
-        select(OrganizationSubscription).where(
-            OrganizationSubscription.organization_id == event.organization_id,
-            OrganizationSubscription.plan_id == plan.id,
-            OrganizationSubscription.status.in_(["ACTIVE", "TRIAL"]),
-        )
-    )
-    if subscription is None:
-        subscription = OrganizationSubscription(
-            organization_id=event.organization_id,
-            plan_id=plan.id,
-            status="ACTIVE",
-        )
-        db.add(subscription)
-        await db.flush()
-
-    await ActivationService.activate_event(
-        db,
-        organization_id=event.organization_id,
-        event_id=event.id,
-        subscription_id=subscription.id,
-        grant_id=None,
-        activation_policy="SNAPSHOT_LOCKED",
-        idempotency_key=f"load-fixture-activation-{event.id}",
-        actor_id=event.created_by,
-    )
+    db.add(CommercialContractItem(contract_id=contract.id, offer_id=offer.id, offer_version_id=version.id, event_id=event.id, quantity=1, unit_price=0, tax_rate=18, line_total=0, allocation_snapshot_json={"max_registrations": 200000}))
+    await db.flush()
+    await ActivationService.activate_event(db, organization_id=event.organization_id, event_id=event.id, commercial_contract_id=contract.id, activation_policy="SNAPSHOT_LOCKED", idempotency_key=f"load-fixture-activation-{event.id}", actor_id=event.created_by)
 
 
 async def get_or_create_org(db, slug: str, name: str) -> Organization:

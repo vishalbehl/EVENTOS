@@ -1,0 +1,35 @@
+{
+  "status": "PASSED",
+  "real_browser": true,
+  "real_mfa_login": true,
+  "resource_types": [
+    "REGISTRATION_FORM",
+    "ABSTRACT_FORM",
+    "FORM_CATEGORY"
+  ],
+  "versioned_mutations": 6,
+  "source_template_scopes": [
+    "GLOBAL",
+    "ORGANIZATION",
+    "EVENT"
+  ],
+  "combined_category_document_repairs": 3,
+  "explicit_category_load_more_clicks": 4,
+  "reviewed_invalid_lineage_detachments": 1,
+  "mutation_attempts": 7,
+  "unconfirmed_lineage_detachment_denied": true,
+  "registration_invalid_references_detached": true,
+  "abstract_invalid_binding_replaced": true,
+  "large_category_strip_contained": true,
+  "api_routes_mocked": false,
+  "credential_artifacts_saved": false,
+  "startup_profile": "development_restricted_runtime_no_default_seeding",
+  "production_startup_verified": false,
+  "screenshots": [
+    "D:\\DEV\\conf-platform\\services\\backend\\test-results\\category-a-browser\\category-a-review-before.png",
+    "D:\\DEV\\conf-platform\\services\\backend\\test-results\\category-a-browser\\category-a-review-after.png"
+  ],
+  "persisted_database_and_audits_verified": true,
+  "stable_operational_purpose_preserved": true,
+  "generated_fixtures_removed": true
+}

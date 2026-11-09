@@ -7,8 +7,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import delete, select, func
+from sqlalchemy import and_, delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.modules.rbac.services.event_scope import owned_event_scope
 
 from app.core.cache import cache_service
 from app.core.cache import invalidate_event
@@ -32,7 +33,7 @@ class TechnologyServiceCommandService:
         await self.db.commit()
 
     async def record_recommendation_snapshot(self, *, event_id: uuid.UUID, organization_id: uuid.UUID, facts: dict[str, Any], overrides: dict[str, Any]) -> None:
-        request = await self.db.scalar(select(ServiceRequest).where(ServiceRequest.event_id == event_id, ServiceRequest.organization_id == organization_id).order_by(ServiceRequest.id.desc()).limit(1))
+        request = await self.db.scalar(select(ServiceRequest).where(ServiceRequest.event_id == event_id, and_(ServiceRequest.organization_id == organization_id, owned_event_scope(self.db, ServiceRequest.event_id, organization_id))).order_by(ServiceRequest.id.desc()).limit(1))
         if request is None:
             return
         run_number = int(await self.db.scalar(select(func.count(ServiceRequestEventSnapshot.id)).where(ServiceRequestEventSnapshot.request_id == request.id)) or 0) + 1
@@ -42,7 +43,7 @@ class TechnologyServiceCommandService:
         await invalidate_event(organization_id, event_id)
 
     async def attach_upload(self, *, request_id: uuid.UUID, organization_id: uuid.UUID, user, upload_id: uuid.UUID) -> ServiceRequestAttachment:
-        request = await self.db.scalar(select(ServiceRequest).where(ServiceRequest.id == request_id, ServiceRequest.organization_id == organization_id).with_for_update())
+        request = await self.db.scalar(select(ServiceRequest).where(ServiceRequest.id == request_id, and_(ServiceRequest.organization_id == organization_id, owned_event_scope(self.db, ServiceRequest.event_id, organization_id))).with_for_update())
         upload = await self.db.scalar(select(DurableUpload).where(DurableUpload.id == upload_id, DurableUpload.organization_id == organization_id))
         if request is None or upload is None or upload.event_id != request.event_id:
             raise HTTPException(status_code=404, detail="Request or upload not found.")
@@ -61,21 +62,16 @@ class TechnologyServiceCommandService:
         return attachment
 
     async def _event_for_user(self, *, event_id: uuid.UUID, user) -> Event:
-        event = await self.db.scalar(
-            select(Event)
-            .where(Event.id == event_id, Event.deleted_at.is_(None))
-            .execution_options(skip_tenant_filter=True)
-        )
-        platform_admin = (
-            getattr(user, "role", None) == "super_admin"
-            or getattr(user, "platform_role", None) == "SUPER_ADMIN"
-            or getattr(user, "is_platform_admin", False)
-        )
-        if event is None or (
-            getattr(user, "organization_id", None) != event.organization_id
-            and not platform_admin
+        from app.modules.rbac.services.event_scope import customer_event
+        from app.modules.rbac.services.access_contexts import selected_request_context
+        token = getattr(user, "_request_token_data", None)
+        if token is None:
+            raise HTTPException(401, detail={"code": "SESSION_CONTEXT_REQUIRED"})
+        event = await customer_event(self.db, user, event_id, token)
+        async with selected_request_context(
+            self.db, user, token, event_id=event.id, action="EVENTS:EDIT"
         ):
-            raise HTTPException(status_code=404, detail="Event not found.")
+            pass
         return event
 
     async def create(
@@ -149,7 +145,7 @@ class TechnologyServiceCommandService:
                 select(ServiceRequest)
                 .where(
                     ServiceRequest.id == request_id,
-                    ServiceRequest.organization_id == organization_id,
+                    and_(ServiceRequest.organization_id == organization_id, owned_event_scope(self.db, ServiceRequest.event_id, organization_id)),
                 )
                 .with_for_update()
             )
@@ -177,7 +173,7 @@ class TechnologyServiceCommandService:
             raise
 
     async def save_draft(self, *, request_id: uuid.UUID, organization_id: uuid.UUID, user, items: list[dict[str, Any]], overrides: dict[str, Any] | None = None, description: str | None = None, expected_version: int | None = None) -> ServiceRequest:
-        row = await self.db.scalar(select(ServiceRequest).where(ServiceRequest.id == request_id, ServiceRequest.organization_id == organization_id).with_for_update())
+        row = await self.db.scalar(select(ServiceRequest).where(ServiceRequest.id == request_id, and_(ServiceRequest.organization_id == organization_id, owned_event_scope(self.db, ServiceRequest.event_id, organization_id))).with_for_update())
         if row is None: raise HTTPException(status_code=404, detail="Service request not found.")
         if row.status not in {"DRAFT", "REVISION_REQUESTED"}: raise HTTPException(status_code=409, detail="REQUEST_NOT_EDITABLE")
         if expected_version is not None and row.version != expected_version: raise_version_conflict(row.version)
@@ -202,7 +198,7 @@ class TechnologyServiceCommandService:
         return row
 
     async def add_comment(self, *, request_id: uuid.UUID, organization_id: uuid.UUID, user, body: str) -> ServiceRequestComment:
-        row = await self.db.scalar(select(ServiceRequest).where(ServiceRequest.id == request_id, ServiceRequest.organization_id == organization_id))
+        row = await self.db.scalar(select(ServiceRequest).where(ServiceRequest.id == request_id, and_(ServiceRequest.organization_id == organization_id, owned_event_scope(self.db, ServiceRequest.event_id, organization_id))))
         if row is None: raise HTTPException(status_code=404, detail="Service request not found.")
         comment = ServiceRequestComment(request_id=row.id, author_id=user.id, author_type="COMMAND_CENTER" if getattr(user, "role", "") == "super_admin" else "ORGANISER", body=body)
         row.version = int(row.version or 1) + 1

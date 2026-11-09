@@ -12,9 +12,11 @@ const ORGANISER_DESTINATIONS = [
   { label: "Organisation Profile", group: "Organisation", href: "/organisation/profile" },
   { label: "People & Teams", group: "Team", href: "/people-teams/users" },
   { label: "Access & Roles", group: "Security", href: "/access-roles/roles" },
-  { label: "Plans & Entitlements", group: "Billing", href: "/plans-entitlements/overview" },
+  { label: "Commercial Overview", group: "Commercial", href: "/commercial/overview" },
+  { label: "Plans & Add-ons", group: "Commercial", href: "/commercial/workspace" },
+  { label: "Invoices", group: "Commercial", href: "/commercial/invoices" },
+  { label: "Payments & Tax", group: "Commercial", href: "/commercial/billing-history" },
   { label: "Events", group: "Events", href: "/events" },
-  { label: "Billing & Invoices", group: "Finance", href: "/billing/overview" },
   { label: "Platform Settings", group: "Settings", href: "/settings/general" },
 ];
 
@@ -50,7 +52,7 @@ export function CommandPalette() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="hidden h-9 min-w-64 items-center gap-2 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-left text-xs text-[var(--text-secondary)] shadow-sm hover:border-[var(--text-tertiary)] lg:flex xl:min-w-80"
+        className="organisation-command-search hidden items-center gap-2 text-left text-xs text-[var(--text-secondary)] md:flex"
         aria-label="Open command search"
       >
         <Search aria-hidden className="size-3.5" />
@@ -60,14 +62,14 @@ export function CommandPalette() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="grid size-9 place-items-center rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-secondary)] lg:hidden"
+        className="organisation-topbar-icon grid md:hidden"
         aria-label="Open command search"
       >
         <Search aria-hidden className="size-4" />
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[min(42rem,85dvh)] overflow-hidden border-[var(--border-default)] bg-[var(--bg-surface)] p-0 text-[var(--text-primary)] sm:max-w-2xl">
+        <DialogContent className="max-h-[min(42rem,85dvh)] overflow-hidden p-0 text-[var(--text-primary)] sm:max-w-2xl">
           <DialogTitle className="sr-only">Organiser Portal search</DialogTitle>
           <DialogDescription className="sr-only">Search and open an administrative destination.</DialogDescription>
           <div className="flex items-center gap-3 border-b border-[var(--border-subtle)] px-4">

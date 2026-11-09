@@ -424,7 +424,7 @@ async def get_dashboard_data(
     # 5 — Speaker check
     sp_result = await db.execute(
         select(Speaker).options(
-            load_only(Speaker.id, Speaker.speaker_code, Speaker.event_id, Speaker.email)
+            load_only(Speaker.id, Speaker.upload_token, Speaker.event_id, Speaker.email)
         ).where(
             Speaker.event_id == event_id,
             Speaker.email == email.lower(),
@@ -508,7 +508,7 @@ async def get_dashboard_data(
     from app.config import settings
     speaker_portal_url = ""
     if speaker_rec:
-        speaker_portal_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{event_id}/{speaker_rec.speaker_code}"
+        speaker_portal_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{event_id}/{speaker_rec.upload_token}"
     else:
         role_row = next((r for r in roles_db if r.name.lower() == attendee_role.lower()), None)
         if role_row and role_row.category == "Presentation Related":
@@ -771,21 +771,50 @@ async def verify_and_resolve_registration(
     if not name or not phone:
         return None
 
-    # Fetch all participants for this event to check name + phone matches
-    stmt = select(Participant).where(Participant.event_id == event_id)
-    result = await db.execute(stmt)
-    all_participants = result.scalars().all()
-
-    match_participant = None
-    for p in all_participants:
-        # Check Name Match (case-insensitive, trimmed)
-        n1 = " ".join(name.strip().lower().split())
-        n2 = " ".join((p.name or "").strip().lower().split())
-        if n1 == n2:
-            # Check Phone Match
-            if phone_numbers_match(phone, p.phone):
-                match_participant = p
-                break
+    # Match the functional identity index. The query is bounded regardless of
+    # event size and loads the role needed by the response in the same round trip.
+    from sqlalchemy import func, literal
+    from sqlalchemy.orm import joinedload
+    normalized_name = " ".join(name.strip().lower().split())
+    normalized_phone = normalize_phone(phone)
+    phone_suffix = normalized_phone[-7:]
+    normalized_db_name = func.lower(func.regexp_replace(
+        func.btrim(func.concat(
+            Participant.first_name,
+            literal(" "),
+            Participant.last_name,
+        )),
+        r"\s+",
+        " ",
+        "g",
+    ))
+    normalized_db_phone = func.right(func.regexp_replace(
+        func.coalesce(Participant.phone, ""),
+        r"\D",
+        "",
+        "g",
+    ), 7)
+    matches = list((await db.scalars(
+        select(Participant)
+        .options(joinedload(Participant.role_rel))
+        .where(
+            Participant.event_id == event_id,
+            Participant.deleted_at.is_(None),
+            normalized_db_name == normalized_name,
+            normalized_db_phone == phone_suffix,
+        )
+        .order_by(Participant.id)
+        .limit(2)
+    )).all())
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "PROFILE_MERGE_AMBIGUOUS",
+                "message": "More than one existing profile matches. Contact event support for review.",
+            },
+        )
+    match_participant = matches[0] if matches else None
 
     if match_participant:
         if not confirm_merge:

@@ -90,7 +90,6 @@ export interface SpeakerPortalAuthResponse {
   allow_override: boolean;
   talks: PortalTalk[];
   posters: PortalPoster[];
-  speaker_code?: string;
   qr_code_url?: string;
   theme_color?: string | null;
   upload_token?: string | null;
@@ -124,6 +123,14 @@ export interface SpeakerPortalAuthResponse {
   registration_mode_enabled?: boolean;
   abstract_submission_enabled: boolean;
   abstract_submission_reason?: string | null;
+  intake_form?: {
+    purpose: "SPEAKER_INTAKE";
+    title: string;
+    fields: Array<Record<string, unknown>>;
+    settings: Record<string, unknown>;
+    binding_version: number;
+    template_version: number;
+  } | null;
 }
 
 export interface SpeakerPortalConfigResponse {

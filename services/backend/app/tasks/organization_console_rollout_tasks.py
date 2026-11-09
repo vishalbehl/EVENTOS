@@ -10,6 +10,12 @@ from app.modules.billing.services.entitlement_resolver import EntitlementResolve
 from app.modules.billing.services.event_entitlement_service import EventEntitlementService
 from app.modules.billing.services.usage_service import UsageService
 from app.modules.billing.models.event_activation import EventActivation
+from app.modules.billing.models.cloud_commercial import (
+    CommercialContract,
+    CommercialContractItem,
+    CommercialOffer,
+    CommercialOfferVersion,
+)
 from app.modules.events.models.event import Event
 from app.modules.platform.models.organization import Organization
 from app.modules.platform.models.organization_console import EntitlementShadowComparison, EventCommercialContract
@@ -43,9 +49,9 @@ def _run_rollout_task(task, operation):
 
 
 def shadow_access_projection(resolved: dict) -> dict:
-    """Project both resolvers onto decisions the legacy engine can express.
+    """Project both resolvers onto decisions the previous engine can express.
 
-    Legacy activation snapshots only persisted feature enablement, not typed
+    Previous activation snapshots only persisted feature enablement, not typed
     TIER/ENUM values. Shadow rollout therefore compares access decisions for
     features and exact numeric allowances for limits. Typed contract values
     are validated independently when contracts are created and resolved.
@@ -56,8 +62,8 @@ def shadow_access_projection(resolved: dict) -> dict:
     }
 
 
-def _differences(legacy: dict, contract: dict) -> dict:
-    return {key: {"legacy": legacy.get(key), "contract": contract.get(key)} for key in sorted(set(legacy) | set(contract)) if legacy.get(key) != contract.get(key)}
+def _differences(previous: dict, contract: dict) -> dict:
+    return {key: {"previous": previous.get(key), "contract": contract.get(key)} for key in sorted(set(previous) | set(contract)) if previous.get(key) != contract.get(key)}
 
 
 async def backfill_organization_console_in_session(db, organization_id: uuid.UUID, apply: bool = False) -> dict:
@@ -76,20 +82,32 @@ async def backfill_organization_console_in_session(db, organization_id: uuid.UUI
     ).all()
     report["events"] = len(events)
     for event in events:
-            legacy = await EntitlementResolver.resolve_event_entitlements(db, organization_id, event.id, explain=True)
-            legacy_values = shadow_access_projection(legacy)
+            previous = await EntitlementResolver.resolve_event_entitlements(db, organization_id, event.id, explain=True)
+            previous_values = shadow_access_projection(previous)
             contract = await db.scalar(select(EventCommercialContract).where(EventCommercialContract.organization_id == organization_id, EventCommercialContract.event_id == event.id, EventCommercialContract.status == "ACTIVE").order_by(EventCommercialContract.version.desc()).limit(1))
             if not contract:
                 report["contracts"] += 1
                 if apply:
-                    activation = legacy.get("activation")
-                    plan = getattr(getattr(activation, "subscription", None), "plan", None)
+                    activation = previous.get("activation")
+                    contract_source = await db.scalar(
+                        select(CommercialContract).where(
+                            CommercialContract.id == activation.commercial_contract_id
+                        )
+                    ) if activation and activation.commercial_contract_id else None
+                    contract_item = await db.scalar(
+                        select(CommercialContractItem)
+                        .where(CommercialContractItem.contract_id == contract_source.id)
+                        .order_by(CommercialContractItem.created_at.asc())
+                    ) if contract_source else None
+                    offer = await db.get(CommercialOffer, contract_item.offer_id) if contract_item else None
+                    offer_version = await db.get(CommercialOfferVersion, contract_item.offer_version_id) if contract_item else None
                     contract = EventCommercialContract(
                         organization_id=organization_id, event_id=event.id, version=1, status="ACTIVE",
-                        plan_key=str(getattr(plan, "key", None) or getattr(plan, "name", None) or "legacy-activation"),
-                        plan_version=str(getattr(plan, "version", None) or "backfill-v1"), currency=str(getattr(getattr(activation, "subscription", None), "currency", None) or "INR")[:3].upper(),
-                        entitlements=legacy_values, hard_ceilings={}, addons=[],
-                        source={"type": "ACTIVATION_BACKFILL", "activation_id": str(getattr(activation, "id", "")), "snapshot_set_id": str(getattr(activation, "current_snapshot_set_id", ""))},
+                        plan_key=str(getattr(offer, "code", None) or "commercial-contract"),
+                        plan_version=str(getattr(offer_version, "version_number", None) or "backfill-v1"),
+                        currency=str(getattr(contract_source, "currency", None) or "INR")[:3].upper(),
+                        entitlements=previous_values, hard_ceilings={}, addons=[],
+                        source={"type": "ACTIVATION_BACKFILL", "activation_id": str(getattr(activation, "id", "")), "commercial_contract_id": str(getattr(activation, "commercial_contract_id", "")), "snapshot_set_id": str(getattr(activation, "current_snapshot_set_id", ""))},
                         effective_at=getattr(activation, "activated_at", None) or event.created_at or datetime.now(timezone.utc), created_by=event.created_by,
                     )
                     db.add(contract); await db.flush()
@@ -104,8 +122,8 @@ async def backfill_organization_console_in_session(db, organization_id: uuid.UUI
             if apply and contract:
                 canonical = await EventEntitlementService.resolve(db, organization_id, event.id, explain=True, ignore_rollout_flag=True)
                 contract_values = shadow_access_projection(canonical)
-                differences = _differences(legacy_values, contract_values)
-                db.add(EntitlementShadowComparison(organization_id=organization_id, event_id=event.id, legacy_values=legacy_values, contract_values=contract_values, differences=differences, resolution_version=canonical["resolution_version"], status="DIVERGED" if differences else "MATCHED"))
+                differences = _differences(previous_values, contract_values)
+                db.add(EntitlementShadowComparison(organization_id=organization_id, event_id=event.id, legacy_values=previous_values, contract_values=contract_values, differences=differences, resolution_version=canonical["resolution_version"], status="DIVERGED" if differences else "MATCHED"))
                 if differences:
                     CapabilityDiagnosticsService.add(
                         db,
@@ -155,15 +173,15 @@ async def shadow_compare_organization(organization_id_str: str) -> dict:
             )
         ).all()
         for event in events:
-            legacy = shadow_access_projection(
+            previous_values = shadow_access_projection(
                 await EntitlementResolver.resolve_event_entitlements(
                     db, organization_id, event.id, explain=True
                 )
             )
             canonical = await EventEntitlementService.resolve(db, organization_id, event.id, explain=True, ignore_rollout_flag=True)
             canonical_access = shadow_access_projection(canonical)
-            differences = _differences(legacy, canonical_access)
-            db.add(EntitlementShadowComparison(organization_id=organization_id, event_id=event.id, legacy_values=legacy, contract_values=canonical_access, differences=differences, resolution_version=canonical["resolution_version"], status="DIVERGED" if differences else "MATCHED"))
+            differences = _differences(previous_values, canonical_access)
+            db.add(EntitlementShadowComparison(organization_id=organization_id, event_id=event.id, legacy_values=previous_values, contract_values=canonical_access, differences=differences, resolution_version=canonical["resolution_version"], status="DIVERGED" if differences else "MATCHED"))
             if differences:
                 CapabilityDiagnosticsService.add(
                     db,

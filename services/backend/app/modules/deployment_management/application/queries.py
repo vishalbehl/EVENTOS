@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.modules.rbac.services.event_scope import owned_event_scope
 
 from app.modules.deployment_management.models import Deployment, DeploymentChecklist, Risk
 from app.modules.operations_planning.models import Project
@@ -21,7 +22,7 @@ class DeploymentQueryService:
         return await self.db.scalar(
             select(Project).where(
                 Project.id == project_id,
-                Project.organization_id == organization_id,
+                and_(Project.organization_id == organization_id, owned_event_scope(self.db, Project.event_id, organization_id)),
             )
         )
 
@@ -33,7 +34,7 @@ class DeploymentQueryService:
             .join(Project, Project.id == Deployment.project_id)
             .where(
                 Deployment.id == deployment_id,
-                Project.organization_id == organization_id,
+                and_(Project.organization_id == organization_id, owned_event_scope(self.db, Project.event_id, organization_id)),
             )
         )
 
@@ -50,7 +51,7 @@ class DeploymentQueryService:
             .join(Project, Project.id == Deployment.project_id)
             .where(
                 DeploymentChecklist.deployment_id == deployment_id,
-                Project.organization_id == organization_id,
+                and_(Project.organization_id == organization_id, owned_event_scope(self.db, Project.event_id, organization_id)),
             )
             .order_by(DeploymentChecklist.id)
             .limit(limit)
@@ -69,7 +70,7 @@ class DeploymentQueryService:
             .join(Project, Project.id == Risk.project_id)
             .where(
                 Risk.project_id == project_id,
-                Project.organization_id == organization_id,
+                and_(Project.organization_id == organization_id, owned_event_scope(self.db, Project.event_id, organization_id)),
             )
             .order_by(Risk.id)
             .limit(limit)

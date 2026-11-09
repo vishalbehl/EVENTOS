@@ -11,6 +11,8 @@ from starlette.requests import Request
 from starlette.types import ASGIApp
 
 from app.config import settings
+from app.core.client_ip import resolve_client_ip
+from app.core.log_redaction import redact_credentials
 from app.database import (
     AsyncSessionLocal,
     get_db_request_metrics,
@@ -44,12 +46,7 @@ def _extract_jwt_claims(authorization: Optional[str]) -> Tuple[Optional[uuid.UUI
         return None, None
 
 def _get_client_ip(request: Request) -> Optional[str]:
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return None
+    return resolve_client_ip(request)
 
 class RequestLoggingMiddleware:
     """
@@ -89,7 +86,7 @@ class RequestLoggingMiddleware:
             request_id_value = str(uuid.uuid4())
         request_id_token = db_request_id.set(request_id_value)
         request_path_token = db_request_path.set(path)
-        query_params = dict(request.query_params)
+        query_params = redact_credentials(dict(request.query_params))
         payload_data = {"query_params": query_params}
 
         try:
@@ -189,7 +186,9 @@ class RequestLoggingMiddleware:
                     await db.commit()
             else:
                 from app.tasks.audit_tasks import write_api_request_log
-                write_api_request_log.delay(api_data)
+                from app.core.bounded_task_dispatch import admit_best_effort_celery_task
+
+                admit_best_effort_celery_task(write_api_request_log, args=(api_data,))
 
         except Exception as exc:
             logger.warning(f"[RequestLoggingMiddleware] Failed to log API activity: {exc}")

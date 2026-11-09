@@ -15,6 +15,26 @@ from app.modules.workflow.schemas.workflow_schemas import (
 )
 from app.modules.workflow.services.workflow_service import WorkflowService
 from app.modules.workflow.application.queries import WorkflowQueryService
+from app.modules.rbac.services.access_contexts import actor_request_context
+from app.modules.audit.models.audit_log import AuditLog
+
+
+async def _admit(db, organization_id, actor_id, action, key):
+    if not key:
+        raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+    async with actor_request_context(db, actor_id, organization_id, action=action):
+        pass  # Transaction-owned revision locks survive until command commit.
+
+
+def _audit(db, organization_id, actor_id, action, resource_id, reason):
+    token = db.info.get("customer_request_selector")
+    db.add(AuditLog(organization_id=organization_id, actor_user_id=actor_id,
+        resource_type="workflow", resource_id=resource_id, action_type=action,
+        correlation_id=uuid.uuid4(), is_sensitive=True,
+        new_state={"acting_organization_id": str(organization_id),
+                   "target_organization_id": str(organization_id),
+                   "workspace_id": str(token.active_workspace_id) if token and token.active_workspace_id else None,
+                   "reason": reason}))
 
 
 class WorkflowCommandService:
@@ -41,6 +61,7 @@ class WorkflowCommandService:
         WorkflowCommandService._validate_steps(payload)
         operation = None
         try:
+            await _admit(db, organization_id, actor_id, "workflows:manage", idempotency_key)
             if idempotency_key:
                 operation = await begin_idempotent(
                     db,
@@ -56,14 +77,14 @@ class WorkflowCommandService:
                     return replay[1]
 
             workflow = await WorkflowService.create_workflow(db, organization_id, payload)
-            await db.commit()
             result = await WorkflowQueryService.get_workflow(db, organization_id, workflow.id)
             if result is None:
                 raise HTTPException(status_code=500, detail="Workflow creation failed.")
             serialized = WorkflowOut.model_validate(result).model_dump(mode="json")
+            _audit(db, organization_id, actor_id, "WORKFLOW_CREATED", result.id, "User requested template creation")
             if operation is not None:
                 await complete_idempotent(db, operation, response_status=201, response_body=serialized, resource_id=result.id)
-                await db.commit()
+            await db.commit()
             return serialized
         except Exception:
             if db.in_transaction():
@@ -82,6 +103,7 @@ class WorkflowCommandService:
     ):
         operation = None
         try:
+            await _admit(db, organization_id, actor_id, "workflows:manage", idempotency_key)
             if idempotency_key:
                 operation = await begin_idempotent(
                     db,
@@ -98,14 +120,14 @@ class WorkflowCommandService:
             instance = await WorkflowService.trigger_workflow(db, organization_id, workflow_id, entity_id)
             if not instance:
                 raise HTTPException(status_code=400, detail="Could not trigger workflow. Verify it is active.")
-            await db.commit()
             result = await WorkflowQueryService.get_instance(db, organization_id, instance.id)
             if result is None:
                 raise HTTPException(status_code=500, detail="Workflow execution failed.")
             serialized = WorkflowInstanceOut.model_validate(result).model_dump(mode="json")
+            _audit(db, organization_id, actor_id, "WORKFLOW_TRIGGERED", result.id, "User requested workflow execution")
             if operation is not None:
                 await complete_idempotent(db, operation, response_status=202, response_body=serialized, resource_id=result.id)
-                await db.commit()
+            await db.commit()
             return serialized
         except Exception:
             if db.in_transaction():
@@ -121,9 +143,13 @@ class WorkflowCommandService:
         payload: CompleteTaskRequest,
         *,
         idempotency_key: Optional[str] = None,
+        expected_version: int | None = None,
     ) -> dict:
         operation = None
         try:
+            await _admit(db, organization_id, actor_id, "workflows:approve", idempotency_key)
+            if expected_version is None:
+                raise HTTPException(428, detail={"code": "IF_MATCH_REQUIRED"})
             if idempotency_key:
                 operation = await begin_idempotent(
                     db,
@@ -131,16 +157,18 @@ class WorkflowCommandService:
                     actor_id=actor_id,
                     operation="workflow.complete_task",
                     key=idempotency_key,
-                    payload={"task_id": str(task_id), "comment": payload.comment},
+                    payload={"task_id": str(task_id), "comment": payload.comment, "version": expected_version},
                 )
                 replay = replay_response(operation)
                 if replay:
                     await db.rollback()
                     return replay[1]
-            success = await WorkflowService.complete_task(db, organization_id, task_id, payload.comment)
+            success = await WorkflowService.complete_task(db, organization_id, task_id, payload.comment,
+                expected_version=expected_version)
             if not success:
                 raise HTTPException(status_code=400, detail="Could not complete task. Task may not be pending manual review, or you do not have permission.")
             response = {"status": "success", "message": "Manual task completed."}
+            _audit(db, organization_id, actor_id, "WORKFLOW_TASK_APPROVED", task_id, payload.comment)
             if operation is not None:
                 await complete_idempotent(db, operation, response_status=200, response_body=response)
             await db.commit()

@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="9" time="19.781" timestamp="2026-10-28T09:46:15.955709+05:30" hostname="Vishal"><testcase classname="tests.test_attendance_governance" name="test_participant_checkin_is_durably_idempotent_and_audited" time="14.978"><failure message="app.core.dependencies.feature_gate.EntitlementRequiredException: 403: {'code': 'NOT_ENTITLED', 'error': 'ERR_ENTITLEMENT_REQUIRED', 'feature': 'FEAT_ATTENDEE_CHECKIN', 'upgrade_url': '/billing/upgrade'}">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x00000290C9A2ABA0&gt;
+event = &lt;Event id=ec0fb5f7-9678-4772-94cf-372bb599527f short_code=TC6F6D status=active&gt;
+session_obj = &lt;app.modules.agenda.models.session.AgendaSession object at 0x00000290CA4C9D30&gt;
+organizer = &lt;User id=67eeaf81-95a1-4218-abf0-75fd6ae1c2b0 email=organizer-f16e6d@test.com role=organiser&gt;
+
+    @pytest.mark.asyncio
+    async def test_participant_checkin_is_durably_idempotent_and_audited(
+        db: AsyncSession,
+        event: Event,
+        session_obj: Session,
+        organizer: User,
+    ):
+        await activate_event_for_test(db, event)
+        participant = await _participant(db, event, uuid.uuid4().hex[:8])
+        await db.commit()
+    
+        key = f"checkin-{uuid.uuid4()}"
+        payload = CheckInCreate(session_id=session_obj.id)
+&gt;       created = await checkin_participant(
+            participant_id=participant.id,
+            payload=payload,
+            event=event,
+            current_user=organizer,
+            idempotency_key=key,
+            db=db,
+        )
+
+tests\test_attendance_governance.py:51: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+app\modules\registration\routers\participants.py:1421: in checkin_participant
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.checkin", user_id=current_user.id)
+app\core\dependencies\feature_gate.py:279: in enforce_event_operation
+    return await enforce_event_feature(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x00000290C9A2ABA0&gt;
+organization_id = UUID('d8931732-35b2-4024-a263-d58703599617')
+event_id = UUID('ec0fb5f7-9678-4772-94cf-372bb599527f')
+feature_key = 'FEAT_ATTENDEE_CHECKIN'
+
+    async def enforce_event_feature(
+        db,
+        organization_id: uuid.UUID,
+        event_id: uuid.UUID,
+        feature_key: str,
+        *,
+        event: Event | None = None,
+        user_id: uuid.UUID | None = None,
+        operation: str | None = None,
+    ):
+        """Authoritative operation gate usable by authenticated and public flows."""
+        try:
+            # Authorization needs feature state only; quota aggregation belongs to
+            # capability/billing reads and is intentionally excluded from this hot path.
+            feature = await CapabilityService.resolve_event_feature_for_enforcement(
+                db,
+                organization_id,
+                event_id,
+                feature_key,
+                event=event,
+                user_id=user_id,
+            )
+        except Exception as exc:
+            raise EntitlementRequiredException(
+                feature_key,
+                "RESOLUTION_UNAVAILABLE",
+                organization_id=organization_id,
+                event_id=event_id,
+                actor_user_id=user_id,
+                operation=operation,
+            ) from exc
+        if not feature or not feature["enabled"]:
+            from app.config import settings
+            if settings.ALLOW_TEST_CAPABILITY_BYPASS:
+                return feature or {"key": feature_key, "enabled": True, "value": True}
+&gt;           raise EntitlementRequiredException(
+                feature_key,
+                feature.get("reason_code", "NOT_ENTITLED") if feature else "NOT_ENTITLED",
+                organization_id=organization_id,
+                event_id=event_id,
+                actor_user_id=user_id,
+                operation=operation,
+            )
+E           app.core.dependencies.feature_gate.EntitlementRequiredException: 403: {'code': 'NOT_ENTITLED', 'error': 'ERR_ENTITLEMENT_REQUIRED', 'feature': 'FEAT_ATTENDEE_CHECKIN', 'upgrade_url': '/billing/upgrade'}
+
+app\core\dependencies\feature_gate.py:325: EntitlementRequiredException</failure></testcase><testcase classname="tests.test_attendance_governance" name="test_participant_checkin_rejects_idempotency_conflict_and_capacity_overflow" time="1.259"><failure message="app.core.dependencies.feature_gate.EntitlementRequiredException: 403: {'code': 'NOT_ENTITLED', 'error': 'ERR_ENTITLEMENT_REQUIRED', 'feature': 'FEAT_ATTENDEE_CHECKIN', 'upgrade_url': '/billing/upgrade'}">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x00000290CA6DF110&gt;
+event = &lt;Event id=b15dbdf9-c975-4822-8442-863d24daba15 short_code=TC5418 status=active&gt;
+session_obj = &lt;app.modules.agenda.models.session.AgendaSession object at 0x00000290CCD81090&gt;
+organizer = &lt;User id=a9c82caa-dcf5-4595-8436-ad2a77d37128 email=organizer-6b9b5b@test.com role=organiser&gt;
+
+    @pytest.mark.asyncio
+    async def test_participant_checkin_rejects_idempotency_conflict_and_capacity_overflow(
+        db: AsyncSession,
+        event: Event,
+        session_obj: Session,
+        organizer: User,
+    ):
+        await activate_event_for_test(db, event)
+        first = await _participant(db, event, uuid.uuid4().hex[:8])
+        second = await _participant(db, event, uuid.uuid4().hex[:8])
+        db.add(CapacityRule(event_id=event.id, session_id=session_obj.id, capacity=1))
+        await db.commit()
+    
+        key = f"checkin-{uuid.uuid4()}"
+&gt;       await checkin_participant(
+            participant_id=first.id,
+            payload=CheckInCreate(session_id=session_obj.id),
+            event=event,
+            current_user=organizer,
+            idempotency_key=key,
+            db=db,
+        )
+
+tests\test_attendance_governance.py:94: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+app\modules\registration\routers\participants.py:1421: in checkin_participant
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.checkin", user_id=current_user.id)
+app\core\dependencies\feature_gate.py:279: in enforce_event_operation
+    return await enforce_event_feature(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x00000290CA6DF110&gt;
+organization_id = UUID('e60a1580-8a46-4096-b490-681c86edf5bd')
+event_id = UUID('b15dbdf9-c975-4822-8442-863d24daba15')
+feature_key = 'FEAT_ATTENDEE_CHECKIN'
+
+    async def enforce_event_feature(
+        db,
+        organization_id: uuid.UUID,
+        event_id: uuid.UUID,
+        feature_key: str,
+        *,
+        event: Event | None = None,
+        user_id: uuid.UUID | None = None,
+        operation: str | None = None,
+    ):
+        """Authoritative operation gate usable by authenticated and public flows."""
+        try:
+            # Authorization needs feature state only; quota aggregation belongs to
+            # capability/billing reads and is intentionally excluded from this hot path.
+            feature = await CapabilityService.resolve_event_feature_for_enforcement(
+                db,
+                organization_id,
+                event_id,
+                feature_key,
+                event=event,
+                user_id=user_id,
+            )
+        except Exception as exc:
+            raise EntitlementRequiredException(
+                feature_key,
+                "RESOLUTION_UNAVAILABLE",
+                organization_id=organization_id,
+                event_id=event_id,
+                actor_user_id=user_id,
+                operation=operation,
+            ) from exc
+        if not feature or not feature["enabled"]:
+            from app.config import settings
+            if settings.ALLOW_TEST_CAPABILITY_BYPASS:
+                return feature or {"key": feature_key, "enabled": True, "value": True}
+&gt;           raise EntitlementRequiredException(
+                feature_key,
+                feature.get("reason_code", "NOT_ENTITLED") if feature else "NOT_ENTITLED",
+                organization_id=organization_id,
+                event_id=event_id,
+                actor_user_id=user_id,
+                operation=operation,
+            )
+E           app.core.dependencies.feature_gate.EntitlementRequiredException: 403: {'code': 'NOT_ENTITLED', 'error': 'ERR_ENTITLEMENT_REQUIRED', 'feature': 'FEAT_ATTENDEE_CHECKIN', 'upgrade_url': '/billing/upgrade'}
+
+app\core\dependencies\feature_gate.py:325: EntitlementRequiredException</failure></testcase><testcase classname="tests.test_attendance_governance" name="test_canonical_entitlement_flag_resolves_without_legacy_fallback" time="0.593" /><testcase classname="tests.test_billing_activation_query_service" name="test_activation_query_service_is_read_only_and_bounded" time="0.007" /><testcase classname="tests.test_billing_activation_query_service" name="test_activation_query_service_applies_organization_scope_and_limit" time="0.008" /><testcase classname="tests.test_billing_activation_query_service" name="test_consumption_query_requires_both_tenant_and_grant_scope" time="0.006" /><testcase classname="tests.test_billing_activation_query_service" name="test_active_contract_query_is_projected_tenant_scoped_and_bounded" time="0.005" /><testcase classname="tests.test_billing_activation_query_service" name="test_latest_activation_query_is_tenant_and_event_scoped" time="0.006" /><testcase classname="tests.test_billing_activation_query_service" name="test_event_existence_query_is_tenant_scoped" time="1.831" /></testsuite></testsuites>

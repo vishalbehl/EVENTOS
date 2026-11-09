@@ -203,7 +203,7 @@ async def get_my_activity(
     """
     logs, total = await AuditQueryService(db).list_user_activity(
         actor_user_id=current_user.id,
-        organization_id=current_user.organization_id,
+        organization_id=current_user.request_organization_id,
         page=page,
         page_size=page_size,
     )
@@ -248,7 +248,7 @@ async def get_my_activity_cursor(
     position = decode_cursor(cursor) if cursor else None
     rows, has_next = await AuditQueryService(db).list_user_activity_cursor(
         actor_user_id=current_user.id,
-        organization_id=current_user.organization_id,
+        organization_id=current_user.request_organization_id,
         cursor_time=position.occurred_at if position else None,
         cursor_id=position.record_id if position else None,
         limit=bounded_page_size(page_size, maximum=100),

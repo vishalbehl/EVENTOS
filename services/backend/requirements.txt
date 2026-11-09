@@ -119,6 +119,8 @@ yarl==1.23.0
 bleach==6.3.0
 
 pypdf==5.1.0
+pyHanko==0.31.0
+reportlab==4.5.1
 mutagen==1.47.0
 premailer
 prometheus-client==0.22.1

@@ -10,7 +10,7 @@ import asyncio
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.billing.capability_registry import CATALOG_LIMIT_KEYS, FEATURE_DEFINITIONS, LIMIT_DEFINITIONS, OPERATION_PERMISSIONS
+from app.modules.billing.capability_registry import CATALOG_LIMIT_KEYS, FEATURE_DEFINITIONS, LIMIT_DEFINITIONS, OPERATION_PERMISSIONS, unknown_active_feature_keys
 from app.modules.billing.services.capability_cache_service import CapabilityCacheService
 from app.core.cache import cache_service
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
@@ -32,6 +32,17 @@ from app.modules.analytics.models.analytics_domain_tables import ApiUsageMetric
 
 
 class CapabilityService:
+    # A feature enters this set only after an equivalence test proves that its
+    # mutation admission has no catalogue-configured dependency, conflict or
+    # provider-readiness policy. Keep this deliberately smaller than the code
+    # registry: unknown/future features take the full resolver by default.
+    _INDEPENDENT_ENFORCEMENT_FEATURES = frozenset({"FEAT_REGISTRATION_FORMS"})
+    _PROVIDER_FEATURE_CHANNELS = {
+        "FEAT_SMS": "SMS",
+        "FEAT_WHATSAPP": "WHATSAPP",
+        "FEAT_PUSH_NOTIFICATIONS": "PUSH",
+    }
+
     @staticmethod
     def _enabled(value: Any) -> bool:
         if isinstance(value, dict):
@@ -47,6 +58,12 @@ class CapabilityService:
             allowed_values = definition.get("allowed_values", [])
             return allowed_values[-1] if allowed_values else True
         return True
+
+    @staticmethod
+    async def validate_existing_catalogue(db: AsyncSession) -> list[str]:
+        """Read-only runtime check; never provision or rewrite commercial data."""
+        keys = (await db.scalars(select(FeatureCatalog.key).where(FeatureCatalog.is_active.is_(True)))).all()
+        return unknown_active_feature_keys(keys)
 
     @staticmethod
     async def sync_catalogue(db: AsyncSession) -> dict[str, Any]:
@@ -127,10 +144,7 @@ class CapabilityService:
                 row.version = (row.version or 0) + 1
                 updated.append(catalogue_key)
         await db.flush()
-        unknown_active = sorted(
-            key for key, row in rows.items()
-            if row.is_active and key not in FEATURE_DEFINITIONS and not key.startswith("LIMIT_")
-        )
+        unknown_active = unknown_active_feature_keys([key for key, row in rows.items() if row.is_active])
         return {
             "created": created,
             "updated": updated,
@@ -150,6 +164,10 @@ class CapabilityService:
         environment: str = "ALL",
         include_usage: bool = True,
     ) -> dict[str, Any]:
+        if event is not None and (
+            event.id != event_id or event.organization_id != organization_id
+        ):
+            raise LookupError("Event does not belong to the selected organization")
         cache_variant = "full" if include_usage else "features"
         cache_revision, cached = await CapabilityCacheService.get(
             db, organization_id, event_id, environment, user_id, cache_variant,
@@ -296,7 +314,7 @@ class CapabilityService:
                 "source": source.get("source_type"),
                 "sources": source_lineage,
                 "flags": relevant_flags,
-                "upgrade_url": "/subscriptions",
+                "upgrade_url": "/commercial/overview",
                 "owner_console": meta.owner_console if meta else definition.get("owner_console", "BUSINESS"),
                 "portal_routes": definition.get("portal_routes", []),
                 "page_gate": definition.get("page_gate", False),
@@ -379,7 +397,9 @@ class CapabilityService:
                     UsageReservation.organization_id == organization_id,
                     UsageReservation.metric_key == key,
                     UsageReservation.status == "RESERVED",
-                    UsageReservation.expires_at > now,
+                    or_(UsageReservation.expires_at > now,
+                        UsageReservation.metadata_json["delivery_hold"].as_boolean().is_(True),
+                        UsageReservation.metadata_json["reconciliation_required"].as_boolean().is_(True)),
                 ]
                 if definition.get("scope") != "ORGANIZATION":
                     reservation_filters.append(UsageReservation.event_id == event_id)
@@ -459,6 +479,256 @@ class CapabilityService:
         return result
 
     @staticmethod
+    async def resolve_event_feature_for_enforcement(
+        db: AsyncSession,
+        organization_id: uuid.UUID,
+        event_id: uuid.UUID,
+        feature_key: str,
+        *,
+        event: Event | None = None,
+        user_id: uuid.UUID | None = None,
+        environment: str = "ALL",
+    ) -> dict[str, Any]:
+        """Resolve one independent event feature without building the UI package.
+
+        The full capability response includes catalogue presentation metadata,
+        every limit, provider readiness, dependency closure and conflict
+        projection.  A mutation gate needs only the requested feature.  The
+        narrow path is deliberately limited to code-owned features without
+        dependencies, conflicts or provider state; all other features retain
+        the full resolver so this optimisation cannot weaken composite policy.
+        """
+        definition = FEATURE_DEFINITIONS.get(feature_key)
+        if event is not None and (
+            event.id != event_id or event.organization_id != organization_id
+        ):
+            raise LookupError("Event does not belong to the selected organization")
+        if (
+            definition is None
+            or feature_key not in CapabilityService._INDEPENDENT_ENFORCEMENT_FEATURES
+            or definition.get("dependencies")
+            or definition.get("conflicts")
+            or feature_key in CapabilityService._PROVIDER_FEATURE_CHANNELS
+        ):
+            result = await CapabilityService.resolve_event(
+                db,
+                organization_id,
+                event_id,
+                event=event,
+                user_id=user_id,
+                environment=environment,
+                include_usage=False,
+            )
+            return result["features"].get(
+                feature_key,
+                {
+                    "key": feature_key,
+                    "value": False,
+                    "enabled": False,
+                    "reason_code": "NOT_ENTITLED",
+                },
+            )
+
+        cache_variant = f"features-{feature_key.lower()}"
+        cache_revision, cached = await CapabilityCacheService.get(
+            db,
+            organization_id,
+            event_id,
+            environment,
+            user_id,
+            cache_variant,
+        )
+        if cached is not None and isinstance(cached.get("feature"), dict):
+            return cached["feature"]
+
+        lock_name = (
+            f"lock:capabilities:{cache_variant}:{organization_id}:{event_id}:"
+            f"{environment}:{user_id or 'global'}:{cache_revision}"
+        )
+        lock_token, lock_backend_available = await cache_service.acquire_lock_status(
+            lock_name,
+            ttl_seconds=max(15, CapabilityCacheService.ttl_seconds()),
+        )
+        if lock_backend_available and lock_token is None:
+            for _ in range(30):
+                await asyncio.sleep(0.2)
+                _, cached = await CapabilityCacheService.get(
+                    db,
+                    organization_id,
+                    event_id,
+                    environment,
+                    user_id,
+                    cache_variant,
+                    revision=cache_revision,
+                )
+                if cached is not None and isinstance(cached.get("feature"), dict):
+                    return cached["feature"]
+
+        try:
+            now = datetime.now(timezone.utc)
+            organization = await db.get(Organization, organization_id)
+            if event is None:
+                event = await db.scalar(
+                    select(Event).where(
+                        Event.id == event_id,
+                        Event.organization_id == organization_id,
+                    )
+                )
+            if organization is None or event is None:
+                raise LookupError("Event does not belong to the selected organization")
+
+            internal_unrestricted = organization.has_unrestricted_capabilities
+            resolved = await EventEntitlementService.resolve(
+                db,
+                organization_id,
+                event_id,
+                explain=True,
+                feature_keys={feature_key},
+                include_limits=False,
+            )
+            restrictions = (
+                await db.scalars(
+                    select(CapabilityRestriction).where(
+                        CapabilityRestriction.status == "APPROVED",
+                        or_(
+                            CapabilityRestriction.organization_id.is_(None),
+                            CapabilityRestriction.organization_id == organization_id,
+                        ),
+                        or_(
+                            CapabilityRestriction.event_id.is_(None),
+                            CapabilityRestriction.event_id == event_id,
+                        ),
+                        CapabilityRestriction.effective_at <= now,
+                        or_(
+                            CapabilityRestriction.expires_at.is_(None),
+                            CapabilityRestriction.expires_at > now,
+                        ),
+                        or_(
+                            CapabilityRestriction.capability_key.is_(None),
+                            CapabilityRestriction.capability_key == feature_key,
+                        ),
+                    )
+                )
+            ).all()
+            restriction = next(
+                (row for row in restrictions if row.capability_key == feature_key),
+                next((row for row in restrictions if row.capability_key is None), None),
+            )
+            flags = await PlatformFlagService.evaluate(
+                db,
+                organization_id=organization_id,
+                event_id=event_id,
+                user_id=user_id,
+                environment=environment,
+            )
+            relevant_flags = {
+                flag_key: flag
+                for flag_key, flag in flags.items()
+                if feature_key in (flag.get("target_capabilities") or [])
+            }
+
+            resolved_features = resolved.get("features", {})
+            source = resolved_features.get(feature_key, {})
+            source_lineage = resolved.get("sources", {}).get(feature_key, [])
+            legacy_parent = definition.get("legacy_parent")
+            if (
+                not source
+                and resolved.get("rollout_mode") in {"LEGACY", "SHADOW"}
+                and legacy_parent
+                and resolved_features.get(legacy_parent)
+            ):
+                parent_source = resolved_features[legacy_parent]
+                parent_value = parent_source.get(
+                    "value", parent_source.get("enabled", False)
+                )
+                source = {
+                    "value": parent_value,
+                    "enabled": CapabilityService._enabled(parent_value),
+                    "value_type": definition.get("value_type", "BOOLEAN"),
+                    "source_type": "LEGACY_PARENT_COMPATIBILITY",
+                    "source_ref": legacy_parent,
+                }
+                source_lineage = [{
+                    "source": "LEGACY_PARENT_COMPATIBILITY",
+                    "source_ref": legacy_parent,
+                    "value": parent_value,
+                }]
+
+            raw_value = source.get("value", source.get("enabled", False))
+            enabled = CapabilityService._enabled(raw_value)
+            reason_code = None if enabled else "NOT_ENTITLED"
+            if not internal_unrestricted:
+                if not resolved["availability"]["available"]:
+                    enabled, reason_code = False, "CONTRACT_REQUIRED"
+                elif not organization.is_active or organization.suspended_at:
+                    enabled, reason_code = False, "SUSPENDED"
+                elif str(getattr(event, "status", "")).lower() in {
+                    "suspended", "archived", "cancelled"
+                }:
+                    enabled, reason_code = False, "SUSPENDED"
+                elif restriction:
+                    enabled = False
+                    reason_code = restriction.reason_code or "SECURITY_RESTRICTED"
+                elif any(
+                    flag["flag_type"] == "KILL_SWITCH" and flag["value"] is True
+                    for flag in relevant_flags.values()
+                ):
+                    enabled, reason_code = False, "SECURITY_RESTRICTED"
+                elif any(
+                    flag["flag_type"] in {"RELEASE", "OPERATIONAL"}
+                    and flag["value"] is False
+                    for flag in relevant_flags.values()
+                ):
+                    enabled, reason_code = False, "ROLLOUT_DISABLED"
+
+            backend_mode = definition.get("backend_mode", "NOT_IMPLEMENTED")
+            if not internal_unrestricted:
+                if enabled and backend_mode == "PROVIDER_REQUIRED":
+                    enabled, reason_code = False, "PROVIDER_UNAVAILABLE"
+                elif enabled and backend_mode == "NOT_IMPLEMENTED":
+                    enabled, reason_code = False, "ROLLOUT_DISABLED"
+
+            feature = {
+                "key": feature_key,
+                "name": feature_key,
+                "value_type": definition.get("value_type", "BOOLEAN"),
+                "allowed_values": definition.get("allowed_values", []),
+                "value": raw_value,
+                "enabled": enabled,
+                "reason_code": reason_code,
+                "source": source.get("source_type"),
+                "sources": source_lineage,
+                "flags": relevant_flags,
+                "upgrade_url": "/commercial/overview",
+                "owner_console": definition.get("owner_console", "BUSINESS"),
+                "portal_routes": definition.get("portal_routes", []),
+                "page_gate": definition.get("page_gate", False),
+                "operations": definition.get("operations", []),
+                "backend_mode": backend_mode,
+                "availability_note": definition.get("availability_note"),
+                "dependencies": [],
+                "conflicts": [],
+                "operation_permissions": {
+                    operation: OPERATION_PERMISSIONS[operation]
+                    for operation in definition.get("operations", [])
+                },
+            }
+            if not CapabilityCacheService.has_pending_changes(db):
+                await CapabilityCacheService.put(
+                    organization_id,
+                    event_id,
+                    cache_revision,
+                    environment,
+                    user_id,
+                    {"feature": feature},
+                    cache_variant,
+                )
+            return feature
+        finally:
+            if lock_token is not None:
+                await cache_service.release_lock(lock_name, lock_token)
+
+    @staticmethod
     async def resolve_organization(db: AsyncSession, organization_id: uuid.UUID, *, user_id: uuid.UUID | None = None, environment: str = "ALL") -> dict[str, Any]:
         cache_revision, cached = await CapabilityCacheService.get(
             db, organization_id, None, environment, user_id
@@ -521,7 +791,7 @@ class CapabilityService:
                     else base.get("sources", {}).get(key, [])
                 ),
                 "flags": relevant_flags,
-                "upgrade_url": "/subscriptions",
+                "upgrade_url": "/commercial/overview",
                 "owner_console": definition.get("owner_console", "BUSINESS"),
                 "portal_routes": definition.get("portal_routes", []),
                 "page_gate": definition.get("page_gate", False),
@@ -565,7 +835,11 @@ class CapabilityService:
                 if definition.get("period") == "BILLING_PERIOD":
                     usage_filters.extend((UsageLedgerEntry.period_start <= now, UsageLedgerEntry.period_end > now))
                 used = int(await db.scalar(select(func.coalesce(func.sum(UsageLedgerEntry.quantity), 0)).where(*usage_filters)) or 0)
-            reservation_filters = [UsageReservation.organization_id == organization_id, UsageReservation.metric_key == key, UsageReservation.status == "RESERVED", UsageReservation.expires_at > now]
+            reservation_filters = [UsageReservation.organization_id == organization_id,
+                UsageReservation.metric_key == key, UsageReservation.status == "RESERVED",
+                or_(UsageReservation.expires_at > now,
+                    UsageReservation.metadata_json["delivery_hold"].as_boolean().is_(True),
+                    UsageReservation.metadata_json["reconciliation_required"].as_boolean().is_(True))]
             reserved = int(await db.scalar(select(func.coalesce(func.sum(UsageReservation.quantity), 0)).where(*reservation_filters)) or 0)
             remaining = None if allowed is None else max(int(allowed) - used - reserved, 0)
             enforcement_mode = str(item.get("enforcement_mode") or "HARD").upper()

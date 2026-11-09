@@ -42,7 +42,7 @@ async def superadmin_import_hardware(
     if idempotency_key:
         idempotency_record = await begin_idempotent(
             db,
-            organization_id=current_user.organization_id,
+            organization_id=current_user.request_organization_id,
             actor_id=current_user.id,
             operation="commercial.hardware_catalog_import",
             key=idempotency_key,
@@ -88,7 +88,7 @@ async def superadmin_import_hardware(
             await complete_idempotent(
                 db, idempotency_record, response_status=200, response_body=response
             )
-        await commit_transaction(db, organization_id=current_user.organization_id)
+        await commit_transaction(db, organization_id=current_user.request_organization_id)
         return response
 
     # Resolve all existing catalog rows in bounded batches. The previous
@@ -118,7 +118,7 @@ async def superadmin_import_hardware(
         data["category_id"] = categories_by_name[category_name.lower()].id
         item = items_by_code.get(data["asset_code"])
         if item is None:
-            item = HardwareItem(**data, organization_id=current_user.organization_id)
+            item = HardwareItem(**data, organization_id=current_user.request_organization_id)
             db.add(item)
             items_by_code[data["asset_code"]] = item
         else:
@@ -148,7 +148,7 @@ async def superadmin_import_hardware(
         await complete_idempotent(
             db, idempotency_record, response_status=200, response_body=response
         )
-    await commit_transaction(db, organization_id=current_user.organization_id)
+    await commit_transaction(db, organization_id=current_user.request_organization_id)
     return response
 
 
@@ -158,7 +158,7 @@ async def superadmin_delete_hardware(hardware_id: uuid.UUID, current_user: User 
     if item is None:
         raise HTTPException(status_code=404, detail="Hardware item not found")
     await db.delete(item)
-    await commit_transaction(db, organization_id=current_user.organization_id)
+    await commit_transaction(db, organization_id=current_user.request_organization_id)
     return {"status": "success", "id": str(hardware_id)}
 
 @router.post("/categories", response_model=ServiceCategoryOut)
@@ -173,7 +173,7 @@ async def create_category(
             name=req.name,
             description=req.description
         )
-        await commit_transaction(db, organization_id=current_user.organization_id)
+        await commit_transaction(db, organization_id=current_user.request_organization_id)
         return category
     except Exception as e:
         await db.rollback()
@@ -185,7 +185,7 @@ async def create_service(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     try:
         service = await ServiceCatalogService.create_service(
             db=db,
@@ -198,7 +198,7 @@ async def create_service(
             is_internal=req.is_internal,
             features=req.features
         )
-        await commit_transaction(db, organization_id=current_user.organization_id)
+        await commit_transaction(db, organization_id=current_user.request_organization_id)
         return service
     except Exception as e:
         await db.rollback()
@@ -213,7 +213,7 @@ async def search_services(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     services = await ServiceCatalogQueryService(db).search_services(
         organization_id=org_id,
         category_id=category_id,
@@ -231,11 +231,11 @@ async def clone_service(
 ):
     try:
         cloned = await ServiceCatalogService.clone_service(
-            db=db, service_id=id, organization_id=current_user.organization_id
+            db=db, service_id=id, organization_id=current_user.request_organization_id
         )
         if not cloned:
             raise HTTPException(status_code=404, detail="Service not found to clone")
-        await commit_transaction(db, organization_id=current_user.organization_id)
+        await commit_transaction(db, organization_id=current_user.request_organization_id)
         return cloned
     except HTTPException:
         raise
@@ -251,11 +251,11 @@ async def archive_service(
 ):
     try:
         success = await ServiceCatalogService.archive_service(
-            db=db, service_id=id, organization_id=current_user.organization_id
+            db=db, service_id=id, organization_id=current_user.request_organization_id
         )
         if not success:
             raise HTTPException(status_code=404, detail="Service not found or already archived")
-        await commit_transaction(db, organization_id=current_user.organization_id)
+        await commit_transaction(db, organization_id=current_user.request_organization_id)
         return {"status": "success", "message": "Service archived"}
     except HTTPException:
         raise
@@ -269,7 +269,7 @@ async def create_package(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     try:
         services_dict = [{"service_id": s.service_id, "quantity": s.quantity} for s in req.services]
         package = await ServiceCatalogService.create_package(
@@ -281,7 +281,7 @@ async def create_package(
             price=req.price,
             services=services_dict
         )
-        await commit_transaction(db, organization_id=current_user.organization_id)
+        await commit_transaction(db, organization_id=current_user.request_organization_id)
         return package
     except Exception as e:
         await db.rollback()
@@ -294,7 +294,7 @@ async def get_packages(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     packages = await ServiceCatalogQueryService(db).list_packages(
         organization_id=org_id,
         limit=limit,
@@ -416,7 +416,7 @@ async def superadmin_create_staff(
         description=body.description or ""
     )
     db.add(role)
-    await commit_transaction(db, organization_id=current_user.organization_id)
+    await commit_transaction(db, organization_id=current_user.request_organization_id)
     return {"status": "success", "id": str(role.id)}
 
 @router.patch("/superadmin/catalog/staff/{role_id}")
@@ -458,7 +458,7 @@ async def superadmin_update_staff(
     if body.description is not None:
         role.description = body.description
 
-    await commit_transaction(db, organization_id=current_user.organization_id)
+    await commit_transaction(db, organization_id=current_user.request_organization_id)
     return {"status": "success", "id": str(role_id)}
 
 from fastapi import File, UploadFile
@@ -585,7 +585,7 @@ async def superadmin_import_staff(
 
         imported_count += 1
 
-    await commit_transaction(db, organization_id=current_user.organization_id)
+    await commit_transaction(db, organization_id=current_user.request_organization_id)
     return {"status": "success", "count": imported_count}
 
 @router.delete("/superadmin/catalog/staff/{role_id}")
@@ -601,7 +601,7 @@ async def superadmin_delete_staff(
 
     try:
         await db.delete(role)
-        await commit_transaction(db, organization_id=current_user.organization_id)
+        await commit_transaction(db, organization_id=current_user.request_organization_id)
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=f"Failed to delete staff role: {str(e)}")

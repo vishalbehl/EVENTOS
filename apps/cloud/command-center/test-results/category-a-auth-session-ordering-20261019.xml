@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="18" failures="0" errors="0" time="1.7449286">
+    <testsuite name="lib/api-client.test.ts" timestamp="2026-10-19T12:16:33.586Z" hostname="Vishal" tests="5" failures="0" errors="0" skipped="0" time="0.8414444">
+        <testcase classname="lib/api-client.test.ts" name="apiClient &gt; adds auth headers and request metadata to requests" time="0.681596">
+        </testcase>
+        <testcase classname="lib/api-client.test.ts" name="apiClient &gt; preserves an explicit authorization header for bounded session operations" time="0.0283627">
+        </testcase>
+        <testcase classname="lib/api-client.test.ts" name="apiClient &gt; maps problem responses into ApiError with a stable code" time="0.0467792">
+        </testcase>
+        <testcase classname="lib/api-client.test.ts" name="apiClient &gt; refreshes once and replays a request with the rotated token" time="0.0575981">
+        </testcase>
+        <testcase classname="lib/api-client.test.ts" name="apiClient &gt; parses plain and encoded download filenames" time="0.0034097">
+        </testcase>
+    </testsuite>
+    <testsuite name="services/auth-service.test.ts" timestamp="2026-10-19T12:16:33.600Z" hostname="Vishal" tests="2" failures="0" errors="0" skipped="0" time="0.3261945">
+        <testcase classname="services/auth-service.test.ts" name="authService privileged login &gt; submits the MFA code and stores a verified administrator session" time="0.2271252">
+        </testcase>
+        <testcase classname="services/auth-service.test.ts" name="authService privileged login &gt; revokes and refuses a valid non-administrator identity" time="0.0663798">
+        </testcase>
+    </testsuite>
+    <testsuite name="services/auth-session-races.test.ts" timestamp="2026-10-19T12:16:33.606Z" hostname="Vishal" tests="7" failures="0" errors="0" skipped="0" time="0.517817">
+        <testcase classname="services/auth-session-races.test.ts" name="session response ordering &gt; does not let an old failed restoration log out a newly installed session" time="0.195695">
+        </testcase>
+        <testcase classname="services/auth-session-races.test.ts" name="session response ordering &gt; does not resurrect a session when an old successful restoration finishes after logout" time="0.0552969">
+        </testcase>
+        <testcase classname="services/auth-session-races.test.ts" name="session response ordering &gt; does not merge an obsolete profile into a different logged-in identity" time="0.0203223">
+        </testcase>
+        <testcase classname="services/auth-session-races.test.ts" name="session response ordering &gt; orders login after an in-flight refresh cookie response" time="0.0411682">
+        </testcase>
+        <testcase classname="services/auth-session-races.test.ts" name="session response ordering &gt; shares one refresh between restore and an automatic API recovery" time="0.1138447">
+        </testcase>
+        <testcase classname="services/auth-session-races.test.ts" name="session response ordering &gt; does not refresh or replay an old identity&apos;s 401 under a new identity" time="0.032288">
+        </testcase>
+        <testcase classname="services/auth-session-races.test.ts" name="session response ordering &gt; clears local access immediately and orders a newer login after logout" time="0.0310705">
+        </testcase>
+    </testsuite>
+    <testsuite name="store/use-auth-store.test.ts" timestamp="2026-10-19T12:16:33.621Z" hostname="Vishal" tests="4" failures="0" errors="0" skipped="0" time="0.0594727">
+        <testcase classname="store/use-auth-store.test.ts" name="privileged auth persistence &gt; does not persist credentials when remember me is disabled" time="0.0197824">
+        </testcase>
+        <testcase classname="store/use-auth-store.test.ts" name="privileged auth persistence &gt; persists only non-secret administrator metadata and never impersonation tokens" time="0.0057825">
+        </testcase>
+        <testcase classname="store/use-auth-store.test.ts" name="privileged auth persistence &gt; keeps session ordering memory-only and ignores credentials in legacy persisted state" time="0.0039289">
+        </testcase>
+        <testcase classname="store/use-auth-store.test.ts" name="privileged auth persistence &gt; advances ordering on every identity transition but not activity updates" time="0.0028151">
+        </testcase>
+    </testsuite>
+</testsuites>

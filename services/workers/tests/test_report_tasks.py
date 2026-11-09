@@ -201,8 +201,6 @@ class TestQuoteProposalPdf:
 
         assert pdf.startswith(b"%PDF")
         assert len(pdf) > 1000
-
-
 class TestInvoicePdf:
     def test_renderer_uses_version_bound_invoice_snapshot(self):
         from workers.tasks.report_tasks import _build_invoice_pdf
@@ -222,6 +220,11 @@ class TestInvoicePdf:
 
         assert pdf.startswith(b"%PDF")
         assert len(pdf) > 1000
+        from app.modules.billing.services.invoice_pdf_service import signing_status
+
+        status = signing_status(pdf)
+        assert status["page_count"] == 1
+        assert status["is_cryptographically_signed"] is False
 
 
 class TestCommercialReportArtifacts:

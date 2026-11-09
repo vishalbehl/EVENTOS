@@ -36,7 +36,6 @@ def _waypoint_document(meta: dict) -> dict:
     card_heading_id = f"card-heading-{key}"
     text_id = f"text-{key}"
     btn_id = f"btn-{key}"
-    access_code_id = f"access-code-{key}"
     footer_id = f"footer-{key}"
 
     if key == "speaker-upload-invite":
@@ -48,7 +47,7 @@ def _waypoint_document(meta: dict) -> dict:
                     "canvasColor": "#0b172a",
                     "textColor": "#f4f8ff",
                     "fontFamily": "MODERN_SANS",
-                    "childrenIds": [heading_id, subheading_id, card_id, access_code_id, footer_id],
+                    "childrenIds": [heading_id, subheading_id, card_id, footer_id],
                 },
             },
             heading_id: {
@@ -102,32 +101,6 @@ def _waypoint_document(meta: dict) -> dict:
                         "buttonTextColor": "#ffffff",
                         "fullWidth": False,
                     },
-                },
-            },
-            access_code_id: {
-                "type": "Container",
-                "data": {
-                    "style": {
-                        "backgroundColor": "#0f1b2e",
-                        "borderRadius": 8,
-                        "padding": {"top": 16, "right": 24, "bottom": 16, "left": 24},
-                        "margin": {"top": 8, "right": 24, "bottom": 24, "left": 24},
-                    },
-                    "props": {"childrenIds": [f"ac-label-{key}", f"ac-val-{key}"]},
-                },
-            },
-            f"ac-label-{key}": {
-                "type": "Text",
-                "data": {
-                    "style": {"padding": {"top": 0, "right": 0, "bottom": 4, "left": 0}, "color": "#e4a410", "fontSize": 12},
-                    "props": {"text": "YOUR UNIQUE ACCESS CODE:"},
-                },
-            },
-            f"ac-val-{key}": {
-                "type": "Heading",
-                "data": {
-                    "style": {"padding": {"top": 0, "right": 0, "bottom": 0, "left": 0}, "color": "#ffffff", "fontSize": 24},
-                    "props": {"text": "((AccessCode))", "level": "h2"},
                 },
             },
             footer_id: {

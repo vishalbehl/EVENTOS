@@ -1,0 +1,53 @@
+{
+  "schema": "category-a-load-provision-v1",
+  "environment": "local-isolated",
+  "database": "category_a_load_provision_20261028",
+  "slug_prefix": "category-a-load-skew-rehearsal-20261028-",
+  "approval_reference": "isolated-skew-provisioner-rehearsal-20261028",
+  "rehearsal": true,
+  "identity": {
+    "database_name": "category_a_load_provision_20261028",
+    "database_role": "postgres",
+    "rolsuper": true,
+    "rolbypassrls": true,
+    "rolcreatedb": true,
+    "rolcreaterole": true,
+    "migration_revisions": [
+      "20261022_3670"
+    ]
+  },
+  "counts": {
+    "tenants": 100,
+    "workspaces": 100,
+    "revisions": 100,
+    "memberships": 10000,
+    "events": 10000
+  },
+  "stages": {
+    "organizations": {
+      "batches": 1,
+      "seconds": 0.014
+    },
+    "workspaces": {
+      "batches": 1,
+      "seconds": 0.017
+    },
+    "access_revisions": {
+      "batches": 1,
+      "seconds": 0.012
+    },
+    "users": {
+      "batches": 10,
+      "seconds": 0.831
+    },
+    "memberships": {
+      "batches": 10,
+      "seconds": 1.203
+    },
+    "events": {
+      "batches": 10,
+      "seconds": 1.697
+    }
+  },
+  "completed_at": "2026-10-28T04:40:46.066023+00:00"
+}

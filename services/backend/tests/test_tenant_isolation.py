@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,9 +18,11 @@ async def second_organization(db: AsyncSession) -> Organization:
     org = Organization(
         name="Second Test Org",
         slug=f"second-org-{uuid.uuid4().hex[:8]}",
-        plan="pro",
     )
     db.add(org)
+    await db.flush()
+    from app.modules.rbac.models.access_foundation import OrganizationAccessRevision
+    db.add(OrganizationAccessRevision(organization_id=org.id, revision=1))
     await db.flush()
     return org
 
@@ -42,7 +45,9 @@ async def organizer_b(db: AsyncSession, second_organization: Organization) -> Us
     membership = UserOrganizationMembership(
         user_id=user.id,
         organization_id=second_organization.id,
-        org_role="organiser"
+        org_role="owner",
+        accepted_at=datetime.now(timezone.utc),
+        is_active=True,
     )
     db.add(membership)
     await db.flush()
@@ -52,8 +57,13 @@ async def organizer_b(db: AsyncSession, second_organization: Organization) -> Us
 async def event_b(db: AsyncSession, second_organization: Organization, organizer_b: User) -> Event:
     """Create and persist a draft Event for the second Org."""
     from datetime import date
+    from app.modules.rbac.models.access_foundation import OperationalWorkspace
+    workspace = OperationalWorkspace(organization_id=second_organization.id, name="Second Event Workspace")
+    db.add(workspace)
+    await db.flush()
     ev = Event(
         organization_id=second_organization.id,
+        operational_workspace_id=workspace.id,
         created_by=organizer_b.id,
         name="Second Conference 2026",
         short_code=f"TB{uuid.uuid4().hex[:4].upper()}",
@@ -139,13 +149,9 @@ class TestTenantIsolation:
     ):
         # Fetch events using Super Admin credentials
         resp = await client.get("/events", headers=auth_headers(super_admin))
-        assert resp.status_code == 200
-        data = resp.json()
-        
-        # Privileged users remain scoped until a step-up impersonation token is issued.
-        event_ids = [uuid.UUID(e["id"]) for e in data]
-        assert event.id in event_ids
-        assert event_b.id not in event_ids
+        # Platform identity has no accepted customer membership. A platform
+        # role must never manufacture customer context or event access.
+        assert resp.status_code in {403, 404}, resp.text
 
     @pytest.mark.asyncio
     async def test_event_assignment_rejects_cross_tenant_user_and_event(

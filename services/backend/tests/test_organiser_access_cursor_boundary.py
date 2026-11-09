@@ -11,8 +11,8 @@ def test_organiser_access_cursor_routes_use_keyset_query_methods():
     assert '"/access/assignments/page"' in router
     assert "list_roles_cursor" in router
     assert "list_assignments_cursor" in router
-    assert "Role.created_at < position.occurred_at" in queries
-    assert "UserRoleAssignment.assigned_at < position.occurred_at" in queries
-    assert ".limit(bounded + 1)" in queries
+    assert "r.created_at < position.occurred_at" in queries
+    assert "a.assigned_at < position.occurred_at" in queries
+    assert ".limit(size + 1)" in queries
     assert "AuditLog.organization_id" not in queries[queries.index("class OrganiserAccessQueryService"):]
 

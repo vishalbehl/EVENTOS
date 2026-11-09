@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1200" viewBox="0 0 1920 1200" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="200" y1="40" x2="1720" y2="1140" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0E0806"/><stop offset=".3" stop-color="#1A0F0A"/><stop offset=".65" stop-color="#24140D"/><stop offset="1" stop-color="#130A06"/>
+    </linearGradient>
+    <linearGradient id="duneRidgeA" x1="960" y1="420" x2="960" y2="1080" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#281710"/><stop offset="1" stop-color="#190E09"/>
+    </linearGradient>
+    <linearGradient id="duneRidgeB" x1="960" y1="580" x2="960" y2="1200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1E110B"/><stop offset="1" stop-color="#100805"/>
+    </linearGradient>
+    <filter id="softGlow"><feGaussianBlur stdDeviation="50"/></filter>
+    <pattern id="duneGrid" width="128" height="128" patternUnits="userSpaceOnUse">
+      <path d="M128 0H0V128" stroke="#B45309" stroke-opacity=".06"/>
+    </pattern>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#sky)"/>
+  <ellipse cx="600" cy="220" rx="520" ry="240" fill="#EA580C" fill-opacity=".18" filter="url(#softGlow)"/>
+  <ellipse cx="1480" cy="200" rx="460" ry="250" fill="#D97706" fill-opacity=".15" filter="url(#softGlow)"/>
+  <path d="M0 640C160 580 310 630 480 560C660 480 810 570 990 490C1180 410 1340 500 1520 430C1690 370 1810 410 1920 360V1200H0V640Z" fill="url(#duneRidgeA)" fill-opacity=".9"/>
+  <path d="M0 800C180 720 350 780 540 690C720 600 890 700 1080 620C1270 540 1440 630 1630 560C1770 510 1860 540 1920 500V1200H0V800Z" fill="#1C100A" fill-opacity=".88"/>
+  <path d="M0 940C190 860 380 910 580 830C770 750 950 840 1140 760C1340 680 1510 770 1710 690C1820 640 1880 660 1920 630V1200H0V940Z" fill="url(#duneRidgeB)" fill-opacity=".98"/>
+  <rect width="1920" height="1200" fill="url(#duneGrid)"/>
+</svg>
+

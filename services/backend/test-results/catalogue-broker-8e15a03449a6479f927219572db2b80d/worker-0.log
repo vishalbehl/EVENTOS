@@ -1,0 +1,96 @@
+ 
+ -------------- catalogue-0-8e15a03449a6479f927219572db2b80d@localhost v5.6.3 (recovery)
+--- ***** ----- 
+-- ******* ---- Windows-11-10.0.26300-SP0 2026-10-21 11:34:58
+- *** --- * --- 
+- ** ---------- [config]
+- ** ---------- .> app:         worker:0x2bebdf986e0
+- ** ---------- .> transport:   redis://127.0.0.1:58589/0
+- ** ---------- .> results:     disabled://
+- *** --- * --- .> concurrency: 1 (solo)
+-- ******* ---- .> task events: OFF (enable -E to monitor tasks in this worker)
+--- ***** ----- 
+ -------------- [queues]
+                .> category-a-catalogue-8e15a03449a6479f927219572db2b80d exchange=tasks(direct) key=default
+                
+
+[2026-10-21 11:35:07,980: CRITICAL/MainProcess] Couldn't ack '3595fe59-097e-4781-a062-bae28227e737', reason:network:TimeoutError
+Traceback (most recent call last):
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\connection.py", line 3146, in get_connection
+    connection.can_read()
+    ~~~~~~~~~~~~~~~~~~~^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\connection.py", line 1351, in can_read
+    return self._parser.can_read(timeout)
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\_parsers\base.py", line 160, in can_read
+    return self._buffer.can_read(timeout)
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\_parsers\socket.py", line 97, in can_read
+    return bool(self.unread_bytes()) or self._read_from_socket(
+                                        ~~~~~~~~~~~~~~~~~~~~~~^
+        timeout=timeout, raise_on_timeout=False
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\_parsers\socket.py", line 67, in _read_from_socket
+    raise ConnectionError(SERVER_CLOSED_CONNECTION_ERROR)
+redis.exceptions.ConnectionError: Connection closed by server.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\connection.py", line 1033, in connect_check_health
+    sock = self._connect()
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\connection.py", line 1581, in _connect
+    raise err
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\connection.py", line 1565, in _connect
+    sock.connect(socket_address)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+TimeoutError: timed out
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\kombu\message.py", line 131, in ack_log_error
+    self.ack(multiple=multiple)
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\kombu\message.py", line 126, in ack
+    self.channel.basic_ack(self.delivery_tag, multiple=multiple)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\kombu\transport\virtual\base.py", line 670, in basic_ack
+    self.qos.ack(delivery_tag)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\kombu\transport\redis.py", line 387, in ack
+    self._remove_from_indices(delivery_tag).execute()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\client.py", line 2040, in execute
+    conn = self.connection_pool.get_connection()
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\utils.py", line 258, in wrapper
+    return func(*args, **kwargs)
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\connection.py", line 3153, in get_connection
+    connection.connect()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\connection.py", line 1006, in connect
+    self.retry.call_with_retry(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        lambda: self.connect_check_health(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        lambda error: self.disconnect(error),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\retry.py", line 132, in call_with_retry
+    raise error
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\retry.py", line 120, in call_with_retry
+    return do()
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\connection.py", line 1007, in <lambda>
+    lambda: self.connect_check_health(
+            ~~~~~~~~~~~~~~~~~~~~~~~~~^
+        check_health=True, retry_socket_connect=False
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ),
+    ^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\connection.py", line 1044, in connect_check_health
+    raise e
+redis.exceptions.TimeoutError: Timeout connecting to server

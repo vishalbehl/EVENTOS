@@ -22,6 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { apiClient } from "@/lib/api-client";
+import { TablePagination } from "@/components/organizer/common/TablePagination";
 
 type FileReviewView = "dashboard" | "validation" | "upload";
 
@@ -696,55 +697,18 @@ export default function FileMonitoringPage() {
                   </table>
                 </div>
 
-                {/* Premium Pagination Controls */}
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-white/5 pt-4 text-[10px] font-bold uppercase tracking-wider text-muted">
-                  <div className="flex items-center gap-2">
-                    <span>Show</span>
-                    <select
-                      value={pageSize}
-                      onChange={(e) => {
-                        setPageSize(Number(e.target.value));
-                        setCurrentPage(1);
-                      }}
-                      className="h-8 px-2 rounded-lg border border-white/10 bg-white/5 text-[var(--text)] font-semibold focus:outline-none"
-                    >
-                      <option value="10">10</option>
-                      <option value="20">20</option>
-                      <option value="30">30</option>
-                      <option value="50">50</option>
-                    </select>
-                    <span>entries</span>
-                    <span className="ml-4 normal-case text-muted/80">
-                      Showing {totalElements ? (currentPage - 1) * pageSize + 1 : 0} to {Math.min(currentPage * pageSize, totalElements)} of {totalElements} entries
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                      disabled={currentPage === 1}
-                      className="rounded-lg bg-white/5 border-white/10 hover:bg-white/10 text-[10px] font-bold uppercase tracking-wider px-3.5 disabled:opacity-50"
-                    >
-                      Previous
-                    </Button>
-                    
-                    <span className="text-[10px] font-bold text-[var(--text)] mx-2 normal-case">
-                      Page {currentPage} of {totalPages || 1}
-                    </span>
-
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                      disabled={currentPage === totalPages || totalPages === 0}
-                      className="rounded-lg bg-white/5 border-white/10 hover:bg-white/10 text-[10px] font-bold uppercase tracking-wider px-3.5 disabled:opacity-50"
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </div>
+                <TablePagination
+                  currentPage={currentPage}
+                  totalItems={totalElements}
+                  pageSize={pageSize}
+                  onPageChange={setCurrentPage}
+                  onPageSizeChange={(newSize) => {
+                    setPageSize(newSize);
+                    setCurrentPage(1);
+                  }}
+                  itemLabel="files"
+                  pageSizeOptions={[10, 20, 30, 50, 100]}
+                />
 
               </Card>
 

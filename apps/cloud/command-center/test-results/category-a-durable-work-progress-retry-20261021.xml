@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="3" failures="0" errors="0" time="0.0331317">
+    <testsuite name="lib/catalogue-reconciliation-progress.test.ts" timestamp="2026-10-21T04:46:56.110Z" hostname="Vishal" tests="3" failures="0" errors="0" skipped="0" time="0.0331317">
+        <testcase classname="lib/catalogue-reconciliation-progress.test.ts" name="does not equate broker dispatch with page completion" time="0.0075026">
+        </testcase>
+        <testcase classname="lib/catalogue-reconciliation-progress.test.ts" name="requires enumeration and all nonempty durable streams before success" time="0.0015282">
+        </testcase>
+        <testcase classname="lib/catalogue-reconciliation-progress.test.ts" name="keeps legacy and failed runs explicit instead of synthesising completion" time="0.002012">
+        </testcase>
+    </testsuite>
+</testsuites>

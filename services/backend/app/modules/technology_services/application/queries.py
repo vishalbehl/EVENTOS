@@ -5,8 +5,9 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.modules.rbac.services.event_scope import owned_event_scope
 from sqlalchemy.orm import load_only, selectinload
 
 from app.modules.events.models.event import Event
@@ -69,13 +70,10 @@ class TechnologyServiceQueryService:
             )
             .where(Event.id == event_id, Event.deleted_at.is_(None))
         )
-        if not is_platform_admin:
-            statement = statement.where(Event.organization_id == organization_id)
-        else:
-            # The router has already required a platform-admin principal. The
-            # explicit branch is needed so the general request tenant hook
-            # does not hide a deliberately selected cross-tenant admin scope.
-            statement = statement.execution_options(skip_tenant_filter=True)
+        statement = statement.where(
+            Event.organization_id == organization_id,
+            owned_event_scope(self.db, Event.id, organization_id),
+        )
         return await self.db.scalar(statement)
 
     async def get(self, *, request_id: uuid.UUID, organization_id: uuid.UUID) -> ServiceRequest | None:
@@ -84,7 +82,7 @@ class TechnologyServiceQueryService:
             .options(load_only(*self._columns, ServiceRequest.event_snapshot, ServiceRequest.planning_overrides, ServiceRequest.submitted_at, ServiceRequest.submitted_by, ServiceRequest.owner_user_id), selectinload(ServiceRequest.items))
             .where(
                 ServiceRequest.id == request_id,
-                ServiceRequest.organization_id == organization_id,
+                and_(ServiceRequest.organization_id == organization_id, owned_event_scope(self.db, ServiceRequest.event_id, organization_id)),
             )
         )
 
@@ -92,7 +90,7 @@ class TechnologyServiceQueryService:
         event = await self.get_event_for_scope(event_id=event_id, organization_id=organization_id)
         if event is None:
             return {}
-        request = await self.db.scalar(select(ServiceRequest).where(ServiceRequest.event_id == event_id, ServiceRequest.organization_id == organization_id).order_by(ServiceRequest.id.desc()).limit(1))
+        request = await self.db.scalar(select(ServiceRequest).where(ServiceRequest.event_id == event_id, and_(ServiceRequest.organization_id == organization_id, owned_event_scope(self.db, ServiceRequest.event_id, organization_id))).order_by(ServiceRequest.id.desc()).limit(1))
         result = await recommendations(self.db, event, request.planning_overrides if request else {})
         start_date_str = event.start_date.isoformat() if getattr(event, "start_date", None) else ""
         end_date_str = event.end_date.isoformat() if getattr(event, "end_date", None) else ""
@@ -326,7 +324,7 @@ class TechnologyServiceQueryService:
         return self._request_out(row)
 
     async def request_timeline(self, *, request_id: uuid.UUID, organization_id: uuid.UUID) -> list[dict[str, Any]]:
-        row = await self.db.scalar(select(ServiceRequest).where(ServiceRequest.id == request_id, ServiceRequest.organization_id == organization_id))
+        row = await self.db.scalar(select(ServiceRequest).where(ServiceRequest.id == request_id, and_(ServiceRequest.organization_id == organization_id, owned_event_scope(self.db, ServiceRequest.event_id, organization_id))))
         if row is None: return []
         comments = list((await self.db.scalars(select(ServiceRequestComment).where(ServiceRequestComment.request_id == request_id).order_by(ServiceRequestComment.created_at))).all())
         audit_rows = list((await self.db.scalars(select(AuditLog).where(
@@ -360,7 +358,7 @@ class TechnologyServiceQueryService:
         return entries
 
     async def request_snapshots(self, *, request_id: uuid.UUID, organization_id: uuid.UUID) -> list[dict[str, Any]]:
-        row = await self.db.scalar(select(ServiceRequest.id).where(ServiceRequest.id == request_id, ServiceRequest.organization_id == organization_id))
+        row = await self.db.scalar(select(ServiceRequest.id).where(ServiceRequest.id == request_id, and_(ServiceRequest.organization_id == organization_id, owned_event_scope(self.db, ServiceRequest.event_id, organization_id))))
         if row is None:
             return []
         snapshots = list((await self.db.scalars(select(ServiceRequestEventSnapshot).where(
@@ -369,7 +367,7 @@ class TechnologyServiceQueryService:
         return [{"id": str(item.id), "request_id": str(item.request_id), "event_id": str(item.event_id), "run_number": item.run_number, "facts": item.facts, "overrides": item.overrides, "created_at": item.created_at.isoformat()} for item in snapshots]
 
     async def request_attachments(self, *, request_id: uuid.UUID, organization_id: uuid.UUID) -> list[dict[str, Any]]:
-        row = await self.db.scalar(select(ServiceRequest.id).where(ServiceRequest.id == request_id, ServiceRequest.organization_id == organization_id))
+        row = await self.db.scalar(select(ServiceRequest.id).where(ServiceRequest.id == request_id, and_(ServiceRequest.organization_id == organization_id, owned_event_scope(self.db, ServiceRequest.event_id, organization_id))))
         if row is None:
             return []
         items = list((await self.db.scalars(select(ServiceRequestAttachment).where(ServiceRequestAttachment.request_id == request_id).order_by(ServiceRequestAttachment.created_at))).all())
@@ -382,7 +380,7 @@ class TechnologyServiceQueryService:
             .options(load_only(*self._columns, ServiceRequest.event_snapshot, ServiceRequest.planning_overrides, ServiceRequest.submitted_at), selectinload(ServiceRequest.items))
             .where(
                 ServiceRequest.event_id == event_id,
-                ServiceRequest.organization_id == organization_id,
+                and_(ServiceRequest.organization_id == organization_id, owned_event_scope(self.db, ServiceRequest.event_id, organization_id)),
             )
             .order_by(ServiceRequest.id.desc())
             .limit(bounded_limit)
@@ -395,7 +393,7 @@ class TechnologyServiceQueryService:
                 select(ServiceRequest.status, func.count(ServiceRequest.id))
                 .where(
                     ServiceRequest.event_id == event_id,
-                    ServiceRequest.organization_id == organization_id,
+                    and_(ServiceRequest.organization_id == organization_id, owned_event_scope(self.db, ServiceRequest.event_id, organization_id)),
                 )
                 .group_by(ServiceRequest.status)
             )
@@ -415,7 +413,7 @@ class TechnologyServiceQueryService:
             .options(load_only(*self._columns))
             .where(
                 ServiceRequest.event_id == event_id,
-                ServiceRequest.organization_id == organization_id,
+                and_(ServiceRequest.organization_id == organization_id, owned_event_scope(self.db, ServiceRequest.event_id, organization_id)),
             )
             .order_by(ServiceRequest.id.desc())
             .offset(bounded_offset)

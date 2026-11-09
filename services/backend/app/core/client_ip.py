@@ -28,24 +28,32 @@ def resolve_client_ip(request: Request) -> str | None:
     if not peer or not _in_networks(peer, settings.TRUSTED_PROXY_CIDRS):
         return peer
 
+    # A trusted immediate peer does not make an attacker-prepended first hop
+    # trustworthy. Walk towards the client and stop at the first untrusted hop.
     forwarded = request.headers.get("forwarded", "")
+    chain: list[str] = []
     if forwarded:
-        first = forwarded.split(",", 1)[0]
-        for part in first.split(";"):
-            key, _, value = part.strip().partition("=")
-            if key.lower() == "for":
-                candidate = value.strip('"[]')
-                try:
-                    return str(ipaddress.ip_address(candidate))
-                except ValueError:
+        for hop in forwarded.split(","):
+            found = False
+            for part in hop.split(";"):
+                key, _, value = part.strip().partition("=")
+                if key.lower() == "for":
+                    chain.append(value.strip().strip('"').strip('[]'))
+                    found = True
                     break
-
-    chain = [item.strip() for item in request.headers.get("x-forwarded-for", "").split(",") if item.strip()]
-    for candidate in chain:
+            if not found:
+                return peer
+    else:
+        chain = [item.strip() for item in request.headers.get("x-forwarded-for", "").split(",")]
+    if len(chain) > 32:
+        return peer
+    for candidate in reversed(chain):
         try:
-            return str(ipaddress.ip_address(candidate))
+            address = str(ipaddress.ip_address(candidate))
         except ValueError:
-            continue
+            return peer
+        if not _in_networks(address, settings.TRUSTED_PROXY_CIDRS):
+            return address
     return peer
 
 

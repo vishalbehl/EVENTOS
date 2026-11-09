@@ -35,6 +35,7 @@ def test_webhook_command_service_contains_transaction_and_replay_guards():
     assert "await db.rollback()" in source
     assert "IDEMPOTENCY_CONFLICT" in source
     assert "with_for_update" in source
+    assert "raise_version_conflict" in source
 
 
 def test_webhook_read_routes_delegate_to_query_service():

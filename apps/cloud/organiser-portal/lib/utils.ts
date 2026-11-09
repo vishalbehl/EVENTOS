@@ -280,6 +280,14 @@ export function truncate(str: string, maxLength: number): string {
   return `${str.slice(0, maxLength - 1)}…`;
 }
 
+const FORM_REVIEW_MESSAGES = new Map<string, string>([
+  ["FORM_TEMPLATE_RECONCILIATION_REQUIRED", "Review the form's saved template selection before publishing."],
+  ["FORM_CATEGORY_RECONCILIATION_REQUIRED", "Review the form's saved category selection before publishing."],
+  ["FORM_DOCUMENT_RECONCILIATION_REQUIRED", "This form's configuration needs review. Open the form editor before publishing."],
+  ["MANAGED_ASSET_NOT_SCAN_READY", "A form image is unavailable or has not passed its safety scan. Choose a ready image before publishing."],
+  ["MANAGED_FORM_ASSET_TYPE_INVALID", "Choose a supported form image: PNG, JPEG, WebP or GIF."],
+]);
+
 export function getErrorMessage(value: any, fallback = "Something went wrong"): string {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -302,6 +310,8 @@ export function getErrorMessage(value: any, fallback = "Something went wrong"): 
   }
 
   if (value && typeof value === "object") {
+    const reviewMessage = typeof value.code === "string" ? FORM_REVIEW_MESSAGES.get(value.code) : undefined;
+    if (reviewMessage) return reviewMessage;
     if (typeof value.message === "string" && value.message.trim()) {
       return value.message.trim();
     }

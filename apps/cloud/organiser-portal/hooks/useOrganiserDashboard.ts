@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { apiGet } from "@/lib/api-client";
+import { apiGet, shouldRetryRead } from "@/lib/api-client";
 import type { AttentionItem } from "@/components/organizer/workspace/OrganiserPrimitives";
+import { accessContextCacheKey, isPlatformSelfSession, useAuthStore } from "@/store/use-auth-store";
 
 export type OrganiserDashboardEvent = {
   id: string;
@@ -20,16 +21,29 @@ export type OrganiserDashboard = {
     name: string;
     slug?: string | null;
     is_internal_unrestricted?: boolean;
+    lifecycle_state?: string;
   };
   metrics: {
     active_events: number;
+    total_events: number;
     team_members: number;
     total_registrations: number;
+    total_sessions: number;
+    total_speakers: number;
+    total_checkins: number;
     total_revenue: number;
   };
-  plan: {
-    name: string;
+  registration_overview: {
+    approved: number;
+    pending: number;
+    waitlisted: number;
+    other: number;
+  };
+  commercial: {
+    offer_name: string;
     status: string;
+    billing_cycle?: string | null;
+    valid_till?: string | null;
     registrations_used: number;
     registrations_max: number | null;
     storage_used_gb: number;
@@ -39,6 +53,7 @@ export type OrganiserDashboard = {
     unrestricted: boolean;
   };
   trend: Array<{ label: string; registrations: number; revenue: number }>;
+  session_distribution: Array<{ label: string; oral: number; poster: number }>;
   events: OrganiserDashboardEvent[];
   recent_activity: Array<{
     id: string;
@@ -54,26 +69,38 @@ export type OrganiserDashboard = {
 };
 
 export function useOrganiserDashboard() {
+  const state = useAuthStore();
+  const { user, activeContext, isContextSwitching, isAuthenticated, hasHydrated } = state;
+  const contextKey = accessContextCacheKey(activeContext, user?.organization_id);
   return useQuery({
-    queryKey: ["organiser-dashboard"],
-    queryFn: () => apiGet<OrganiserDashboard>("/organiser/dashboard"),
-    refetchInterval: 30_000,
+    queryKey: ["organiser-dashboard", user?.id, contextKey, state.impersonationSessionId],
+    queryFn: ({ signal }) => apiGet<OrganiserDashboard>("/organiser/dashboard", { signal }),
+    enabled: hasHydrated && isAuthenticated && !isContextSwitching && !isPlatformSelfSession(state),
+    retry: shouldRetryRead,
+    refetchInterval: query => query.state.error ? false : 30_000,
   });
 }
 
 export function useOrganiserNeedsAttention() {
+  const state = useAuthStore();
+  const { user, activeContext, isContextSwitching, isAuthenticated, hasHydrated } = state;
+  const contextKey = accessContextCacheKey(activeContext, user?.organization_id);
   return useQuery({
-    queryKey: ["organiser-needs-attention"],
-    queryFn: () => apiGet<AttentionItem[]>("/organiser/needs-attention"),
-    refetchInterval: 30_000,
+    queryKey: ["organiser-needs-attention", user?.id, contextKey, state.impersonationSessionId],
+    queryFn: ({ signal }) => apiGet<AttentionItem[]>("/organiser/needs-attention", { signal }),
+    enabled: hasHydrated && isAuthenticated && !isContextSwitching && !isPlatformSelfSession(state),
+    retry: shouldRetryRead,
+    refetchInterval: query => query.state.error ? false : 30_000,
   });
 }
 
 export function useEventNeedsAttention(eventId?: string) {
+  const { user, activeContext, isContextSwitching } = useAuthStore();
+  const contextKey = accessContextCacheKey(activeContext, user?.organization_id);
   return useQuery({
-    queryKey: ["event-needs-attention", eventId],
+    queryKey: ["event-needs-attention", contextKey, eventId],
     queryFn: () => apiGet<AttentionItem[]>(`/organiser/events/${eventId}/needs-attention`),
-    enabled: Boolean(eventId),
+    enabled: Boolean(eventId) && !isContextSwitching,
     refetchInterval: 30_000,
   });
 }

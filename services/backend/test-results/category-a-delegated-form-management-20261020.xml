@@ -1,0 +1,1889 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="16" skipped="0" tests="16" time="136.576" timestamp="2026-10-20T15:34:34.418275+05:30" hostname="Vishal"><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[event_scope-SURVEY]" time="40.587"><failure message="fastapi.exceptions.HTTPException: 404: Category not found.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC86971FD0&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x1fc894bef80&gt;
+purpose = 'SURVEY', case = 'event_scope'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("case", ["event_scope", "workspace_scope", "requested", "suspended", "detached",
+        "missing_action", "foreign_event", "catalogue_denied"])
+    async def test_client_approved_form_boundaries(db, delegated_cohort, purpose, case):
+        data = delegated_cohort
+        async with TenantContextGuard.scoped(db, data.client.id):
+&gt;           source = await TemplateCommands.execute(db, operation="create", actor=data.owner,
+                payload=FormTemplateCreate(name="Client owned operational source",
+                    category_key="survey" if purpose == "SURVEY" else "speaker_intake", fields=[], settings={}),
+                idempotency_key=retry_key())
+
+tests\test_delegated_form_management.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC86971FD0&gt;
+
+    @staticmethod
+    async def execute(db, *, operation, actor, payload=None, template_id=None,
+                      if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        expected = require_if_match(if_match) if operation != "create" else None
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 &lt;= len(idempotency_key.strip()) &lt;= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        changes = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
+        if operation not in {"create", "update", "duplicate", "delete"}:
+            raise ValueError("Unsupported template operation")
+        try:
+            org = await category_authority(db, actor, audience)
+            owner = None if audience == "PLATFORM" else org
+            scope = "GLOBAL" if audience == "PLATFORM" else "ORGANIZATION"
+            if changes.get("organization_id") not in (None, owner) or changes.get("event_id") is not None:
+                raise HTTPException(422, detail={"code": "CATALOGUE_OWNER_IS_SERVER_CONTROLLED"})
+            if operation == "create" and changes.get("scope_type", scope) != scope:
+                raise HTTPException(422, detail={"code": "USE_SCOPED_CATALOGUE_OR_EVENT_AGGREGATE"})
+            if audience == "CUSTOMER" and changes.get("is_default"):
+                raise HTTPException(403, detail={"code": "GLOBAL_DEFAULT_IS_PLATFORM_CONTROLLED"})
+            receipt = await begin_idempotent(db, organization_id=org, actor_id=actor.id,
+                operation=f"registration.{audience.lower()}.form_template.{operation}", key=idempotency_key,
+                payload={"id": str(template_id) if template_id else None, "version": expected, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                result = None if operation == "delete" else catalogue_projection(FormTemplateResponse.model_validate(replay[1]))
+                await db.commit()
+                return result
+            if audience == "PLATFORM":
+                # Also used by category commands and bounded initial provisioning.
+                await db.execute(text("SELECT pg_advisory_xact_lock(1128353876, 1)"))
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # NO KEY UPDATE preserves serialization without deadlocking on a
+            # competing request's already-inserted receipt foreign key.
+            authority_row = await db.scalar(select(Organization).where(Organization.id == org)
+                .with_for_update(key_share=True).execution_options(populate_existing=True))
+            if authority_row is None:
+                raise HTTPException(404, detail="Authority context not found.")
+            await category_authority(db, actor, audience)
+            previous = None
+            source = None
+            if operation != "create":
+                visibility = and_(FormTemplate.organization_id == owner, FormTemplate.scope_type == scope)
+                if operation == "duplicate" and audience == "CUSTOMER":
+                    visibility = or_(visibility, and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"))
+                source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id,
+                    FormTemplate.deleted_at.is_(None), visibility).with_for_update(of=FormTemplate)
+                    .execution_options(shared_form_catalogue=True, populate_existing=True))
+                if source is None:
+                    raise HTTPException(404, detail="Template not found.")
+                previous = int(source.version or 1)
+                if previous != expected:
+                    raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": previous})
+                if (operation == "update" and source.category_key in OPERATIONAL_TEMPLATE_KEYS
+                        and "category_key" in changes and changes["category_key"] != source.category_key):
+                    raise HTTPException(409, detail={"code": "TEMPLATE_PURPOSE_IMMUTABLE"})
+            if operation == "duplicate":
+                if not source.is_active:
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+                if len(source.fields or []) &gt; 100:
+                    raise HTTPException(409, detail={"code": "TEMPLATE_EXCEEDS_FIELD_BOUND"})
+                # No event lineage, submitted defaults, credentials or asset/redirect references.
+                try:
+                    document = CatalogueDocument.model_validate({
+                        "fields": source.fields or [], "settings": source.settings or {}})
+                    fields = [field.model_dump(mode="json", exclude_none=True) for field in document.fields]
+                    for field in fields:
+                        field.pop("default_value", None)
+                        for option in field.get("options") or []:
+                            if isinstance(option, dict):
+                                option["is_default"] = False
+                        if field["type"] in {"role", "file", "image", "signature"} or field["id"].lower() in {"role", "category"}:
+                            field["options"] = []
+                except (ValidationError, TypeError, ValueError):
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_RECONCILIATION_REQUIRED"})
+                safe_settings = {key: value for key, value in (source.settings or {}).items() if key in {
+                    "submit_button_label", "success_title", "success_message", "allow_multiple_submissions",
+                    "require_login", "send_email_confirmation", "enable_terms", "enable_preview", "enable_payment", "steps"}}
+                changes = {"name": f"{source.name[:130]} (Custom Copy)", "category_id": str(source.category_id) if source.category_id else None,
+                    "category_key": source.category_key, "description": source.description,
+                    "fields": fields, "settings": safe_settings, "slug": f"copy-{uuid.uuid4().hex}"}
+            category_id = changes.get("category_id", source.category_id if source is not None else None)
+            category = None
+            if operation != "delete" and category_id is None:
+                category_key = changes.get("category_key", source.category_key if source is not None else "registration")
+                matches = list((await db.scalars(select(FormCategory).where(
+                    FormCategory.slug == category_key, FormCategory.deleted_at.is_(None),
+                    FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == owner, FormCategory.organization_id.is_(None)))
+                    .order_by(FormCategory.id).limit(2).with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))).all())
+                if not matches:
+&gt;                   raise HTTPException(404, detail="Category not found.")
+E                   fastapi.exceptions.HTTPException: 404: Category not found.
+
+app\modules\registration\application\template_commands.py:590: HTTPException</failure></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[event_scope-SPEAKER_INTAKE]" time="5.750"><failure message="fastapi.exceptions.HTTPException: 404: Category not found.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC894E3B10&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x1fc8a11e740&gt;
+purpose = 'SPEAKER_INTAKE', case = 'event_scope'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("case", ["event_scope", "workspace_scope", "requested", "suspended", "detached",
+        "missing_action", "foreign_event", "catalogue_denied"])
+    async def test_client_approved_form_boundaries(db, delegated_cohort, purpose, case):
+        data = delegated_cohort
+        async with TenantContextGuard.scoped(db, data.client.id):
+&gt;           source = await TemplateCommands.execute(db, operation="create", actor=data.owner,
+                payload=FormTemplateCreate(name="Client owned operational source",
+                    category_key="survey" if purpose == "SURVEY" else "speaker_intake", fields=[], settings={}),
+                idempotency_key=retry_key())
+
+tests\test_delegated_form_management.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC894E3B10&gt;
+
+    @staticmethod
+    async def execute(db, *, operation, actor, payload=None, template_id=None,
+                      if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        expected = require_if_match(if_match) if operation != "create" else None
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 &lt;= len(idempotency_key.strip()) &lt;= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        changes = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
+        if operation not in {"create", "update", "duplicate", "delete"}:
+            raise ValueError("Unsupported template operation")
+        try:
+            org = await category_authority(db, actor, audience)
+            owner = None if audience == "PLATFORM" else org
+            scope = "GLOBAL" if audience == "PLATFORM" else "ORGANIZATION"
+            if changes.get("organization_id") not in (None, owner) or changes.get("event_id") is not None:
+                raise HTTPException(422, detail={"code": "CATALOGUE_OWNER_IS_SERVER_CONTROLLED"})
+            if operation == "create" and changes.get("scope_type", scope) != scope:
+                raise HTTPException(422, detail={"code": "USE_SCOPED_CATALOGUE_OR_EVENT_AGGREGATE"})
+            if audience == "CUSTOMER" and changes.get("is_default"):
+                raise HTTPException(403, detail={"code": "GLOBAL_DEFAULT_IS_PLATFORM_CONTROLLED"})
+            receipt = await begin_idempotent(db, organization_id=org, actor_id=actor.id,
+                operation=f"registration.{audience.lower()}.form_template.{operation}", key=idempotency_key,
+                payload={"id": str(template_id) if template_id else None, "version": expected, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                result = None if operation == "delete" else catalogue_projection(FormTemplateResponse.model_validate(replay[1]))
+                await db.commit()
+                return result
+            if audience == "PLATFORM":
+                # Also used by category commands and bounded initial provisioning.
+                await db.execute(text("SELECT pg_advisory_xact_lock(1128353876, 1)"))
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # NO KEY UPDATE preserves serialization without deadlocking on a
+            # competing request's already-inserted receipt foreign key.
+            authority_row = await db.scalar(select(Organization).where(Organization.id == org)
+                .with_for_update(key_share=True).execution_options(populate_existing=True))
+            if authority_row is None:
+                raise HTTPException(404, detail="Authority context not found.")
+            await category_authority(db, actor, audience)
+            previous = None
+            source = None
+            if operation != "create":
+                visibility = and_(FormTemplate.organization_id == owner, FormTemplate.scope_type == scope)
+                if operation == "duplicate" and audience == "CUSTOMER":
+                    visibility = or_(visibility, and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"))
+                source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id,
+                    FormTemplate.deleted_at.is_(None), visibility).with_for_update(of=FormTemplate)
+                    .execution_options(shared_form_catalogue=True, populate_existing=True))
+                if source is None:
+                    raise HTTPException(404, detail="Template not found.")
+                previous = int(source.version or 1)
+                if previous != expected:
+                    raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": previous})
+                if (operation == "update" and source.category_key in OPERATIONAL_TEMPLATE_KEYS
+                        and "category_key" in changes and changes["category_key"] != source.category_key):
+                    raise HTTPException(409, detail={"code": "TEMPLATE_PURPOSE_IMMUTABLE"})
+            if operation == "duplicate":
+                if not source.is_active:
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+                if len(source.fields or []) &gt; 100:
+                    raise HTTPException(409, detail={"code": "TEMPLATE_EXCEEDS_FIELD_BOUND"})
+                # No event lineage, submitted defaults, credentials or asset/redirect references.
+                try:
+                    document = CatalogueDocument.model_validate({
+                        "fields": source.fields or [], "settings": source.settings or {}})
+                    fields = [field.model_dump(mode="json", exclude_none=True) for field in document.fields]
+                    for field in fields:
+                        field.pop("default_value", None)
+                        for option in field.get("options") or []:
+                            if isinstance(option, dict):
+                                option["is_default"] = False
+                        if field["type"] in {"role", "file", "image", "signature"} or field["id"].lower() in {"role", "category"}:
+                            field["options"] = []
+                except (ValidationError, TypeError, ValueError):
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_RECONCILIATION_REQUIRED"})
+                safe_settings = {key: value for key, value in (source.settings or {}).items() if key in {
+                    "submit_button_label", "success_title", "success_message", "allow_multiple_submissions",
+                    "require_login", "send_email_confirmation", "enable_terms", "enable_preview", "enable_payment", "steps"}}
+                changes = {"name": f"{source.name[:130]} (Custom Copy)", "category_id": str(source.category_id) if source.category_id else None,
+                    "category_key": source.category_key, "description": source.description,
+                    "fields": fields, "settings": safe_settings, "slug": f"copy-{uuid.uuid4().hex}"}
+            category_id = changes.get("category_id", source.category_id if source is not None else None)
+            category = None
+            if operation != "delete" and category_id is None:
+                category_key = changes.get("category_key", source.category_key if source is not None else "registration")
+                matches = list((await db.scalars(select(FormCategory).where(
+                    FormCategory.slug == category_key, FormCategory.deleted_at.is_(None),
+                    FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == owner, FormCategory.organization_id.is_(None)))
+                    .order_by(FormCategory.id).limit(2).with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))).all())
+                if not matches:
+&gt;                   raise HTTPException(404, detail="Category not found.")
+E                   fastapi.exceptions.HTTPException: 404: Category not found.
+
+app\modules\registration\application\template_commands.py:590: HTTPException</failure></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[workspace_scope-SURVEY]" time="5.900"><failure message="fastapi.exceptions.HTTPException: 404: Category not found.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC894E3ED0&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x1fc89deccd0&gt;
+purpose = 'SURVEY', case = 'workspace_scope'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("case", ["event_scope", "workspace_scope", "requested", "suspended", "detached",
+        "missing_action", "foreign_event", "catalogue_denied"])
+    async def test_client_approved_form_boundaries(db, delegated_cohort, purpose, case):
+        data = delegated_cohort
+        async with TenantContextGuard.scoped(db, data.client.id):
+&gt;           source = await TemplateCommands.execute(db, operation="create", actor=data.owner,
+                payload=FormTemplateCreate(name="Client owned operational source",
+                    category_key="survey" if purpose == "SURVEY" else "speaker_intake", fields=[], settings={}),
+                idempotency_key=retry_key())
+
+tests\test_delegated_form_management.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC894E3ED0&gt;
+
+    @staticmethod
+    async def execute(db, *, operation, actor, payload=None, template_id=None,
+                      if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        expected = require_if_match(if_match) if operation != "create" else None
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 &lt;= len(idempotency_key.strip()) &lt;= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        changes = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
+        if operation not in {"create", "update", "duplicate", "delete"}:
+            raise ValueError("Unsupported template operation")
+        try:
+            org = await category_authority(db, actor, audience)
+            owner = None if audience == "PLATFORM" else org
+            scope = "GLOBAL" if audience == "PLATFORM" else "ORGANIZATION"
+            if changes.get("organization_id") not in (None, owner) or changes.get("event_id") is not None:
+                raise HTTPException(422, detail={"code": "CATALOGUE_OWNER_IS_SERVER_CONTROLLED"})
+            if operation == "create" and changes.get("scope_type", scope) != scope:
+                raise HTTPException(422, detail={"code": "USE_SCOPED_CATALOGUE_OR_EVENT_AGGREGATE"})
+            if audience == "CUSTOMER" and changes.get("is_default"):
+                raise HTTPException(403, detail={"code": "GLOBAL_DEFAULT_IS_PLATFORM_CONTROLLED"})
+            receipt = await begin_idempotent(db, organization_id=org, actor_id=actor.id,
+                operation=f"registration.{audience.lower()}.form_template.{operation}", key=idempotency_key,
+                payload={"id": str(template_id) if template_id else None, "version": expected, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                result = None if operation == "delete" else catalogue_projection(FormTemplateResponse.model_validate(replay[1]))
+                await db.commit()
+                return result
+            if audience == "PLATFORM":
+                # Also used by category commands and bounded initial provisioning.
+                await db.execute(text("SELECT pg_advisory_xact_lock(1128353876, 1)"))
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # NO KEY UPDATE preserves serialization without deadlocking on a
+            # competing request's already-inserted receipt foreign key.
+            authority_row = await db.scalar(select(Organization).where(Organization.id == org)
+                .with_for_update(key_share=True).execution_options(populate_existing=True))
+            if authority_row is None:
+                raise HTTPException(404, detail="Authority context not found.")
+            await category_authority(db, actor, audience)
+            previous = None
+            source = None
+            if operation != "create":
+                visibility = and_(FormTemplate.organization_id == owner, FormTemplate.scope_type == scope)
+                if operation == "duplicate" and audience == "CUSTOMER":
+                    visibility = or_(visibility, and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"))
+                source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id,
+                    FormTemplate.deleted_at.is_(None), visibility).with_for_update(of=FormTemplate)
+                    .execution_options(shared_form_catalogue=True, populate_existing=True))
+                if source is None:
+                    raise HTTPException(404, detail="Template not found.")
+                previous = int(source.version or 1)
+                if previous != expected:
+                    raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": previous})
+                if (operation == "update" and source.category_key in OPERATIONAL_TEMPLATE_KEYS
+                        and "category_key" in changes and changes["category_key"] != source.category_key):
+                    raise HTTPException(409, detail={"code": "TEMPLATE_PURPOSE_IMMUTABLE"})
+            if operation == "duplicate":
+                if not source.is_active:
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+                if len(source.fields or []) &gt; 100:
+                    raise HTTPException(409, detail={"code": "TEMPLATE_EXCEEDS_FIELD_BOUND"})
+                # No event lineage, submitted defaults, credentials or asset/redirect references.
+                try:
+                    document = CatalogueDocument.model_validate({
+                        "fields": source.fields or [], "settings": source.settings or {}})
+                    fields = [field.model_dump(mode="json", exclude_none=True) for field in document.fields]
+                    for field in fields:
+                        field.pop("default_value", None)
+                        for option in field.get("options") or []:
+                            if isinstance(option, dict):
+                                option["is_default"] = False
+                        if field["type"] in {"role", "file", "image", "signature"} or field["id"].lower() in {"role", "category"}:
+                            field["options"] = []
+                except (ValidationError, TypeError, ValueError):
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_RECONCILIATION_REQUIRED"})
+                safe_settings = {key: value for key, value in (source.settings or {}).items() if key in {
+                    "submit_button_label", "success_title", "success_message", "allow_multiple_submissions",
+                    "require_login", "send_email_confirmation", "enable_terms", "enable_preview", "enable_payment", "steps"}}
+                changes = {"name": f"{source.name[:130]} (Custom Copy)", "category_id": str(source.category_id) if source.category_id else None,
+                    "category_key": source.category_key, "description": source.description,
+                    "fields": fields, "settings": safe_settings, "slug": f"copy-{uuid.uuid4().hex}"}
+            category_id = changes.get("category_id", source.category_id if source is not None else None)
+            category = None
+            if operation != "delete" and category_id is None:
+                category_key = changes.get("category_key", source.category_key if source is not None else "registration")
+                matches = list((await db.scalars(select(FormCategory).where(
+                    FormCategory.slug == category_key, FormCategory.deleted_at.is_(None),
+                    FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == owner, FormCategory.organization_id.is_(None)))
+                    .order_by(FormCategory.id).limit(2).with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))).all())
+                if not matches:
+&gt;                   raise HTTPException(404, detail="Category not found.")
+E                   fastapi.exceptions.HTTPException: 404: Category not found.
+
+app\modules\registration\application\template_commands.py:590: HTTPException</failure></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[workspace_scope-SPEAKER_INTAKE]" time="5.635"><failure message="fastapi.exceptions.HTTPException: 404: Category not found.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC89A52EA0&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x1fc899b1f30&gt;
+purpose = 'SPEAKER_INTAKE', case = 'workspace_scope'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("case", ["event_scope", "workspace_scope", "requested", "suspended", "detached",
+        "missing_action", "foreign_event", "catalogue_denied"])
+    async def test_client_approved_form_boundaries(db, delegated_cohort, purpose, case):
+        data = delegated_cohort
+        async with TenantContextGuard.scoped(db, data.client.id):
+&gt;           source = await TemplateCommands.execute(db, operation="create", actor=data.owner,
+                payload=FormTemplateCreate(name="Client owned operational source",
+                    category_key="survey" if purpose == "SURVEY" else "speaker_intake", fields=[], settings={}),
+                idempotency_key=retry_key())
+
+tests\test_delegated_form_management.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC89A52EA0&gt;
+
+    @staticmethod
+    async def execute(db, *, operation, actor, payload=None, template_id=None,
+                      if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        expected = require_if_match(if_match) if operation != "create" else None
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 &lt;= len(idempotency_key.strip()) &lt;= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        changes = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
+        if operation not in {"create", "update", "duplicate", "delete"}:
+            raise ValueError("Unsupported template operation")
+        try:
+            org = await category_authority(db, actor, audience)
+            owner = None if audience == "PLATFORM" else org
+            scope = "GLOBAL" if audience == "PLATFORM" else "ORGANIZATION"
+            if changes.get("organization_id") not in (None, owner) or changes.get("event_id") is not None:
+                raise HTTPException(422, detail={"code": "CATALOGUE_OWNER_IS_SERVER_CONTROLLED"})
+            if operation == "create" and changes.get("scope_type", scope) != scope:
+                raise HTTPException(422, detail={"code": "USE_SCOPED_CATALOGUE_OR_EVENT_AGGREGATE"})
+            if audience == "CUSTOMER" and changes.get("is_default"):
+                raise HTTPException(403, detail={"code": "GLOBAL_DEFAULT_IS_PLATFORM_CONTROLLED"})
+            receipt = await begin_idempotent(db, organization_id=org, actor_id=actor.id,
+                operation=f"registration.{audience.lower()}.form_template.{operation}", key=idempotency_key,
+                payload={"id": str(template_id) if template_id else None, "version": expected, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                result = None if operation == "delete" else catalogue_projection(FormTemplateResponse.model_validate(replay[1]))
+                await db.commit()
+                return result
+            if audience == "PLATFORM":
+                # Also used by category commands and bounded initial provisioning.
+                await db.execute(text("SELECT pg_advisory_xact_lock(1128353876, 1)"))
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # NO KEY UPDATE preserves serialization without deadlocking on a
+            # competing request's already-inserted receipt foreign key.
+            authority_row = await db.scalar(select(Organization).where(Organization.id == org)
+                .with_for_update(key_share=True).execution_options(populate_existing=True))
+            if authority_row is None:
+                raise HTTPException(404, detail="Authority context not found.")
+            await category_authority(db, actor, audience)
+            previous = None
+            source = None
+            if operation != "create":
+                visibility = and_(FormTemplate.organization_id == owner, FormTemplate.scope_type == scope)
+                if operation == "duplicate" and audience == "CUSTOMER":
+                    visibility = or_(visibility, and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"))
+                source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id,
+                    FormTemplate.deleted_at.is_(None), visibility).with_for_update(of=FormTemplate)
+                    .execution_options(shared_form_catalogue=True, populate_existing=True))
+                if source is None:
+                    raise HTTPException(404, detail="Template not found.")
+                previous = int(source.version or 1)
+                if previous != expected:
+                    raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": previous})
+                if (operation == "update" and source.category_key in OPERATIONAL_TEMPLATE_KEYS
+                        and "category_key" in changes and changes["category_key"] != source.category_key):
+                    raise HTTPException(409, detail={"code": "TEMPLATE_PURPOSE_IMMUTABLE"})
+            if operation == "duplicate":
+                if not source.is_active:
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+                if len(source.fields or []) &gt; 100:
+                    raise HTTPException(409, detail={"code": "TEMPLATE_EXCEEDS_FIELD_BOUND"})
+                # No event lineage, submitted defaults, credentials or asset/redirect references.
+                try:
+                    document = CatalogueDocument.model_validate({
+                        "fields": source.fields or [], "settings": source.settings or {}})
+                    fields = [field.model_dump(mode="json", exclude_none=True) for field in document.fields]
+                    for field in fields:
+                        field.pop("default_value", None)
+                        for option in field.get("options") or []:
+                            if isinstance(option, dict):
+                                option["is_default"] = False
+                        if field["type"] in {"role", "file", "image", "signature"} or field["id"].lower() in {"role", "category"}:
+                            field["options"] = []
+                except (ValidationError, TypeError, ValueError):
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_RECONCILIATION_REQUIRED"})
+                safe_settings = {key: value for key, value in (source.settings or {}).items() if key in {
+                    "submit_button_label", "success_title", "success_message", "allow_multiple_submissions",
+                    "require_login", "send_email_confirmation", "enable_terms", "enable_preview", "enable_payment", "steps"}}
+                changes = {"name": f"{source.name[:130]} (Custom Copy)", "category_id": str(source.category_id) if source.category_id else None,
+                    "category_key": source.category_key, "description": source.description,
+                    "fields": fields, "settings": safe_settings, "slug": f"copy-{uuid.uuid4().hex}"}
+            category_id = changes.get("category_id", source.category_id if source is not None else None)
+            category = None
+            if operation != "delete" and category_id is None:
+                category_key = changes.get("category_key", source.category_key if source is not None else "registration")
+                matches = list((await db.scalars(select(FormCategory).where(
+                    FormCategory.slug == category_key, FormCategory.deleted_at.is_(None),
+                    FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == owner, FormCategory.organization_id.is_(None)))
+                    .order_by(FormCategory.id).limit(2).with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))).all())
+                if not matches:
+&gt;                   raise HTTPException(404, detail="Category not found.")
+E                   fastapi.exceptions.HTTPException: 404: Category not found.
+
+app\modules\registration\application\template_commands.py:590: HTTPException</failure></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[requested-SURVEY]" time="5.940"><failure message="fastapi.exceptions.HTTPException: 404: Category not found.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC89A50B00&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x1fc89c2b670&gt;
+purpose = 'SURVEY', case = 'requested'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("case", ["event_scope", "workspace_scope", "requested", "suspended", "detached",
+        "missing_action", "foreign_event", "catalogue_denied"])
+    async def test_client_approved_form_boundaries(db, delegated_cohort, purpose, case):
+        data = delegated_cohort
+        async with TenantContextGuard.scoped(db, data.client.id):
+&gt;           source = await TemplateCommands.execute(db, operation="create", actor=data.owner,
+                payload=FormTemplateCreate(name="Client owned operational source",
+                    category_key="survey" if purpose == "SURVEY" else "speaker_intake", fields=[], settings={}),
+                idempotency_key=retry_key())
+
+tests\test_delegated_form_management.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC89A50B00&gt;
+
+    @staticmethod
+    async def execute(db, *, operation, actor, payload=None, template_id=None,
+                      if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        expected = require_if_match(if_match) if operation != "create" else None
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 &lt;= len(idempotency_key.strip()) &lt;= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        changes = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
+        if operation not in {"create", "update", "duplicate", "delete"}:
+            raise ValueError("Unsupported template operation")
+        try:
+            org = await category_authority(db, actor, audience)
+            owner = None if audience == "PLATFORM" else org
+            scope = "GLOBAL" if audience == "PLATFORM" else "ORGANIZATION"
+            if changes.get("organization_id") not in (None, owner) or changes.get("event_id") is not None:
+                raise HTTPException(422, detail={"code": "CATALOGUE_OWNER_IS_SERVER_CONTROLLED"})
+            if operation == "create" and changes.get("scope_type", scope) != scope:
+                raise HTTPException(422, detail={"code": "USE_SCOPED_CATALOGUE_OR_EVENT_AGGREGATE"})
+            if audience == "CUSTOMER" and changes.get("is_default"):
+                raise HTTPException(403, detail={"code": "GLOBAL_DEFAULT_IS_PLATFORM_CONTROLLED"})
+            receipt = await begin_idempotent(db, organization_id=org, actor_id=actor.id,
+                operation=f"registration.{audience.lower()}.form_template.{operation}", key=idempotency_key,
+                payload={"id": str(template_id) if template_id else None, "version": expected, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                result = None if operation == "delete" else catalogue_projection(FormTemplateResponse.model_validate(replay[1]))
+                await db.commit()
+                return result
+            if audience == "PLATFORM":
+                # Also used by category commands and bounded initial provisioning.
+                await db.execute(text("SELECT pg_advisory_xact_lock(1128353876, 1)"))
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # NO KEY UPDATE preserves serialization without deadlocking on a
+            # competing request's already-inserted receipt foreign key.
+            authority_row = await db.scalar(select(Organization).where(Organization.id == org)
+                .with_for_update(key_share=True).execution_options(populate_existing=True))
+            if authority_row is None:
+                raise HTTPException(404, detail="Authority context not found.")
+            await category_authority(db, actor, audience)
+            previous = None
+            source = None
+            if operation != "create":
+                visibility = and_(FormTemplate.organization_id == owner, FormTemplate.scope_type == scope)
+                if operation == "duplicate" and audience == "CUSTOMER":
+                    visibility = or_(visibility, and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"))
+                source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id,
+                    FormTemplate.deleted_at.is_(None), visibility).with_for_update(of=FormTemplate)
+                    .execution_options(shared_form_catalogue=True, populate_existing=True))
+                if source is None:
+                    raise HTTPException(404, detail="Template not found.")
+                previous = int(source.version or 1)
+                if previous != expected:
+                    raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": previous})
+                if (operation == "update" and source.category_key in OPERATIONAL_TEMPLATE_KEYS
+                        and "category_key" in changes and changes["category_key"] != source.category_key):
+                    raise HTTPException(409, detail={"code": "TEMPLATE_PURPOSE_IMMUTABLE"})
+            if operation == "duplicate":
+                if not source.is_active:
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+                if len(source.fields or []) &gt; 100:
+                    raise HTTPException(409, detail={"code": "TEMPLATE_EXCEEDS_FIELD_BOUND"})
+                # No event lineage, submitted defaults, credentials or asset/redirect references.
+                try:
+                    document = CatalogueDocument.model_validate({
+                        "fields": source.fields or [], "settings": source.settings or {}})
+                    fields = [field.model_dump(mode="json", exclude_none=True) for field in document.fields]
+                    for field in fields:
+                        field.pop("default_value", None)
+                        for option in field.get("options") or []:
+                            if isinstance(option, dict):
+                                option["is_default"] = False
+                        if field["type"] in {"role", "file", "image", "signature"} or field["id"].lower() in {"role", "category"}:
+                            field["options"] = []
+                except (ValidationError, TypeError, ValueError):
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_RECONCILIATION_REQUIRED"})
+                safe_settings = {key: value for key, value in (source.settings or {}).items() if key in {
+                    "submit_button_label", "success_title", "success_message", "allow_multiple_submissions",
+                    "require_login", "send_email_confirmation", "enable_terms", "enable_preview", "enable_payment", "steps"}}
+                changes = {"name": f"{source.name[:130]} (Custom Copy)", "category_id": str(source.category_id) if source.category_id else None,
+                    "category_key": source.category_key, "description": source.description,
+                    "fields": fields, "settings": safe_settings, "slug": f"copy-{uuid.uuid4().hex}"}
+            category_id = changes.get("category_id", source.category_id if source is not None else None)
+            category = None
+            if operation != "delete" and category_id is None:
+                category_key = changes.get("category_key", source.category_key if source is not None else "registration")
+                matches = list((await db.scalars(select(FormCategory).where(
+                    FormCategory.slug == category_key, FormCategory.deleted_at.is_(None),
+                    FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == owner, FormCategory.organization_id.is_(None)))
+                    .order_by(FormCategory.id).limit(2).with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))).all())
+                if not matches:
+&gt;                   raise HTTPException(404, detail="Category not found.")
+E                   fastapi.exceptions.HTTPException: 404: Category not found.
+
+app\modules\registration\application\template_commands.py:590: HTTPException</failure></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[requested-SPEAKER_INTAKE]" time="5.813"><failure message="fastapi.exceptions.HTTPException: 404: Category not found.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC8A1069F0&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x1fc89b7d0c0&gt;
+purpose = 'SPEAKER_INTAKE', case = 'requested'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("case", ["event_scope", "workspace_scope", "requested", "suspended", "detached",
+        "missing_action", "foreign_event", "catalogue_denied"])
+    async def test_client_approved_form_boundaries(db, delegated_cohort, purpose, case):
+        data = delegated_cohort
+        async with TenantContextGuard.scoped(db, data.client.id):
+&gt;           source = await TemplateCommands.execute(db, operation="create", actor=data.owner,
+                payload=FormTemplateCreate(name="Client owned operational source",
+                    category_key="survey" if purpose == "SURVEY" else "speaker_intake", fields=[], settings={}),
+                idempotency_key=retry_key())
+
+tests\test_delegated_form_management.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC8A1069F0&gt;
+
+    @staticmethod
+    async def execute(db, *, operation, actor, payload=None, template_id=None,
+                      if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        expected = require_if_match(if_match) if operation != "create" else None
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 &lt;= len(idempotency_key.strip()) &lt;= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        changes = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
+        if operation not in {"create", "update", "duplicate", "delete"}:
+            raise ValueError("Unsupported template operation")
+        try:
+            org = await category_authority(db, actor, audience)
+            owner = None if audience == "PLATFORM" else org
+            scope = "GLOBAL" if audience == "PLATFORM" else "ORGANIZATION"
+            if changes.get("organization_id") not in (None, owner) or changes.get("event_id") is not None:
+                raise HTTPException(422, detail={"code": "CATALOGUE_OWNER_IS_SERVER_CONTROLLED"})
+            if operation == "create" and changes.get("scope_type", scope) != scope:
+                raise HTTPException(422, detail={"code": "USE_SCOPED_CATALOGUE_OR_EVENT_AGGREGATE"})
+            if audience == "CUSTOMER" and changes.get("is_default"):
+                raise HTTPException(403, detail={"code": "GLOBAL_DEFAULT_IS_PLATFORM_CONTROLLED"})
+            receipt = await begin_idempotent(db, organization_id=org, actor_id=actor.id,
+                operation=f"registration.{audience.lower()}.form_template.{operation}", key=idempotency_key,
+                payload={"id": str(template_id) if template_id else None, "version": expected, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                result = None if operation == "delete" else catalogue_projection(FormTemplateResponse.model_validate(replay[1]))
+                await db.commit()
+                return result
+            if audience == "PLATFORM":
+                # Also used by category commands and bounded initial provisioning.
+                await db.execute(text("SELECT pg_advisory_xact_lock(1128353876, 1)"))
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # NO KEY UPDATE preserves serialization without deadlocking on a
+            # competing request's already-inserted receipt foreign key.
+            authority_row = await db.scalar(select(Organization).where(Organization.id == org)
+                .with_for_update(key_share=True).execution_options(populate_existing=True))
+            if authority_row is None:
+                raise HTTPException(404, detail="Authority context not found.")
+            await category_authority(db, actor, audience)
+            previous = None
+            source = None
+            if operation != "create":
+                visibility = and_(FormTemplate.organization_id == owner, FormTemplate.scope_type == scope)
+                if operation == "duplicate" and audience == "CUSTOMER":
+                    visibility = or_(visibility, and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"))
+                source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id,
+                    FormTemplate.deleted_at.is_(None), visibility).with_for_update(of=FormTemplate)
+                    .execution_options(shared_form_catalogue=True, populate_existing=True))
+                if source is None:
+                    raise HTTPException(404, detail="Template not found.")
+                previous = int(source.version or 1)
+                if previous != expected:
+                    raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": previous})
+                if (operation == "update" and source.category_key in OPERATIONAL_TEMPLATE_KEYS
+                        and "category_key" in changes and changes["category_key"] != source.category_key):
+                    raise HTTPException(409, detail={"code": "TEMPLATE_PURPOSE_IMMUTABLE"})
+            if operation == "duplicate":
+                if not source.is_active:
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+                if len(source.fields or []) &gt; 100:
+                    raise HTTPException(409, detail={"code": "TEMPLATE_EXCEEDS_FIELD_BOUND"})
+                # No event lineage, submitted defaults, credentials or asset/redirect references.
+                try:
+                    document = CatalogueDocument.model_validate({
+                        "fields": source.fields or [], "settings": source.settings or {}})
+                    fields = [field.model_dump(mode="json", exclude_none=True) for field in document.fields]
+                    for field in fields:
+                        field.pop("default_value", None)
+                        for option in field.get("options") or []:
+                            if isinstance(option, dict):
+                                option["is_default"] = False
+                        if field["type"] in {"role", "file", "image", "signature"} or field["id"].lower() in {"role", "category"}:
+                            field["options"] = []
+                except (ValidationError, TypeError, ValueError):
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_RECONCILIATION_REQUIRED"})
+                safe_settings = {key: value for key, value in (source.settings or {}).items() if key in {
+                    "submit_button_label", "success_title", "success_message", "allow_multiple_submissions",
+                    "require_login", "send_email_confirmation", "enable_terms", "enable_preview", "enable_payment", "steps"}}
+                changes = {"name": f"{source.name[:130]} (Custom Copy)", "category_id": str(source.category_id) if source.category_id else None,
+                    "category_key": source.category_key, "description": source.description,
+                    "fields": fields, "settings": safe_settings, "slug": f"copy-{uuid.uuid4().hex}"}
+            category_id = changes.get("category_id", source.category_id if source is not None else None)
+            category = None
+            if operation != "delete" and category_id is None:
+                category_key = changes.get("category_key", source.category_key if source is not None else "registration")
+                matches = list((await db.scalars(select(FormCategory).where(
+                    FormCategory.slug == category_key, FormCategory.deleted_at.is_(None),
+                    FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == owner, FormCategory.organization_id.is_(None)))
+                    .order_by(FormCategory.id).limit(2).with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))).all())
+                if not matches:
+&gt;                   raise HTTPException(404, detail="Category not found.")
+E                   fastapi.exceptions.HTTPException: 404: Category not found.
+
+app\modules\registration\application\template_commands.py:590: HTTPException</failure></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[suspended-SURVEY]" time="5.931"><failure message="fastapi.exceptions.HTTPException: 404: Category not found.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC89A2E9C0&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x1fc89545cf0&gt;
+purpose = 'SURVEY', case = 'suspended'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("case", ["event_scope", "workspace_scope", "requested", "suspended", "detached",
+        "missing_action", "foreign_event", "catalogue_denied"])
+    async def test_client_approved_form_boundaries(db, delegated_cohort, purpose, case):
+        data = delegated_cohort
+        async with TenantContextGuard.scoped(db, data.client.id):
+&gt;           source = await TemplateCommands.execute(db, operation="create", actor=data.owner,
+                payload=FormTemplateCreate(name="Client owned operational source",
+                    category_key="survey" if purpose == "SURVEY" else "speaker_intake", fields=[], settings={}),
+                idempotency_key=retry_key())
+
+tests\test_delegated_form_management.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC89A2E9C0&gt;
+
+    @staticmethod
+    async def execute(db, *, operation, actor, payload=None, template_id=None,
+                      if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        expected = require_if_match(if_match) if operation != "create" else None
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 &lt;= len(idempotency_key.strip()) &lt;= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        changes = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
+        if operation not in {"create", "update", "duplicate", "delete"}:
+            raise ValueError("Unsupported template operation")
+        try:
+            org = await category_authority(db, actor, audience)
+            owner = None if audience == "PLATFORM" else org
+            scope = "GLOBAL" if audience == "PLATFORM" else "ORGANIZATION"
+            if changes.get("organization_id") not in (None, owner) or changes.get("event_id") is not None:
+                raise HTTPException(422, detail={"code": "CATALOGUE_OWNER_IS_SERVER_CONTROLLED"})
+            if operation == "create" and changes.get("scope_type", scope) != scope:
+                raise HTTPException(422, detail={"code": "USE_SCOPED_CATALOGUE_OR_EVENT_AGGREGATE"})
+            if audience == "CUSTOMER" and changes.get("is_default"):
+                raise HTTPException(403, detail={"code": "GLOBAL_DEFAULT_IS_PLATFORM_CONTROLLED"})
+            receipt = await begin_idempotent(db, organization_id=org, actor_id=actor.id,
+                operation=f"registration.{audience.lower()}.form_template.{operation}", key=idempotency_key,
+                payload={"id": str(template_id) if template_id else None, "version": expected, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                result = None if operation == "delete" else catalogue_projection(FormTemplateResponse.model_validate(replay[1]))
+                await db.commit()
+                return result
+            if audience == "PLATFORM":
+                # Also used by category commands and bounded initial provisioning.
+                await db.execute(text("SELECT pg_advisory_xact_lock(1128353876, 1)"))
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # NO KEY UPDATE preserves serialization without deadlocking on a
+            # competing request's already-inserted receipt foreign key.
+            authority_row = await db.scalar(select(Organization).where(Organization.id == org)
+                .with_for_update(key_share=True).execution_options(populate_existing=True))
+            if authority_row is None:
+                raise HTTPException(404, detail="Authority context not found.")
+            await category_authority(db, actor, audience)
+            previous = None
+            source = None
+            if operation != "create":
+                visibility = and_(FormTemplate.organization_id == owner, FormTemplate.scope_type == scope)
+                if operation == "duplicate" and audience == "CUSTOMER":
+                    visibility = or_(visibility, and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"))
+                source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id,
+                    FormTemplate.deleted_at.is_(None), visibility).with_for_update(of=FormTemplate)
+                    .execution_options(shared_form_catalogue=True, populate_existing=True))
+                if source is None:
+                    raise HTTPException(404, detail="Template not found.")
+                previous = int(source.version or 1)
+                if previous != expected:
+                    raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": previous})
+                if (operation == "update" and source.category_key in OPERATIONAL_TEMPLATE_KEYS
+                        and "category_key" in changes and changes["category_key"] != source.category_key):
+                    raise HTTPException(409, detail={"code": "TEMPLATE_PURPOSE_IMMUTABLE"})
+            if operation == "duplicate":
+                if not source.is_active:
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+                if len(source.fields or []) &gt; 100:
+                    raise HTTPException(409, detail={"code": "TEMPLATE_EXCEEDS_FIELD_BOUND"})
+                # No event lineage, submitted defaults, credentials or asset/redirect references.
+                try:
+                    document = CatalogueDocument.model_validate({
+                        "fields": source.fields or [], "settings": source.settings or {}})
+                    fields = [field.model_dump(mode="json", exclude_none=True) for field in document.fields]
+                    for field in fields:
+                        field.pop("default_value", None)
+                        for option in field.get("options") or []:
+                            if isinstance(option, dict):
+                                option["is_default"] = False
+                        if field["type"] in {"role", "file", "image", "signature"} or field["id"].lower() in {"role", "category"}:
+                            field["options"] = []
+                except (ValidationError, TypeError, ValueError):
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_RECONCILIATION_REQUIRED"})
+                safe_settings = {key: value for key, value in (source.settings or {}).items() if key in {
+                    "submit_button_label", "success_title", "success_message", "allow_multiple_submissions",
+                    "require_login", "send_email_confirmation", "enable_terms", "enable_preview", "enable_payment", "steps"}}
+                changes = {"name": f"{source.name[:130]} (Custom Copy)", "category_id": str(source.category_id) if source.category_id else None,
+                    "category_key": source.category_key, "description": source.description,
+                    "fields": fields, "settings": safe_settings, "slug": f"copy-{uuid.uuid4().hex}"}
+            category_id = changes.get("category_id", source.category_id if source is not None else None)
+            category = None
+            if operation != "delete" and category_id is None:
+                category_key = changes.get("category_key", source.category_key if source is not None else "registration")
+                matches = list((await db.scalars(select(FormCategory).where(
+                    FormCategory.slug == category_key, FormCategory.deleted_at.is_(None),
+                    FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == owner, FormCategory.organization_id.is_(None)))
+                    .order_by(FormCategory.id).limit(2).with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))).all())
+                if not matches:
+&gt;                   raise HTTPException(404, detail="Category not found.")
+E                   fastapi.exceptions.HTTPException: 404: Category not found.
+
+app\modules\registration\application\template_commands.py:590: HTTPException</failure></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[suspended-SPEAKER_INTAKE]" time="5.538"><failure message="fastapi.exceptions.HTTPException: 404: Category not found.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC89A2C270&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x1fc89545b40&gt;
+purpose = 'SPEAKER_INTAKE', case = 'suspended'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("case", ["event_scope", "workspace_scope", "requested", "suspended", "detached",
+        "missing_action", "foreign_event", "catalogue_denied"])
+    async def test_client_approved_form_boundaries(db, delegated_cohort, purpose, case):
+        data = delegated_cohort
+        async with TenantContextGuard.scoped(db, data.client.id):
+&gt;           source = await TemplateCommands.execute(db, operation="create", actor=data.owner,
+                payload=FormTemplateCreate(name="Client owned operational source",
+                    category_key="survey" if purpose == "SURVEY" else "speaker_intake", fields=[], settings={}),
+                idempotency_key=retry_key())
+
+tests\test_delegated_form_management.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC89A2C270&gt;
+
+    @staticmethod
+    async def execute(db, *, operation, actor, payload=None, template_id=None,
+                      if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        expected = require_if_match(if_match) if operation != "create" else None
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 &lt;= len(idempotency_key.strip()) &lt;= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        changes = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
+        if operation not in {"create", "update", "duplicate", "delete"}:
+            raise ValueError("Unsupported template operation")
+        try:
+            org = await category_authority(db, actor, audience)
+            owner = None if audience == "PLATFORM" else org
+            scope = "GLOBAL" if audience == "PLATFORM" else "ORGANIZATION"
+            if changes.get("organization_id") not in (None, owner) or changes.get("event_id") is not None:
+                raise HTTPException(422, detail={"code": "CATALOGUE_OWNER_IS_SERVER_CONTROLLED"})
+            if operation == "create" and changes.get("scope_type", scope) != scope:
+                raise HTTPException(422, detail={"code": "USE_SCOPED_CATALOGUE_OR_EVENT_AGGREGATE"})
+            if audience == "CUSTOMER" and changes.get("is_default"):
+                raise HTTPException(403, detail={"code": "GLOBAL_DEFAULT_IS_PLATFORM_CONTROLLED"})
+            receipt = await begin_idempotent(db, organization_id=org, actor_id=actor.id,
+                operation=f"registration.{audience.lower()}.form_template.{operation}", key=idempotency_key,
+                payload={"id": str(template_id) if template_id else None, "version": expected, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                result = None if operation == "delete" else catalogue_projection(FormTemplateResponse.model_validate(replay[1]))
+                await db.commit()
+                return result
+            if audience == "PLATFORM":
+                # Also used by category commands and bounded initial provisioning.
+                await db.execute(text("SELECT pg_advisory_xact_lock(1128353876, 1)"))
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # NO KEY UPDATE preserves serialization without deadlocking on a
+            # competing request's already-inserted receipt foreign key.
+            authority_row = await db.scalar(select(Organization).where(Organization.id == org)
+                .with_for_update(key_share=True).execution_options(populate_existing=True))
+            if authority_row is None:
+                raise HTTPException(404, detail="Authority context not found.")
+            await category_authority(db, actor, audience)
+            previous = None
+            source = None
+            if operation != "create":
+                visibility = and_(FormTemplate.organization_id == owner, FormTemplate.scope_type == scope)
+                if operation == "duplicate" and audience == "CUSTOMER":
+                    visibility = or_(visibility, and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"))
+                source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id,
+                    FormTemplate.deleted_at.is_(None), visibility).with_for_update(of=FormTemplate)
+                    .execution_options(shared_form_catalogue=True, populate_existing=True))
+                if source is None:
+                    raise HTTPException(404, detail="Template not found.")
+                previous = int(source.version or 1)
+                if previous != expected:
+                    raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": previous})
+                if (operation == "update" and source.category_key in OPERATIONAL_TEMPLATE_KEYS
+                        and "category_key" in changes and changes["category_key"] != source.category_key):
+                    raise HTTPException(409, detail={"code": "TEMPLATE_PURPOSE_IMMUTABLE"})
+            if operation == "duplicate":
+                if not source.is_active:
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+                if len(source.fields or []) &gt; 100:
+                    raise HTTPException(409, detail={"code": "TEMPLATE_EXCEEDS_FIELD_BOUND"})
+                # No event lineage, submitted defaults, credentials or asset/redirect references.
+                try:
+                    document = CatalogueDocument.model_validate({
+                        "fields": source.fields or [], "settings": source.settings or {}})
+                    fields = [field.model_dump(mode="json", exclude_none=True) for field in document.fields]
+                    for field in fields:
+                        field.pop("default_value", None)
+                        for option in field.get("options") or []:
+                            if isinstance(option, dict):
+                                option["is_default"] = False
+                        if field["type"] in {"role", "file", "image", "signature"} or field["id"].lower() in {"role", "category"}:
+                            field["options"] = []
+                except (ValidationError, TypeError, ValueError):
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_RECONCILIATION_REQUIRED"})
+                safe_settings = {key: value for key, value in (source.settings or {}).items() if key in {
+                    "submit_button_label", "success_title", "success_message", "allow_multiple_submissions",
+                    "require_login", "send_email_confirmation", "enable_terms", "enable_preview", "enable_payment", "steps"}}
+                changes = {"name": f"{source.name[:130]} (Custom Copy)", "category_id": str(source.category_id) if source.category_id else None,
+                    "category_key": source.category_key, "description": source.description,
+                    "fields": fields, "settings": safe_settings, "slug": f"copy-{uuid.uuid4().hex}"}
+            category_id = changes.get("category_id", source.category_id if source is not None else None)
+            category = None
+            if operation != "delete" and category_id is None:
+                category_key = changes.get("category_key", source.category_key if source is not None else "registration")
+                matches = list((await db.scalars(select(FormCategory).where(
+                    FormCategory.slug == category_key, FormCategory.deleted_at.is_(None),
+                    FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == owner, FormCategory.organization_id.is_(None)))
+                    .order_by(FormCategory.id).limit(2).with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))).all())
+                if not matches:
+&gt;                   raise HTTPException(404, detail="Category not found.")
+E                   fastapi.exceptions.HTTPException: 404: Category not found.
+
+app\modules\registration\application\template_commands.py:590: HTTPException</failure></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[detached-SURVEY]" time="6.465"><failure message="fastapi.exceptions.HTTPException: 404: Category not found.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC8A131750&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x1fc89acb880&gt;
+purpose = 'SURVEY', case = 'detached'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("case", ["event_scope", "workspace_scope", "requested", "suspended", "detached",
+        "missing_action", "foreign_event", "catalogue_denied"])
+    async def test_client_approved_form_boundaries(db, delegated_cohort, purpose, case):
+        data = delegated_cohort
+        async with TenantContextGuard.scoped(db, data.client.id):
+&gt;           source = await TemplateCommands.execute(db, operation="create", actor=data.owner,
+                payload=FormTemplateCreate(name="Client owned operational source",
+                    category_key="survey" if purpose == "SURVEY" else "speaker_intake", fields=[], settings={}),
+                idempotency_key=retry_key())
+
+tests\test_delegated_form_management.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC8A131750&gt;
+
+    @staticmethod
+    async def execute(db, *, operation, actor, payload=None, template_id=None,
+                      if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        expected = require_if_match(if_match) if operation != "create" else None
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 &lt;= len(idempotency_key.strip()) &lt;= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        changes = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
+        if operation not in {"create", "update", "duplicate", "delete"}:
+            raise ValueError("Unsupported template operation")
+        try:
+            org = await category_authority(db, actor, audience)
+            owner = None if audience == "PLATFORM" else org
+            scope = "GLOBAL" if audience == "PLATFORM" else "ORGANIZATION"
+            if changes.get("organization_id") not in (None, owner) or changes.get("event_id") is not None:
+                raise HTTPException(422, detail={"code": "CATALOGUE_OWNER_IS_SERVER_CONTROLLED"})
+            if operation == "create" and changes.get("scope_type", scope) != scope:
+                raise HTTPException(422, detail={"code": "USE_SCOPED_CATALOGUE_OR_EVENT_AGGREGATE"})
+            if audience == "CUSTOMER" and changes.get("is_default"):
+                raise HTTPException(403, detail={"code": "GLOBAL_DEFAULT_IS_PLATFORM_CONTROLLED"})
+            receipt = await begin_idempotent(db, organization_id=org, actor_id=actor.id,
+                operation=f"registration.{audience.lower()}.form_template.{operation}", key=idempotency_key,
+                payload={"id": str(template_id) if template_id else None, "version": expected, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                result = None if operation == "delete" else catalogue_projection(FormTemplateResponse.model_validate(replay[1]))
+                await db.commit()
+                return result
+            if audience == "PLATFORM":
+                # Also used by category commands and bounded initial provisioning.
+                await db.execute(text("SELECT pg_advisory_xact_lock(1128353876, 1)"))
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # NO KEY UPDATE preserves serialization without deadlocking on a
+            # competing request's already-inserted receipt foreign key.
+            authority_row = await db.scalar(select(Organization).where(Organization.id == org)
+                .with_for_update(key_share=True).execution_options(populate_existing=True))
+            if authority_row is None:
+                raise HTTPException(404, detail="Authority context not found.")
+            await category_authority(db, actor, audience)
+            previous = None
+            source = None
+            if operation != "create":
+                visibility = and_(FormTemplate.organization_id == owner, FormTemplate.scope_type == scope)
+                if operation == "duplicate" and audience == "CUSTOMER":
+                    visibility = or_(visibility, and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"))
+                source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id,
+                    FormTemplate.deleted_at.is_(None), visibility).with_for_update(of=FormTemplate)
+                    .execution_options(shared_form_catalogue=True, populate_existing=True))
+                if source is None:
+                    raise HTTPException(404, detail="Template not found.")
+                previous = int(source.version or 1)
+                if previous != expected:
+                    raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": previous})
+                if (operation == "update" and source.category_key in OPERATIONAL_TEMPLATE_KEYS
+                        and "category_key" in changes and changes["category_key"] != source.category_key):
+                    raise HTTPException(409, detail={"code": "TEMPLATE_PURPOSE_IMMUTABLE"})
+            if operation == "duplicate":
+                if not source.is_active:
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+                if len(source.fields or []) &gt; 100:
+                    raise HTTPException(409, detail={"code": "TEMPLATE_EXCEEDS_FIELD_BOUND"})
+                # No event lineage, submitted defaults, credentials or asset/redirect references.
+                try:
+                    document = CatalogueDocument.model_validate({
+                        "fields": source.fields or [], "settings": source.settings or {}})
+                    fields = [field.model_dump(mode="json", exclude_none=True) for field in document.fields]
+                    for field in fields:
+                        field.pop("default_value", None)
+                        for option in field.get("options") or []:
+                            if isinstance(option, dict):
+                                option["is_default"] = False
+                        if field["type"] in {"role", "file", "image", "signature"} or field["id"].lower() in {"role", "category"}:
+                            field["options"] = []
+                except (ValidationError, TypeError, ValueError):
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_RECONCILIATION_REQUIRED"})
+                safe_settings = {key: value for key, value in (source.settings or {}).items() if key in {
+                    "submit_button_label", "success_title", "success_message", "allow_multiple_submissions",
+                    "require_login", "send_email_confirmation", "enable_terms", "enable_preview", "enable_payment", "steps"}}
+                changes = {"name": f"{source.name[:130]} (Custom Copy)", "category_id": str(source.category_id) if source.category_id else None,
+                    "category_key": source.category_key, "description": source.description,
+                    "fields": fields, "settings": safe_settings, "slug": f"copy-{uuid.uuid4().hex}"}
+            category_id = changes.get("category_id", source.category_id if source is not None else None)
+            category = None
+            if operation != "delete" and category_id is None:
+                category_key = changes.get("category_key", source.category_key if source is not None else "registration")
+                matches = list((await db.scalars(select(FormCategory).where(
+                    FormCategory.slug == category_key, FormCategory.deleted_at.is_(None),
+                    FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == owner, FormCategory.organization_id.is_(None)))
+                    .order_by(FormCategory.id).limit(2).with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))).all())
+                if not matches:
+&gt;                   raise HTTPException(404, detail="Category not found.")
+E                   fastapi.exceptions.HTTPException: 404: Category not found.
+
+app\modules\registration\application\template_commands.py:590: HTTPException</failure></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[detached-SPEAKER_INTAKE]" time="5.584"><failure message="fastapi.exceptions.HTTPException: 404: Category not found.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC89516050&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x1fc8a092ef0&gt;
+purpose = 'SPEAKER_INTAKE', case = 'detached'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("case", ["event_scope", "workspace_scope", "requested", "suspended", "detached",
+        "missing_action", "foreign_event", "catalogue_denied"])
+    async def test_client_approved_form_boundaries(db, delegated_cohort, purpose, case):
+        data = delegated_cohort
+        async with TenantContextGuard.scoped(db, data.client.id):
+&gt;           source = await TemplateCommands.execute(db, operation="create", actor=data.owner,
+                payload=FormTemplateCreate(name="Client owned operational source",
+                    category_key="survey" if purpose == "SURVEY" else "speaker_intake", fields=[], settings={}),
+                idempotency_key=retry_key())
+
+tests\test_delegated_form_management.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC89516050&gt;
+
+    @staticmethod
+    async def execute(db, *, operation, actor, payload=None, template_id=None,
+                      if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        expected = require_if_match(if_match) if operation != "create" else None
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 &lt;= len(idempotency_key.strip()) &lt;= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        changes = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
+        if operation not in {"create", "update", "duplicate", "delete"}:
+            raise ValueError("Unsupported template operation")
+        try:
+            org = await category_authority(db, actor, audience)
+            owner = None if audience == "PLATFORM" else org
+            scope = "GLOBAL" if audience == "PLATFORM" else "ORGANIZATION"
+            if changes.get("organization_id") not in (None, owner) or changes.get("event_id") is not None:
+                raise HTTPException(422, detail={"code": "CATALOGUE_OWNER_IS_SERVER_CONTROLLED"})
+            if operation == "create" and changes.get("scope_type", scope) != scope:
+                raise HTTPException(422, detail={"code": "USE_SCOPED_CATALOGUE_OR_EVENT_AGGREGATE"})
+            if audience == "CUSTOMER" and changes.get("is_default"):
+                raise HTTPException(403, detail={"code": "GLOBAL_DEFAULT_IS_PLATFORM_CONTROLLED"})
+            receipt = await begin_idempotent(db, organization_id=org, actor_id=actor.id,
+                operation=f"registration.{audience.lower()}.form_template.{operation}", key=idempotency_key,
+                payload={"id": str(template_id) if template_id else None, "version": expected, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                result = None if operation == "delete" else catalogue_projection(FormTemplateResponse.model_validate(replay[1]))
+                await db.commit()
+                return result
+            if audience == "PLATFORM":
+                # Also used by category commands and bounded initial provisioning.
+                await db.execute(text("SELECT pg_advisory_xact_lock(1128353876, 1)"))
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # NO KEY UPDATE preserves serialization without deadlocking on a
+            # competing request's already-inserted receipt foreign key.
+            authority_row = await db.scalar(select(Organization).where(Organization.id == org)
+                .with_for_update(key_share=True).execution_options(populate_existing=True))
+            if authority_row is None:
+                raise HTTPException(404, detail="Authority context not found.")
+            await category_authority(db, actor, audience)
+            previous = None
+            source = None
+            if operation != "create":
+                visibility = and_(FormTemplate.organization_id == owner, FormTemplate.scope_type == scope)
+                if operation == "duplicate" and audience == "CUSTOMER":
+                    visibility = or_(visibility, and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"))
+                source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id,
+                    FormTemplate.deleted_at.is_(None), visibility).with_for_update(of=FormTemplate)
+                    .execution_options(shared_form_catalogue=True, populate_existing=True))
+                if source is None:
+                    raise HTTPException(404, detail="Template not found.")
+                previous = int(source.version or 1)
+                if previous != expected:
+                    raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": previous})
+                if (operation == "update" and source.category_key in OPERATIONAL_TEMPLATE_KEYS
+                        and "category_key" in changes and changes["category_key"] != source.category_key):
+                    raise HTTPException(409, detail={"code": "TEMPLATE_PURPOSE_IMMUTABLE"})
+            if operation == "duplicate":
+                if not source.is_active:
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+                if len(source.fields or []) &gt; 100:
+                    raise HTTPException(409, detail={"code": "TEMPLATE_EXCEEDS_FIELD_BOUND"})
+                # No event lineage, submitted defaults, credentials or asset/redirect references.
+                try:
+                    document = CatalogueDocument.model_validate({
+                        "fields": source.fields or [], "settings": source.settings or {}})
+                    fields = [field.model_dump(mode="json", exclude_none=True) for field in document.fields]
+                    for field in fields:
+                        field.pop("default_value", None)
+                        for option in field.get("options") or []:
+                            if isinstance(option, dict):
+                                option["is_default"] = False
+                        if field["type"] in {"role", "file", "image", "signature"} or field["id"].lower() in {"role", "category"}:
+                            field["options"] = []
+                except (ValidationError, TypeError, ValueError):
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_RECONCILIATION_REQUIRED"})
+                safe_settings = {key: value for key, value in (source.settings or {}).items() if key in {
+                    "submit_button_label", "success_title", "success_message", "allow_multiple_submissions",
+                    "require_login", "send_email_confirmation", "enable_terms", "enable_preview", "enable_payment", "steps"}}
+                changes = {"name": f"{source.name[:130]} (Custom Copy)", "category_id": str(source.category_id) if source.category_id else None,
+                    "category_key": source.category_key, "description": source.description,
+                    "fields": fields, "settings": safe_settings, "slug": f"copy-{uuid.uuid4().hex}"}
+            category_id = changes.get("category_id", source.category_id if source is not None else None)
+            category = None
+            if operation != "delete" and category_id is None:
+                category_key = changes.get("category_key", source.category_key if source is not None else "registration")
+                matches = list((await db.scalars(select(FormCategory).where(
+                    FormCategory.slug == category_key, FormCategory.deleted_at.is_(None),
+                    FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == owner, FormCategory.organization_id.is_(None)))
+                    .order_by(FormCategory.id).limit(2).with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))).all())
+                if not matches:
+&gt;                   raise HTTPException(404, detail="Category not found.")
+E                   fastapi.exceptions.HTTPException: 404: Category not found.
+
+app\modules\registration\application\template_commands.py:590: HTTPException</failure></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[missing_action-SURVEY]" time="5.709"><failure message="fastapi.exceptions.HTTPException: 404: Category not found.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC89AF17C0&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x1fc89a737c0&gt;
+purpose = 'SURVEY', case = 'missing_action'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("case", ["event_scope", "workspace_scope", "requested", "suspended", "detached",
+        "missing_action", "foreign_event", "catalogue_denied"])
+    async def test_client_approved_form_boundaries(db, delegated_cohort, purpose, case):
+        data = delegated_cohort
+        async with TenantContextGuard.scoped(db, data.client.id):
+&gt;           source = await TemplateCommands.execute(db, operation="create", actor=data.owner,
+                payload=FormTemplateCreate(name="Client owned operational source",
+                    category_key="survey" if purpose == "SURVEY" else "speaker_intake", fields=[], settings={}),
+                idempotency_key=retry_key())
+
+tests\test_delegated_form_management.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC89AF17C0&gt;
+
+    @staticmethod
+    async def execute(db, *, operation, actor, payload=None, template_id=None,
+                      if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        expected = require_if_match(if_match) if operation != "create" else None
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 &lt;= len(idempotency_key.strip()) &lt;= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        changes = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
+        if operation not in {"create", "update", "duplicate", "delete"}:
+            raise ValueError("Unsupported template operation")
+        try:
+            org = await category_authority(db, actor, audience)
+            owner = None if audience == "PLATFORM" else org
+            scope = "GLOBAL" if audience == "PLATFORM" else "ORGANIZATION"
+            if changes.get("organization_id") not in (None, owner) or changes.get("event_id") is not None:
+                raise HTTPException(422, detail={"code": "CATALOGUE_OWNER_IS_SERVER_CONTROLLED"})
+            if operation == "create" and changes.get("scope_type", scope) != scope:
+                raise HTTPException(422, detail={"code": "USE_SCOPED_CATALOGUE_OR_EVENT_AGGREGATE"})
+            if audience == "CUSTOMER" and changes.get("is_default"):
+                raise HTTPException(403, detail={"code": "GLOBAL_DEFAULT_IS_PLATFORM_CONTROLLED"})
+            receipt = await begin_idempotent(db, organization_id=org, actor_id=actor.id,
+                operation=f"registration.{audience.lower()}.form_template.{operation}", key=idempotency_key,
+                payload={"id": str(template_id) if template_id else None, "version": expected, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                result = None if operation == "delete" else catalogue_projection(FormTemplateResponse.model_validate(replay[1]))
+                await db.commit()
+                return result
+            if audience == "PLATFORM":
+                # Also used by category commands and bounded initial provisioning.
+                await db.execute(text("SELECT pg_advisory_xact_lock(1128353876, 1)"))
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # NO KEY UPDATE preserves serialization without deadlocking on a
+            # competing request's already-inserted receipt foreign key.
+            authority_row = await db.scalar(select(Organization).where(Organization.id == org)
+                .with_for_update(key_share=True).execution_options(populate_existing=True))
+            if authority_row is None:
+                raise HTTPException(404, detail="Authority context not found.")
+            await category_authority(db, actor, audience)
+            previous = None
+            source = None
+            if operation != "create":
+                visibility = and_(FormTemplate.organization_id == owner, FormTemplate.scope_type == scope)
+                if operation == "duplicate" and audience == "CUSTOMER":
+                    visibility = or_(visibility, and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"))
+                source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id,
+                    FormTemplate.deleted_at.is_(None), visibility).with_for_update(of=FormTemplate)
+                    .execution_options(shared_form_catalogue=True, populate_existing=True))
+                if source is None:
+                    raise HTTPException(404, detail="Template not found.")
+                previous = int(source.version or 1)
+                if previous != expected:
+                    raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": previous})
+                if (operation == "update" and source.category_key in OPERATIONAL_TEMPLATE_KEYS
+                        and "category_key" in changes and changes["category_key"] != source.category_key):
+                    raise HTTPException(409, detail={"code": "TEMPLATE_PURPOSE_IMMUTABLE"})
+            if operation == "duplicate":
+                if not source.is_active:
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+                if len(source.fields or []) &gt; 100:
+                    raise HTTPException(409, detail={"code": "TEMPLATE_EXCEEDS_FIELD_BOUND"})
+                # No event lineage, submitted defaults, credentials or asset/redirect references.
+                try:
+                    document = CatalogueDocument.model_validate({
+                        "fields": source.fields or [], "settings": source.settings or {}})
+                    fields = [field.model_dump(mode="json", exclude_none=True) for field in document.fields]
+                    for field in fields:
+                        field.pop("default_value", None)
+                        for option in field.get("options") or []:
+                            if isinstance(option, dict):
+                                option["is_default"] = False
+                        if field["type"] in {"role", "file", "image", "signature"} or field["id"].lower() in {"role", "category"}:
+                            field["options"] = []
+                except (ValidationError, TypeError, ValueError):
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_RECONCILIATION_REQUIRED"})
+                safe_settings = {key: value for key, value in (source.settings or {}).items() if key in {
+                    "submit_button_label", "success_title", "success_message", "allow_multiple_submissions",
+                    "require_login", "send_email_confirmation", "enable_terms", "enable_preview", "enable_payment", "steps"}}
+                changes = {"name": f"{source.name[:130]} (Custom Copy)", "category_id": str(source.category_id) if source.category_id else None,
+                    "category_key": source.category_key, "description": source.description,
+                    "fields": fields, "settings": safe_settings, "slug": f"copy-{uuid.uuid4().hex}"}
+            category_id = changes.get("category_id", source.category_id if source is not None else None)
+            category = None
+            if operation != "delete" and category_id is None:
+                category_key = changes.get("category_key", source.category_key if source is not None else "registration")
+                matches = list((await db.scalars(select(FormCategory).where(
+                    FormCategory.slug == category_key, FormCategory.deleted_at.is_(None),
+                    FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == owner, FormCategory.organization_id.is_(None)))
+                    .order_by(FormCategory.id).limit(2).with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))).all())
+                if not matches:
+&gt;                   raise HTTPException(404, detail="Category not found.")
+E                   fastapi.exceptions.HTTPException: 404: Category not found.
+
+app\modules\registration\application\template_commands.py:590: HTTPException</failure></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[missing_action-SPEAKER_INTAKE]" time="5.443"><failure message="fastapi.exceptions.HTTPException: 404: Category not found.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC89AF3F20&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x1fc89f5dea0&gt;
+purpose = 'SPEAKER_INTAKE', case = 'missing_action'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("case", ["event_scope", "workspace_scope", "requested", "suspended", "detached",
+        "missing_action", "foreign_event", "catalogue_denied"])
+    async def test_client_approved_form_boundaries(db, delegated_cohort, purpose, case):
+        data = delegated_cohort
+        async with TenantContextGuard.scoped(db, data.client.id):
+&gt;           source = await TemplateCommands.execute(db, operation="create", actor=data.owner,
+                payload=FormTemplateCreate(name="Client owned operational source",
+                    category_key="survey" if purpose == "SURVEY" else "speaker_intake", fields=[], settings={}),
+                idempotency_key=retry_key())
+
+tests\test_delegated_form_management.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC89AF3F20&gt;
+
+    @staticmethod
+    async def execute(db, *, operation, actor, payload=None, template_id=None,
+                      if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        expected = require_if_match(if_match) if operation != "create" else None
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 &lt;= len(idempotency_key.strip()) &lt;= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        changes = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
+        if operation not in {"create", "update", "duplicate", "delete"}:
+            raise ValueError("Unsupported template operation")
+        try:
+            org = await category_authority(db, actor, audience)
+            owner = None if audience == "PLATFORM" else org
+            scope = "GLOBAL" if audience == "PLATFORM" else "ORGANIZATION"
+            if changes.get("organization_id") not in (None, owner) or changes.get("event_id") is not None:
+                raise HTTPException(422, detail={"code": "CATALOGUE_OWNER_IS_SERVER_CONTROLLED"})
+            if operation == "create" and changes.get("scope_type", scope) != scope:
+                raise HTTPException(422, detail={"code": "USE_SCOPED_CATALOGUE_OR_EVENT_AGGREGATE"})
+            if audience == "CUSTOMER" and changes.get("is_default"):
+                raise HTTPException(403, detail={"code": "GLOBAL_DEFAULT_IS_PLATFORM_CONTROLLED"})
+            receipt = await begin_idempotent(db, organization_id=org, actor_id=actor.id,
+                operation=f"registration.{audience.lower()}.form_template.{operation}", key=idempotency_key,
+                payload={"id": str(template_id) if template_id else None, "version": expected, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                result = None if operation == "delete" else catalogue_projection(FormTemplateResponse.model_validate(replay[1]))
+                await db.commit()
+                return result
+            if audience == "PLATFORM":
+                # Also used by category commands and bounded initial provisioning.
+                await db.execute(text("SELECT pg_advisory_xact_lock(1128353876, 1)"))
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # NO KEY UPDATE preserves serialization without deadlocking on a
+            # competing request's already-inserted receipt foreign key.
+            authority_row = await db.scalar(select(Organization).where(Organization.id == org)
+                .with_for_update(key_share=True).execution_options(populate_existing=True))
+            if authority_row is None:
+                raise HTTPException(404, detail="Authority context not found.")
+            await category_authority(db, actor, audience)
+            previous = None
+            source = None
+            if operation != "create":
+                visibility = and_(FormTemplate.organization_id == owner, FormTemplate.scope_type == scope)
+                if operation == "duplicate" and audience == "CUSTOMER":
+                    visibility = or_(visibility, and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"))
+                source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id,
+                    FormTemplate.deleted_at.is_(None), visibility).with_for_update(of=FormTemplate)
+                    .execution_options(shared_form_catalogue=True, populate_existing=True))
+                if source is None:
+                    raise HTTPException(404, detail="Template not found.")
+                previous = int(source.version or 1)
+                if previous != expected:
+                    raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": previous})
+                if (operation == "update" and source.category_key in OPERATIONAL_TEMPLATE_KEYS
+                        and "category_key" in changes and changes["category_key"] != source.category_key):
+                    raise HTTPException(409, detail={"code": "TEMPLATE_PURPOSE_IMMUTABLE"})
+            if operation == "duplicate":
+                if not source.is_active:
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+                if len(source.fields or []) &gt; 100:
+                    raise HTTPException(409, detail={"code": "TEMPLATE_EXCEEDS_FIELD_BOUND"})
+                # No event lineage, submitted defaults, credentials or asset/redirect references.
+                try:
+                    document = CatalogueDocument.model_validate({
+                        "fields": source.fields or [], "settings": source.settings or {}})
+                    fields = [field.model_dump(mode="json", exclude_none=True) for field in document.fields]
+                    for field in fields:
+                        field.pop("default_value", None)
+                        for option in field.get("options") or []:
+                            if isinstance(option, dict):
+                                option["is_default"] = False
+                        if field["type"] in {"role", "file", "image", "signature"} or field["id"].lower() in {"role", "category"}:
+                            field["options"] = []
+                except (ValidationError, TypeError, ValueError):
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_RECONCILIATION_REQUIRED"})
+                safe_settings = {key: value for key, value in (source.settings or {}).items() if key in {
+                    "submit_button_label", "success_title", "success_message", "allow_multiple_submissions",
+                    "require_login", "send_email_confirmation", "enable_terms", "enable_preview", "enable_payment", "steps"}}
+                changes = {"name": f"{source.name[:130]} (Custom Copy)", "category_id": str(source.category_id) if source.category_id else None,
+                    "category_key": source.category_key, "description": source.description,
+                    "fields": fields, "settings": safe_settings, "slug": f"copy-{uuid.uuid4().hex}"}
+            category_id = changes.get("category_id", source.category_id if source is not None else None)
+            category = None
+            if operation != "delete" and category_id is None:
+                category_key = changes.get("category_key", source.category_key if source is not None else "registration")
+                matches = list((await db.scalars(select(FormCategory).where(
+                    FormCategory.slug == category_key, FormCategory.deleted_at.is_(None),
+                    FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == owner, FormCategory.organization_id.is_(None)))
+                    .order_by(FormCategory.id).limit(2).with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))).all())
+                if not matches:
+&gt;                   raise HTTPException(404, detail="Category not found.")
+E                   fastapi.exceptions.HTTPException: 404: Category not found.
+
+app\modules\registration\application\template_commands.py:590: HTTPException</failure></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[foreign_event-SURVEY]" time="5.742"><failure message="fastapi.exceptions.HTTPException: 404: Category not found.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC8A203BD0&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x1fc8a4371f0&gt;
+purpose = 'SURVEY', case = 'foreign_event'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("case", ["event_scope", "workspace_scope", "requested", "suspended", "detached",
+        "missing_action", "foreign_event", "catalogue_denied"])
+    async def test_client_approved_form_boundaries(db, delegated_cohort, purpose, case):
+        data = delegated_cohort
+        async with TenantContextGuard.scoped(db, data.client.id):
+&gt;           source = await TemplateCommands.execute(db, operation="create", actor=data.owner,
+                payload=FormTemplateCreate(name="Client owned operational source",
+                    category_key="survey" if purpose == "SURVEY" else "speaker_intake", fields=[], settings={}),
+                idempotency_key=retry_key())
+
+tests\test_delegated_form_management.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC8A203BD0&gt;
+
+    @staticmethod
+    async def execute(db, *, operation, actor, payload=None, template_id=None,
+                      if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        expected = require_if_match(if_match) if operation != "create" else None
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 &lt;= len(idempotency_key.strip()) &lt;= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        changes = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
+        if operation not in {"create", "update", "duplicate", "delete"}:
+            raise ValueError("Unsupported template operation")
+        try:
+            org = await category_authority(db, actor, audience)
+            owner = None if audience == "PLATFORM" else org
+            scope = "GLOBAL" if audience == "PLATFORM" else "ORGANIZATION"
+            if changes.get("organization_id") not in (None, owner) or changes.get("event_id") is not None:
+                raise HTTPException(422, detail={"code": "CATALOGUE_OWNER_IS_SERVER_CONTROLLED"})
+            if operation == "create" and changes.get("scope_type", scope) != scope:
+                raise HTTPException(422, detail={"code": "USE_SCOPED_CATALOGUE_OR_EVENT_AGGREGATE"})
+            if audience == "CUSTOMER" and changes.get("is_default"):
+                raise HTTPException(403, detail={"code": "GLOBAL_DEFAULT_IS_PLATFORM_CONTROLLED"})
+            receipt = await begin_idempotent(db, organization_id=org, actor_id=actor.id,
+                operation=f"registration.{audience.lower()}.form_template.{operation}", key=idempotency_key,
+                payload={"id": str(template_id) if template_id else None, "version": expected, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                result = None if operation == "delete" else catalogue_projection(FormTemplateResponse.model_validate(replay[1]))
+                await db.commit()
+                return result
+            if audience == "PLATFORM":
+                # Also used by category commands and bounded initial provisioning.
+                await db.execute(text("SELECT pg_advisory_xact_lock(1128353876, 1)"))
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # NO KEY UPDATE preserves serialization without deadlocking on a
+            # competing request's already-inserted receipt foreign key.
+            authority_row = await db.scalar(select(Organization).where(Organization.id == org)
+                .with_for_update(key_share=True).execution_options(populate_existing=True))
+            if authority_row is None:
+                raise HTTPException(404, detail="Authority context not found.")
+            await category_authority(db, actor, audience)
+            previous = None
+            source = None
+            if operation != "create":
+                visibility = and_(FormTemplate.organization_id == owner, FormTemplate.scope_type == scope)
+                if operation == "duplicate" and audience == "CUSTOMER":
+                    visibility = or_(visibility, and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"))
+                source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id,
+                    FormTemplate.deleted_at.is_(None), visibility).with_for_update(of=FormTemplate)
+                    .execution_options(shared_form_catalogue=True, populate_existing=True))
+                if source is None:
+                    raise HTTPException(404, detail="Template not found.")
+                previous = int(source.version or 1)
+                if previous != expected:
+                    raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": previous})
+                if (operation == "update" and source.category_key in OPERATIONAL_TEMPLATE_KEYS
+                        and "category_key" in changes and changes["category_key"] != source.category_key):
+                    raise HTTPException(409, detail={"code": "TEMPLATE_PURPOSE_IMMUTABLE"})
+            if operation == "duplicate":
+                if not source.is_active:
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+                if len(source.fields or []) &gt; 100:
+                    raise HTTPException(409, detail={"code": "TEMPLATE_EXCEEDS_FIELD_BOUND"})
+                # No event lineage, submitted defaults, credentials or asset/redirect references.
+                try:
+                    document = CatalogueDocument.model_validate({
+                        "fields": source.fields or [], "settings": source.settings or {}})
+                    fields = [field.model_dump(mode="json", exclude_none=True) for field in document.fields]
+                    for field in fields:
+                        field.pop("default_value", None)
+                        for option in field.get("options") or []:
+                            if isinstance(option, dict):
+                                option["is_default"] = False
+                        if field["type"] in {"role", "file", "image", "signature"} or field["id"].lower() in {"role", "category"}:
+                            field["options"] = []
+                except (ValidationError, TypeError, ValueError):
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_RECONCILIATION_REQUIRED"})
+                safe_settings = {key: value for key, value in (source.settings or {}).items() if key in {
+                    "submit_button_label", "success_title", "success_message", "allow_multiple_submissions",
+                    "require_login", "send_email_confirmation", "enable_terms", "enable_preview", "enable_payment", "steps"}}
+                changes = {"name": f"{source.name[:130]} (Custom Copy)", "category_id": str(source.category_id) if source.category_id else None,
+                    "category_key": source.category_key, "description": source.description,
+                    "fields": fields, "settings": safe_settings, "slug": f"copy-{uuid.uuid4().hex}"}
+            category_id = changes.get("category_id", source.category_id if source is not None else None)
+            category = None
+            if operation != "delete" and category_id is None:
+                category_key = changes.get("category_key", source.category_key if source is not None else "registration")
+                matches = list((await db.scalars(select(FormCategory).where(
+                    FormCategory.slug == category_key, FormCategory.deleted_at.is_(None),
+                    FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == owner, FormCategory.organization_id.is_(None)))
+                    .order_by(FormCategory.id).limit(2).with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))).all())
+                if not matches:
+&gt;                   raise HTTPException(404, detail="Category not found.")
+E                   fastapi.exceptions.HTTPException: 404: Category not found.
+
+app\modules\registration\application\template_commands.py:590: HTTPException</failure></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[foreign_event-SPEAKER_INTAKE]" time="5.950"><failure message="fastapi.exceptions.HTTPException: 404: Category not found.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC8A203070&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x1fc894bc910&gt;
+purpose = 'SPEAKER_INTAKE', case = 'foreign_event'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("case", ["event_scope", "workspace_scope", "requested", "suspended", "detached",
+        "missing_action", "foreign_event", "catalogue_denied"])
+    async def test_client_approved_form_boundaries(db, delegated_cohort, purpose, case):
+        data = delegated_cohort
+        async with TenantContextGuard.scoped(db, data.client.id):
+&gt;           source = await TemplateCommands.execute(db, operation="create", actor=data.owner,
+                payload=FormTemplateCreate(name="Client owned operational source",
+                    category_key="survey" if purpose == "SURVEY" else "speaker_intake", fields=[], settings={}),
+                idempotency_key=retry_key())
+
+tests\test_delegated_form_management.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC8A203070&gt;
+
+    @staticmethod
+    async def execute(db, *, operation, actor, payload=None, template_id=None,
+                      if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        expected = require_if_match(if_match) if operation != "create" else None
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 &lt;= len(idempotency_key.strip()) &lt;= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        changes = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
+        if operation not in {"create", "update", "duplicate", "delete"}:
+            raise ValueError("Unsupported template operation")
+        try:
+            org = await category_authority(db, actor, audience)
+            owner = None if audience == "PLATFORM" else org
+            scope = "GLOBAL" if audience == "PLATFORM" else "ORGANIZATION"
+            if changes.get("organization_id") not in (None, owner) or changes.get("event_id") is not None:
+                raise HTTPException(422, detail={"code": "CATALOGUE_OWNER_IS_SERVER_CONTROLLED"})
+            if operation == "create" and changes.get("scope_type", scope) != scope:
+                raise HTTPException(422, detail={"code": "USE_SCOPED_CATALOGUE_OR_EVENT_AGGREGATE"})
+            if audience == "CUSTOMER" and changes.get("is_default"):
+                raise HTTPException(403, detail={"code": "GLOBAL_DEFAULT_IS_PLATFORM_CONTROLLED"})
+            receipt = await begin_idempotent(db, organization_id=org, actor_id=actor.id,
+                operation=f"registration.{audience.lower()}.form_template.{operation}", key=idempotency_key,
+                payload={"id": str(template_id) if template_id else None, "version": expected, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                result = None if operation == "delete" else catalogue_projection(FormTemplateResponse.model_validate(replay[1]))
+                await db.commit()
+                return result
+            if audience == "PLATFORM":
+                # Also used by category commands and bounded initial provisioning.
+                await db.execute(text("SELECT pg_advisory_xact_lock(1128353876, 1)"))
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # NO KEY UPDATE preserves serialization without deadlocking on a
+            # competing request's already-inserted receipt foreign key.
+            authority_row = await db.scalar(select(Organization).where(Organization.id == org)
+                .with_for_update(key_share=True).execution_options(populate_existing=True))
+            if authority_row is None:
+                raise HTTPException(404, detail="Authority context not found.")
+            await category_authority(db, actor, audience)
+            previous = None
+            source = None
+            if operation != "create":
+                visibility = and_(FormTemplate.organization_id == owner, FormTemplate.scope_type == scope)
+                if operation == "duplicate" and audience == "CUSTOMER":
+                    visibility = or_(visibility, and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"))
+                source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id,
+                    FormTemplate.deleted_at.is_(None), visibility).with_for_update(of=FormTemplate)
+                    .execution_options(shared_form_catalogue=True, populate_existing=True))
+                if source is None:
+                    raise HTTPException(404, detail="Template not found.")
+                previous = int(source.version or 1)
+                if previous != expected:
+                    raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": previous})
+                if (operation == "update" and source.category_key in OPERATIONAL_TEMPLATE_KEYS
+                        and "category_key" in changes and changes["category_key"] != source.category_key):
+                    raise HTTPException(409, detail={"code": "TEMPLATE_PURPOSE_IMMUTABLE"})
+            if operation == "duplicate":
+                if not source.is_active:
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+                if len(source.fields or []) &gt; 100:
+                    raise HTTPException(409, detail={"code": "TEMPLATE_EXCEEDS_FIELD_BOUND"})
+                # No event lineage, submitted defaults, credentials or asset/redirect references.
+                try:
+                    document = CatalogueDocument.model_validate({
+                        "fields": source.fields or [], "settings": source.settings or {}})
+                    fields = [field.model_dump(mode="json", exclude_none=True) for field in document.fields]
+                    for field in fields:
+                        field.pop("default_value", None)
+                        for option in field.get("options") or []:
+                            if isinstance(option, dict):
+                                option["is_default"] = False
+                        if field["type"] in {"role", "file", "image", "signature"} or field["id"].lower() in {"role", "category"}:
+                            field["options"] = []
+                except (ValidationError, TypeError, ValueError):
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_RECONCILIATION_REQUIRED"})
+                safe_settings = {key: value for key, value in (source.settings or {}).items() if key in {
+                    "submit_button_label", "success_title", "success_message", "allow_multiple_submissions",
+                    "require_login", "send_email_confirmation", "enable_terms", "enable_preview", "enable_payment", "steps"}}
+                changes = {"name": f"{source.name[:130]} (Custom Copy)", "category_id": str(source.category_id) if source.category_id else None,
+                    "category_key": source.category_key, "description": source.description,
+                    "fields": fields, "settings": safe_settings, "slug": f"copy-{uuid.uuid4().hex}"}
+            category_id = changes.get("category_id", source.category_id if source is not None else None)
+            category = None
+            if operation != "delete" and category_id is None:
+                category_key = changes.get("category_key", source.category_key if source is not None else "registration")
+                matches = list((await db.scalars(select(FormCategory).where(
+                    FormCategory.slug == category_key, FormCategory.deleted_at.is_(None),
+                    FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == owner, FormCategory.organization_id.is_(None)))
+                    .order_by(FormCategory.id).limit(2).with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))).all())
+                if not matches:
+&gt;                   raise HTTPException(404, detail="Category not found.")
+E                   fastapi.exceptions.HTTPException: 404: Category not found.
+
+app\modules\registration\application\template_commands.py:590: HTTPException</failure></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[catalogue_denied-SURVEY]" time="5.671"><failure message="fastapi.exceptions.HTTPException: 404: Category not found.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC8A232EA0&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x1fc8a266c50&gt;
+purpose = 'SURVEY', case = 'catalogue_denied'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("case", ["event_scope", "workspace_scope", "requested", "suspended", "detached",
+        "missing_action", "foreign_event", "catalogue_denied"])
+    async def test_client_approved_form_boundaries(db, delegated_cohort, purpose, case):
+        data = delegated_cohort
+        async with TenantContextGuard.scoped(db, data.client.id):
+&gt;           source = await TemplateCommands.execute(db, operation="create", actor=data.owner,
+                payload=FormTemplateCreate(name="Client owned operational source",
+                    category_key="survey" if purpose == "SURVEY" else "speaker_intake", fields=[], settings={}),
+                idempotency_key=retry_key())
+
+tests\test_delegated_form_management.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC8A232EA0&gt;
+
+    @staticmethod
+    async def execute(db, *, operation, actor, payload=None, template_id=None,
+                      if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        expected = require_if_match(if_match) if operation != "create" else None
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 &lt;= len(idempotency_key.strip()) &lt;= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        changes = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
+        if operation not in {"create", "update", "duplicate", "delete"}:
+            raise ValueError("Unsupported template operation")
+        try:
+            org = await category_authority(db, actor, audience)
+            owner = None if audience == "PLATFORM" else org
+            scope = "GLOBAL" if audience == "PLATFORM" else "ORGANIZATION"
+            if changes.get("organization_id") not in (None, owner) or changes.get("event_id") is not None:
+                raise HTTPException(422, detail={"code": "CATALOGUE_OWNER_IS_SERVER_CONTROLLED"})
+            if operation == "create" and changes.get("scope_type", scope) != scope:
+                raise HTTPException(422, detail={"code": "USE_SCOPED_CATALOGUE_OR_EVENT_AGGREGATE"})
+            if audience == "CUSTOMER" and changes.get("is_default"):
+                raise HTTPException(403, detail={"code": "GLOBAL_DEFAULT_IS_PLATFORM_CONTROLLED"})
+            receipt = await begin_idempotent(db, organization_id=org, actor_id=actor.id,
+                operation=f"registration.{audience.lower()}.form_template.{operation}", key=idempotency_key,
+                payload={"id": str(template_id) if template_id else None, "version": expected, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                result = None if operation == "delete" else catalogue_projection(FormTemplateResponse.model_validate(replay[1]))
+                await db.commit()
+                return result
+            if audience == "PLATFORM":
+                # Also used by category commands and bounded initial provisioning.
+                await db.execute(text("SELECT pg_advisory_xact_lock(1128353876, 1)"))
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # NO KEY UPDATE preserves serialization without deadlocking on a
+            # competing request's already-inserted receipt foreign key.
+            authority_row = await db.scalar(select(Organization).where(Organization.id == org)
+                .with_for_update(key_share=True).execution_options(populate_existing=True))
+            if authority_row is None:
+                raise HTTPException(404, detail="Authority context not found.")
+            await category_authority(db, actor, audience)
+            previous = None
+            source = None
+            if operation != "create":
+                visibility = and_(FormTemplate.organization_id == owner, FormTemplate.scope_type == scope)
+                if operation == "duplicate" and audience == "CUSTOMER":
+                    visibility = or_(visibility, and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"))
+                source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id,
+                    FormTemplate.deleted_at.is_(None), visibility).with_for_update(of=FormTemplate)
+                    .execution_options(shared_form_catalogue=True, populate_existing=True))
+                if source is None:
+                    raise HTTPException(404, detail="Template not found.")
+                previous = int(source.version or 1)
+                if previous != expected:
+                    raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": previous})
+                if (operation == "update" and source.category_key in OPERATIONAL_TEMPLATE_KEYS
+                        and "category_key" in changes and changes["category_key"] != source.category_key):
+                    raise HTTPException(409, detail={"code": "TEMPLATE_PURPOSE_IMMUTABLE"})
+            if operation == "duplicate":
+                if not source.is_active:
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+                if len(source.fields or []) &gt; 100:
+                    raise HTTPException(409, detail={"code": "TEMPLATE_EXCEEDS_FIELD_BOUND"})
+                # No event lineage, submitted defaults, credentials or asset/redirect references.
+                try:
+                    document = CatalogueDocument.model_validate({
+                        "fields": source.fields or [], "settings": source.settings or {}})
+                    fields = [field.model_dump(mode="json", exclude_none=True) for field in document.fields]
+                    for field in fields:
+                        field.pop("default_value", None)
+                        for option in field.get("options") or []:
+                            if isinstance(option, dict):
+                                option["is_default"] = False
+                        if field["type"] in {"role", "file", "image", "signature"} or field["id"].lower() in {"role", "category"}:
+                            field["options"] = []
+                except (ValidationError, TypeError, ValueError):
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_RECONCILIATION_REQUIRED"})
+                safe_settings = {key: value for key, value in (source.settings or {}).items() if key in {
+                    "submit_button_label", "success_title", "success_message", "allow_multiple_submissions",
+                    "require_login", "send_email_confirmation", "enable_terms", "enable_preview", "enable_payment", "steps"}}
+                changes = {"name": f"{source.name[:130]} (Custom Copy)", "category_id": str(source.category_id) if source.category_id else None,
+                    "category_key": source.category_key, "description": source.description,
+                    "fields": fields, "settings": safe_settings, "slug": f"copy-{uuid.uuid4().hex}"}
+            category_id = changes.get("category_id", source.category_id if source is not None else None)
+            category = None
+            if operation != "delete" and category_id is None:
+                category_key = changes.get("category_key", source.category_key if source is not None else "registration")
+                matches = list((await db.scalars(select(FormCategory).where(
+                    FormCategory.slug == category_key, FormCategory.deleted_at.is_(None),
+                    FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == owner, FormCategory.organization_id.is_(None)))
+                    .order_by(FormCategory.id).limit(2).with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))).all())
+                if not matches:
+&gt;                   raise HTTPException(404, detail="Category not found.")
+E                   fastapi.exceptions.HTTPException: 404: Category not found.
+
+app\modules\registration\application\template_commands.py:590: HTTPException</failure></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_form_boundaries[catalogue_denied-SPEAKER_INTAKE]" time="9.299"><failure message="fastapi.exceptions.HTTPException: 404: Category not found.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC8952B590&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x1fc8a0a54e0&gt;
+purpose = 'SPEAKER_INTAKE', case = 'catalogue_denied'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("case", ["event_scope", "workspace_scope", "requested", "suspended", "detached",
+        "missing_action", "foreign_event", "catalogue_denied"])
+    async def test_client_approved_form_boundaries(db, delegated_cohort, purpose, case):
+        data = delegated_cohort
+        async with TenantContextGuard.scoped(db, data.client.id):
+&gt;           source = await TemplateCommands.execute(db, operation="create", actor=data.owner,
+                payload=FormTemplateCreate(name="Client owned operational source",
+                    category_key="survey" if purpose == "SURVEY" else "speaker_intake", fields=[], settings={}),
+                idempotency_key=retry_key())
+
+tests\test_delegated_form_management.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001FC8952B590&gt;
+
+    @staticmethod
+    async def execute(db, *, operation, actor, payload=None, template_id=None,
+                      if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        expected = require_if_match(if_match) if operation != "create" else None
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 &lt;= len(idempotency_key.strip()) &lt;= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        changes = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
+        if operation not in {"create", "update", "duplicate", "delete"}:
+            raise ValueError("Unsupported template operation")
+        try:
+            org = await category_authority(db, actor, audience)
+            owner = None if audience == "PLATFORM" else org
+            scope = "GLOBAL" if audience == "PLATFORM" else "ORGANIZATION"
+            if changes.get("organization_id") not in (None, owner) or changes.get("event_id") is not None:
+                raise HTTPException(422, detail={"code": "CATALOGUE_OWNER_IS_SERVER_CONTROLLED"})
+            if operation == "create" and changes.get("scope_type", scope) != scope:
+                raise HTTPException(422, detail={"code": "USE_SCOPED_CATALOGUE_OR_EVENT_AGGREGATE"})
+            if audience == "CUSTOMER" and changes.get("is_default"):
+                raise HTTPException(403, detail={"code": "GLOBAL_DEFAULT_IS_PLATFORM_CONTROLLED"})
+            receipt = await begin_idempotent(db, organization_id=org, actor_id=actor.id,
+                operation=f"registration.{audience.lower()}.form_template.{operation}", key=idempotency_key,
+                payload={"id": str(template_id) if template_id else None, "version": expected, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                result = None if operation == "delete" else catalogue_projection(FormTemplateResponse.model_validate(replay[1]))
+                await db.commit()
+                return result
+            if audience == "PLATFORM":
+                # Also used by category commands and bounded initial provisioning.
+                await db.execute(text("SELECT pg_advisory_xact_lock(1128353876, 1)"))
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # NO KEY UPDATE preserves serialization without deadlocking on a
+            # competing request's already-inserted receipt foreign key.
+            authority_row = await db.scalar(select(Organization).where(Organization.id == org)
+                .with_for_update(key_share=True).execution_options(populate_existing=True))
+            if authority_row is None:
+                raise HTTPException(404, detail="Authority context not found.")
+            await category_authority(db, actor, audience)
+            previous = None
+            source = None
+            if operation != "create":
+                visibility = and_(FormTemplate.organization_id == owner, FormTemplate.scope_type == scope)
+                if operation == "duplicate" and audience == "CUSTOMER":
+                    visibility = or_(visibility, and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"))
+                source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id,
+                    FormTemplate.deleted_at.is_(None), visibility).with_for_update(of=FormTemplate)
+                    .execution_options(shared_form_catalogue=True, populate_existing=True))
+                if source is None:
+                    raise HTTPException(404, detail="Template not found.")
+                previous = int(source.version or 1)
+                if previous != expected:
+                    raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": previous})
+                if (operation == "update" and source.category_key in OPERATIONAL_TEMPLATE_KEYS
+                        and "category_key" in changes and changes["category_key"] != source.category_key):
+                    raise HTTPException(409, detail={"code": "TEMPLATE_PURPOSE_IMMUTABLE"})
+            if operation == "duplicate":
+                if not source.is_active:
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+                if len(source.fields or []) &gt; 100:
+                    raise HTTPException(409, detail={"code": "TEMPLATE_EXCEEDS_FIELD_BOUND"})
+                # No event lineage, submitted defaults, credentials or asset/redirect references.
+                try:
+                    document = CatalogueDocument.model_validate({
+                        "fields": source.fields or [], "settings": source.settings or {}})
+                    fields = [field.model_dump(mode="json", exclude_none=True) for field in document.fields]
+                    for field in fields:
+                        field.pop("default_value", None)
+                        for option in field.get("options") or []:
+                            if isinstance(option, dict):
+                                option["is_default"] = False
+                        if field["type"] in {"role", "file", "image", "signature"} or field["id"].lower() in {"role", "category"}:
+                            field["options"] = []
+                except (ValidationError, TypeError, ValueError):
+                    raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_RECONCILIATION_REQUIRED"})
+                safe_settings = {key: value for key, value in (source.settings or {}).items() if key in {
+                    "submit_button_label", "success_title", "success_message", "allow_multiple_submissions",
+                    "require_login", "send_email_confirmation", "enable_terms", "enable_preview", "enable_payment", "steps"}}
+                changes = {"name": f"{source.name[:130]} (Custom Copy)", "category_id": str(source.category_id) if source.category_id else None,
+                    "category_key": source.category_key, "description": source.description,
+                    "fields": fields, "settings": safe_settings, "slug": f"copy-{uuid.uuid4().hex}"}
+            category_id = changes.get("category_id", source.category_id if source is not None else None)
+            category = None
+            if operation != "delete" and category_id is None:
+                category_key = changes.get("category_key", source.category_key if source is not None else "registration")
+                matches = list((await db.scalars(select(FormCategory).where(
+                    FormCategory.slug == category_key, FormCategory.deleted_at.is_(None),
+                    FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == owner, FormCategory.organization_id.is_(None)))
+                    .order_by(FormCategory.id).limit(2).with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))).all())
+                if not matches:
+&gt;                   raise HTTPException(404, detail="Category not found.")
+E                   fastapi.exceptions.HTTPException: 404: Category not found.
+
+app\modules\registration\application\template_commands.py:590: HTTPException</failure></testcase></testsuite></testsuites>

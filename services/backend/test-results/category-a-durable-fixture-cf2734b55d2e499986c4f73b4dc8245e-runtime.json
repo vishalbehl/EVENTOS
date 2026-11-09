@@ -1,0 +1,95 @@
+{
+  "status": "PASSED",
+  "stage": "completed",
+  "database": "category_a_restore_20261021_cf2734b55d2e",
+  "actual_restricted_login": true,
+  "actual_identity_command": true,
+  "cases": [
+    {
+      "operation": "create",
+      "writer_first": false,
+      "outcome": "PASSED",
+      "committed_writer": 0,
+      "blocked_on_revision": true,
+      "later_replay_status": 403,
+      "receipt_and_audit_delta": 0,
+      "actual_role_audit_verified": true
+    },
+    {
+      "operation": "create",
+      "writer_first": true,
+      "outcome": "PASSED",
+      "committed_writer": 1,
+      "blocked_on_revision": true,
+      "later_replay_status": 403,
+      "receipt_and_audit_delta": 1,
+      "actual_role_audit_verified": true
+    },
+    {
+      "operation": "template_retire",
+      "writer_first": false,
+      "outcome": "PASSED",
+      "committed_writer": 0,
+      "blocked_on_revision": true,
+      "later_replay_status": 403,
+      "receipt_and_audit_delta": 0,
+      "actual_role_audit_verified": true
+    },
+    {
+      "operation": "template_retire",
+      "writer_first": true,
+      "outcome": "PASSED",
+      "committed_writer": 1,
+      "blocked_on_revision": true,
+      "later_replay_status": 403,
+      "receipt_and_audit_delta": 1,
+      "actual_role_audit_verified": true
+    },
+    {
+      "operation": "category_retire",
+      "writer_first": false,
+      "outcome": "PASSED",
+      "committed_writer": 0,
+      "blocked_on_revision": true,
+      "later_replay_status": 403,
+      "receipt_and_audit_delta": 0,
+      "actual_role_audit_verified": true
+    },
+    {
+      "operation": "category_retire",
+      "writer_first": true,
+      "outcome": "PASSED",
+      "committed_writer": 1,
+      "blocked_on_revision": true,
+      "later_replay_status": 403,
+      "receipt_and_audit_delta": 1,
+      "actual_role_audit_verified": true
+    },
+    {
+      "operation": "repair",
+      "writer_first": false,
+      "outcome": "PASSED",
+      "committed_writer": 0,
+      "blocked_on_revision": true,
+      "later_replay_status": 403,
+      "receipt_and_audit_delta": 0,
+      "actual_role_audit_verified": true
+    },
+    {
+      "operation": "repair",
+      "writer_first": true,
+      "outcome": "PASSED",
+      "committed_writer": 1,
+      "blocked_on_revision": true,
+      "later_replay_status": 403,
+      "receipt_and_audit_delta": 1,
+      "actual_role_audit_verified": true
+    }
+  ],
+  "staging_acceptance": "NOT_RUN",
+  "production_acceptance": "NOT_RUN",
+  "runtime_role_is_safe": true,
+  "missing_canary_policies": [],
+  "default_platform_customer_flow": "NOT_RUN",
+  "provider_io": "NOT_RUN"
+}

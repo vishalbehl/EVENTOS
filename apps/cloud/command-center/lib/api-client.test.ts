@@ -15,6 +15,7 @@ const authState = {
   accessToken: "access-token",
   refreshToken: "refresh-token",
   rememberMe: true,
+  sessionRevision: 0,
   setAuth: vi.fn(),
   logout: vi.fn(),
   updateActivity: vi.fn(),

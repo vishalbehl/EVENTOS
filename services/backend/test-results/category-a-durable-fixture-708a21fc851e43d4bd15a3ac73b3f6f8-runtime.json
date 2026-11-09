@@ -1,0 +1,55 @@
+{
+  "status": "FAILED",
+  "stage": "create_setup_categories",
+  "database": "category_a_restore_20261021_708a21fc851e",
+  "actual_restricted_login": true,
+  "actual_identity_command": true,
+  "cases": [],
+  "staging_acceptance": "NOT_RUN",
+  "production_acceptance": "NOT_RUN",
+  "runtime_role_is_safe": true,
+  "missing_canary_policies": [],
+  "error_type": "InvalidRequestError",
+  "project_frames": [
+    {
+      "file": ".venv\\Lib\\site-packages\\sqlalchemy\\orm\\mapper.py",
+      "line": 4228,
+      "function": "_configure_registries"
+    },
+    {
+      "file": ".venv\\Lib\\site-packages\\sqlalchemy\\orm\\mapper.py",
+      "line": 4269,
+      "function": "_do_configure_registries"
+    },
+    {
+      "file": ".venv\\Lib\\site-packages\\sqlalchemy\\orm\\mapper.py",
+      "line": 2428,
+      "function": "_post_configure_properties"
+    },
+    {
+      "file": ".venv\\Lib\\site-packages\\sqlalchemy\\orm\\interfaces.py",
+      "line": 595,
+      "function": "init"
+    },
+    {
+      "file": ".venv\\Lib\\site-packages\\sqlalchemy\\orm\\relationships.py",
+      "line": 1656,
+      "function": "do_init"
+    },
+    {
+      "file": ".venv\\Lib\\site-packages\\sqlalchemy\\orm\\relationships.py",
+      "line": 1866,
+      "function": "_setup_entity"
+    },
+    {
+      "file": ".venv\\Lib\\site-packages\\sqlalchemy\\orm\\clsregistry.py",
+      "line": 520,
+      "function": "_resolve_name"
+    },
+    {
+      "file": ".venv\\Lib\\site-packages\\sqlalchemy\\orm\\clsregistry.py",
+      "line": 501,
+      "function": "_raise_for_name"
+    }
+  ]
+}

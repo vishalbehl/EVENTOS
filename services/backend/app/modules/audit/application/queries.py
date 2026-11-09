@@ -206,6 +206,10 @@ class AuditQueryService:
         resource_types: list[str] | None,
         page: int,
         page_size: int,
+        search: str | None = None,
+        actor_role: str | None = None,
+        occurred_from: datetime | None = None,
+        occurred_to: datetime | None = None,
     ) -> tuple[list[AuditLog], int]:
         """Return a bounded organization audit page with stable ordering."""
         bounded = self._page_size(page_size)
@@ -214,6 +218,19 @@ class AuditQueryService:
             filters.append(AuditLog.resource_type == resource_type)
         elif resource_types:
             filters.append(AuditLog.resource_type.in_(resource_types))
+        if search:
+            term = f"%{search.strip()}%"
+            filters.append(or_(
+                AuditLog.action_type.ilike(term),
+                AuditLog.resource_type.ilike(term),
+                AuditLog.actor_role.ilike(term),
+            ))
+        if actor_role:
+            filters.append(AuditLog.actor_role == actor_role)
+        if occurred_from:
+            filters.append(AuditLog.occurred_at >= occurred_from)
+        if occurred_to:
+            filters.append(AuditLog.occurred_at <= occurred_to)
         total = int(await self.db.scalar(
             select(func.count()).select_from(AuditLog).where(*filters)
         ) or 0)
@@ -348,17 +365,16 @@ class AuditQueryService:
     ) -> tuple[list[AuditLog], int]:
         """Return the immutable commercial/entitlement history for one tenant."""
         resource_types = (
-            "commercial_access_request", "organization_subscription", "organization_addon",
-            "entitlement_grant", "entitlement_override", "plan_feature", "organization_feature",
+            "commercial_request", "commercial_contract", "capacity_addon",
+            "entitlement_grant", "entitlement_override", "commercial_feature", "organization_feature",
         )
         condition = and_(
             AuditLog.organization_id == organization_id,
             or_(
                 AuditLog.resource_type.in_(resource_types),
                 AuditLog.action_type.ilike("%ENTITLEMENT%"),
-                AuditLog.action_type.ilike("%SUBSCRIPTION%"),
-                AuditLog.action_type.ilike("%ADDON%"),
-                AuditLog.action_type.ilike("%COMMERCIAL_ACCESS%"),
+                AuditLog.action_type.ilike("%CONTRACT%"),
+                AuditLog.action_type.ilike("%CAPACITY%"),
             ),
         )
         bounded = self._page_size(page_size)

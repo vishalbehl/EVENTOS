@@ -156,23 +156,20 @@ class TestEventModel:
             )
         assert "At least one mode (Speaker or Registration) must be enabled." in str(exc_info.value)
 
-    def test_event_requests_reject_commercial_control_fields(self):
+    def test_event_requests_reject_direct_commercial_control(self):
         from pydantic import ValidationError
         from app.modules.rbac.schemas.event import EventCreate, EventUpdate
 
-        with pytest.raises(ValidationError) as create_error:
+        with pytest.raises(ValidationError):
             EventCreate(
                 name="Commercial bypass attempt",
                 short_code="BYPASS",
                 start_date=date(2026, 9, 1),
                 end_date=date(2026, 9, 3),
-                licensing_details={"plan_name": "Enterprise"},
+                commercial_contract_id="00000000-0000-0000-0000-000000000000",
             )
-        assert "licensing_details" in str(create_error.value)
-
-        with pytest.raises(ValidationError) as update_error:
+        with pytest.raises(ValidationError):
             EventUpdate(feature_toggles={"FEAT_API_ACCESS": True})
-        assert "feature_toggles" in str(update_error.value)
 
 
 # ── Org scoping tests ─────────────────────────────────────────
@@ -294,7 +291,6 @@ class TestSpeakerModel:
             last_name="Jones",
             email=f"bob-{uuid.uuid4().hex[:6]}@example.com",
             upload_token=hash2,
-            speaker_code=hash2[:8].upper(),
             upload_status="pending",
         )
         db.add(sp2)

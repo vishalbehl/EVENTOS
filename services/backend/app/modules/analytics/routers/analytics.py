@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.tenant_context import TenantContextGuard
-from app.dependencies import get_db, get_current_event, CurrentEvent, get_current_user
+from app.dependencies import get_db, get_current_event, CurrentEvent, get_current_user, TokenDep
 from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.identity.models.user import User
 from app.modules.presentations.services.upload_service import create_presigned_download
@@ -54,7 +54,13 @@ global_router = APIRouter(prefix="/analytics", tags=["global_analytics"])
 
 async def get_allowed_sessions(user: User, event_id: uuid.UUID, db: AsyncSession) -> Optional[set[str]]:
     """Returns a set of allowed session_ids (as strings) or None if all are allowed."""
-    if user.role in ["super_admin", "organiser", "admin"]:
+    from app.modules.rbac.services.access_contexts import selected_request_context
+    token = getattr(user, "_request_token_data", None)
+    if token is None:
+        raise HTTPException(401, detail={"code": "SESSION_CONTEXT_REQUIRED"})
+    async with selected_request_context(db, user, token, event_id=event_id) as context:
+        permissions = context.actions
+    if "ANALYTICS:VIEW" in permissions:
         return None
     
     result = await db.execute(
@@ -492,23 +498,21 @@ async def export_analytics(
 
 @global_router.get("/summary", response_model=DashboardStats)
 async def global_summary(
+    token: TokenDep,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> DashboardStats:
     """Aggregated metrics across all events the user has access to."""
-    # For now, let's just get all events if super_admin, or assigned events otherwise
     from app.modules.events.models.event import Event
-    from app.modules.rbac.models.user_assignment import UserEventAssignment
-    
-    if current_user.role in ["super_admin", "admin"]:
-        res = await db.execute(select(Event.id))
+    from app.modules.rbac.services.access_contexts import selected_request_context
+    from app.modules.rbac.services.event_scope import owned_event_scope
+    async with selected_request_context(
+        db, current_user, token, event_id=token.active_event_id, action="ANALYTICS:VIEW"
+    ):
+        res = await db.execute(select(Event.id).where(
+            owned_event_scope(db, Event.id, token.active_organization_id)
+        ).order_by(Event.id))
         event_ids = res.scalars().all()
-    else:
-        res = await db.execute(
-            select(UserEventAssignment.event_id)
-            .where(UserEventAssignment.user_id == current_user.id)
-        )
-        event_ids = list(set(res.scalars().all()))
 
     # Build a combined snapshot
     total_stats = {
@@ -521,7 +525,11 @@ async def global_summary(
     
     for eid in event_ids:
         try:
-            snap = await build_analytics_snapshot(db, eid, organization_id=current_user.organization_id)
+            snap = await build_analytics_snapshot(
+                db,
+                eid,
+                organization_id=current_user.request_organization_id,
+            )
             ov = snap.get("overview", {})
             total_stats["total_speakers"] += ov.get("total_speakers", 0)
             total_stats["total_sessions"] += ov.get("total_sessions", 0)
@@ -543,8 +551,11 @@ async def global_summary(
                     files_approved=r["files_ready"],
                     readiness_pct=r["readiness_pct"]
                 ))
+        except HTTPException:
+            raise
         except Exception:
-            continue
+            # A dependency/query failure is not a truthful empty/partial total.
+            raise HTTPException(503, detail={"code": "ANALYTICS_UNAVAILABLE"}) from None
 
     # Recalculate percentages
     if total_stats["total_speakers"] > 0:

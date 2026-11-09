@@ -1,0 +1,17 @@
+{
+  "status": "FAILED",
+  "stage": "committed_page_barrier",
+  "database": "category_a_restore_20261021_7b7df2be9566",
+  "staging_acceptance": "NOT_RUN",
+  "production_acceptance": "NOT_RUN",
+  "fixture_only": true,
+  "private_broker_unavailable_verified": true,
+  "offline_checkpoint": {
+    "pages_completed": 1,
+    "status": "PENDING",
+    "generation": 3,
+    "dispatch_attempts": 1
+  },
+  "error_type": "TimeoutError",
+  "private_broker_removed": true
+}

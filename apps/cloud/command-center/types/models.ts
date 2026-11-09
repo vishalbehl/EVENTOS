@@ -50,7 +50,7 @@ export interface Organization {
   name: string;
   slug: string;
   logo_url: string | null;
-  plan: string;
+  offer_name: string;
   created_at: string;
 }
 

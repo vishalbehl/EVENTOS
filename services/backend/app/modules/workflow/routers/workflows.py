@@ -10,12 +10,16 @@ from app.modules.workflow.application.queries import WorkflowQueryService
 from app.modules.workflow.schemas.workflow_schemas import (
     WorkflowOut, WorkflowCreate, WorkflowInstanceOut, CompleteTaskRequest
 )
+from app.modules.rbac.services.access_administration import scoped_administration
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
+_manage = Depends(scoped_administration("workflows:view", "workflows:manage"))
+_approve = Depends(scoped_administration("workflows:view", "workflows:approve"))
 
 @router.post(
     "",
     response_model=WorkflowOut,
+    dependencies=[_manage],
     status_code=status.HTTP_201_CREATED,
     summary="Create a new workflow template"
 )
@@ -25,7 +29,7 @@ async def create_workflow(
     db: DB,
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", min_length=8, max_length=255),
 ) -> WorkflowOut:
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     if not org_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -40,13 +44,14 @@ async def create_workflow(
 @router.get(
     "",
     response_model=List[WorkflowOut],
+    dependencies=[_manage],
     summary="List organization workflows"
 )
 async def list_workflows(
     current_user: ActiveUser,
     db: DB
 ) -> List[WorkflowOut]:
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     if not org_id:
         return []
         
@@ -56,6 +61,7 @@ async def list_workflows(
 @router.get(
     "/{workflow_id}",
     response_model=WorkflowOut,
+    dependencies=[_manage],
     summary="Get workflow details"
 )
 async def get_workflow(
@@ -63,7 +69,7 @@ async def get_workflow(
     current_user: ActiveUser,
     db: DB
 ) -> WorkflowOut:
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     if not org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found.")
         
@@ -76,6 +82,7 @@ async def get_workflow(
 @router.post(
     "/{workflow_id}/trigger",
     response_model=WorkflowInstanceOut,
+    dependencies=[_manage],
     status_code=status.HTTP_202_ACCEPTED,
     summary="Trigger/Execute a workflow template"
 )
@@ -86,7 +93,7 @@ async def trigger_workflow(
     entity_id: Optional[uuid.UUID] = Query(None, description="Optional entity ID triggering the workflow"),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", min_length=8, max_length=255),
 ) -> WorkflowInstanceOut:
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     if not org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found.")
         
@@ -98,6 +105,7 @@ async def trigger_workflow(
 @router.get(
     "/instances/{instance_id}",
     response_model=WorkflowInstanceOut,
+    dependencies=[_manage],
     summary="Get workflow instance status and history"
 )
 async def get_instance_status(
@@ -105,7 +113,7 @@ async def get_instance_status(
     current_user: ActiveUser,
     db: DB
 ) -> WorkflowInstanceOut:
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     if not org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow instance not found.")
         
@@ -117,6 +125,7 @@ async def get_instance_status(
 
 @router.post(
     "/tasks/{task_id}/complete",
+    dependencies=[_approve],
     summary="Approve/Complete a pending manual workflow task"
 )
 async def complete_task(
@@ -125,11 +134,13 @@ async def complete_task(
     current_user: ActiveUser,
     db: DB,
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", min_length=8, max_length=255),
+    expected_version: Optional[int] = Header(None, alias="If-Match", ge=1),
 ):
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     if not org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
         
     return await WorkflowCommandService.complete_task(
-        db, org_id, current_user.id, task_id, body, idempotency_key=idempotency_key
+        db, org_id, current_user.id, task_id, body, idempotency_key=idempotency_key,
+        expected_version=expected_version,
     )

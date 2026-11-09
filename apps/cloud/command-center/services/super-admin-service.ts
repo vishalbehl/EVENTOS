@@ -9,6 +9,12 @@ import { apiClient } from "@/lib/api-client";
 import { toast } from "sonner";
 import { platformKey, adminKeys, queryKeys } from "@/lib/query-keys";
 import type { ConsoleKey } from "@/lib/console-registry";
+export {
+  useInviteOrganizationMember,
+  useUpdateOrganizationMember,
+  useRemoveOrganizationMember,
+  useSetOrganizationMemberEvent,
+} from "@/features/organizations/api/organization-console-api";
 export { platformKey, adminKeys };
 
 export interface ConsoleMetric { key: string; label: string; value: string | number; unit?: string | null; comparison?: number | null; comparison_label?: string | null; status?: "neutral" | "success" | "warning" | "danger"; destination?: string }
@@ -35,11 +41,11 @@ export interface ActivityItem {
   occurred_at: string
 }
 
-export interface TrialExpiring {
+export interface ContractExpiring {
   org_id: string
   org_name: string
-  plan_name: string
-  trial_ends_at: string
+  offer_name: string
+  contract_ends_at: string
   days_remaining: number
 }
 
@@ -47,13 +53,13 @@ export interface TopOrgByMrr {
   org_id: string
   org_name: string
   mrr: number
-  plan_name: string
+  offer_name: string
 }
 
 export interface DashboardMetrics {
   total_organizations: number
   active_organizations: number
-  trial_organizations: number
+  pending_payment_organizations: number
   total_users: number
   mrr_current: number
   arr_current: number
@@ -67,14 +73,14 @@ export interface DashboardMetrics {
   mrr_trend: number[]
   events_trend: number[]
   revenue_trend: number[]
-  subscriptions_active: number
-  subscriptions_trial: number
-  subscriptions_grace: number
-  subscriptions_suspended: number
-  subscriptions_expired: number
-  subscriptions_cancelled: number
+  contracts_active: number
+  contracts_pending_payment: number
+  contracts_grace: number
+  contracts_suspended: number
+  contracts_expired: number
+  contracts_cancelled: number
   recent_activity: ActivityItem[]
-  trials_expiring: TrialExpiring[]
+  contracts_expiring: ContractExpiring[]
   top_orgs_by_mrr: TopOrgByMrr[]
   platform_status: 'healthy' | 'degraded' | 'down'
   services_degraded: number
@@ -85,7 +91,7 @@ export interface AdminOrg {
   id: string;
   name: string;
   slug: string;
-  plan: string;
+  offer_name: string;
   status: string;
   health_score: number | null;
   health_status: string;
@@ -111,10 +117,10 @@ export interface OrgDetail {
   max_registrations?: number;
   country?: string;
   timezone?: string;
-  subscription: {
-    plan: string;
+  contract: {
+    offer_name: string;
     status: string;
-    current_period_end?: string;
+    ends_at?: string;
     stripe_customer_id?: string;
   };
   health: {
@@ -138,42 +144,6 @@ export interface TimelineEvent {
   actor_id?: string;
   timestamp: string;
   metadata: Record<string, any>;
-}
-
-export interface SubscriptionPlan {
-  id: string;
-  name: string;
-  tagline?: string;
-  description?: string;
-  billing_model: string;
-  currency: string;
-  price_per_event?: number;
-  price_display: string;
-  max_events: number;
-  max_users: number;
-  max_registrations?: number;
-  max_speakers?: number;
-  max_sessions?: number;
-  max_rooms?: number;
-  max_ticket_categories?: number;
-  max_badge_templates?: number;
-  max_certificate_templates?: number;
-  max_emails_per_event?: number;
-  storage_quota_mb: number;
-  display_order: number;
-  is_popular: boolean;
-  color_hex?: string;
-  razorpay_plan_id?: string;
-  stripe_product_id?: string;
-  stripe_price_id?: string;
-  is_active: boolean;
-  version?: number;
-  lifecycle_status?: "DRAFT" | "REVIEW" | "PUBLISHED" | "RETIRED";
-  effective_at?: string | null;
-  retired_at?: string | null;
-  created_at: string;
-  subscribers_count?: number;
-  mrr?: number;
 }
 
 export interface FeatureMatrixItem {
@@ -263,7 +233,7 @@ export interface Addon {
   retired_at?: string | null;
   created_at: string;
   feature_ids?: string[];
-  feature_assignments?: AddonFeatureAssignment[];
+  feature_assignments?: TypedFeatureAssignment[];
   features_spec?: { category: string; feature: string; value: string; price?: number }[];
   hardware_spec?: { item_id: string; quantity: number; days: number }[];
   staff_spec?: { role_id: string; quantity: number; days: number }[];
@@ -274,46 +244,12 @@ export interface Addon {
 }
 
 
-export interface OrgSubscription {
-  id: string;
-  organization_id: string;
-  organization_name: string;
-  organization_slug: string;
-  plan_id: string;
-  plan_name: string;
-  status: string;
-  stripe_customer_id?: string;
-  stripe_subscription_id?: string;
-  trial_ends_at?: string;
-  current_period_end?: string;
-  cancel_at_period_end: boolean;
-  created_at: string;
-}
-
-export interface Subscription {
-  id: string
-  organization_id: string
-  org_name: string
-  org_slug: string
-  plan_name: string
-  plan_id: string
-  plan_color_hex: string
-  status: 'ACTIVE' | 'TRIAL' | 'GRACE_PERIOD' | 'SUSPENDED' | 'EXPIRED' | 'CANCELLED'
-  trial_ends_at: string | null
-  current_period_end: string | null
-  stripe_customer_id: string | null
-  stripe_subscription_id: string | null
-  mrr: number
-  mrr_inr: number
-  days_until_trial_end: number | null
-}
-
 export interface Invoice {
   id: string;
   organization_id: string;
   org_name: string;
   organization_name?: string; // compatibility
-  plan_name: string;
+  offer_name: string;
   amount: number;
   amount_inr: number;
   gst_amount: number;
@@ -361,6 +297,7 @@ export interface RevenueMetric {
 
 export interface GlobalUser {
   id: string;
+  version: number;
   email: string;
   first_name: string;
   last_name: string;
@@ -450,8 +387,8 @@ export interface OrganizationDossier {
   };
   owner?: { id: string; name: string; email: string } | null;
   health: { score?: number | null; status: string; warnings: string[] };
-  subscription?: { id: string; plan_id: string; plan_name: string; status: string; billing_model?: string | null; currency: string; price_per_event?: number | null; trial_ends_at?: string | null; current_period_end?: string | null; cancel_at_period_end: boolean; created_at: string } | null;
-  subscription_history: OrganizationDossier["subscription"][];
+  contract?: { id: string; offer_id?: string | null; offer_name: string; status: string; billing_interval?: string | null; currency: string; starts_at?: string | null; ends_at?: string | null; auto_renew: boolean; cancel_at_period_end: boolean } | null;
+  contract_history: OrganizationDossier["contract"][];
   event_entitlement: { purchased: number; reserved: number; consumed: number; remaining: number; actual_events: number; activations: Record<string, number> };
   grants: Array<{ id: string; type: string; source: string; status: string; total?: number | null; consumed?: number | null; reserved?: number | null; valid_until?: string | null }>;
   capabilities: Array<{ id: string; key: string; name: string; category?: string | null; description?: string | null; enabled: boolean; source: "plan" | "addon" | "override" | "none"; extended: boolean; expires_at?: string | null; reason?: string | null }>;
@@ -648,6 +585,7 @@ export interface OrgEvent {
 
 export interface OrganizationMember {
   id: string;
+  version: number;
   user_id: string | null;
   name: string;
   first_name: string | null;
@@ -664,6 +602,7 @@ export interface OrganizationMember {
 }
 
 export interface OrganizationProvisionPayload {
+  organization_kind: "NORMAL" | "EMC" | "CLIENT";
   name: string;
   slug: string;
   owner_email: string;
@@ -676,7 +615,7 @@ export interface OrganizationProvisionPayload {
 
 export interface OrganizationProvisionResult {
   organization: AdminOrg;
-  owner_invitation: { membership_id: string; email: string; token: string };
+  owner_invitation: { membership_id: string; email: string; token: string | null; link_available?: boolean };
   replayed: boolean;
 }
 
@@ -724,19 +663,6 @@ export const adminApi = {
     apiClient.put(`/platform/organisations/${id}`, data),
 
 
-  getSubscriptionPlans: () =>
-    apiClient.get<SubscriptionPlan[]>("/platform/subscription-plans"),
-
-  createPlan: (data: Partial<SubscriptionPlan>, reason: string, idempotencyKey: string) =>
-    apiClient.post<any>("/platform/subscription-plans", data, {
-      headers: { "Idempotency-Key": idempotencyKey, "X-Admin-Reason": reason },
-    }),
-
-  updatePlan: (id: string, data: Partial<SubscriptionPlan>, version: number, reason: string, idempotencyKey: string) =>
-    apiClient.patch<any>(`/platform/subscription-plans/${id}`, data, {
-      headers: { "If-Match": String(version), "Idempotency-Key": idempotencyKey, "X-Admin-Reason": reason },
-    }),
-
   getFeaturesCatalog: () =>
     apiClient.get<FeatureCatalogItem[]>("/platform/features"),
 
@@ -744,31 +670,68 @@ export const adminApi = {
     apiClient.get<FeatureMatrixCategory[]>("/platform/features/matrix"),
 
   getAddons: () =>
-    apiClient.get<Addon[]>("/platform/addons"),
+    apiClient.get<Addon[]>("/platform/venue/addons"),
 
-  createAddon: (data: any, reason: string, idempotencyKey: string) =>
-    apiClient.post<any>("/platform/addons", data, {
-      headers: { "Idempotency-Key": idempotencyKey, "X-Admin-Reason": reason },
+  getCloudCatalogue: (family?: string) =>
+    apiClient.get<CloudCommercialOffer[]>("/platform/commercial/offers", { params: family ? { family } : undefined }),
+
+  createCloudOffer: (payload: CloudOfferCreateInput, idempotencyKey: string) =>
+    apiClient.post<CloudCommercialOffer>("/platform/commercial/offers", payload, {
+      headers: { "If-Match": "0", "Idempotency-Key": idempotencyKey },
     }),
 
-  patchAddon: (addonId: string, data: any, version: number, reason: string, idempotencyKey: string) =>
-    apiClient.patch<any>(`/platform/addons/${addonId}`, data, {
-      headers: { "If-Match": String(version), "Idempotency-Key": idempotencyKey, "X-Admin-Reason": reason },
+  previewCloudPricing: (payload: CloudPricingPreviewRequest) =>
+    apiClient.post<CloudPricingPreview>("/platform/commercial/pricing/preview", payload),
+
+  getCloudPricingConfigurations: () =>
+    apiClient.get<CloudPricingConfiguration[]>("/platform/commercial/pricing/configurations"),
+
+  saveCloudPricingConfiguration: (payload: CloudPricingConfigurationInput, idempotencyKey: string) =>
+    apiClient.post<{ id: string; name: string; account_type: string; version: number }>("/platform/commercial/pricing/configurations", payload, {
+      headers: { "Idempotency-Key": idempotencyKey },
     }),
 
-  deleteAddon: (addonId: string, version: number, reason: string, idempotencyKey: string) =>
-    apiClient.delete(`/platform/addons/${addonId}`, {
-      headers: { "If-Match": String(version), "Idempotency-Key": idempotencyKey, "X-Admin-Reason": reason },
+  createCloudOfferVersion: (offerId: string, data: CloudOfferVersionInput, version: number, idempotencyKey: string) =>
+    apiClient.post<{ id: string; version_number: number }>(`/platform/commercial/offers/${offerId}/versions`, data, {
+      headers: { "If-Match": String(version), "Idempotency-Key": idempotencyKey },
     }),
 
-  getPlanFeatures: (planId: string) =>
-    apiClient.get<string[]>(`/platform/subscription-plans/${planId}/features`),
+  getCloudOfferVersions: (offerId: string) =>
+    apiClient.get<CloudOfferVersionHistory[]>(`/platform/commercial/offers/${offerId}/versions`),
 
-  updatePlanFeatures: (planId: string, featureKeys: string[]) =>
-    apiClient.put(`/platform/subscription-plans/${planId}/features`, { feature_keys: featureKeys }),
+  getCloudOfferImpactPreview: (offerId: string, versionId?: string) =>
+    apiClient.get<CloudOfferImpactPreview>("/platform/commercial/impact-preview", { params: { offer_id: offerId, version_id: versionId } }),
 
-  getSubscriptions: (params?: { skip?: number; limit?: number; status?: string; plan_id?: string }) =>
-    apiClient.get<PaginatedResponse<OrgSubscription>>("/platform/subscriptions", { params }),
+  publishCloudOfferVersion: (versionId: string, version: number, idempotencyKey: string) =>
+    apiClient.post<{ id: string }>(`/platform/commercial/offer-versions/${versionId}/publish`, undefined, {
+      headers: { "If-Match": String(version), "Idempotency-Key": idempotencyKey },
+    }),
+
+  getCloudCommercialRequests: () =>
+    apiClient.get<CloudCommercialRequest[]>("/platform/commercial/requests"),
+
+  createCloudCommercialRequest: (payload: CloudAdminCommercialRequestInput, idempotencyKey: string) =>
+    apiClient.post<{ id: string; status: string; version: number }>("/platform/commercial/requests", payload, {
+      headers: { "Idempotency-Key": idempotencyKey },
+    }),
+
+  decideCloudCommercialRequest: (requestId: string, decision: "APPROVED" | "REJECTED" | "QUOTE_ISSUED", reason: string, version: number, idempotencyKey: string) =>
+    apiClient.post<{ id: string; status: string; version: number }>(`/platform/commercial/requests/${requestId}/decision`, {
+      decision,
+      reason,
+      quote_reference: decision === "QUOTE_ISSUED" ? `QUOTE-${requestId.slice(0, 8).toUpperCase()}` : undefined,
+    }, { headers: { "If-Match": String(version), "Idempotency-Key": idempotencyKey } }),
+
+  activateCloudCommercialRequest: (requestId: string, version: number, idempotencyKey: string) =>
+    apiClient.post<{ contract_id: string; invoice_id: string; contract_status: string }>(`/platform/commercial/requests/${requestId}/activate`, undefined, { headers: { "If-Match": String(version), "Idempotency-Key": idempotencyKey } }),
+
+  getAdminEmcAccounts: () => apiClient.get<AdminEmcAccount[]>("/platform/commercial/emc/accounts"),
+  getAdminEmcWorkspaces: (accountId: string) => apiClient.get<any[]>(`/platform/commercial/emc/accounts/${accountId}/workspaces`),
+  createAdminEmcWorkspace: (accountId: string, payload: { organization_id: string; reason: string }, version: number, idempotencyKey: string) => apiClient.post<any>(`/platform/commercial/emc/accounts/${accountId}/workspaces`, payload, { headers: { "If-Match": String(version), "Idempotency-Key": idempotencyKey } }),
+  getAdminEmcAllocations: (accountId: string) => apiClient.get<any[]>(`/platform/commercial/emc/accounts/${accountId}/allocations`),
+  getAdminEmcHistory: (accountId: string) => apiClient.get<{ usage: any[]; contracts: any[] }>(`/platform/commercial/emc/accounts/${accountId}/history`),
+  createAdminEmcAllocation: (accountId: string, payload: any, version: number, idempotencyKey: string) => apiClient.post<any>(`/platform/commercial/emc/accounts/${accountId}/allocations`, payload, { headers: { "If-Match": String(version), "Idempotency-Key": idempotencyKey } }),
+  transferAdminEmcAllocation: (accountId: string, payload: any, version: number, idempotencyKey: string) => apiClient.post<any>(`/platform/commercial/emc/accounts/${accountId}/allocations/transfers`, payload, { headers: { "If-Match": String(version), "Idempotency-Key": idempotencyKey } }),
 
   getInvoices: (params?: { skip?: number; limit?: number; status?: string; org_id?: string }) =>
     apiClient.get<PaginatedResponse<Invoice>>("/platform/invoices", { params }),
@@ -851,21 +814,13 @@ export const adminApi = {
   getHealth: () =>
     apiClient.get<PlatformHealth>("/platform/health"),
 
-  getSubscriptionsHealthSummary: () =>
-    apiClient.get<StatusCounts>("/platform/subscriptions/health-summary"),
-
-  changeOrgPlan: (orgId: string, planId: string, reason: string) =>
-    apiClient.patch<any>(`/platform/organizations/${orgId}/subscription/plan`, { plan_id: planId, reason }),
-
-  extendTrial: (orgId: string, days: number, reason: string) =>
-    apiClient.patch<any>(`/platform/organizations/${orgId}/trial/extend`, { days, reason }),
-
   applyCredit: (orgId: string, amount: number, currency: string, reason: string) =>
     apiClient.post<any>(`/platform/organizations/${orgId}/apply-credit`, { amount, currency, reason }),
 
-  reset2FA: (userId: string, reason: string) =>
+  reset2FA: (userId: string, reason: string, version: number, key: string) =>
     apiClient.delete(`/platform/users/${userId}/2fa`, {
       data: { reason },
+      headers: { "If-Match": String(version), "Idempotency-Key": key },
     }),
 
   getOrgLimits: (orgId: string) =>
@@ -896,26 +851,31 @@ export const adminApi = {
       headers: { "Idempotency-Key": idempotencyKey },
     }),
 
-  getOrganizationMembers: (orgId: string) =>
-    apiClient.get<OrganizationMember[]>(`/platform/organisations/${orgId}/members`),
+  getOrganizationMembers: (orgId: string, signal?: AbortSignal) =>
+    apiClient.get<OrganizationMember[]>(`/platform/organisations/${orgId}/members`, { signal }),
 
-  inviteOrganizationMember: (orgId: string, payload: { email: string; org_role: string; reason: string }) =>
-    apiClient.post<{ membership_id: string; email: string; invite_token: string }>(`/platform/organisations/${orgId}/members`, payload),
+  inviteOrganizationMember: (orgId: string, payload: { email: string; org_role: string; reason: string }, key: string) =>
+    apiClient.post<{ membership_id: string; email: string; invite_token: string | null; replayed: boolean }>(`/platform/organisations/${orgId}/members`, payload,
+      { headers: { "Idempotency-Key": key } }),
 
-  updateOrganizationMember: (orgId: string, memberId: string, orgRole: string, reason: string) =>
-    apiClient.patch(`/platform/organisations/${orgId}/members/${memberId}`, { org_role: orgRole, reason }),
+  updateOrganizationMember: (orgId: string, memberId: string, orgRole: string, reason: string, version: number, key: string) =>
+    apiClient.patch(`/platform/organisations/${orgId}/members/${memberId}`, { org_role: orgRole, reason },
+      { headers: { "If-Match": String(version), "Idempotency-Key": key } }),
 
-  removeOrganizationMember: (orgId: string, memberId: string, reason: string) =>
-    apiClient.delete(`/platform/organisations/${orgId}/members/${memberId}`, { data: { reason } }),
+  removeOrganizationMember: (orgId: string, memberId: string, reason: string, version: number, key: string) =>
+    apiClient.delete(`/platform/organisations/${orgId}/members/${memberId}`, { data: { reason },
+      headers: { "If-Match": String(version), "Idempotency-Key": key } }),
 
-  assignOrganizationMemberEvent: (orgId: string, memberId: string, eventId: string, permissions: Record<string, boolean>, reason: string) =>
-    apiClient.put(`/platform/organisations/${orgId}/members/${memberId}/events/${eventId}`, { permissions, reason }, { headers: { "Idempotency-Key": crypto.randomUUID() } }),
+  assignOrganizationMemberEvent: (orgId: string, memberId: string, eventId: string, permissions: Record<string, boolean>, reason: string, version: number, key: string) =>
+    apiClient.put(`/platform/organisations/${orgId}/members/${memberId}/events/${eventId}`, { permissions, reason },
+      { headers: { "If-Match": String(version), "Idempotency-Key": key } }),
 
-  unassignOrganizationMemberEvent: (orgId: string, memberId: string, eventId: string, reason: string) =>
-    apiClient.delete(`/platform/organisations/${orgId}/members/${memberId}/events/${eventId}`, { data: { reason } }),
+  unassignOrganizationMemberEvent: (orgId: string, memberId: string, eventId: string, reason: string, version: number, key: string) =>
+    apiClient.delete(`/platform/organisations/${orgId}/members/${memberId}/events/${eventId}`, { data: { reason },
+      headers: { "If-Match": String(version), "Idempotency-Key": key } }),
 
   getOrgAddons: (orgId: string) =>
-    apiClient.get<any[]>(`/platform/organizations/${orgId}/addons`),
+    apiClient.get<any[]>(`/platform/commercial/contracts?organization_id=${encodeURIComponent(orgId)}`),
 
   impersonateUser: (userId: string, data: { reason: string }) =>
     apiClient.post<{ access_token: string; token_type: string; expires_in: number; session_id: string }>(
@@ -929,14 +889,15 @@ export const adminApi = {
   deleteOrg: (orgId: string, reason: string) =>
     apiClient.delete(`/platform/organizations/${orgId}`, { data: { reason } }),
 
-  updateUserStatus: (userId: string, isActive: boolean, reason: string) =>
-    apiClient.patch<any>(`/platform/users/${userId}/status`, { is_active: isActive, reason }),
+  updateUserStatus: (userId: string, isActive: boolean, reason: string, version: number, key: string) =>
+    apiClient.patch<{ message: string; is_active: boolean; version: number; policy_revision: number; sessions_revoked: number; correlation_id: string }>(`/platform/users/${userId}/status`,
+      { is_active: isActive, reason }, { headers: { "If-Match": String(version), "Idempotency-Key": key } }),
 
-  updateUserPlatformRole: (userId: string, platformRole: "SUPER_ADMIN" | "SUPPORT_ADMIN" | "FINANCE_ADMIN" | "NONE", reason: string) =>
-    apiClient.patch<{ message: string; platform_role: string | null }>(`/platform/users/${userId}/platform-role`, {
+  updateUserPlatformRole: (userId: string, platformRole: "SUPER_ADMIN" | "SUPPORT_ADMIN" | "FINANCE_ADMIN" | "NONE", reason: string, version: number, key: string) =>
+    apiClient.patch<{ message: string; platform_role: string | null; version: number; policy_revision: number }>(`/platform/users/${userId}/platform-role`, {
       platform_role: platformRole,
       reason,
-    }),
+    }, { headers: { "If-Match": String(version), "Idempotency-Key": key } }),
 
   deleteOrgFeatureOverride: (orgId: string, featureId: string, reason: string) =>
     apiClient.delete(`/platform/organizations/${orgId}/features/overrides/${featureId}`, { data: { reason } }),
@@ -951,24 +912,6 @@ export const adminApi = {
     is_sensitive?: boolean;
   }) =>
     apiClient.get<{ items: any[]; next_cursor: string | null; has_next: boolean }>("/platform/audit", { params }),
-
-  patchPlanLimits: (planId: string, data: any) =>
-    apiClient.patch<any>(`/platform/plans/${planId}`, data),
-
-  updatePlanFeaturesBulk: (planId: string, featureKeys: string[]) =>
-    apiClient.put(`/platform/plans/${planId}/features`, { feature_keys: featureKeys }),
-
-  bulkExtendTrial: (data: { org_ids: string[]; days: number; reason: string }) =>
-    apiClient.post<any>(`/platform/subscriptions/bulk-extend`, data),
-
-  bulkChangePlan: (data: { org_ids: string[]; plan_id: string; reason: string }) =>
-    apiClient.post<any>(`/platform/subscriptions/bulk-change-plan`, data),
-
-  cancelSubscription: (subId: string, reason: string) =>
-    apiClient.post<any>(`/platform/subscriptions/${subId}/cancel`, { reason }),
-
-  reactivateSubscription: (subId: string, reason: string) =>
-    apiClient.post<any>(`/platform/subscriptions/${subId}/reactivate`, { reason }),
 
   getInvoiceItems: (invoiceId: string) =>
     apiClient.get<any[]>(`/platform/invoices/${invoiceId}/items`),
@@ -985,9 +928,10 @@ export const adminApi = {
   getRevenueAnalytics: () =>
     apiClient.get<any>("/platform/revenue/analytics"),
 
-  forceLogoutUser: (userId: string, reason: string) =>
+  forceLogoutUser: (userId: string, reason: string, version: number, key: string) =>
     apiClient.delete(`/platform/users/${userId}/sessions`, {
       data: { reason },
+      headers: { "If-Match": String(version), "Idempotency-Key": key },
     }),
 
   exportAuditLogs: (payload: any) =>
@@ -1057,12 +1001,6 @@ export const useAdminOrgFeatures = (id: string) =>
     enabled: !!id,
   });
 
-export const useSubscriptionPlans = () =>
-  useQuery({
-    queryKey: adminKeys.subscriptionPlans,
-    queryFn: adminApi.getSubscriptionPlans,
-  });
-
 export const useFeaturesCatalog = () =>
   useQuery({
     queryKey: adminKeys.featuresCatalog,
@@ -1081,38 +1019,159 @@ export const useAddons = () =>
     queryFn: adminApi.getAddons,
   });
 
-export const useCreateAddon = () => {
+export const useCreateFeatureCatalogItem = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ data, reason, idempotencyKey = crypto.randomUUID() }: { data: any; reason: string; idempotencyKey?: string }) =>
-      adminApi.createAddon(data, reason, idempotencyKey),
+    mutationFn: (payload: FeatureCatalogPayload) => adminApi.createFeatureCatalogItem(payload),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: adminKeys.featuresCatalog }),
+  });
+};
+
+export const useUpdateFeatureCatalogItem = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: FeatureCatalogPayload }) => adminApi.updateFeatureCatalogItem(id, data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: adminKeys.featuresCatalog }),
+  });
+};
+
+export const useDeleteFeatureCatalogItem = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => adminApi.deleteFeatureCatalogItem(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: adminKeys.featuresCatalog }),
+  });
+};
+
+export const useCloudCatalogue = (family?: string) =>
+  useQuery({
+    queryKey: ["cloud-commercial", "catalogue", family ?? "all"],
+    queryFn: () => adminApi.getCloudCatalogue(family),
+    staleTime: 30_000,
+  });
+
+export const useCreateCloudOffer = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ payload, idempotencyKey = crypto.randomUUID() }: { payload: CloudOfferCreateInput; idempotencyKey?: string }) =>
+      adminApi.createCloudOffer(payload, idempotencyKey),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cloud-commercial", "catalogue"] }),
+  });
+};
+
+export const useCloudPricingPreview = () => useMutation({
+  mutationFn: (payload: CloudPricingPreviewRequest) => adminApi.previewCloudPricing(payload),
+});
+
+export const useCloudPricingConfigurations = () => useQuery({
+  queryKey: ["cloud-commercial", "pricing-configurations"],
+  queryFn: () => adminApi.getCloudPricingConfigurations(),
+  staleTime: 30_000,
+});
+
+export const useSaveCloudPricingConfiguration = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ payload, idempotencyKey = crypto.randomUUID() }: { payload: CloudPricingConfigurationInput; idempotencyKey?: string }) =>
+      adminApi.saveCloudPricingConfiguration(payload, idempotencyKey),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cloud-commercial", "pricing-configurations"] }),
+  });
+};
+
+export const useCreateCloudOfferVersion = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ offerId, data, version, idempotencyKey = crypto.randomUUID() }: {
+      offerId: string;
+      data: CloudOfferVersionInput;
+      version: number;
+      idempotencyKey?: string;
+    }) => adminApi.createCloudOfferVersion(offerId, data, version, idempotencyKey),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cloud-commercial", "catalogue"] }),
+  });
+};
+
+export const useCloudOfferVersions = (offerId?: string) => useQuery({
+  queryKey: ["cloud-commercial", "offer-versions", offerId],
+  queryFn: () => adminApi.getCloudOfferVersions(offerId!),
+  enabled: !!offerId,
+  staleTime: 30_000,
+});
+
+export const useCloudOfferImpactPreview = (offerId?: string, versionId?: string) => useQuery({
+  queryKey: ["cloud-commercial", "impact-preview", offerId, versionId],
+  queryFn: () => adminApi.getCloudOfferImpactPreview(offerId!, versionId),
+  enabled: !!offerId,
+  staleTime: 15_000,
+});
+
+export const usePublishCloudOfferVersion = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ versionId, version, idempotencyKey = crypto.randomUUID() }: { versionId: string; version: number; idempotencyKey?: string }) =>
+      adminApi.publishCloudOfferVersion(versionId, version, idempotencyKey),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cloud-commercial", "catalogue"] }),
+  });
+};
+
+export const useCloudCommercialRequests = () =>
+  useQuery({
+    queryKey: ["cloud-commercial", "requests"],
+    queryFn: () => adminApi.getCloudCommercialRequests(),
+    staleTime: 15_000,
+  });
+
+export const useCreateCloudCommercialRequest = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ payload, idempotencyKey = crypto.randomUUID() }: { payload: CloudAdminCommercialRequestInput; idempotencyKey?: string }) =>
+      adminApi.createCloudCommercialRequest(payload, idempotencyKey),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cloud-commercial", "requests"] }),
+  });
+};
+
+export const useDecideCloudCommercialRequest = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ requestId, decision, reason, version, idempotencyKey = crypto.randomUUID() }: { requestId: string; decision: "APPROVED" | "REJECTED" | "QUOTE_ISSUED"; reason: string; version: number; idempotencyKey?: string }) => adminApi.decideCloudCommercialRequest(requestId, decision, reason, version, idempotencyKey),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cloud-commercial", "requests"] }),
+  });
+};
+
+export const useActivateCloudCommercialRequest = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ requestId, version, idempotencyKey = crypto.randomUUID() }: { requestId: string; version: number; idempotencyKey?: string }) => adminApi.activateCloudCommercialRequest(requestId, version, idempotencyKey),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: adminKeys.addons });
+      queryClient.invalidateQueries({ queryKey: ["cloud-commercial", "requests"] });
+      queryClient.invalidateQueries({ queryKey: ["cloud-commercial", "contracts"] });
     },
   });
 };
 
-export const useUpdateAddon = () => {
+export const useAdminEmcAccounts = () => useQuery({ queryKey: ["cloud-commercial", "emc", "accounts"], queryFn: () => adminApi.getAdminEmcAccounts(), staleTime: 30_000 });
+export const useAdminEmcWorkspaces = (accountId?: string) => useQuery({ queryKey: ["cloud-commercial", "emc", "workspaces", accountId], queryFn: () => adminApi.getAdminEmcWorkspaces(accountId!), enabled: !!accountId, staleTime: 15_000 });
+export const useCreateAdminEmcWorkspace = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ addonId, data, version, reason, idempotencyKey = crypto.randomUUID() }: { addonId: string; data: any; version: number; reason: string; idempotencyKey?: string }) =>
-      adminApi.patchAddon(addonId, data, version, reason, idempotencyKey),
-    onSuccess: (_, { addonId }) => {
-      queryClient.invalidateQueries({ queryKey: adminKeys.addons });
-      queryClient.invalidateQueries({ queryKey: adminKeys.addonVersions(addonId) });
-    },
+    mutationFn: ({ accountId, organizationId, reason, version, idempotencyKey = crypto.randomUUID() }: { accountId: string; organizationId: string; reason: string; version: number; idempotencyKey?: string }) => adminApi.createAdminEmcWorkspace(accountId, { organization_id: organizationId, reason }, version, idempotencyKey),
+    onSuccess: (_data, variables) => { void queryClient.invalidateQueries({ queryKey: ["cloud-commercial", "emc", "workspaces", variables.accountId] }); void queryClient.invalidateQueries({ queryKey: ["cloud-commercial", "emc", "accounts"] }); },
   });
 };
-
-export const useDeleteAddon = () => {
+export const useAdminEmcAllocations = (accountId?: string) => useQuery({ queryKey: ["cloud-commercial", "emc", "allocations", accountId], queryFn: () => adminApi.getAdminEmcAllocations(accountId!), enabled: !!accountId, staleTime: 15_000 });
+export const useAdminEmcHistory = (accountId?: string) => useQuery({ queryKey: ["cloud-commercial", "emc", "history", accountId], queryFn: () => adminApi.getAdminEmcHistory(accountId!), enabled: !!accountId, staleTime: 15_000 });
+export const useCreateAdminEmcAllocation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ addonId, version, reason, idempotencyKey = crypto.randomUUID() }: { addonId: string; version: number; reason: string; idempotencyKey?: string }) =>
-      adminApi.deleteAddon(addonId, version, reason, idempotencyKey),
-    onSuccess: (_, { addonId }) => {
-      queryClient.invalidateQueries({ queryKey: adminKeys.addons });
-      queryClient.invalidateQueries({ queryKey: adminKeys.addonVersions(addonId) });
-    },
+    mutationFn: ({ accountId, payload, version, idempotencyKey = crypto.randomUUID() }: { accountId: string; payload: any; version: number; idempotencyKey?: string }) => adminApi.createAdminEmcAllocation(accountId, payload, version, idempotencyKey),
+    onSuccess: (_data, variables) => { void queryClient.invalidateQueries({ queryKey: ["cloud-commercial", "emc", "allocations", variables.accountId] }); void queryClient.invalidateQueries({ queryKey: ["cloud-commercial", "emc", "accounts"] }); },
+  });
+};
+export const useTransferAdminEmcAllocation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ accountId, payload, version, idempotencyKey = crypto.randomUUID() }: { accountId: string; payload: any; version: number; idempotencyKey?: string }) => adminApi.transferAdminEmcAllocation(accountId, payload, version, idempotencyKey),
+    onSuccess: (_data, variables) => { void queryClient.invalidateQueries({ queryKey: ["cloud-commercial", "emc", "allocations", variables.accountId] }); void queryClient.invalidateQueries({ queryKey: ["cloud-commercial", "emc", "accounts"] }); },
   });
 };
 
@@ -1158,25 +1217,6 @@ export const downloadCommercialExport = (exportId: string, organizationId: strin
     params: { organization_id: organizationId },
   });
 
-export const useUpdatePlanLimits = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ planId, data }: { planId: string; data: Partial<SubscriptionPlan> }) =>
-      adminApi.patchPlanLimits(planId, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: adminKeys.subscriptionPlans });
-      queryClient.invalidateQueries({ queryKey: adminKeys.featureMatrix });
-    },
-  });
-};
-
-export const usePlanFeatures = (planId: string) =>
-  useQuery({
-    queryKey: adminKeys.planFeatures(planId),
-    queryFn: () => adminApi.getPlanFeatures(planId),
-    enabled: !!planId,
-  });
-
 export interface TypedFeatureAssignment {
   feature_key: string;
   name?: string;
@@ -1202,67 +1242,6 @@ export interface PlanTemplateVersion {
 }
 
 export type AddonTemplateVersion = PlanTemplateVersion;
-
-export const usePlanTemplateVersions = (planId: string) =>
-  useQuery({
-    queryKey: adminKeys.planVersions(planId),
-    queryFn: () => apiClient.get<{ items: PlanTemplateVersion[]; next_cursor?: string | null }>(`/platform/subscription-plans/${planId}/versions`),
-    enabled: Boolean(planId),
-  });
-
-export const useAddonTemplateVersions = (addonId: string) =>
-  useQuery({
-    queryKey: adminKeys.addonVersions(addonId),
-    queryFn: () => apiClient.get<{ items: AddonTemplateVersion[]; next_cursor?: string | null }>(`/platform/addons/${addonId}/versions`),
-    enabled: Boolean(addonId),
-  });
-
-export interface AddonFeatureAssignment extends TypedFeatureAssignment {
-  operation: "REPLACE" | "INCREMENT" | "DECREMENT" | "UNLOCK";
-  validity_days?: number | null;
-  stackable?: boolean;
-  max_quantity?: number | null;
-}
-
-export const useTypedPlanFeatures = (planId: string) =>
-  useQuery({
-    queryKey: adminKeys.typedPlanFeatures(planId),
-    queryFn: async () => {
-      const res = await apiClient.get<{ items: TypedFeatureAssignment[] }>(`/platform/subscription-plans/${planId}/feature-assignments`);
-      return res || { items: [] };
-    },
-    enabled: !!planId,
-  });
-
-export const useUpdateTypedPlanFeatures = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ planId, planVersion, reason, idempotencyKey = crypto.randomUUID(), assignments }: { planId: string; planVersion: number; reason: string; idempotencyKey?: string; assignments: TypedFeatureAssignment[] }) => {
-      const feature_keys = assignments.map((a) => a.feature_key);
-      return await apiClient.put(`/platform/subscription-plans/${planId}/features`, { feature_keys, assignments }, {
-        headers: { "If-Match": String(planVersion), "Idempotency-Key": idempotencyKey, "X-Admin-Reason": reason },
-      });
-    },
-    onSuccess: (_, { planId }) => {
-      queryClient.invalidateQueries({ queryKey: adminKeys.subscriptionPlans });
-      queryClient.invalidateQueries({ queryKey: adminKeys.featureMatrix });
-      queryClient.invalidateQueries({ queryKey: adminKeys.planFeatures(planId) });
-      queryClient.invalidateQueries({ queryKey: adminKeys.typedPlanFeatures(planId) });
-    },
-  });
-};
-
-export const useAdminSubscriptions = (params?: { skip?: number; limit?: number; status?: string; plan_id?: string }) =>
-  useQuery({
-    queryKey: adminKeys.subscriptions(params),
-    queryFn: () => adminApi.getSubscriptions(params),
-  });
-
-export const useAdminInvoices = (params?: { skip?: number; limit?: number; status?: string; org_id?: string }) =>
-  useQuery({
-    queryKey: adminKeys.invoices(params),
-    queryFn: () => adminApi.getInvoices(params),
-  });
 
 export const useRevenueMetrics = (months = 12) =>
   useQuery({
@@ -1365,12 +1344,6 @@ export const usePlatformHealth = () =>
     refetchInterval: 15_000,
   });
 
-export const useSubscriptionHealthSummary = () =>
-  useQuery({
-    queryKey: adminKeys.subscriptionsHealthSummary,
-    queryFn: adminApi.getSubscriptionsHealthSummary,
-  });
-
 export const useOrgLimits = (orgId: string) =>
   useQuery({
     queryKey: adminKeys.orgLimits(orgId),
@@ -1423,41 +1396,6 @@ export const useOverrideFeature = (orgId: string) => {
   });
 };
 
-export const useCreatePlan = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ data, reason, idempotencyKey = crypto.randomUUID() }: { data: Partial<SubscriptionPlan>; reason: string; idempotencyKey?: string }) =>
-      adminApi.createPlan(data, reason, idempotencyKey),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: adminKeys.subscriptionPlans });
-      qc.invalidateQueries({ queryKey: adminKeys.featureMatrix });
-    },
-  });
-};
-
-export const useUpdatePlan = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, version, reason, idempotencyKey = crypto.randomUUID(), data }: { id: string; version: number; reason: string; idempotencyKey?: string; data: Partial<SubscriptionPlan> }) =>
-      adminApi.updatePlan(id, data, version, reason, idempotencyKey),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: adminKeys.subscriptionPlans });
-      qc.invalidateQueries({ queryKey: adminKeys.featureMatrix });
-    },
-  });
-};
-
-export const useUpdatePlanFeatures = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ planId, featureKeys }: { planId: string; featureKeys: string[] }) =>
-      adminApi.updatePlanFeatures(planId, featureKeys),
-    onSuccess: (_, variables) => {
-      qc.invalidateQueries({ queryKey: adminKeys.planFeatures(variables.planId) });
-    },
-  });
-};
-
 export const useTriggerReindex = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -1492,47 +1430,6 @@ export const useUpdateGlobalSettings = () => {
   });
 };
 
-export const useChangePlan = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ orgId, planId, reason }: { orgId: string; planId: string; reason: string }) =>
-      adminApi.changeOrgPlan(orgId, planId, reason),
-    onSuccess: (_, variables) => {
-      qc.invalidateQueries({ queryKey: adminKeys.orgDetail(variables.orgId) });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "orgs") });
-      qc.invalidateQueries({ queryKey: platformKey("admin-orgs") });
-      qc.invalidateQueries({ queryKey: platformKey("admin-subscriptions") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "orgs") });
-      qc.invalidateQueries({ queryKey: platformKey("admin-orgs") });
-      qc.invalidateQueries({ queryKey: platformKey("admin-subscriptions") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
-    },
-  });
-};
-
-export const useChangeOrgPlan = useChangePlan;
-
-export const useExtendTrial = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ orgId, days, reason }: { orgId: string; days: number; reason: string }) =>
-      adminApi.extendTrial(orgId, days, reason),
-    onSuccess: (_, variables) => {
-      qc.invalidateQueries({ queryKey: adminKeys.orgDetail(variables.orgId) });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
-      qc.invalidateQueries({ queryKey: adminKeys.subscriptionsHealthSummary });
-      qc.invalidateQueries({ queryKey: platformKey("admin-subscriptions") });
-      qc.invalidateQueries({ queryKey: platformKey("admin-dashboard") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "dashboard") });
-      qc.invalidateQueries({ queryKey: platformKey("admin-subscriptions") });
-      qc.invalidateQueries({ queryKey: platformKey("admin-dashboard") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "dashboard") });
-    },
-  });
-};
-
 export const useApplyCredit = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -1549,8 +1446,8 @@ export const useApplyCredit = () => {
 export const useReset2FA = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ userId, reason }: { userId: string; reason: string }) =>
-      adminApi.reset2FA(userId, reason),
+    mutationFn: ({ userId, reason, version, key }: { userId: string; reason: string; version: number; key: string }) =>
+      adminApi.reset2FA(userId, reason, version, key),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: adminKeys.globalUsers() });
     },
@@ -1625,8 +1522,8 @@ export const useImpersonateUser = () => {
 export const useUpdateUserStatus = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ userId, isActive, reason }: { userId: string; isActive: boolean; reason: string }) =>
-      adminApi.updateUserStatus(userId, isActive, reason),
+    mutationFn: ({ userId, isActive, reason, version, key }: { userId: string; isActive: boolean; reason: string; version: number; key: string }) =>
+      adminApi.updateUserStatus(userId, isActive, reason, version, key),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminKeys.globalUsers() });
     },
@@ -1636,11 +1533,13 @@ export const useUpdateUserStatus = () => {
 export const useUpdateUserPlatformRole = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ userId, platformRole, reason }: {
+    mutationFn: ({ userId, platformRole, reason, version, key }: {
       userId: string;
       platformRole: "SUPER_ADMIN" | "SUPPORT_ADMIN" | "FINANCE_ADMIN" | "NONE";
       reason: string;
-    }) => adminApi.updateUserPlatformRole(userId, platformRole, reason),
+      version: number;
+      key: string;
+    }) => adminApi.updateUserPlatformRole(userId, platformRole, reason, version, key),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminKeys.globalUsers() });
     },
@@ -1649,9 +1548,11 @@ export const useUpdateUserPlatformRole = () => {
 
 export const useOrganizationMembers = (orgId: string) =>
   useQuery({
-    queryKey: adminKeys.orgMembers(orgId),
-    queryFn: () => adminApi.getOrganizationMembers(orgId),
+    queryKey: [...queryKeys.organizationConsole.domain(orgId, "members"), "legacy-list"],
+    queryFn: ({ signal }) => adminApi.getOrganizationMembers(orgId, signal),
     enabled: !!orgId,
+    retry: false,
+    staleTime: 0,
   });
 
 export const useProvisionOrganization = () => {
@@ -1660,43 +1561,6 @@ export const useProvisionOrganization = () => {
     mutationFn: ({ payload, idempotencyKey }: { payload: OrganizationProvisionPayload; idempotencyKey: string }) =>
       adminApi.provisionOrganization(payload, idempotencyKey),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.organizations.all }),
-  });
-};
-
-export const useInviteOrganizationMember = (orgId: string) => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: { email: string; org_role: string; reason: string }) => adminApi.inviteOrganizationMember(orgId, payload),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: adminKeys.orgMembers(orgId) }),
-  });
-};
-
-export const useUpdateOrganizationMember = (orgId: string) => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ memberId, orgRole, reason }: { memberId: string; orgRole: string; reason: string }) =>
-      adminApi.updateOrganizationMember(orgId, memberId, orgRole, reason),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: adminKeys.orgMembers(orgId) }),
-  });
-};
-
-export const useRemoveOrganizationMember = (orgId: string) => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ memberId, reason }: { memberId: string; reason: string }) =>
-      adminApi.removeOrganizationMember(orgId, memberId, reason),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: adminKeys.orgMembers(orgId) }),
-  });
-};
-
-export const useSetOrganizationMemberEvent = (orgId: string) => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ memberId, eventId, assigned, reason }: { memberId: string; eventId: string; assigned: boolean; reason: string }) =>
-      assigned
-        ? adminApi.assignOrganizationMemberEvent(orgId, memberId, eventId, {}, reason)
-        : adminApi.unassignOrganizationMemberEvent(orgId, memberId, eventId, reason),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: adminKeys.orgMembers(orgId) }),
   });
 };
 
@@ -1744,193 +1608,6 @@ export const useDeleteOrg = () => {
 };
 
 
-export const useUpdatePlanFeaturesBulk = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ planId, featureKeys }: { planId: string; featureKeys: string[] }) =>
-      adminApi.updatePlanFeaturesBulk(planId, featureKeys),
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: adminKeys.planFeatures(vars.planId) });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "org-features") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "org-features") });
-      qc.invalidateQueries({ queryKey: adminKeys.featureMatrix });
-    },
-  });
-};
-
-export const useBulkExtendTrial = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: { org_ids: string[]; days: number; reason: string }) =>
-      adminApi.bulkExtendTrial(data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
-      qc.invalidateQueries({ queryKey: adminKeys.subscriptionsHealthSummary });
-    },
-  });
-};
-
-export const useBulkChangePlan = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: { org_ids: string[]; plan_id: string; reason: string }) =>
-      adminApi.bulkChangePlan(data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "orgs") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "orgs") });
-    },
-  });
-};
-
-export const useCancelSubscription = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ subId, reason }: { subId: string; reason: string }) =>
-      adminApi.cancelSubscription(subId, reason),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
-      qc.invalidateQueries({ queryKey: adminKeys.subscriptionsHealthSummary });
-    },
-  });
-};
-
-export const useReactivateSubscription = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ subId, reason }: { subId: string; reason: string }) =>
-      adminApi.reactivateSubscription(subId, reason),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
-      qc.invalidateQueries({ queryKey: adminKeys.subscriptionsHealthSummary });
-    },
-  });
-};
-
-export const useInvoiceItems = (invoiceId: string) =>
-  useQuery({
-    queryKey: adminKeys.invoiceItems(invoiceId),
-    queryFn: () => adminApi.getInvoiceItems(invoiceId),
-    enabled: !!invoiceId,
-  });
-
-export const useMarkInvoicePaid = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ invoiceId, reason }: { invoiceId: string; reason: string }) =>
-      adminApi.markInvoicePaid(invoiceId, reason),
-    onSuccess: (_, { invoiceId }) => {
-      qc.invalidateQueries({ queryKey: platformKey("admin", "invoices") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "invoices") });
-      qc.invalidateQueries({ queryKey: adminKeys.invoiceItems(invoiceId) });
-    },
-  });
-};
-
-export const useSendInvoiceReminder = () =>
-  useMutation({
-    mutationFn: ({ invoiceId, reason }: { invoiceId: string; reason: string }) =>
-      adminApi.sendInvoiceReminder(invoiceId, reason),
-  });
-
-export const useVoidInvoice = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ invoiceId, reason }: { invoiceId: string; reason: string }) =>
-      adminApi.voidInvoice(invoiceId, reason),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: platformKey("admin", "invoices") });
-      qc.invalidateQueries({ queryKey: platformKey("admin-invoices") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "invoices") });
-      qc.invalidateQueries({ queryKey: platformKey("admin-invoices") });
-    },
-  });
-};
-
-// Redefined below in extended commercial api hooks section
-
-export const useForceLogoutUser = () =>
-  useMutation({
-    mutationFn: ({ userId, reason }: { userId: string; reason: string }) =>
-      adminApi.forceLogoutUser(userId, reason),
-  });
-
-export const useExportAuditLogs = () =>
-  useMutation({
-    mutationFn: (payload: any) => adminApi.exportAuditLogs(payload),
-  });
-
-export const useRetryJobExecution = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (executionId: string) => adminApi.retryJobExecution(executionId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: platformKey("admin", "job-executions") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "job-stats") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "job-executions") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "job-stats") });
-    },
-  });
-};
-
-export const useCancelJobExecution = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (executionId: string) => adminApi.cancelJobExecution(executionId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: platformKey("admin", "job-executions") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "job-stats") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "job-executions") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "job-stats") });
-    },
-  });
-};
-
-export const useEndImpersonationSession = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (sessionId: string) => adminApi.endImpersonationSession(sessionId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: platformKey("admin", "impersonation-logs") });
-      qc.invalidateQueries({ queryKey: platformKey("admin", "impersonation-logs") });
-    },
-  });
-};
-
-export const useCreateFeatureCatalogItem = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: FeatureCatalogPayload) => adminApi.createFeatureCatalogItem(data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: adminKeys.featuresCatalog });
-    },
-  });
-};
-
-export const useUpdateFeatureCatalogItem = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: FeatureCatalogPayload }) => adminApi.updateFeatureCatalogItem(id, data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: adminKeys.featuresCatalog });
-    },
-  });
-};
-
-export const useDeleteFeatureCatalogItem = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => adminApi.deleteFeatureCatalogItem(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: adminKeys.featuresCatalog });
-    },
-  });
-};
-
 export const useReorderFeatureCategories = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -1957,26 +1634,6 @@ export const useJobFailures = (executionId: string) =>
     queryKey: platformKey("admin", "job-failures", executionId),
     queryFn: () => adminApi.getJobFailures(executionId),
     enabled: !!executionId,
-  });
-
-export const useSubscriptions = (params?: {
-  status?: string;
-  search?: string;
-  plan_id?: string;
-  skip?: number;
-  limit?: number;
-}) =>
-  useQuery({
-    queryKey: platformKey("admin-subscriptions", params),
-    queryFn: () =>
-      apiClient.get<{
-        items: Subscription[];
-        total: number;
-        summary: { total_mrr_inr: number; at_risk_count: number };
-      }>("/platform/subscriptions", {
-        params,
-      }),
-    staleTime: 30_000,
   });
 
 export const useRevenueAnalytics = (period = "12m") =>
@@ -2034,8 +1691,25 @@ export const useAuditLogs = (params: {
 export const useForceLogout = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (userId: string) => apiClient.delete<any>(`/platform/users/${userId}/sessions`),
+    mutationFn: ({ userId, reason, version, key }: { userId: string; reason: string; version: number; key: string }) =>
+      adminApi.forceLogoutUser(userId, reason, version, key),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: platformKey('admin-users') }),
+  });
+};
+
+export const useForceLogoutUser = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, reason, version, key }: { userId: string; reason: string; version: number; key: string }) => adminApi.forceLogoutUser(userId, reason, version, key),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: platformKey('admin-users') }),
+  });
+};
+
+export const useEndImpersonationSession = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionId: string) => adminApi.endImpersonationSession(sessionId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: adminKeys.impersonationLogs() }),
   });
 };
 
@@ -3408,6 +3082,170 @@ export const useConvertQuoteToProposal = (quoteId: string, organizationId?: stri
     },
     onError: (e: any) => toast.error(e.message || 'Proposal conversion failed'),
   })
+}
+
+export interface CloudOfferCreateInput {
+  code: string;
+  product_family: "WORKSPACE" | "EVENT" | "EMC" | "CAPACITY_ADDON" | "VENUE" | "VENUE_ADDON";
+  name: string;
+  display_name: string;
+  description?: string;
+  scope_type: string;
+  is_quote_only: boolean;
+  display_order: number;
+  change_reason: string;
+}
+
+export interface CloudCommercialPrice {
+  billing_interval: string;
+  pricing_unit: string;
+  amount: number;
+  currency: string;
+  tax_mode: string;
+}
+
+export interface CloudPricingPreviewRequest {
+  account_type: "ORGANIZER" | "EMC";
+  workspace_offer_code?: string;
+  workspace_billing_interval?: string;
+  emc_offer_code?: string;
+  capacity_addon_codes?: string[];
+  events?: Array<{ event_id: string; offer_code?: string; quantity?: number; capacity_addon_codes?: string[] }>;
+}
+
+export interface CloudPricingPreview {
+  price_book_version: string;
+  quote_required: boolean;
+  currency: string;
+  line_items: Array<{ code: string; display_name: string; product_family: string; quantity: number; unit_price: number; line_total: number; billing_interval: string }>;
+  subtotal: number;
+  gst_rate: number;
+  gst: number;
+  total: number;
+  warnings: string[];
+}
+
+export interface CloudPricingConfigurationInput {
+  name: string;
+  payload: CloudPricingPreviewRequest;
+  preview_snapshot: CloudPricingPreview;
+}
+
+export interface CloudPricingConfiguration {
+  id: string;
+  name: string;
+  account_type: "ORGANIZER" | "EMC";
+  payload: CloudPricingPreviewRequest;
+  preview: CloudPricingPreview;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CloudCommercialEntitlement {
+  key: string;
+  scope_type: string;
+  quantity: number | null;
+  unit_type?: string | null;
+  value_type: string;
+  consumption_model: string;
+  hard_ceiling: boolean;
+}
+
+export interface CloudCommercialOffer {
+  id: string;
+  code: string;
+  product_family: "WORKSPACE" | "EVENT" | "EMC" | "CAPACITY_ADDON" | "VENUE" | "VENUE_ADDON";
+  name: string;
+  display_name: string;
+  description?: string | null;
+  scope_type: string;
+  is_quote_only: boolean;
+  lifecycle_status: string;
+  version_id?: string | null;
+  version_number: number;
+  effective_from: string;
+  eligible_addon_codes: string[];
+  prices: CloudCommercialPrice[];
+  entitlements: CloudCommercialEntitlement[];
+}
+
+export interface CloudOfferVersionInput {
+  effective_from: string;
+  change_reason: string;
+  prices: Array<{ billing_interval: string; pricing_unit: string; amount: number; currency?: string; tax_mode?: string }>;
+  entitlements: Array<{ entitlement_key: string; scope_type: string; value_type?: string; quantity?: number | null; unit_type?: string; consumption_model?: string; hard_ceiling?: boolean }>;
+  eligible_addon_codes: string[];
+}
+
+export interface CloudOfferVersionHistory {
+  id: string;
+  offer_id: string;
+  version_number: number;
+  effective_from: string;
+  effective_until?: string | null;
+  version_status: string;
+  change_reason?: string | null;
+  published_at?: string | null;
+  eligible_addon_codes: string[];
+  prices: CloudCommercialPrice[];
+  entitlements: CloudCommercialEntitlement[];
+}
+
+export interface CloudOfferImpactPreview {
+  offer_id: string;
+  offer_code: string;
+  target_version_id: string;
+  target_version_number: number;
+  effective_from: string;
+  active_contracts_unchanged: number;
+  active_allocations_unchanged: number;
+  new_purchases_use_after_effective_date: boolean;
+  renewals_use_target_version: boolean;
+  amendments_require_approval: boolean;
+}
+
+export interface CloudCommercialRequest {
+  id: string;
+  product_family: string;
+  request_type: string;
+  status: string;
+  requested_offer_codes: string[];
+  requested_capacity: Record<string, unknown>;
+  requirements: Record<string, unknown>;
+  quote_id?: string | null;
+  quote_reference?: string | null;
+  quote_status?: string | null;
+  quote_valid_until?: string | null;
+  contract_id?: string | null;
+  contract_status?: string | null;
+  invoice_id?: string | null;
+  payment_state?: string | null;
+  last_response?: string | null;
+  last_response_at?: string | null;
+  next_action: string;
+  version: number;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface CloudAdminCommercialRequestInput extends CloudPricingPreviewRequest {
+  organization_id: string;
+  request_type: "QUOTE" | "CUSTOM_CAPACITY" | "ENTERPRISE" | "EMC";
+  requested_capacity?: Record<string, number>;
+  requirements: Record<string, unknown>;
+  billing_profile: Record<string, unknown>;
+  reason: string;
+}
+
+export interface AdminEmcAccount {
+  id: string;
+  owner_organization_id: string;
+  status: string;
+  currency: string;
+  country: string;
+  version: number;
+  created_at: string;
 }
 
 export const useSendProposalToOrganiser = (propId: string, organizationId?: string) => {

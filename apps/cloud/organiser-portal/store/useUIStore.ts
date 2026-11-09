@@ -1,7 +1,23 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+export type OrganisationBackground =
+  | 'landscape'
+  | 'aurora'
+  | 'mist'
+  | 'celestial'
+  | 'dune'
+  | 'emerald'
+  | 'prism'
+  | 'solaris'
+  | 'topo'
+  | 'cyber'
+  | 'glacier'
+  | 'monochrome'
+  | 'sakura';
+
 interface UIState {
+  organisationBackground: OrganisationBackground;
   isSidebarCollapsed: boolean;
   isMobileOpen: boolean;
   isSecondarySidebarOpen: boolean;
@@ -13,11 +29,14 @@ interface UIState {
   setSecondarySidebarOpen: (open: boolean) => void;
   toggleSecondarySidebar: () => void;
   setSelectedEventService: (service: string | null) => void;
+  setOrganisationBackground: (preset: OrganisationBackground) => void;
+  resetForAccessContext: () => void;
 }
 
 export const useUIStore = create<UIState>()(
   persist(
     (set) => ({
+      organisationBackground: 'landscape',
       isSidebarCollapsed: false,
       isMobileOpen: false,
       isSecondarySidebarOpen: false,
@@ -29,12 +48,23 @@ export const useUIStore = create<UIState>()(
       setSecondarySidebarOpen: (open) => set({ isSecondarySidebarOpen: open }),
       toggleSecondarySidebar: () => set((state) => ({ isSecondarySidebarOpen: !state.isSecondarySidebarOpen })),
       setSelectedEventService: (service) => set({ selectedEventService: service }),
+      setOrganisationBackground: (organisationBackground) => {
+        if (typeof document !== 'undefined') {
+          document.documentElement.setAttribute('data-organisation-background', organisationBackground);
+        }
+        set({ organisationBackground });
+      },
+      resetForAccessContext: () => set({
+        isMobileOpen: false,
+        selectedEventService: null,
+      }),
     }),
     {
       name: 'event-os-ui-storage',
       partialize: (state) => ({
         isSidebarCollapsed: state.isSidebarCollapsed,
         isSecondarySidebarOpen: state.isSecondarySidebarOpen,
+        organisationBackground: state.organisationBackground,
       }),
     }
   )

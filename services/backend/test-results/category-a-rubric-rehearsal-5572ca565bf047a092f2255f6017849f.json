@@ -1,0 +1,17 @@
+{
+  "status": "PASSED",
+  "stage": "completed",
+  "database": "category_a_restore_20261022_5572ca565bf0",
+  "migration_revision": "20261022_3670",
+  "applied_history_rewritten": false,
+  "production_acceptance": "NOT_RUN",
+  "existing_rows_and_sequences_preserved": true,
+  "old_work_coverage_preserved": true,
+  "checkpoint_artifact": "category-a-rubric-fixture-5572ca565bf047a092f2255f6017849f-runtime.json",
+  "rubric_artifact": "category-a-rubric-fixture-5572ca565bf047a092f2255f6017849f-rubric-runtime.json",
+  "forward_only_downgrade_refused": true,
+  "downgrade_refusal_preserved_data_metadata_revision_and_sequences": true,
+  "actual_restricted_login": true,
+  "database_quarantined": true,
+  "temporary_login_removed": true
+}

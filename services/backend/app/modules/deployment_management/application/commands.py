@@ -7,8 +7,9 @@ from datetime import date
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.modules.rbac.services.event_scope import owned_event_scope
 
 from app.modules.operations_planning.models import Project
 from app.modules.deployment_management.models import (
@@ -28,7 +29,7 @@ class DeploymentCommandService:
         row = await self.db.scalar(
             select(Project).where(
                 Project.id == project_id,
-                Project.organization_id == organization_id,
+                and_(Project.organization_id == organization_id, owned_event_scope(self.db, Project.event_id, organization_id)),
             )
         )
         if row is None:

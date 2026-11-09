@@ -11,13 +11,15 @@ import uuid
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.encoders import jsonable_encoder
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.client_ip import resolve_client_ip
+from app.modules.rbac.schemas.teams import TeamCreationResult, TeamMutationResult, TeamBindingReason, TeamMemberMutationResult, TeamEventBindingWrite, TeamEventMutationResult, TeamEventActionsResult
+from app.modules.rbac.services.platform_permissions import platform_team_manager, platform_team_reader
 from app.core.cache import cache_service
 from app.core.cache_keys import TenantCacheKey
 from app.core.cache_policy import CacheTTL, ttl
@@ -52,7 +54,7 @@ from app.modules.events.services.event_job_control_service import (
 )
 from app.modules.platform.application.organization_team_commands import OrganizationTeamCommandService
 from app.modules.platform.application.organization_team_queries import OrganizationTeamQueryService
-from app.modules.platform.application.queries import OrganizationConsoleQueryService, OrganizationLifecycleQueryService, CommercialAccessQueryService, FinancialAdjustmentQueryService, PrivilegedAccessQueryService, OrganizationExportQueryService, CapabilityRestrictionQueryService, EntitlementOverrideQueryService, EventContractQueryService, ComplianceEvidenceQueryService, UsageQueryService, CapabilityDiagnosticsQueryService
+from app.modules.platform.application.queries import OrganizationConsoleQueryService, OrganizationLifecycleQueryService, FinancialAdjustmentQueryService, PrivilegedAccessQueryService, OrganizationExportQueryService, CapabilityRestrictionQueryService, EntitlementOverrideQueryService, EventContractQueryService, ComplianceEvidenceQueryService, UsageQueryService, CapabilityDiagnosticsQueryService
 from app.modules.platform.application.organization_search_queries import (
     OrganizationConsoleRegistrationQueryService,
     OrganizationConsoleSearchQueryService,
@@ -75,7 +77,6 @@ from app.modules.platform.application.usage_commands import OrganizationUsageCom
 from app.modules.platform.application.financial_adjustment_commands import FinancialAdjustmentCommandService
 from app.modules.platform.application.integration_commands import IntegrationConnectionCommandService
 from app.modules.platform.application.export_commands import OrganizationExportCommandService
-from app.modules.platform.application.commercial_access_commands import CommercialAccessCommandService
 from app.modules.platform.application.event_control_commands import EventOperationalControlCommandService
 from app.modules.platform.application.event_settings_commands import EventSettingsCommandService
 from app.modules.platform.application.registration_correction_commands import RegistrationCorrectionCommandService
@@ -103,7 +104,6 @@ from app.modules.platform.models.organization_console import (
     OrganizationTeamEvent,
     CapabilityRestriction,
     CapabilityDiagnosticEvent,
-    CommercialAccessRequest,
     PrivilegedMutationReceipt,
     OrganizationComplianceControl,
     OrganizationComplianceEvidence,
@@ -141,14 +141,12 @@ from app.modules.platform.schemas.organization_console import (
     IntegrationConnectionUpdate,
     OrganizationTeamCreate,
     OrganizationTeamUpdate,
-    OrganizationTeamAssignment,
     NotificationRuleWrite,
     NotificationChannelWrite,
     NotificationChannelVerification,
     ImpersonationHandoffCreate,
     OrganizerRolloutUpdate,
     CapabilityRestrictionCreate,
-    CommercialAccessDecision,
     LegalHoldCreate,
     LegalHoldRelease,
     ComplianceControlCreate,
@@ -165,6 +163,7 @@ from app.modules.platform.services.capability_rollout_preflight_service import (
 )
 from app.modules.platform.services.metering_service import MeteringService
 from app.modules.platform.services.lifecycle_service import OrganizationLifecycleService
+from app.modules.platform.services.foundation_recovery import FoundationRecoveryInput, FoundationRecoveryResult, recover_foundation
 from app.modules.superadmin.dependencies import require_super_admin
 from app.modules.registration.models.participant_registration import ParticipantRegistration
 from app.modules.registration.models.participant import Participant
@@ -226,9 +225,8 @@ from app.modules.platform.models.platform_domain_tables import (
     PlatformFlagOverride,
 )
 from app.modules.platform.models.organization_console import EntitlementShadowComparison
-from app.core.dependencies.feature_gate import enforce_event_operation, enforce_org_operation
+from app.core.dependencies.feature_gate import enforce_platform_event_operation as enforce_event_operation, enforce_platform_org_operation as enforce_org_operation
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
-from app.modules.billing.models.subscription import Addon, OrganizationAddon, OrganizationSubscription, SubscriptionPlan
 from app.modules.billing.models.event_activation import EventActivation
 
 
@@ -261,6 +259,16 @@ async def _require_scoped_event(db: AsyncSession, organization_id: uuid.UUID, ev
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     return event
+
+
+@router.post("/foundation-recovery", response_model=FoundationRecoveryResult)
+async def foundation_recovery(organization_id: uuid.UUID, payload: FoundationRecoveryInput, response: Response,
+    step_up: StepUpAuth, if_match: str | None = Header(None, alias="If-Match"),
+    key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=120),
+    actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    from app.core.concurrency import require_if_match
+    response.headers["Cache-Control"] = "no-store"
+    return await recover_foundation(db, actor, organization_id, payload, require_if_match(if_match), key)
 
 
 def _console_event_out(event: Event) -> dict:
@@ -1098,10 +1106,14 @@ async def create_lifecycle_job(
     payload: LifecycleJobCreate,
     request: Request,
     step_up: StepUpAuth,
+    if_match: str | None = Header(default=None, alias="If-Match"),
     idempotency_key: str = Header(min_length=16, max_length=120, alias="Idempotency-Key"),
     actor: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ) -> LifecycleJobOut:
+    OrganizationLifecycleService.require_available_operation(payload.job_type)
+    from app.core.concurrency import require_if_match
+    expected_version = require_if_match(if_match)
     service = OrganizationConsoleService(db)
     await service.require_organization(organization_id)
     if payload.job_type in {"CLONE", "MERGE"} and not payload.target_organization_id:
@@ -1121,7 +1133,7 @@ async def create_lifecycle_job(
         organization_id=organization_id, actor=actor,
         target_organization_id=payload.target_organization_id, job_type=normalized_type,
         manifest=manifest, manifest_checksum=manifest_checksum, reason=payload.reason,
-        idempotency_key=idempotency_key, requires_approval=requires_approval,
+        idempotency_key=idempotency_key, requires_approval=requires_approval, expected_version=expected_version,
     )
     return LifecycleJobOut.model_validate(job)
 
@@ -1162,12 +1174,18 @@ async def decide_lifecycle_job(
     payload: LifecycleApprovalDecision,
     request: Request,
     step_up: StepUpAuth,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    idempotency_key: str = Header(..., min_length=16, max_length=120, alias="Idempotency-Key"),
     actor: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ) -> LifecycleJobOut:
+    from app.core.concurrency import require_if_match
+    expected = require_if_match(if_match)
+    if expected != payload.version:
+        raise HTTPException(400, detail={"code": "VERSION_HEADER_BODY_CONFLICT"})
     job = await OrganizationLifecycleCommandService(db).decide(
         organization_id=organization_id, job_id=job_id, actor=actor,
-        decision=payload.decision, reason=payload.reason, version=payload.version,
+        decision=payload.decision, reason=payload.reason, version=expected, idempotency_key=idempotency_key,
     )
     return LifecycleJobOut.model_validate(job)
 
@@ -1179,52 +1197,22 @@ async def retry_lifecycle_job(
     payload: LifecycleApprovalDecision,
     request: Request,
     step_up: StepUpAuth,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    idempotency_key: str = Header(..., min_length=16, max_length=120, alias="Idempotency-Key"),
     actor: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ) -> LifecycleJobOut:
+    from app.core.concurrency import require_if_match
+    expected = require_if_match(if_match)
+    if expected != payload.version:
+        raise HTTPException(400, detail={"code": "VERSION_HEADER_BODY_CONFLICT"})
     if payload.decision != "APPROVED":
         raise HTTPException(status_code=409, detail="Only failed jobs can be approved for retry")
     job = await OrganizationLifecycleCommandService(db).retry(
         organization_id=organization_id, job_id=job_id, actor=actor,
-        reason=payload.reason, version=payload.version,
+        reason=payload.reason, version=expected, idempotency_key=idempotency_key,
     )
     return LifecycleJobOut.model_validate(job)
-
-
-@router.get("/commercial/access-requests")
-async def list_commercial_access_requests(
-    organization_id: uuid.UUID,
-    request_status: str | None = Query(default=None, alias="status"),
-    db: AsyncSession = Depends(get_db),
-):
-    await OrganizationConsoleService(db).require_organization(organization_id)
-    items = await CommercialAccessQueryService(db).list(
-        organization_id=organization_id, status_filter=request_status
-    )
-    return {"items": items, "freshness_at": datetime.now(timezone.utc)}
-
-
-@router.post("/commercial/access-requests/{access_request_id}/decision")
-async def decide_commercial_access_request(
-    organization_id: uuid.UUID,
-    access_request_id: uuid.UUID,
-    payload: CommercialAccessDecision,
-    request: Request,
-    step_up: StepUpAuth,
-    expected_version: int = Header(..., alias="If-Match", ge=1),
-    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160),
-    actor: User = Depends(require_super_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    await OrganizationConsoleService(db).require_organization(organization_id)
-    fingerprint = request_fingerprint(payload.model_dump(mode="json"))
-    return await CommercialAccessCommandService(db).decide(
-        organization_id=organization_id, access_request_id=access_request_id,
-        actor=actor, decision=payload.decision, reason=payload.reason,
-        case_reference=payload.case_reference, effective_at=payload.effective_at,
-        ends_at=payload.ends_at, expected_version=expected_version,
-        idempotency_key=idempotency_key, request_hash=fingerprint,
-    )
 
 
 @router.get("/events")
@@ -1826,7 +1814,7 @@ async def _team_out(db: AsyncSession, organization_id: uuid.UUID, team_id: uuid.
 
 
 @router.get("/teams")
-async def list_organization_teams(organization_id: uuid.UUID, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+async def list_organization_teams(organization_id: uuid.UUID, actor: User = Depends(platform_team_reader), db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
     rows = await OrganizationTeamQueryService(db).list_for_organization(
         organization_id=organization_id,
@@ -1846,8 +1834,9 @@ async def list_organization_teams(organization_id: uuid.UUID, actor: User = Depe
     ], "freshness_at": datetime.now(timezone.utc), "source": "organizer_access.organization_teams"}
 
 
-@router.post("/teams", status_code=status.HTTP_201_CREATED)
-async def create_organization_team(organization_id: uuid.UUID, payload: OrganizationTeamCreate, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+@router.post("/teams", status_code=status.HTTP_201_CREATED, response_model=TeamCreationResult)
+async def create_organization_team(organization_id: uuid.UUID, payload: OrganizationTeamCreate, request: Request, response: Response, step_up: StepUpAuth, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160), actor: User = Depends(platform_team_manager), db: AsyncSession = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
     await OrganizationConsoleService(db).require_organization(organization_id)
     row = await OrganizationTeamCommandService(db).create(
         organization_id=organization_id,
@@ -1855,12 +1844,14 @@ async def create_organization_team(organization_id: uuid.UUID, payload: Organiza
         name=payload.name,
         description=payload.description,
         reason=payload.reason,
+        idempotency_key=idempotency_key,
     )
-    return await _team_out(db, organization_id, row.id)
+    return row
 
 
-@router.patch("/teams/{team_id}")
-async def update_organization_team(organization_id: uuid.UUID, team_id: uuid.UUID, payload: OrganizationTeamUpdate, request: Request, step_up: StepUpAuth, if_match: int = Header(alias="If-Match", ge=1), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+@router.patch("/teams/{team_id}", response_model=TeamMutationResult)
+async def update_organization_team(organization_id: uuid.UUID, team_id: uuid.UUID, payload: OrganizationTeamUpdate, request: Request, response: Response, step_up: StepUpAuth, if_match: int | None = Header(None, alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160), actor: User = Depends(platform_team_manager), db: AsyncSession = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
     row = await OrganizationTeamCommandService(db).update(
         organization_id=organization_id,
         team_id=team_id,
@@ -1868,45 +1859,67 @@ async def update_organization_team(organization_id: uuid.UUID, team_id: uuid.UUI
         name=payload.name,
         description=payload.description,
         if_match=if_match,
-        reason=payload.reason,
+        reason=payload.reason, idempotency_key=idempotency_key,
     )
-    return await _team_out(db, organization_id, row.id)
+    return row
 
 
-@router.delete("/teams/{team_id}")
-async def archive_organization_team(organization_id: uuid.UUID, team_id: uuid.UUID, request: Request, step_up: StepUpAuth, payload: LegalHoldRelease = Body(...), if_match: int = Header(alias="If-Match", ge=1), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+@router.delete("/teams/{team_id}", response_model=TeamMutationResult)
+async def archive_organization_team(organization_id: uuid.UUID, team_id: uuid.UUID, request: Request, response: Response, step_up: StepUpAuth, payload: LegalHoldRelease = Body(...), if_match: int | None = Header(None, alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160), actor: User = Depends(platform_team_manager), db: AsyncSession = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
     row = await OrganizationTeamCommandService(db).archive(
         organization_id=organization_id,
         team_id=team_id,
         actor=actor,
         if_match=if_match,
-        reason=payload.reason,
+        reason=payload.reason, idempotency_key=idempotency_key,
     )
-    return {"id": row.id, "deleted_at": row.deleted_at, "version": row.version}
+    return row
 
 
-@router.put("/teams/{team_id}/members/{member_id}")
-async def assign_organization_team_member(organization_id: uuid.UUID, team_id: uuid.UUID, member_id: uuid.UUID, payload: OrganizationTeamAssignment, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    team = await OrganizationTeamCommandService(db).assign_member(organization_id=organization_id, team_id=team_id, member_id=member_id, actor=actor, reason=payload.reason)
-    return await _team_out(db, organization_id, team.id)
+@router.put("/teams/{team_id}/members/{member_id}", response_model=TeamMemberMutationResult)
+async def assign_organization_team_member(organization_id: uuid.UUID, team_id: uuid.UUID, member_id: uuid.UUID, payload: TeamBindingReason, request: Request, response: Response, step_up: StepUpAuth, if_match: int | None = Header(None, alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160), actor: User = Depends(platform_team_manager), db: AsyncSession = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
+    return await OrganizationTeamCommandService(db).assign_member(organization_id=organization_id,
+        team_id=team_id, member_id=member_id, actor=actor, reason=payload.reason,
+        if_match=if_match, idempotency_key=idempotency_key)
 
 
-@router.delete("/teams/{team_id}/members/{member_id}")
-async def unassign_organization_team_member(organization_id: uuid.UUID, team_id: uuid.UUID, member_id: uuid.UUID, payload: LegalHoldRelease, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    team = await OrganizationTeamCommandService(db).unassign_member(organization_id=organization_id, team_id=team_id, member_id=member_id, actor=actor, reason=payload.reason)
-    return await _team_out(db, organization_id, team.id)
+@router.delete("/teams/{team_id}/members/{member_id}", response_model=TeamMemberMutationResult)
+async def unassign_organization_team_member(organization_id: uuid.UUID, team_id: uuid.UUID, member_id: uuid.UUID, payload: TeamBindingReason, request: Request, response: Response, step_up: StepUpAuth, if_match: int | None = Header(None, alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160), actor: User = Depends(platform_team_manager), db: AsyncSession = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
+    return await OrganizationTeamCommandService(db).unassign_member(organization_id=organization_id,
+        team_id=team_id, member_id=member_id, actor=actor, reason=payload.reason,
+        if_match=if_match, idempotency_key=idempotency_key)
 
 
-@router.put("/teams/{team_id}/events/{event_id}")
-async def assign_organization_team_event(organization_id: uuid.UUID, team_id: uuid.UUID, event_id: uuid.UUID, payload: OrganizationTeamAssignment, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    team = await OrganizationTeamCommandService(db).assign_event(organization_id=organization_id, team_id=team_id, event_id=event_id, actor=actor, permissions=payload.permissions, reason=payload.reason)
-    return await _team_out(db, organization_id, team.id)
+@router.get("/teams/event-actions", response_model=TeamEventActionsResult)
+async def platform_team_event_actions(organization_id: uuid.UUID, event_id: uuid.UUID, response: Response,
+    actor: User = Depends(platform_team_reader), db: AsyncSession = Depends(get_db)):
+    from app.modules.rbac.services.platform_permissions import platform_team_authority
+    response.headers["Cache-Control"] = "no-store"
+    actions = await platform_team_authority(db, actor.id, "platform:teams:grant")
+    async with TenantContextGuard.scoped(db, organization_id):
+        if await db.scalar(select(Event.id).where(Event.id == event_id,
+            Event.organization_id == organization_id, Event.deleted_at.is_(None))) is None:
+            raise HTTPException(404, detail={"code": "EVENT_NOT_FOUND"})
+    return {"event_id": event_id, "actions": sorted(actions)}
 
 
-@router.delete("/teams/{team_id}/events/{event_id}")
-async def unassign_organization_team_event(organization_id: uuid.UUID, team_id: uuid.UUID, event_id: uuid.UUID, payload: LegalHoldRelease, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    team = await OrganizationTeamCommandService(db).unassign_event(organization_id=organization_id, team_id=team_id, event_id=event_id, actor=actor, reason=payload.reason)
-    return await _team_out(db, organization_id, team.id)
+@router.put("/teams/{team_id}/events/{event_id}", response_model=TeamEventMutationResult)
+async def assign_organization_team_event(organization_id: uuid.UUID, team_id: uuid.UUID, event_id: uuid.UUID, payload: TeamEventBindingWrite, request: Request, response: Response, step_up: StepUpAuth, if_match: int | None = Header(None, alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160), actor: User = Depends(platform_team_manager), db: AsyncSession = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
+    return await OrganizationTeamCommandService(db).assign_event(organization_id=organization_id,
+        team_id=team_id, event_id=event_id, actor=actor, permissions=payload.permissions,
+        reason=payload.reason, if_match=if_match, idempotency_key=idempotency_key, audience="PLATFORM")
+
+
+@router.delete("/teams/{team_id}/events/{event_id}", response_model=TeamEventMutationResult)
+async def unassign_organization_team_event(organization_id: uuid.UUID, team_id: uuid.UUID, event_id: uuid.UUID, payload: TeamBindingReason, request: Request, response: Response, step_up: StepUpAuth, if_match: int | None = Header(None, alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160), actor: User = Depends(platform_team_manager), db: AsyncSession = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
+    return await OrganizationTeamCommandService(db).unassign_event(organization_id=organization_id,
+        team_id=team_id, event_id=event_id, actor=actor, reason=payload.reason,
+        if_match=if_match, idempotency_key=idempotency_key, audience="PLATFORM")
 
 
 @router.post("/api-keys/{key_id}/revoke")
@@ -2448,15 +2461,17 @@ async def update_event_settings(
     actor: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
     if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
     del step_up
     event_update = EventUpdate.model_validate(payload.data)
     from app.core.concurrency import require_if_match
-    expected_version = require_if_match(if_match) if if_match is not None else None
+    expected_version = require_if_match(if_match)
     return await EventSettingsCommandService(db).update(
         organization_id=organization_id, event_id=event_id, actor=actor,
         payload=event_update, reason=payload.reason,
         case_reference=payload.case_reference, expected_version=expected_version,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -3667,6 +3682,10 @@ async def execute_event_workspace_action(organization_id: uuid.UUID, event_id: u
         if not campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
         from app.modules.notifications.tasks.email_tasks import process_email_campaign
+        from app.modules.notifications.services.campaign_queue import queue_campaign_delivery
+        from app.modules.notifications.services.campaign_authority import bind_dispatch
+        if action in {"SEND", "RESEND_FAILED"}:
+            await bind_dispatch(db, campaign, actor.id, organization_id, audience="PLATFORM")
         if action == "SEND":
             if campaign.status != "draft":
                 raise HTTPException(status_code=409, detail="Only draft campaigns can be sent")
@@ -3678,20 +3697,20 @@ async def execute_event_workspace_action(organization_id: uuid.UUID, event_id: u
                 raise HTTPException(status_code=409, detail={"code": "NO_CAMPAIGN_RECIPIENTS", "message": "Campaign has no eligible recipients"})
             await enforce_event_operation(db, organization_id, event_id, "communications.bulk_email.send", user_id=actor.id)
             await enforce_event_operation(db, organization_id, event_id, "communications.email.send", user_id=actor.id)
-            reservation = await UsageReservationService.reserve(db, organization_id=organization_id, event_id=event_id, limit_key="max_emails_per_event", quantity=recipient_count, unit="recipient", idempotency_key=f"console-email-send:{idempotency_key}", ttl_seconds=86_400, metadata={"campaign_id": str(campaign.id), "action": action})
+            reservation = await UsageReservationService.reserve(db, organization_id=organization_id, event_id=event_id, limit_key="max_emails_per_event", quantity=recipient_count, unit="recipient", idempotency_key=f"console-email-send:{idempotency_key}", ttl_seconds=86_400, metadata={"campaign_id": str(campaign.id), "dispatch_id": str(campaign.send_dispatch_id), "action": action})
             campaign.total_recipients = recipient_count
             campaign.status = "sending"
-            task_to_dispatch = lambda: process_email_campaign.delay(str(campaign.id), str(organization_id), str(reservation.id))
+            task_to_dispatch = lambda cid=campaign.id, oid=organization_id, did=campaign.send_dispatch_id, rid=reservation.id: queue_campaign_delivery(cid, oid, did, rid)
         elif action == "RESEND_FAILED":
             failed_count = await db.scalar(select(func.count(EmailLog.id)).where(EmailLog.campaign_id == campaign.id, EmailLog.status.in_(["failed", "bounced"]))) or 0
             if failed_count == 0:
                 raise HTTPException(status_code=409, detail="Campaign has no failed deliveries")
             await enforce_event_operation(db, organization_id, event_id, "communications.bulk_email.send", user_id=actor.id)
             await enforce_event_operation(db, organization_id, event_id, "communications.email.send", user_id=actor.id)
-            reservation = await UsageReservationService.reserve(db, organization_id=organization_id, event_id=event_id, limit_key="max_emails_per_event", quantity=int(failed_count), unit="recipient", idempotency_key=f"console-email-resend:{idempotency_key}", ttl_seconds=86_400, metadata={"campaign_id": str(campaign.id), "action": action})
+            reservation = await UsageReservationService.reserve(db, organization_id=organization_id, event_id=event_id, limit_key="max_emails_per_event", quantity=int(failed_count), unit="recipient", idempotency_key=f"console-email-resend:{idempotency_key}", ttl_seconds=86_400, metadata={"campaign_id": str(campaign.id), "dispatch_id": str(campaign.send_dispatch_id), "action": action})
             await db.execute(update(EmailLog).where(EmailLog.campaign_id == campaign.id, EmailLog.status.in_(["failed", "bounced"])).values(status="queued", error_message=None))
             campaign.status = "sending"
-            task_to_dispatch = lambda: process_email_campaign.delay(str(campaign.id), str(organization_id), str(reservation.id))
+            task_to_dispatch = lambda cid=campaign.id, oid=organization_id, did=campaign.send_dispatch_id, rid=reservation.id: queue_campaign_delivery(cid, oid, did, rid)
         elif action == "CANCEL":
             if campaign.status not in {"draft", "scheduled"}:
                 raise HTTPException(status_code=409, detail="Only draft or scheduled campaigns can be cancelled")

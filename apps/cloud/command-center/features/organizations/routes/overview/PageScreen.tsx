@@ -67,7 +67,7 @@ export default function OverviewPageScreen() {
   if (isLoading) return <LoadingPage />;
 
   const org = summary?.organization;
-  const sub = summary?.subscription;
+  const contract = summary?.contract;
   const metrics = summary?.metrics ?? [];
   const healthFactors = summary?.health_factors ?? [];
   const attentionItems = summary?.attention ?? [];
@@ -165,7 +165,7 @@ export default function OverviewPageScreen() {
               </div>
               <div className="p-3 rounded-xl bg-[var(--bg-surface-3)] border border-[var(--border-subtle)]">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">Current Plan</p>
-                <p className="text-xs font-bold text-[var(--brand-primary)]">{sub?.plan_name || "No Plan"}</p>
+                <p className="text-xs font-bold text-[var(--brand-primary)]">{contract?.offer_name || "No offer"}</p>
               </div>
             </div>
 

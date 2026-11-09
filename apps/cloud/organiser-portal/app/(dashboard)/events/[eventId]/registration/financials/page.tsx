@@ -25,6 +25,8 @@ import {
   StatusBadge,
 } from "@/components/organizer/workspace/OrganiserPrimitives";
 import { Button } from "@/components/ui/button";
+import { TablePagination } from "@/components/organizer/common/TablePagination";
+import { useTablePagination } from "@/hooks/useTablePagination";
 
 import PaymentsTab from "@/components/organizer/registration/financials/PaymentsTab";
 import PromosTab from "@/components/organizer/registration/financials/PromosTab";
@@ -116,6 +118,14 @@ export default function FinancialsPage() {
       return name.includes(query) || email.includes(query) || (p.regno || "").toLowerCase().includes(query);
     });
   }, [participants, searchQuery]);
+
+  const {
+    currentPage,
+    setCurrentPage,
+    pageSize,
+    setPageSize,
+    paginatedItems: paginatedLedger,
+  } = useTablePagination(filteredLedger, 10);
 
   const totalCollected = analytics?.kpis?.total_revenue || 0;
   const paidCount = participants.filter((p) => p.paid_status === "Paid").length;
@@ -257,7 +267,7 @@ export default function FinancialsPage() {
                       </td>
                     </tr>
                   ) : (
-                    filteredLedger.map((p) => (
+                    paginatedLedger.map((p) => (
                       <tr key={p.id} className="hover:bg-[var(--bg-surface-hover)]">
                         <td className="py-3 px-4 font-mono font-bold text-xs text-[var(--pri)]">
                           {p.regno}
@@ -297,6 +307,14 @@ export default function FinancialsPage() {
                 </tbody>
               </table>
             </div>
+            <TablePagination
+              currentPage={currentPage}
+              totalItems={filteredLedger.length}
+              pageSize={pageSize}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={setPageSize}
+              itemLabel="transactions"
+            />
           </Panel>
         )}
       </div>

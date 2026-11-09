@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
-from sqlalchemy import String, Text, DateTime, ForeignKey, Boolean
+from sqlalchemy import String, Text, DateTime, ForeignKey, Boolean, Integer
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -55,6 +55,7 @@ class WorkflowTask(Base):
     instance_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("automation.workflow_instances.id", ondelete="CASCADE"), index=True)
     step_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("automation.workflow_steps.id", ondelete="CASCADE"))
     status: Mapped[str] = mapped_column(String(50), default="pending")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationships
@@ -84,4 +85,3 @@ class WorkflowHistory(Base):
 
     # Relationships
     instance: Mapped["WorkflowInstance"] = relationship("WorkflowInstance", back_populates="history")
-

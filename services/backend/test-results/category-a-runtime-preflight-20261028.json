@@ -1,0 +1,692 @@
+{
+  "environment": "staging",
+  "failures": [],
+  "inspection_scope": "runtime_privileges_schema_and_catalogue_readiness",
+  "whole_database_reconciliation": "NOT_CHECKED",
+  "database_role": {
+    "name": "category_a_rehearsal_runtime_20261015",
+    "rolsuper": false,
+    "rolbypassrls": false,
+    "rolcreatedb": false,
+    "rolcreaterole": false,
+    "rolreplication": false
+  },
+  "public_form_discovery": {
+    "security_definer": true,
+    "fixed_settings": [
+      "search_path=pg_catalog",
+      "row_security=off"
+    ],
+    "uuid_result": true,
+    "returns_set": false,
+    "record_result": false,
+    "argument_names": [
+      "requested_event"
+    ],
+    "stable": true,
+    "definer_can_bypass_rls": true,
+    "runtime_can_assume_definer": false,
+    "runtime_can_create_schema_objects": false,
+    "runtime_can_execute": true,
+    "public_can_execute": false
+  },
+  "catalogue_reference_discovery": {
+    "security_definer": true,
+    "fixed_settings": [
+      "search_path=pg_catalog",
+      "row_security=off"
+    ],
+    "uuid_result": true,
+    "returns_set": true,
+    "record_result": false,
+    "argument_names": [
+      "requested_kind",
+      "source_id",
+      "actor_id",
+      "after_owner"
+    ],
+    "stable": true,
+    "definer_can_bypass_rls": true,
+    "runtime_can_assume_definer": false,
+    "runtime_can_create_schema_objects": false,
+    "runtime_can_execute": true,
+    "public_can_execute": false
+  },
+  "catalogue_blocked_review": {
+    "security_definer": true,
+    "fixed_settings": [
+      "search_path=pg_catalog",
+      "row_security=off"
+    ],
+    "uuid_result": false,
+    "returns_set": true,
+    "record_result": true,
+    "argument_names": [
+      "requested_type",
+      "actor_id",
+      "after_at",
+      "after_id",
+      "requested_limit",
+      "reconciliation_id",
+      "organization_id",
+      "event_id",
+      "resource_type",
+      "resource_id",
+      "resource_version",
+      "reason",
+      "created_at",
+      "current_document"
+    ],
+    "stable": true,
+    "definer_can_bypass_rls": true,
+    "runtime_can_assume_definer": false,
+    "runtime_can_create_schema_objects": false,
+    "runtime_can_execute": true,
+    "public_can_execute": false
+  },
+  "catalogue_template_review": {
+    "security_definer": true,
+    "fixed_settings": [
+      "search_path=pg_catalog",
+      "row_security=off"
+    ],
+    "uuid_result": false,
+    "returns_set": true,
+    "record_result": true,
+    "argument_names": [
+      "actor_id",
+      "requested_template",
+      "after_at",
+      "after_id",
+      "requested_limit",
+      "reconciliation_id",
+      "template_id",
+      "organization_id",
+      "template_name",
+      "template_version",
+      "reason",
+      "created_at"
+    ],
+    "stable": true,
+    "definer_can_bypass_rls": true,
+    "runtime_can_assume_definer": false,
+    "runtime_can_create_schema_objects": false,
+    "runtime_can_execute": true,
+    "public_can_execute": false
+  },
+  "privileged_role_memberships": [],
+  "foundation_schema_create": false,
+  "required_schema_usage": {
+    "public": true,
+    "platform": true,
+    "identity": true,
+    "events": true,
+    "registration": true,
+    "organizer_access": true,
+    "design": true,
+    "abstract": true
+  },
+  "rate_policy_revision_privileges": {
+    "relrowsecurity": true,
+    "relforcerowsecurity": true,
+    "runtime_owns_table": false,
+    "can_read": true,
+    "can_update": false,
+    "can_insert": false,
+    "can_delete": false,
+    "can_truncate": false
+  },
+  "migration_revision": "20261022_3670",
+  "development_bootstrap_enabled": false,
+  "unknown_active_catalogue_keys": [],
+  "catalogue_reconciliation_ledgers": {
+    "template_ledger": "design.form_template_reconciliations",
+    "category_ledger": "design.form_category_reconciliations",
+    "aggregate_ledger": "design.catalogue_document_reconciliations",
+    "dispatch_ledger": "design.catalogue_reconciliation_runs"
+  },
+  "catalogue_ledger_privileges": {
+    "form_template_reconciliations": {
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "policies": [
+        "category_a_form_template_reconciliations_append",
+        "category_a_form_template_reconciliations_read"
+      ],
+      "runtime_owns_table": false,
+      "can_read": true,
+      "can_insert": true,
+      "can_update": false,
+      "can_delete": false,
+      "can_truncate": false,
+      "can_trigger": false
+    },
+    "form_category_reconciliations": {
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "policies": [
+        "category_a_form_category_reconciliations_append",
+        "category_a_form_category_reconciliations_read"
+      ],
+      "runtime_owns_table": false,
+      "can_read": true,
+      "can_insert": true,
+      "can_update": false,
+      "can_delete": false,
+      "can_truncate": false,
+      "can_trigger": false
+    },
+    "catalogue_document_reconciliations": {
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "policies": [
+        "category_a_catalogue_document_reconciliations_append",
+        "category_a_catalogue_document_reconciliations_read"
+      ],
+      "runtime_owns_table": false,
+      "can_read": true,
+      "can_insert": true,
+      "can_update": false,
+      "can_delete": false,
+      "can_truncate": false,
+      "can_trigger": false
+    }
+  },
+  "shared_catalogue_rls": [
+    {
+      "relname": "form_categories",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "inspecting_role_owns_table": false,
+      "policy_count": 1,
+      "scoped_policy": true,
+      "owner_guard": true
+    },
+    {
+      "relname": "form_templates",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "inspecting_role_owns_table": false,
+      "policy_count": 1,
+      "scoped_policy": true,
+      "owner_guard": true
+    }
+  ],
+  "catalogue_dispatch_privileges": {
+    "relrowsecurity": true,
+    "relforcerowsecurity": true,
+    "policies": [
+      "category_a_catalogue_reconciliation_runs_tenant"
+    ],
+    "runtime_owns_table": false,
+    "can_read": true,
+    "can_insert": true,
+    "can_update": true,
+    "can_delete": false,
+    "can_truncate": false,
+    "can_trigger": false
+  },
+  "catalogue_dispatch_checks": [
+    {
+      "conname": "ck_catalogue_reconciliation_run_status",
+      "convalidated": true
+    },
+    {
+      "conname": "ck_catalogue_reconciliation_run_dispatch_attempts",
+      "convalidated": true
+    }
+  ],
+  "catalogue_uniqueness_indexes": [
+    {
+      "relname": "uq_design_global_form_categories_slug_active",
+      "indisvalid": true,
+      "indisready": true,
+      "indisunique": true,
+      "predicate": "((organization_id IS NULL) AND (deleted_at IS NULL) AND (is_active = true))"
+    },
+    {
+      "relname": "uq_design_owned_form_categories_slug_active",
+      "indisvalid": true,
+      "indisready": true,
+      "indisunique": true,
+      "predicate": "((organization_id IS NOT NULL) AND (deleted_at IS NULL) AND (is_active = true))"
+    },
+    {
+      "relname": "uq_design_global_form_templates_slug_active",
+      "indisvalid": true,
+      "indisready": true,
+      "indisunique": true,
+      "predicate": "((organization_id IS NULL) AND (deleted_at IS NULL) AND (is_active = true))"
+    },
+    {
+      "relname": "uq_design_owned_form_templates_slug_active",
+      "indisvalid": true,
+      "indisready": true,
+      "indisunique": true,
+      "predicate": "((organization_id IS NOT NULL) AND (deleted_at IS NULL) AND (is_active = true))"
+    }
+  ],
+  "category_a_hot_path_indexes": [
+    {
+      "schema_name": "platform",
+      "relname": "ix_program_dispatch_due",
+      "indisvalid": true,
+      "indisready": true,
+      "predicate": "(((status)::text = 'CONSUMED'::text) AND ((idempotency_key)::text ~~ 'program-upload:%'::text))"
+    },
+    {
+      "schema_name": "registration",
+      "relname": "ix_registration_participants_event_normalized_identity",
+      "indisvalid": true,
+      "indisready": true,
+      "predicate": "(deleted_at IS NULL)"
+    },
+    {
+      "schema_name": "registration",
+      "relname": "ix_registration_participants_additional_emails",
+      "indisvalid": true,
+      "indisready": true,
+      "predicate": "(deleted_at IS NULL)"
+    },
+    {
+      "schema_name": "design",
+      "relname": "ix_design_global_form_categories_page_active",
+      "indisvalid": true,
+      "indisready": true,
+      "predicate": "((organization_id IS NULL) AND (deleted_at IS NULL) AND (is_active = true))"
+    },
+    {
+      "schema_name": "design",
+      "relname": "ix_design_owned_form_categories_page_active",
+      "indisvalid": true,
+      "indisready": true,
+      "predicate": "((organization_id IS NOT NULL) AND (deleted_at IS NULL) AND (is_active = true))"
+    },
+    {
+      "schema_name": "content",
+      "relname": "ix_content_durable_upload_recovery_active",
+      "indisvalid": true,
+      "indisready": true,
+      "predicate": "((status)::text = ANY ((ARRAY['created'::character varying, 'uploading'::character varying, 'uploaded'::character varying, 'verifying'::character varying, 'scanning'::character varying, 'processing'::character varying])::text[]))"
+    },
+    {
+      "schema_name": "platform",
+      "relname": "ix_usage_reservation_upload_id_active",
+      "indisvalid": true,
+      "indisready": true,
+      "predicate": "(((status)::text = ANY ((ARRAY['RESERVED'::character varying, 'CONSUMED'::character varying])::text[])) AND (((idempotency_key)::text ~~ 'program-upload:%'::text) OR ((idempotency_key)::text ~~ 'registration-upload:%'::text)))"
+    },
+    {
+      "schema_name": "platform",
+      "relname": "ix_registration_upload_dispatch_due",
+      "indisvalid": true,
+      "indisready": true,
+      "predicate": "(((status)::text = 'CONSUMED'::text) AND ((idempotency_key)::text ~~ 'registration-upload:%'::text))"
+    },
+    {
+      "schema_name": "registration",
+      "relname": "ix_registration_participants_event_lower_email",
+      "indisvalid": true,
+      "indisready": true,
+      "predicate": "(email IS NOT NULL)"
+    }
+  ],
+  "session_context_columns": [
+    {
+      "attname": "access_mode",
+      "attnotnull": true
+    },
+    {
+      "attname": "acting_organization_id",
+      "attnotnull": true
+    },
+    {
+      "attname": "active_event_id",
+      "attnotnull": false
+    },
+    {
+      "attname": "active_organization_id",
+      "attnotnull": true
+    },
+    {
+      "attname": "active_workspace_id",
+      "attnotnull": false
+    },
+    {
+      "attname": "relationship_id",
+      "attnotnull": false
+    }
+  ],
+  "session_context_checks": [
+    {
+      "conname": "ck_refresh_token_access_mode",
+      "convalidated": true
+    },
+    {
+      "conname": "ck_refresh_token_context_shape",
+      "convalidated": true
+    }
+  ],
+  "delegated_context_discovery_policies": [
+    {
+      "tablename": "emc_client_delegations",
+      "policyname": "delegation_discovery_identity",
+      "cmd": "SELECT"
+    },
+    {
+      "tablename": "emc_client_relationships",
+      "policyname": "relationship_discovery_identity",
+      "cmd": "SELECT"
+    },
+    {
+      "tablename": "operational_workspaces",
+      "policyname": "delegated_workspace_discovery_identity",
+      "cmd": "SELECT"
+    }
+  ],
+  "lifecycle_dispatch_columns": [
+    {
+      "attname": "dispatch_attempts",
+      "attnotnull": true
+    },
+    {
+      "attname": "next_dispatch_at",
+      "attnotnull": false
+    }
+  ],
+  "lifecycle_dispatch_index": {
+    "indisvalid": true,
+    "indisready": true,
+    "predicate": "((status)::text = ANY ((ARRAY['PENDING'::character varying, 'RETRY_PENDING'::character varying])::text[]))"
+  },
+  "campaign_snapshot_privileges": {
+    "relrowsecurity": true,
+    "relforcerowsecurity": true,
+    "runtime_owns_table": false,
+    "can_read": true,
+    "can_insert": true,
+    "can_update": false,
+    "can_delete": false,
+    "can_truncate": false,
+    "can_trigger": false
+  },
+  "campaign_attempts_privileges": {
+    "relrowsecurity": true,
+    "relforcerowsecurity": true,
+    "runtime_owns_table": false,
+    "can_read": true,
+    "can_insert": true,
+    "can_update": false,
+    "can_delete": false,
+    "can_truncate": false,
+    "can_trigger": false
+  },
+  "campaign_attempt_outcomes_privileges": {
+    "relrowsecurity": true,
+    "relforcerowsecurity": true,
+    "runtime_owns_table": false,
+    "can_read": true,
+    "can_insert": true,
+    "can_update": false,
+    "can_delete": false,
+    "can_truncate": false,
+    "can_trigger": false
+  },
+  "foundation_tables": [
+    {
+      "relname": "access_mutations",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "runtime_owns_table": false
+    },
+    {
+      "relname": "emc_client_delegations",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "runtime_owns_table": false
+    },
+    {
+      "relname": "emc_client_provisioning",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "runtime_owns_table": false
+    },
+    {
+      "relname": "emc_client_relationships",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "runtime_owns_table": false
+    },
+    {
+      "relname": "operational_workspaces",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "runtime_owns_table": false
+    },
+    {
+      "relname": "organization_access_revisions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "runtime_owns_table": false
+    },
+    {
+      "relname": "organization_members",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "runtime_owns_table": false
+    },
+    {
+      "relname": "organization_team_events",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "runtime_owns_table": false
+    },
+    {
+      "relname": "organization_team_members",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "runtime_owns_table": false
+    },
+    {
+      "relname": "organization_teams",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "runtime_owns_table": false
+    },
+    {
+      "relname": "workspace_role_bindings",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "runtime_owns_table": false
+    }
+  ],
+  "team_tenant_policies": [
+    {
+      "tablename": "organization_team_events",
+      "policyname": "category_a_fence_organization_team_events",
+      "permissive": "RESTRICTIVE",
+      "cmd": "ALL",
+      "roles": [
+        "public"
+      ],
+      "qual": "(organization_id = (NULLIF(current_setting('app.current_organization_id'::text, true), ''::text))::uuid)",
+      "with_check": "(organization_id = (NULLIF(current_setting('app.current_organization_id'::text, true), ''::text))::uuid)"
+    },
+    {
+      "tablename": "organization_team_events",
+      "policyname": "category_a_tenant_organization_team_events",
+      "permissive": "PERMISSIVE",
+      "cmd": "ALL",
+      "roles": [
+        "public"
+      ],
+      "qual": "(organization_id = (NULLIF(current_setting('app.current_organization_id'::text, true), ''::text))::uuid)",
+      "with_check": "(organization_id = (NULLIF(current_setting('app.current_organization_id'::text, true), ''::text))::uuid)"
+    },
+    {
+      "tablename": "organization_team_members",
+      "policyname": "category_a_fence_organization_team_members",
+      "permissive": "RESTRICTIVE",
+      "cmd": "ALL",
+      "roles": [
+        "public"
+      ],
+      "qual": "(organization_id = (NULLIF(current_setting('app.current_organization_id'::text, true), ''::text))::uuid)",
+      "with_check": "(organization_id = (NULLIF(current_setting('app.current_organization_id'::text, true), ''::text))::uuid)"
+    },
+    {
+      "tablename": "organization_team_members",
+      "policyname": "category_a_tenant_organization_team_members",
+      "permissive": "PERMISSIVE",
+      "cmd": "ALL",
+      "roles": [
+        "public"
+      ],
+      "qual": "(organization_id = (NULLIF(current_setting('app.current_organization_id'::text, true), ''::text))::uuid)",
+      "with_check": "(organization_id = (NULLIF(current_setting('app.current_organization_id'::text, true), ''::text))::uuid)"
+    },
+    {
+      "tablename": "organization_teams",
+      "policyname": "category_a_fence_organization_teams",
+      "permissive": "RESTRICTIVE",
+      "cmd": "ALL",
+      "roles": [
+        "public"
+      ],
+      "qual": "(organization_id = (NULLIF(current_setting('app.current_organization_id'::text, true), ''::text))::uuid)",
+      "with_check": "(organization_id = (NULLIF(current_setting('app.current_organization_id'::text, true), ''::text))::uuid)"
+    },
+    {
+      "tablename": "organization_teams",
+      "policyname": "category_a_tenant_organization_teams",
+      "permissive": "PERMISSIVE",
+      "cmd": "ALL",
+      "roles": [
+        "public"
+      ],
+      "qual": "(organization_id = (NULLIF(current_setting('app.current_organization_id'::text, true), ''::text))::uuid)",
+      "with_check": "(organization_id = (NULLIF(current_setting('app.current_organization_id'::text, true), ''::text))::uuid)"
+    }
+  ],
+  "reviewed_team_constraints": [
+    {
+      "conname": "ck_team_event_approved_permissions",
+      "convalidated": true,
+      "contype": "c"
+    },
+    {
+      "conname": "ck_team_event_authorization_version",
+      "convalidated": true,
+      "contype": "c"
+    }
+  ],
+  "reviewed_team_marker": {
+    "attnotnull": true,
+    "default_expression": "0"
+  },
+  "ownership_constraints": [
+    {
+      "schema_name": "events",
+      "table_name": "events",
+      "conname": "fk_event_workspace_owner",
+      "convalidated": true,
+      "contype": "f"
+    },
+    {
+      "schema_name": "organizer_access",
+      "table_name": "organization_team_members",
+      "conname": "fk_team_member_team_tenant",
+      "convalidated": true,
+      "contype": "f"
+    },
+    {
+      "schema_name": "organizer_access",
+      "table_name": "organization_team_members",
+      "conname": "fk_team_member_subject_tenant",
+      "convalidated": true,
+      "contype": "f"
+    },
+    {
+      "schema_name": "organizer_access",
+      "table_name": "organization_team_events",
+      "conname": "fk_team_event_team_tenant",
+      "convalidated": true,
+      "contype": "f"
+    },
+    {
+      "schema_name": "organizer_access",
+      "table_name": "organization_team_events",
+      "conname": "fk_team_event_resource_tenant",
+      "convalidated": true,
+      "contype": "f"
+    },
+    {
+      "schema_name": "organizer_access",
+      "table_name": "emc_client_delegations",
+      "conname": "fk_delegation_event_tenant",
+      "convalidated": true,
+      "contype": "f"
+    },
+    {
+      "schema_name": "organizer_access",
+      "table_name": "organization_teams",
+      "conname": "fk_team_owner_tenant",
+      "convalidated": true,
+      "contype": "f"
+    },
+    {
+      "schema_name": "communications",
+      "table_name": "campaign_recipient_snapshots",
+      "conname": "fk_campaign_snapshot_event_owner",
+      "convalidated": true,
+      "contype": "f"
+    },
+    {
+      "schema_name": "communications",
+      "table_name": "campaign_recipient_snapshots",
+      "conname": "fk_campaign_snapshot_campaign_owner",
+      "convalidated": true,
+      "contype": "f"
+    },
+    {
+      "schema_name": "communications",
+      "table_name": "campaign_attempts",
+      "conname": "fk_campaign_attempt_snapshot_owner",
+      "convalidated": true,
+      "contype": "f"
+    },
+    {
+      "schema_name": "communications",
+      "table_name": "campaign_attempt_outcomes",
+      "conname": "fk_campaign_outcome_attempt_owner",
+      "convalidated": true,
+      "contype": "f"
+    },
+    {
+      "schema_name": "communications",
+      "table_name": "email_logs",
+      "conname": "fk_email_log_attempt_owner",
+      "convalidated": true,
+      "contype": "f"
+    },
+    {
+      "schema_name": "events",
+      "table_name": "events",
+      "conname": "ck_event_workspace_required",
+      "convalidated": true,
+      "contype": "c"
+    },
+    {
+      "schema_name": "platform",
+      "table_name": "organizations",
+      "conname": "ck_organization_archive_state",
+      "convalidated": true,
+      "contype": "c"
+    }
+  ],
+  "workspace_constraint_validated": true,
+  "redis": {
+    "role": "master",
+    "cluster_enabled": 0
+  }
+}

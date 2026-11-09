@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1200" viewBox="0 0 1920 1200" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="100" y1="20" x2="1820" y2="1180" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#060710"/><stop offset=".3" stop-color="#0D1022"/><stop offset=".65" stop-color="#14132B"/><stop offset="1" stop-color="#090C1C"/>
+    </linearGradient>
+    <linearGradient id="prismWaveA" x1="960" y1="450" x2="960" y2="1100" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#211E3E"/><stop offset="1" stop-color="#141930"/>
+    </linearGradient>
+    <linearGradient id="prismWaveB" x1="960" y1="620" x2="960" y2="1200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#171A34"/><stop offset="1" stop-color="#0A0E1E"/>
+    </linearGradient>
+    <filter id="softGlow"><feGaussianBlur stdDeviation="60"/></filter>
+    <pattern id="prismGrid" width="144" height="144" patternUnits="userSpaceOnUse">
+      <path d="M144 0L0 144M0 0L144 144" stroke="#8A6BA8" stroke-opacity=".06"/>
+    </pattern>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#sky)"/>
+  <ellipse cx="480" cy="220" rx="460" ry="240" fill="#EC4899" fill-opacity=".18" filter="url(#softGlow)"/>
+  <ellipse cx="1400" cy="240" rx="520" ry="260" fill="#0EA5E9" fill-opacity=".18" filter="url(#softGlow)"/>
+  <circle cx="960" cy="280" r="280" fill="#EAB308" fill-opacity=".12" filter="url(#softGlow)"/>
+  <path d="M0 680L380 580L760 660L1140 540L1520 620L1920 500V1200H0V680Z" fill="url(#prismWaveA)" fill-opacity=".88"/>
+  <path d="M0 830L340 760L720 820L1120 720L1500 790L1920 680V1200H0V830Z" fill="#14182D" fill-opacity=".86"/>
+  <path d="M0 970L360 900L740 950L1160 870L1560 930L1920 830V1200H0V970Z" fill="url(#prismWaveB)" fill-opacity=".98"/>
+  <rect width="1920" height="1200" fill="url(#prismGrid)"/>
+</svg>
+

@@ -1,5 +1,13 @@
 variable "project" { type = string }
 variable "environment" { type = string }
+variable "deployment_profile" {
+  type = string
+  default = "production"
+  validation {
+    condition = contains(["staging", "production"], var.deployment_profile)
+    error_message = "Application runtime profile must be staging or production; resource naming environment is separate."
+  }
+}
 variable "aws_region" { type = string }
 variable "cost_center" { type = string }
 variable "vpc_id" { type = string }

@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="7" time="37.642" timestamp="2026-10-21T18:41:15.547500+05:30" hostname="Vishal"><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_one_category_projects_205_references_only_in_committed_template_pages[GLOBAL]" time="10.930"><failure message="AssertionError: ({'blocked': 1, 'checked': 100, 'next_cursor': 'ffffffff-ffff-ffff-ffff-fffffffff063', 'normalized': 100}, [])&#10;assert 0 == 100">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001E972AA2660&gt;
+organization = &lt;Organization id=bb807f00-c7c0-4f91-8b2d-aca7aae2e005 slug=test-org-7ac2a87d&gt;
+super_admin = &lt;User id=0b71c08f-6c3f-4ddc-bacb-79ca069807e4 email=admin-819fae@test.com role=super_admin&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001E9753FAA50&gt;
+scope = 'GLOBAL'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("scope", ["GLOBAL", "ORGANIZATION", "GLOBAL_CATEGORY_OWNED_TEMPLATES"])
+    async def test_one_category_projects_205_references_only_in_committed_template_pages(
+            db, organization, super_admin, monkeypatch, scope):
+        owner = None if scope == "GLOBAL" else organization.id
+        category_owner = organization.id if scope == "ORGANIZATION" else None
+        category = FormCategory(organization_id=category_owner, name="Bounded taxonomy",
+            slug=f"bounded-{uuid.uuid4().hex}")
+        db.add(category)
+        await db.flush()
+        start = (1 &lt;&lt; 128) - 4096
+        rows = [FormTemplate(id=uuid.UUID(int=start + index), organization_id=owner,
+            scope_type="GLOBAL" if owner is None else "ORGANIZATION", category_id=category.id,
+            category_key="registration" if index == 204 else "legacy-taxonomy-key",
+            name=f"Bounded projection {index}", slug=f"projection-{uuid.uuid4().hex}",
+            fields=[], settings={}, version=1) for index in range(205)]
+        db.add_all(rows)
+        await db.flush()
+        db.add_all([FormTemplateReconciliation(template_id=row.id, template_version=1,
+            operation="DOCUMENT_VALIDATION", status="BLOCKED" if index == 0 else "VALID",
+            actor_user_id=super_admin.id) for index, row in enumerate(rows)])
+        await db.commit()
+        category_id, category_slug = category.id, category.slug
+        identities = [row.id for row in rows]
+    
+        @asynccontextmanager
+        async def sessions():
+            try:
+                yield db
+            except Exception:
+                await db.rollback()
+                raise
+    
+        monkeypatch.setattr(worker, "AsyncSessionLocal", sessions)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            if category_owner is None:
+                # The retained catalogue can itself exceed a category page. Follow
+                # its real cursor, as the durable global stream does, before templates.
+                category_cursor = None
+                while True:
+                    taxonomy = await worker._global_category_page(super_admin.id, category_cursor)
+                    if taxonomy["next_cursor"] is None:
+                        break
+                    advanced = uuid.UUID(taxonomy["next_cursor"])
+                    assert category_cursor is None or advanced &gt; category_cursor
+                    category_cursor = advanced
+            else:
+                await worker._process_page(organization.id, super_admin.id, "FORM_CATEGORY", None)
+        async with TenantContextGuard.scoped(db, owner or super_admin.organization_id):
+            assert await db.scalar(select(func.count()).select_from(FormTemplate).where(
+                FormTemplate.id.in_(identities), FormTemplate.version != 1)) == 0
+        cursor = uuid.UUID(int=start - 1)
+        observed = []
+        for expected_changed in (100, 200, 204):
+            async with TenantContextGuard.scoped(db, super_admin.organization_id):
+                if owner is None:
+                    result = await worker._global_template_page(super_admin.id, cursor)
+                else:
+                    result = await worker._process_page(organization.id, super_admin.id,
+                        "FORM_TEMPLATE", cursor)
+            observed.append((result["checked"], result["normalized"], result["blocked"]))
+            async with TenantContextGuard.scoped(db, owner or super_admin.organization_id):
+                changed = await db.scalar(select(func.count()).select_from(FormTemplate).where(
+                    FormTemplate.id.in_(identities), FormTemplate.version == 2,
+                    FormTemplate.category_key == category_slug))
+&gt;               assert changed == expected_changed, (result, (await db.execute(
+                    select(FormTemplate.version, FormTemplate.category_key, func.count()).where(
+                        FormTemplate.id.in_(identities)).group_by(
+                            FormTemplate.version, FormTemplate.category_key))).all())
+E               AssertionError: ({'blocked': 1, 'checked': 100, 'next_cursor': 'ffffffff-ffff-ffff-ffff-fffffffff063', 'normalized': 100}, [])
+E               assert 0 == 100
+
+tests\test_catalogue_bounded_category_projection.py:79: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_one_category_projects_205_references_only_in_committed_template_pages[ORGANIZATION]" time="2.922" /><testcase classname="tests.test_catalogue_bounded_category_projection" name="test_one_category_projects_205_references_only_in_committed_template_pages[GLOBAL_CATEGORY_OWNED_TEMPLATES]" time="2.887" /><testcase classname="tests.test_owned_category_worker_retirement_races" name="test_owned_category_projection_retirement[False-template-copy]" time="5.186" /><testcase classname="tests.test_owned_category_worker_retirement_races" name="test_owned_category_projection_retirement[False-category-copy]" time="4.956" /><testcase classname="tests.test_owned_category_worker_retirement_races" name="test_owned_category_projection_retirement[True-template-copy]" time="4.093" /><testcase classname="tests.test_owned_category_worker_retirement_races" name="test_owned_category_projection_retirement[True-category-copy]" time="5.818" /></testsuite></testsuites>

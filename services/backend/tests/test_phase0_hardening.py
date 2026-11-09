@@ -11,7 +11,7 @@ Tests for:
   6. Stripe credentials encryption
   7. TicketType UUID PK
   8. Invoice default currency INR
-  9. AddonFeature mappings
+  9. Canonical plan entitlement mapping
 """
 import hashlib
 import json
@@ -216,27 +216,29 @@ def test_invoice_default_currency_inr():
     assert str(col.server_default.arg) == "INR"
 
 
-# ── 8. AddonFeature Mappings ────────────────────────────────────
+# ── 8. Canonical plan entitlement mapping ──────────────────────
 
 
-def test_addon_feature_model_composite_pk():
-    """AddonFeature must have composite PK (addon_id, feature_id)."""
-    from app.modules.billing.models.subscription import AddonFeature
+def test_plan_entitlement_uses_the_canonical_plan_tables():
+    """Venue applications and other add-ons use versioned plan entitlements."""
+    from app.modules.billing.models.cloud_commercial import CommercialOfferEntitlement
 
-    pk_cols = [c.name for c in AddonFeature.__table__.primary_key.columns]
-    assert "addon_id" in pk_cols
-    assert "feature_id" in pk_cols
+    assert CommercialOfferEntitlement.__table__.name == "plan_entitlements"
+    foreign_keys = {
+        foreign_key.target_fullname
+        for foreign_key in CommercialOfferEntitlement.__table__.foreign_keys
+    }
+    assert "commerce.plan_versions.id" in foreign_keys
 
 
 # ── 9. TABLE_SCHEMAS mapping ────────────────────────────────────
 
 
-def test_subscription_transactions_in_table_schemas():
-    """subscription_transactions must be mapped to billing schema."""
+def test_commercial_tables_use_commerce_schema():
+    """Canonical commercial tables remain under the commerce schema."""
     from app.database import TABLE_SCHEMAS
 
-    assert "subscription_transactions" in TABLE_SCHEMAS
-    assert TABLE_SCHEMAS["subscription_transactions"] == "billing"
+    assert TABLE_SCHEMAS["plan_contracts"] == "commerce"
 
 
 # ── 10. Actor Role Width ────────────────────────────────────────

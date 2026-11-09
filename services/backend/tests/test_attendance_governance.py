@@ -42,7 +42,7 @@ async def test_participant_checkin_is_durably_idempotent_and_audited(
     session_obj: Session,
     organizer: User,
 ):
-    await activate_event_for_test(db, event)
+    await activate_event_for_test(db, event, attendee_checkin=True)
     participant = await _participant(db, event, uuid.uuid4().hex[:8])
     await db.commit()
 
@@ -84,7 +84,7 @@ async def test_participant_checkin_rejects_idempotency_conflict_and_capacity_ove
     session_obj: Session,
     organizer: User,
 ):
-    await activate_event_for_test(db, event)
+    await activate_event_for_test(db, event, attendee_checkin=True)
     first = await _participant(db, event, uuid.uuid4().hex[:8])
     second = await _participant(db, event, uuid.uuid4().hex[:8])
     db.add(CapacityRule(event_id=event.id, session_id=session_obj.id, capacity=1))

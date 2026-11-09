@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from .write_authority import authorize_abstract_write, write_abstract_audit
 
 from app.modules.abstracts.models import AbstractAssignment, AbstractReviewer, AbstractReview
-from app.modules.audit.services.audit_service import AuditContext, AuditService
+from app.modules.audit.services.audit_service import AuditContext
 
 
 class AbstractReviewerCommandService:
@@ -19,7 +20,7 @@ class AbstractReviewerCommandService:
         self.db = db
 
     async def _audit(self, *, event, user, action: str, reviewer_id, old=None, new=None):
-        await AuditService.write_log_sync(
+        await write_abstract_audit(
             AuditContext(
                 action_type=action,
                 resource_type="abstract",
@@ -31,10 +32,12 @@ class AbstractReviewerCommandService:
                 new_state={**(new or {}), "event_id": str(event.id)},
             ),
             self.db,
+            commit=False,
         )
 
     async def create(self, *, payload: dict, event, user) -> AbstractReviewer:
         try:
+            await authorize_abstract_write(self.db, event, user, "abstracts.assign_reviewers")
             row = AbstractReviewer(
                 organization_id=event.organization_id,
                 event_id=event.id,
@@ -58,12 +61,15 @@ class AbstractReviewerCommandService:
 
     async def update(self, *, reviewer_id, payload: dict, event, user) -> AbstractReviewer:
         try:
+            await authorize_abstract_write(self.db, event, user, "abstracts.assign_reviewers")
+            if set(payload) - {"full_name", "email", "expertise_topics", "capacity", "status"}:
+                raise HTTPException(422, detail={"code": "UNEXPECTED_REVIEWER_FIELDS"})
             row = await self.db.scalar(
                 select(AbstractReviewer).where(
                     AbstractReviewer.id == reviewer_id,
                     AbstractReviewer.event_id == event.id,
                     AbstractReviewer.organization_id == event.organization_id,
-                ).with_for_update()
+                ).with_for_update().execution_options(populate_existing=True)
             )
             if row is None:
                 raise HTTPException(status_code=404, detail="Reviewer not found")
@@ -83,18 +89,21 @@ class AbstractReviewerCommandService:
 
     async def delete(self, *, reviewer_id, event, user) -> None:
         try:
+            await authorize_abstract_write(self.db, event, user, "abstracts.assign_reviewers")
             row = await self.db.scalar(
                 select(AbstractReviewer).where(
                     AbstractReviewer.id == reviewer_id,
                     AbstractReviewer.event_id == event.id,
                     AbstractReviewer.organization_id == event.organization_id,
-                ).with_for_update()
+                ).with_for_update().execution_options(populate_existing=True)
             )
             if row is None:
                 raise HTTPException(status_code=404, detail="Reviewer not found")
             active = int(await self.db.scalar(
                 select(func.count(AbstractAssignment.id)).where(
                     AbstractAssignment.reviewer_id == row.id,
+                    AbstractAssignment.event_id == event.id,
+                    AbstractAssignment.organization_id == event.organization_id,
                     AbstractAssignment.status.in_(["ASSIGNED", "ACCEPTED"]),
                 )
             ) or 0)

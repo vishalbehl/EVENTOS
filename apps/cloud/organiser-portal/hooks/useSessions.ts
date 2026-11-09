@@ -46,6 +46,14 @@ export function useSessions(eventId: string, filters?: { room_id?: string; statu
   });
 }
 
+export function useSessionDetail(eventId: string, sessionId: string) {
+  return useQuery({
+    queryKey: ["session-detail", eventId, sessionId],
+    queryFn: () => apiGet<any>(`/events/${eventId}/sessions/${sessionId}`),
+    enabled: !!eventId && !!sessionId && eventId !== "undefined" && sessionId !== "undefined",
+  });
+}
+
 export function useDeleteSession(eventId: string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -81,8 +89,9 @@ export function useUpdateSession(eventId: string) {
   return useMutation({
     mutationFn: ({ sessionId, data }: { sessionId: string; data: any }) =>
       apiPatch(`/events/${eventId}/sessions/${sessionId}`, data),
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["session-detail", eventId, variables.sessionId] });
       queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", eventId] });
       toast.success("Session updated successfully");
     },
@@ -91,3 +100,87 @@ export function useUpdateSession(eventId: string) {
     }
   });
 }
+
+export function useAddSessionSpeaker(eventId: string, sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      speaker_id: string;
+      presentation_title?: string;
+      talk_order?: number;
+      talk_duration_minutes?: number;
+      role?: string;
+      is_confirmed?: boolean;
+    }) => apiPost(`/events/${eventId}/sessions/${sessionId}/speakers`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["session-detail", eventId, sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["speakers", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["speaker-talks", eventId] });
+      toast.success("Speaker assigned to session");
+    },
+    onError: (error: any) => {
+      toast.error(formatApiError(error, "Failed to assign speaker"));
+    }
+  });
+}
+
+export function useUpdateSessionSpeaker(eventId: string, sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      sessionSpeakerId,
+      data,
+    }: {
+      sessionSpeakerId: string;
+      data: any;
+    }) => apiPatch(`/events/${eventId}/sessions/${sessionId}/speakers/${sessionSpeakerId}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["session-detail", eventId, sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["speakers", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["speaker-talks", eventId] });
+      toast.success("Talk updated successfully");
+    },
+    onError: (error: any) => {
+      toast.error(formatApiError(error, "Failed to update talk"));
+    }
+  });
+}
+
+export function useRemoveSessionSpeaker(eventId: string, sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionSpeakerId: string) =>
+      apiDelete(`/events/${eventId}/sessions/${sessionId}/speakers/${sessionSpeakerId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["session-detail", eventId, sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["speakers", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["speaker-talks", eventId] });
+      toast.success("Speaker removed from session");
+    },
+    onError: (error: any) => {
+      toast.error(formatApiError(error, "Failed to remove speaker"));
+    }
+  });
+}
+
+export function useReorderSessionSpeakers(eventId: string, sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (orderedIds: string[]) =>
+      apiPost(`/events/${eventId}/sessions/${sessionId}/reorder-speakers`, { ordered_ids: orderedIds }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["session-detail", eventId, sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["speakers", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["speaker-talks", eventId] });
+      toast.success("Speaker order updated");
+    },
+    onError: (error: any) => {
+      toast.error(formatApiError(error, "Failed to reorder speakers"));
+    }
+  });
+}
+

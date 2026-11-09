@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="12.957" timestamp="2026-10-19T11:18:54.265939+05:30" hostname="Vishal"><testcase classname="tests.test_upload_cleanup_claim_takeover" name="test_older_cleanup_cannot_delete_after_newer_recovery_finalizes" time="12.046"><failure message="FileNotFoundError: Uploaded object was not found.">tests\test_upload_cleanup_claim_takeover.py:74: in test_older_cleanup_cannot_delete_after_newer_recovery_finalizes
+    assert storage.get_object_metadata(bucket=row.storage_bucket, storage_path=key,
+app\modules\presentations\services\upload_service.py:423: in get_object_metadata
+    raise FileNotFoundError("Uploaded object was not found.")
+E   FileNotFoundError: Uploaded object was not found.</failure></testcase></testsuite></testsuites>

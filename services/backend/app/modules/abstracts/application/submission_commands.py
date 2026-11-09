@@ -9,9 +9,11 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from .write_authority import authorize_abstract_write, write_abstract_audit, validate_submission_references
 
 from app.modules.abstracts.models import AbstractAuthor, AbstractSubmission
-from app.modules.audit.services.audit_service import AuditContext, AuditService
+from app.modules.audit.services.audit_service import AuditContext
+from app.modules.platform.services.metering_service import MeteringService
 
 
 class AbstractSubmissionCommandService:
@@ -22,6 +24,8 @@ class AbstractSubmissionCommandService:
 
     async def create(self, *, payload: dict[str, Any], event, user) -> AbstractSubmission:
         try:
+            await authorize_abstract_write(self.db, event, user, "abstracts.submit", exclusive=True)
+            await validate_submission_references(self.db, event, payload)
             count = int(
                 await self.db.scalar(
                     select(func.count(AbstractSubmission.id)).where(
@@ -69,7 +73,19 @@ class AbstractSubmissionCommandService:
                     )
                 )
             await self.db.flush()
-            await AuditService.write_log_sync(
+            await MeteringService.record(
+                self.db,
+                organization_id=event.organization_id,
+                event_id=event.id,
+                metric_key="abstracts",
+                quantity=1,
+                unit="submission",
+                source="abstracts.submission.create",
+                idempotency_key=f"abstract-submit:{row.id}",
+                actor_user_id=user.id,
+                metadata={"submission_id": str(row.id)},
+            )
+            await write_abstract_audit(
                 AuditContext(
                     action_type="ABSTRACT_SUBMISSION_CREATED",
                     resource_type="abstract",
@@ -81,6 +97,7 @@ class AbstractSubmissionCommandService:
                     new_state={"status": row.status, "code": row.code, "event_id": str(event.id)},
                 ),
                 self.db,
+                commit=False,
             )
             await self.db.commit()
             await self.db.refresh(row)
@@ -91,6 +108,8 @@ class AbstractSubmissionCommandService:
 
     async def update(self, *, submission_id, payload: dict[str, Any], expected_version: int, event, user) -> AbstractSubmission:
         try:
+            await authorize_abstract_write(self.db, event, user, "abstracts.review")
+            await validate_submission_references(self.db, event, payload)
             row = await self.db.scalar(
                 select(AbstractSubmission).where(
                     AbstractSubmission.id == submission_id,
@@ -127,6 +146,7 @@ class AbstractSubmissionCommandService:
 
     async def delete(self, *, submission_id, expected_version: int, event, user) -> None:
         try:
+            await authorize_abstract_write(self.db, event, user, "abstracts.review")
             row = await self.db.scalar(
                 select(AbstractSubmission).where(
                     AbstractSubmission.id == submission_id,
@@ -166,7 +186,7 @@ class AbstractSubmissionCommandService:
             ))
 
     async def _audit(self, event, user, action: str, resource_id, old: dict[str, Any], new: dict[str, Any]) -> None:
-        await AuditService.write_log_sync(
+        await write_abstract_audit(
             AuditContext(
                 action_type=action,
                 resource_type="abstract",
@@ -178,4 +198,5 @@ class AbstractSubmissionCommandService:
                 new_state={**new, "event_id": str(event.id)},
             ),
             self.db,
+            commit=False,
         )

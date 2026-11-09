@@ -53,6 +53,13 @@ def _hash_token(token: str) -> str:
 def create_access_token(
     user: User,
     *,
+    session_id: Optional[uuid.UUID] = None,
+    access_mode: str = "DIRECT",
+    active_organization_id: Optional[uuid.UUID] = None,
+    acting_organization_id: Optional[uuid.UUID] = None,
+    active_workspace_id: Optional[uuid.UUID] = None,
+    active_event_id: Optional[uuid.UUID] = None,
+    relationship_id: Optional[uuid.UUID] = None,
     mfa_authenticated_at: Optional[datetime] = None,
     impersonator_id: Optional[uuid.UUID] = None,
     impersonation_session_id: Optional[uuid.UUID] = None,
@@ -69,22 +76,47 @@ def create_access_token(
         type → "access"
         exp  → expiry timestamp
     """
+    if type(user.auth_revision) is not int or user.auth_revision < 1:
+        raise ValueError("Persisted authentication revision is required before issuing access.")
     now = datetime.now(timezone.utc)
     expire = now + timedelta(minutes=expires_minutes or settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     amr = ["pwd"]
     if mfa_authenticated_at:
         amr.append("mfa")
+    active_organization_id = active_organization_id or user.organization_id
+    acting_organization_id = acting_organization_id or active_organization_id
+    if access_mode not in {"DIRECT", "DELEGATED"}:
+        raise ValueError("Unsupported access context mode.")
+    if access_mode == "DIRECT":
+        if (acting_organization_id != active_organization_id or relationship_id is not None or
+                active_event_id is not None):
+            raise ValueError("Invalid direct access context.")
+    elif not all((session_id, active_organization_id, acting_organization_id,
+                  active_workspace_id, relationship_id)) or acting_organization_id == active_organization_id:
+        raise ValueError("Invalid delegated access context.")
     payload = {
         "sub": str(user.id),
         "role": user.role,
         "org": str(user.organization_id),
         "jti": str(uuid.uuid4()),
+        "auth_revision": user.auth_revision,
         "type": "access",
         "iat": int(now.timestamp()),
         "exp": int(expire.timestamp()),
         "auth_time": int((mfa_authenticated_at or now).timestamp()),
         "amr": amr,
+        "ctx_mode": access_mode,
+        "ctx_org": str(active_organization_id),
+        "ctx_actor_org": str(acting_organization_id),
     }
+    if session_id:
+        payload["sid"] = str(session_id)
+    if active_workspace_id:
+        payload["ctx_ws"] = str(active_workspace_id)
+    if active_event_id:
+        payload["ctx_event"] = str(active_event_id)
+    if relationship_id:
+        payload["ctx_rel"] = str(relationship_id)
     if impersonator_id:
         payload["impersonator_id"] = str(impersonator_id)
     if impersonation_session_id:
@@ -107,6 +139,12 @@ async def persist_refresh_token(
     user_agent: Optional[str] = None,
     device_info: Optional[str] = None,
     mfa_authenticated_at: Optional[datetime] = None,
+    access_mode: str = "DIRECT",
+    active_organization_id: Optional[uuid.UUID] = None,
+    acting_organization_id: Optional[uuid.UUID] = None,
+    active_workspace_id: Optional[uuid.UUID] = None,
+    active_event_id: Optional[uuid.UUID] = None,
+    relationship_id: Optional[uuid.UUID] = None,
 ) -> RefreshToken:
     """
     Hash and persist a new refresh token record.
@@ -115,6 +153,8 @@ async def persist_refresh_token(
     token_hash = _hash_token(plain_token)
     expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
 
+    selected_organization_id = active_organization_id or user.organization_id
+    selected_actor_id = acting_organization_id or selected_organization_id
     record = RefreshToken(
         user_id=user.id,
         token_hash=token_hash,
@@ -124,6 +164,12 @@ async def persist_refresh_token(
         user_agent=user_agent,
         expires_at=expire,
         mfa_authenticated_at=mfa_authenticated_at,
+        access_mode=access_mode,
+        active_organization_id=selected_organization_id,
+        acting_organization_id=selected_actor_id,
+        active_workspace_id=active_workspace_id,
+        active_event_id=active_event_id,
+        relationship_id=relationship_id,
     )
     db.add(record)
     await db.flush()  # get the ID without committing
@@ -149,8 +195,16 @@ async def rotate_refresh_token(
     Returns (new_plain_token, new_RefreshToken).
     Raises ValueError on invalid / expired / reused token.
     """
+    # Match invalidation's identity-before-refresh lock ordering. Refresh cannot
+    # publish a successor after a committed all-session revocation.
+    current = await db.scalar(select(User).where(User.id == user.id,
+        User.deleted_at.is_(None), User.is_active.is_(True)).with_for_update()
+        .execution_options(populate_existing=True))
+    if current is None:
+        raise ValueError("User account is unavailable.")
     result = await db.execute(
         select(RefreshToken).where(RefreshToken.token_hash == old_token_hash)
+        .with_for_update().execution_options(populate_existing=True)
     )
     old_record = result.scalar_one_or_none()
 
@@ -196,6 +250,12 @@ async def rotate_refresh_token(
         ip_address=ip_address,
         user_agent=user_agent,
         mfa_authenticated_at=old_record.mfa_authenticated_at,
+        access_mode=old_record.access_mode,
+        active_organization_id=old_record.active_organization_id,
+        acting_organization_id=old_record.acting_organization_id,
+        active_workspace_id=old_record.active_workspace_id,
+        active_event_id=old_record.active_event_id,
+        relationship_id=old_record.relationship_id,
     )
     return new_plain, new_record
 
@@ -210,6 +270,10 @@ async def revoke_user_refresh_tokens(
     Returns the number of tokens revoked.
     """
     now = datetime.now(timezone.utc)
+    # The database revision is authoritative even if caches/Redis are unavailable.
+    # Arithmetic UPDATE serializes concurrent invalidations without lost increments.
+    await db.execute(update(User).where(User.id == user_id).values(
+        auth_revision=User.auth_revision + 1))
     result = await db.execute(
         update(RefreshToken)
         .where(
@@ -278,7 +342,7 @@ async def login(
     if not user.password_hash or not verify_password(password, user.password_hash):
         raise ValueError(_GENERIC_ERROR)
 
-    if not user.is_active:
+    if not user.is_active or user.deleted_at is not None:
         raise ValueError("Your account has been deactivated. Contact your administrator.")
 
     mfa_authenticated_at = None
@@ -286,18 +350,22 @@ async def login(
     if settings.ENFORCE_PRIVILEGED_MFA and requires_privileged_mfa(user):
         mfa_authenticated_at = await verify_user_mfa(db, user, mfa_code)
 
-    # Issue tokens
-    access_token = create_access_token(
-        user,
-        mfa_authenticated_at=mfa_authenticated_at,
-        expires_minutes=access_expires_minutes,
-    )
+    # Issue both credentials into one browser/device session. Selection later
+    # changes this family, never the user's home organisation.
+    session_id = uuid.uuid4()
     plain_refresh = create_refresh_token_string()
     await persist_refresh_token(
         db, user, plain_refresh,
+        family_id=session_id,
         ip_address=ip_address,
         user_agent=user_agent,
         mfa_authenticated_at=mfa_authenticated_at,
+    )
+    access_token = create_access_token(
+        user,
+        session_id=session_id,
+        mfa_authenticated_at=mfa_authenticated_at,
+        expires_minutes=access_expires_minutes,
     )
 
     # Update last_login_at

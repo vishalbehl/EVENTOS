@@ -5,9 +5,10 @@ from __future__ import annotations
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from .write_authority import authorize_abstract_write, write_abstract_audit
 
 from app.modules.abstracts.models import AbstractAttachment, AbstractSubmission
-from app.modules.audit.services.audit_service import AuditContext, AuditService
+from app.modules.audit.services.audit_service import AuditContext
 
 
 class AbstractAttachmentCommandService:
@@ -18,6 +19,7 @@ class AbstractAttachmentCommandService:
 
     async def add(self, *, submission_id, payload: dict, event, user) -> AbstractSubmission:
         try:
+            await authorize_abstract_write(self.db, event, user, "abstracts.review")
             submission = await self.db.scalar(
                 select(AbstractSubmission).where(
                     AbstractSubmission.id == submission_id,
@@ -38,7 +40,7 @@ class AbstractAttachmentCommandService:
                 file_size_bytes=payload.get("file_size_bytes"),
             ))
             submission.version = int(submission.version or 1) + 1
-            await AuditService.write_log_sync(
+            await write_abstract_audit(
                 AuditContext(
                     action_type="ABSTRACT_ATTACHMENT_ADDED",
                     resource_type="abstract",
@@ -50,6 +52,7 @@ class AbstractAttachmentCommandService:
                     new_state={"filename": payload["filename"], "event_id": str(event.id)},
                 ),
                 self.db,
+                commit=False,
             )
             await self.db.commit()
             await self.db.refresh(submission)

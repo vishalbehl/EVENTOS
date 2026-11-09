@@ -54,7 +54,7 @@ export function CommercialDetailsDialog({ open, onOpenChange, type, data }: Comm
   const isVenue = type === "addon" && (data.addon_type || data.type) === "VENUE";
   const imageUrl = typeof data.image_url === "string" && data.image_url.trim() ? data.image_url.trim() : data.imageUrl;
   const price = type === "plan"
-    ? data.priceLabel || (data.price_per_event != null ? formatINR(data.price_per_event) : "Custom pricing")
+    ? data.priceLabel || (data.prices?.[0]?.amount != null ? formatINR(data.prices[0].amount) : "Custom pricing")
     : data.priceLabel || (data.final_price != null ? formatINR(data.final_price) : data.price_inr != null ? formatINR(data.price_inr) : "Included");
   const billingModel = String(type === "plan" ? data.billing_model || "PER_EVENT" : data.billing_unit || data.billingUnit || "PER_EVENT").replaceAll("_", " ");
   const entitlements = [

@@ -1,10 +1,10 @@
 import uuid
 from typing import List, Set
-from sqlalchemy import select, and_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
-from app.modules.billing.models.subscription import OrganizationAddon
+from app.modules.billing.models.cloud_commercial import CommercialAccount, CommercialContract, CommercialContractItem, CommercialOffer
 
 
 class EntitlementService:
@@ -23,17 +23,20 @@ class EntitlementService:
 
     @staticmethod
     async def has_addon(db: AsyncSession, organization_id: uuid.UUID, addon_name: str) -> bool:
-        """Check if an organization has a specific add-on active."""
-        from app.modules.billing.models.subscription import Addon
-        stmt = select(OrganizationAddon.id).join(Addon).where(
-            and_(
-                OrganizationAddon.organization_id == organization_id,
-                OrganizationAddon.status == "ACTIVE",
-                Addon.name == addon_name
-            )
+        """Check canonical capacity offers on an active commercial contract."""
+        stmt = select(CommercialContractItem.id).join(
+            CommercialContract, CommercialContract.id == CommercialContractItem.contract_id
+        ).join(
+            CommercialAccount, CommercialAccount.id == CommercialContract.commercial_account_id
+        ).join(
+            CommercialOffer, CommercialOffer.id == CommercialContractItem.offer_id
+        ).where(
+            CommercialAccount.owner_organization_id == organization_id,
+            CommercialContract.status == "ACTIVE",
+            CommercialOffer.product_family == "CAPACITY_ADDON",
+            (CommercialOffer.name == addon_name) | (CommercialOffer.display_name == addon_name) | (CommercialOffer.code == addon_name),
         )
-        res = await db.execute(stmt)
-        return res.scalar_one_or_none() is not None
+        return (await db.scalar(stmt)) is not None
 
     @staticmethod
     async def can_access(db: AsyncSession, organization_id: uuid.UUID, feature_keys: List[str]) -> bool:

@@ -236,8 +236,8 @@ def test_production_gate_requires_mandatory_antivirus():
 
 
 def test_release_gate_checks_operational_runbook_procedures():
-    from pathlib import Path
-    committed = Path("ops/production_operations_runbook.md").read_text(encoding="utf-8").lower()
+    from ops.production_release_gate import operations_runbook
+    committed = operations_runbook().read_text(encoding="utf-8").lower()
     assert all(term in committed for term in ("pg_stat_statements", "restore", "rollback", "dead-letter"))
 
 

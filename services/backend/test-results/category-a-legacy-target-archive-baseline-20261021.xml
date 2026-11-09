@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="3" time="26.937" timestamp="2026-10-21T11:26:10.170519+05:30" hostname="Vishal"><testcase classname="tests.test_catalogue_worker_target_lifecycle" name="test_legacy_page_rejects_already_archived_target" time="18.503"><failure message="Failed: DID NOT RAISE &lt;class 'PermissionError'&gt;">committed_session_factory = async_sessionmaker(class_='AsyncSession', autocommit=False, bind=&lt;sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x000001F70C29D1D0&gt;, autoflush=False, expire_on_commit=False)
+page_target = ({'actor_id': UUID('ce5464f5-b6bd-43b4-85fe-dd5814871616'), 'category_id': UUID('8a555597-27f1-4bd3-a2ce-6775dcc6f9cd'...UUID('ca6be444-959c-4064-a71f-7955067d0e1c'), ...}, &lt;ContextVar name='legacy_target_connection' at 0x000001F70D71CDB0&gt;)
+
+    @pytest.mark.asyncio
+    async def test_legacy_page_rejects_already_archived_target(committed_session_factory, page_target):
+        data, selected = page_target
+        async with committed_session_factory() as db:
+            await archive(db, data)
+&gt;           with pytest.raises(PermissionError, match="target no longer available"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE &lt;class 'PermissionError'&gt;
+
+tests\test_catalogue_worker_target_lifecycle.py:76: Failed</failure></testcase><testcase classname="tests.test_catalogue_worker_target_lifecycle" name="test_legacy_page_orders_with_target_archive[False]" time="2.019"><failure message="Failed: Competing catalogue transaction did not wait">committed_session_factory = async_sessionmaker(class_='AsyncSession', autocommit=False, bind=&lt;sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x000001F70C29D1D0&gt;, autoflush=False, expire_on_commit=False)
+page_target = ({'actor_id': UUID('7ee63cd3-6a10-4982-87ac-9c349489e749'), 'category_id': UUID('3fa78789-1a17-41cd-aa80-4f242a03f596'...UUID('17071f2c-512b-4fdd-95e6-a03aac6f162a'), ...}, &lt;ContextVar name='legacy_target_connection' at 0x000001F70F960680&gt;)
+worker_first = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("worker_first", [False, True])
+    async def test_legacy_page_orders_with_target_archive(committed_session_factory, page_target, worker_first):
+        data, selected = page_target
+        task = None
+        try:
+            async with committed_session_factory() as outer, committed_session_factory() as second:
+                connection = await outer.connection()
+                async with AsyncSession(bind=connection, expire_on_commit=False,
+                        join_transaction_mode="create_savepoint") as first:
+                    if worker_first:
+                        assert (await execute(first, selected, data))["checked"] == 1
+                        pid = await second.scalar(text("SELECT pg_backend_pid()"))
+                        task = asyncio.create_task(archive(second, data))
+                    else:
+                        await archive(first, data)
+                        pid = await second.scalar(text("SELECT pg_backend_pid()"))
+                        task = asyncio.create_task(execute(second, selected, data))
+&gt;                   await wait_for_blocker(first, pid, task)
+
+tests\test_catalogue_worker_target_lifecycle.py:100: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_catalogue_retirement_concurrency.py:96: in wait_for_blocker
+    await asyncio.wait_for(observed(), 10)
+C:\Users\visha\AppData\Local\Programs\Python\Python313\Lib\asyncio\tasks.py:507: in wait_for
+    return await fut
+           ^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    async def observed():
+        while not await observer.scalar(text("SELECT cardinality(pg_blocking_pids(:pid))&gt;0"), {"pid": pid}):
+            if task.done():
+                task.result()
+&gt;               pytest.fail("Competing catalogue transaction did not wait")
+E               Failed: Competing catalogue transaction did not wait
+
+tests\test_catalogue_retirement_concurrency.py:94: Failed</failure></testcase><testcase classname="tests.test_catalogue_worker_target_lifecycle" name="test_legacy_page_orders_with_target_archive[True]" time="4.165"><failure message="Failed: Competing catalogue transaction did not wait">committed_session_factory = async_sessionmaker(class_='AsyncSession', autocommit=False, bind=&lt;sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x000001F70C29D1D0&gt;, autoflush=False, expire_on_commit=False)
+page_target = ({'actor_id': UUID('8b658a72-1a8c-47a7-8d59-5386ac4db913'), 'category_id': UUID('9eb163e6-dbf0-45c9-89b1-dd37febd473b'...UUID('8870bd0c-69ac-4e90-9012-d91731d2bda3'), ...}, &lt;ContextVar name='legacy_target_connection' at 0x000001F70DB42160&gt;)
+worker_first = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("worker_first", [False, True])
+    async def test_legacy_page_orders_with_target_archive(committed_session_factory, page_target, worker_first):
+        data, selected = page_target
+        task = None
+        try:
+            async with committed_session_factory() as outer, committed_session_factory() as second:
+                connection = await outer.connection()
+                async with AsyncSession(bind=connection, expire_on_commit=False,
+                        join_transaction_mode="create_savepoint") as first:
+                    if worker_first:
+                        assert (await execute(first, selected, data))["checked"] == 1
+                        pid = await second.scalar(text("SELECT pg_backend_pid()"))
+                        task = asyncio.create_task(archive(second, data))
+                    else:
+                        await archive(first, data)
+                        pid = await second.scalar(text("SELECT pg_backend_pid()"))
+                        task = asyncio.create_task(execute(second, selected, data))
+&gt;                   await wait_for_blocker(first, pid, task)
+
+tests\test_catalogue_worker_target_lifecycle.py:100: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_catalogue_retirement_concurrency.py:96: in wait_for_blocker
+    await asyncio.wait_for(observed(), 10)
+C:\Users\visha\AppData\Local\Programs\Python\Python313\Lib\asyncio\tasks.py:507: in wait_for
+    return await fut
+           ^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    async def observed():
+        while not await observer.scalar(text("SELECT cardinality(pg_blocking_pids(:pid))&gt;0"), {"pid": pid}):
+            if task.done():
+                task.result()
+&gt;               pytest.fail("Competing catalogue transaction did not wait")
+E               Failed: Competing catalogue transaction did not wait
+
+tests\test_catalogue_retirement_concurrency.py:94: Failed</failure></testcase></testsuite></testsuites>

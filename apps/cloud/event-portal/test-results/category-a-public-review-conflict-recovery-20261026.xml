@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="3" failures="0" errors="0" time="1.1775733">
+    <testsuite name="test/category-a/reviewer-command-recovery.test.tsx" timestamp="2026-10-26T06:54:59.740Z" hostname="Vishal" tests="3" failures="0" errors="0" skipped="0" time="1.1775733">
+        <testcase classname="test/category-a/reviewer-command-recovery.test.tsx" name="retains review input and reuses the same receipt on an explicit retry after throttling" time="0.9000485">
+        </testcase>
+        <testcase classname="test/category-a/reviewer-command-recovery.test.tsx" name="retains conflict input and reuses the loaded version and receipt after throttling" time="0.1615573">
+        </testcase>
+        <testcase classname="test/category-a/reviewer-command-recovery.test.tsx" name="shows submitted scores without offering an unsupported edit or another submission" time="0.1117275">
+        </testcase>
+    </testsuite>
+</testsuites>

@@ -23,6 +23,7 @@ from app.modules.speakers.schemas.session_builder import (
     ConflictDetail,
     SessionReorderItem,
 )
+from app.modules.speakers.services.session_builder_programme_service import accepted_abstract_candidates
 
 
 # ── Conflict Detection ─────────────────────────────────────
@@ -62,7 +63,10 @@ async def detect_conflicts(
             "room_id": s.room_id,
             "start_time": s.start_time,
             "end_time": s.end_time,
+            "session_type": s.session_type,
+            "status": s.status,
             "speakers": [ss.speaker_id for ss in s.session_speakers if ss.speaker_id],
+            "people": list(s.session_speakers),
         }
 
     if candidate_items:
@@ -73,6 +77,32 @@ async def detect_conflicts(
                 session_map[item.session_id]["end_time"] = item.end_time
 
     sessions_list = list(session_map.values())
+
+    # Readiness checks are authoritative: items may remain in the draft queue,
+    # but unresolved confirmation/upload requirements block publication.
+    for item in sessions_list:
+        if item["room_id"] is None:
+            conflicts.append(ConflictDetail(type="missing_room", session_ids=[item["id"]],
+                description="Session has not yet been placed in a programme room", severity="error"))
+        if str(item.get("status") or "").lower() in {"cancelled", "canceled", "invalid"}:
+            conflicts.append(ConflictDetail(type="invalid_session_state", session_ids=[item["id"]],
+                description="Cancelled or invalid sessions cannot be published to the programme", severity="error"))
+        for person in item["people"]:
+            if person.speaker_id and not person.is_confirmed:
+                conflicts.append(ConflictDetail(type="speaker_unconfirmed", session_ids=[item["id"]], speaker_id=person.speaker_id,
+                    description="Assigned speaker has not confirmed this programme item", severity="error"))
+            if person.speaker_id and person.speaker and person.speaker.upload_status not in {"uploaded", "valid", "approved", "pending_validation"}:
+                conflicts.append(ConflictDetail(type="speaker_upload_pending", session_ids=[item["id"]], speaker_id=person.speaker_id,
+                    description="Assigned speaker still needs a valid presentation upload", severity="error"))
+            if person.speaker_id and person.speaker and not _speaker_is_available(person.speaker, item["start_time"], item["end_time"]):
+                conflicts.append(ConflictDetail(type="speaker_unavailable", session_ids=[item["id"]], speaker_id=person.speaker_id,
+                    description="Assigned speaker is not available for this scheduled time", severity="error"))
+        if str(item.get("session_type") or "").upper() == "PANEL":
+            if not item["people"] or not any("moderator" in str(getattr(person, "role", "")).lower() for person in item["people"]):
+                conflicts.append(ConflictDetail(
+                    type="unassigned_moderator", session_ids=[item["id"]],
+                    description="Panel session requires a moderator before publication", severity="error",
+                ))
 
     # ── 1. Room overlap detection ──────────────────────────
     room_sessions: dict[uuid.UUID, list] = {}
@@ -103,6 +133,7 @@ async def detect_conflicts(
             speaker_sessions.setdefault(spk_id, []).append(s)
 
     for speaker_id, spk_sess in speaker_sessions.items():
+        spk_sess.sort(key=lambda item: item["start_time"])
         for i, a in enumerate(spk_sess):
             for b in spk_sess[i + 1:]:
                 if _overlaps(a["start_time"], a["end_time"], b["start_time"], b["end_time"]):
@@ -115,6 +146,17 @@ async def detect_conflicts(
                             f"at {_fmt(a['start_time'])}"
                         ),
                         severity="error",
+                    ))
+                elif (
+                    a["room_id"] is not None and b["room_id"] is not None
+                    and a["room_id"] != b["room_id"]
+                    and b["start_time"] >= a["end_time"]
+                    and (b["start_time"] - a["end_time"]).total_seconds() < 15 * 60
+                ):
+                    conflicts.append(ConflictDetail(
+                        type="travel_time", session_ids=[a["id"], b["id"]], speaker_id=speaker_id,
+                        description="Speaker has less than 15 minutes to move between rooms",
+                        severity="warning",
                     ))
 
     # ── 3. Out-of-bounds detection ─────────────────────────
@@ -133,7 +175,7 @@ async def detect_conflicts(
                     type="out_of_bounds",
                     session_ids=[s["id"]],
                     description="Session is scheduled outside the event date range",
-                    severity="warning",
+                    severity="error",
                 ))
 
     return conflicts
@@ -142,6 +184,25 @@ async def detect_conflicts(
 def _overlaps(s1: datetime, e1: datetime, s2: datetime, e2: datetime) -> bool:
     """Return True if two time intervals overlap (exclusive end boundary)."""
     return s1 < e2 and e1 > s2
+
+
+def _speaker_is_available(speaker, start: datetime, end: datetime) -> bool:
+    """Evaluate optional event-scoped availability without making blank data restrictive."""
+    availability = getattr(speaker, "programme_availability", None) or {}
+    if not availability:
+        return True
+    windows = availability.get(start.date().isoformat())
+    if not windows:
+        return False
+    for window in windows:
+        try:
+            window_start = datetime.strptime(str(window["start"]), "%H:%M").time()
+            window_end = datetime.strptime(str(window["end"]), "%H:%M").time()
+        except (KeyError, TypeError, ValueError):
+            continue
+        if start.time() >= window_start and end.time() <= window_end:
+            return True
+    return False
 
 
 def _fmt(dt: datetime) -> str:
@@ -166,7 +227,7 @@ async def bulk_reorder_sessions(
         Session.event_id == event_id,
         Session.id.in_(session_ids),
         Session.deleted_at.is_(None),
-    )
+    ).with_for_update()
     result = await db.execute(stmt)
     db_sessions = {s.id: s for s in result.scalars().all()}
 
@@ -177,12 +238,15 @@ async def bulk_reorder_sessions(
     # Apply updates
     for item in items:
         session = db_sessions[item.session_id]
-        if item.room_id is not None:
-            session.room_id = item.room_id
-        elif item.room_id is None and hasattr(item, '_room_id_explicitly_null'):
-            session.room_id = None
+        if item.expected_version is not None and int(session.version or 1) != item.expected_version:
+            raise ValueError(
+                f"RESOURCE_VERSION_CONFLICT:{session.id}:expected={item.expected_version}:actual={session.version}"
+            )
+        # None is a deliberate unassignment from the timeline/palette.
+        session.room_id = item.room_id
         session.start_time = item.start_time
         session.end_time = item.end_time
+        session.version = int(session.version or 1) + 1
         session.updated_at = datetime.now(timezone.utc)
 
     await db.flush()
@@ -341,11 +405,13 @@ async def get_builder_snapshot_data(
     # Conflicts
     conflicts = await detect_conflicts(event_id, db)
 
+    candidates = await accepted_abstract_candidates(db=db, event_id=event_id)
     return {
         "sessions": sessions,
         "rooms": rooms,
         "tracks": tracks,
         "unscheduled_speakers": unscheduled_speakers,
+        "accepted_candidates": candidates,
         "conflicts": conflicts,
         "event": event,
     }

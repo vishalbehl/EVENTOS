@@ -186,9 +186,10 @@ async def list_speakers(
             ]
 
         # Calculate derived status from both files and posters
+        visible_ss_ids = {ss.id for ss in visible_session_speakers}
         current_files = [f for f in speaker.presentation_files if f.is_current_version]
         if not is_admin:
-            current_files = [f for f in current_files if f.session_speaker_id in [ss.id for ss in visible_session_speakers]]
+            current_files = [f for f in current_files if f.session_speaker_id in visible_ss_ids]
 
         poster_statuses = [p.status for p in visible_posters]
         
@@ -658,24 +659,32 @@ async def get_speaker_sessions(
 
     # 2. Find all speaker IDs that share this identity (Name + Email match)
     # This prevents merging people with same name but different contact info
-    identity_q = select(Speaker.id).where(
-        Speaker.event_id == event.id,
-        or_(
+    identity_clauses = []
+    if sp.first_name and sp.last_name and sp.email:
+        identity_clauses.append(
             and_(
                 func.trim(func.lower(Speaker.first_name)) == func.trim(sp.first_name.lower()),
                 func.trim(func.lower(Speaker.last_name)) == func.trim(sp.last_name.lower()),
-                func.trim(func.lower(Speaker.email)) == func.trim(sp.email.lower())
-            ),
-            and_(
-                Speaker.email.isnot(None),
-                func.lower(Speaker.email) == func.lower(sp.email)
+                func.trim(func.lower(Speaker.email)) == func.trim(sp.email.lower()),
             )
         )
-    )
+    if sp.email:
+        identity_clauses.append(
+            and_(
+                Speaker.email.isnot(None),
+                func.lower(Speaker.email) == func.lower(sp.email),
+            )
+        )
 
-    identity_result = await db.execute(identity_q)
-    speaker_ids = list(set(identity_result.scalars().all()))
-    if not speaker_ids:
+    if identity_clauses:
+        identity_q = select(Speaker.id).where(
+            Speaker.event_id == event.id,
+            Speaker.deleted_at.is_(None),
+            or_(*identity_clauses),
+        )
+        identity_result = await db.execute(identity_q)
+        speaker_ids = list(set(identity_result.scalars().all()) | {sp.id})
+    else:
         speaker_ids = [sp.id]
 
     # 3. Join session_speakers -> sessions -> rooms for all these IDs
@@ -687,32 +696,24 @@ async def get_speaker_sessions(
         .where(
             SessionSpeaker.speaker_id.in_(speaker_ids),
             Session.event_id == event.id,
+            Session.deleted_at.is_(None),
         )
     )
 
-    # Apply restricted access filtering for non-admin roles
-    if current_user.role not in ["super_admin", "admin", "organiser"]:
-        from app.modules.rbac.models.rbac import UserAccessNode
-        from app.modules.rbac.models.user_assignment import UserEventAssignment
+    # 4. Resolve RBAC access scope consistently
+    event_wide_access, assigned_session_ids, assigned_room_ids = await SpeakerQueryService(db).resolve_access_scope(
+        user_id=current_user.id,
+        event_id=event.id,
+        user_role=current_user.role,
+    )
 
-        # Get assigned node IDs for this user
-        nodes_result = await db.execute(
-            select(UserAccessNode.node_id, UserAccessNode.node_type)
-            .where(UserAccessNode.user_id == current_user.id)
-        )
-        nodes = nodes_result.all()
-        
-        assigned_event_ids = {n.node_id for n in nodes if n.node_type == 'EVENT'}
-        assigned_room_ids = {n.node_id for n in nodes if n.node_type == 'ROOM'}
-        assigned_session_ids = {n.node_id for n in nodes if n.node_type == 'SESSION'}
-
-        if event.id not in assigned_event_ids:
-            q = q.where(
-                or_(
-                    Session.id.in_(assigned_session_ids),
-                    Session.room_id.in_(assigned_room_ids)
-                )
+    if not event_wide_access:
+        q = q.where(
+            or_(
+                Session.id.in_(assigned_session_ids),
+                Session.room_id.in_(assigned_room_ids),
             )
+        )
 
     q = q.order_by(Session.start_time)
     result = await db.execute(q)
@@ -749,23 +750,23 @@ async def get_speaker_sessions(
             session_name=session.name,
             session_code=session.session_code,
             room_name=room.name if room else None,
-            start_time=ss.start_time or session.start_time,
-            end_time=ss.end_time or session.end_time,
+            start_time=getattr(ss, "start_time", None) or session.start_time,
+            end_time=getattr(ss, "end_time", None) or session.end_time,
             talk_title=ss.presentation_title,
-            talk_order=ss.talk_order,
-            speaker_type=ss.speaker_type,
+            talk_order=ss.talk_order or 0,
+            speaker_type=getattr(ss, "speaker_type", None) or getattr(ss, "role", "Speaker"),
             session_status=session.status,
             file_status=file_status,
             files_uploaded=files_uploaded,
             files_total=files_total,
             event_timezone=event.timezone,
-            abstract_text=ss.abstract_text,
-            abstract_keywords=ss.abstract_keywords or [],
-            abstract_status=ss.abstract_status,
-            abstract_version=ss.abstract_version,
-            abstract_submitted_at=ss.abstract_submitted_at,
-            abstract_reviewed_at=ss.abstract_reviewed_at,
-            abstract_review_notes=ss.abstract_review_notes,
+            abstract_text=getattr(ss, "abstract_text", None),
+            abstract_keywords=getattr(ss, "abstract_keywords", None) or [],
+            abstract_status=getattr(ss, "abstract_status", "DRAFT") or "DRAFT",
+            abstract_version=getattr(ss, "abstract_version", 1) or 1,
+            abstract_submitted_at=getattr(ss, "abstract_submitted_at", None),
+            abstract_reviewed_at=getattr(ss, "abstract_reviewed_at", None),
+            abstract_review_notes=getattr(ss, "abstract_review_notes", None),
         ))
     return talks
 
@@ -866,7 +867,6 @@ async def fetch_speakers_from_registration(
             continue
 
         token = str(uuid.uuid4())
-        code = token.split("-")[0].upper()
 
         speaker = Speaker(
             event_id=event.id,
@@ -879,7 +879,6 @@ async def fetch_speakers_from_registration(
             country=p.country,
             designation=p.designation,
             upload_token=token,
-            speaker_code=code,
             upload_status="pending",
         )
         db.add(speaker)

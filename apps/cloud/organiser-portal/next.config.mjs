@@ -7,6 +7,9 @@ const __dirname = path.dirname(__filename);
 /** @type {import('next').NextConfig} */
 const nextConfig = {
     reactStrictMode: true,
+    // The local API and browser harness use both loopback host spellings during development.
+    // Keep HMR/session verification available without broadening production origins.
+    allowedDevOrigins: ["localhost", "127.0.0.1"],
     transpilePackages: [
         "@eventos/email-builder-studio",
         "@eventos/website-builder-studio",
@@ -33,6 +36,13 @@ const nextConfig = {
     },
     async headers() {
         return securityHeaders();
+    },
+    async redirects() {
+        return [
+            { source: "/events/:eventId/program/agenda", destination: "/events/:eventId/sessions/builder", permanent: false },
+            { source: "/events/:eventId/program/builder", destination: "/events/:eventId/sessions/builder", permanent: false },
+            { source: "/events/:eventId/sessions/agenda", destination: "/events/:eventId/sessions/builder", permanent: false },
+        ];
     },
     // Production browsers call the AWS API directly. Rewrites remain local-only.
     async rewrites() {

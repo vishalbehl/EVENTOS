@@ -15,6 +15,9 @@
 from __future__ import annotations
 
 import re
+import hashlib
+import tempfile
+import io
 import uuid
 from contextlib import contextmanager
 from datetime import date, datetime
@@ -73,7 +76,13 @@ def _assert_tenant_storage_path(
     verified_organization_id: uuid.UUID | None = None,
     allow_platform: bool = False,
 ) -> uuid.UUID | None:
-    normalized = storage_path.replace("\\", "/").lstrip("/")
+    # The same key must mean the same thing to S3 and the local provider.
+    # Prefix checks alone permit tenant/A/../B traversal on the filesystem.
+    if not isinstance(storage_path, str) or "\\" in storage_path or "\x00" in storage_path:
+        raise RuntimeError("Storage object key is not canonical.")
+    normalized = storage_path
+    if any(part in {"", ".", ".."} for part in normalized.split("/")):
+        raise RuntimeError("Storage object key is not canonical.")
     if allow_platform and normalized.startswith("platform/"):
         return None
     organization_id = verified_organization_id or _require_tenant_org_id()
@@ -97,6 +106,7 @@ def _get_s3_client(*, for_presigned_url: bool = False):
             connect_timeout=settings.STORAGE_CONNECT_TIMEOUT_SECONDS,
             read_timeout=settings.STORAGE_READ_TIMEOUT_SECONDS,
             max_pool_connections=settings.STORAGE_MAX_CONNECTIONS,
+            s3={"addressing_style": "path" if settings.S3_FORCE_PATH_STYLE else "auto"},
             retries={"mode": "standard", "max_attempts": settings.STORAGE_MAX_RETRIES},
         ),
     }
@@ -398,6 +408,54 @@ def create_presigned_download(
         raise RuntimeError("Could not generate download URL.") from exc
 
 
+def _is_registration_attempt_key(storage_path: str) -> bool:
+    parts = storage_path.split("/")
+    if len(parts) < 6 or parts[0] != "tenant" or parts[2] != "event" or parts[4] not in {"registration_upload", "registration_program"}:
+        return False
+    try:
+        return str(uuid.UUID(parts[1])) == parts[1] and str(uuid.UUID(parts[3])) == parts[3]
+    except ValueError:
+        return False
+
+
+class RegistrationUploadWriteConflict(RuntimeError):
+    """A write-once attempt key is fenced, contended or contains other bytes."""
+
+
+def seal_registration_upload_key(bucket: str, storage_path: str, *, verified_organization_id: uuid.UUID) -> None:
+    """Remove payload and retain a zero-byte key fence against delayed PUTs.
+
+Caller must first commit its DB cleanup intent. Do not physically DELETE this
+marker: absence would permit a still-in-flight conditional writer to win later.
+"""
+    organization_id = _assert_tenant_storage_path(storage_path, verified_organization_id=verified_organization_id)
+    if not _is_registration_attempt_key(storage_path):
+        raise RuntimeError("Only managed registration attempt keys can be fenced.")
+    if settings.STORAGE_MODE == "local":
+        root = (LOCAL_STORAGE_ROOT / bucket).resolve()
+        path = (root / storage_path).resolve()
+        namespace = root / f"tenant/{organization_id}"
+        if namespace not in path.parents:
+            raise RuntimeError("Storage object key is outside the verified tenant namespace.")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".upload-fence-", delete=False) as marker:
+                temporary = marker.name
+            # Atomic replacement also unlinks a writer's already-open inode.
+            # Further writes to that handle cannot recreate the path.
+            os.replace(temporary, path)
+            temporary = None
+        finally:
+            if temporary is not None:
+                os.unlink(temporary)
+        return
+    with _storage_operation("seal_registration_upload_key"):
+        _get_s3_client().put_object(Bucket=bucket, Key=storage_path, Body=b"",
+            ContentType="application/x-conf-platform-upload-fence",
+            Metadata={"conf-platform-cleanup-fence": "v1"})
+
+
 def get_object_metadata(
     *,
     bucket: str,
@@ -414,12 +472,26 @@ def get_object_metadata(
         root = (LOCAL_STORAGE_ROOT / bucket).resolve()
         if root not in path.parents or not path.is_file():
             raise FileNotFoundError("Uploaded object was not found.")
-        return {"size": path.stat().st_size, "content_type": None}
+        size = path.stat().st_size
+        if size == 0 and _is_registration_attempt_key(storage_path):
+            raise FileNotFoundError("Upload payload was removed and its key is fenced.")
+        return {"size": size, "content_type": None}
     try:
         with _storage_operation("head_object"):
             response = _get_s3_client().head_object(Bucket=bucket, Key=storage_path)
     except ClientError as exc:
-        raise FileNotFoundError("Uploaded object was not found.") from exc
+        error = str((exc.response.get("Error") or {}).get("Code") or "")
+        status_code = int((exc.response.get("ResponseMetadata") or {}).get("HTTPStatusCode") or 0)
+        if error in {"404", "NoSuchKey", "NotFound"} or status_code == 404:
+            raise FileNotFoundError("Uploaded object was not found.") from exc
+        # Authentication, throttling and service failures have an uncertain
+        # outcome and must never be converted into destructive not-found
+        # recovery.
+        raise RuntimeError("Object metadata is temporarily unavailable.") from exc
+    if (response.get("Metadata") or {}).get("conf-platform-cleanup-fence") == "v1":
+        if int(response.get("ContentLength", -1)) != 0:
+            raise RuntimeError("Invalid storage cleanup fence.")
+        raise FileNotFoundError("Upload payload was removed and its key is fenced.")
     return {"size": int(response.get("ContentLength", -1)), "content_type": response.get("ContentType")}
 
 
@@ -482,12 +554,27 @@ def create_presigned_import_upload(
 
 # ── Object management ─────────────────────────────────────────
 
-def delete_object(bucket: str, storage_path: str) -> None:
+def delete_object(
+    bucket: str,
+    storage_path: str,
+    *,
+    verified_organization_id: uuid.UUID | None = None,
+) -> None:
     """
     Delete a single object from storage.
     """
+    organization_id = _assert_tenant_storage_path(
+        storage_path, verified_organization_id=verified_organization_id,
+    )
+    if _is_registration_attempt_key(storage_path):
+        return seal_registration_upload_key(bucket, storage_path, verified_organization_id=organization_id)
     if settings.STORAGE_MODE == "local":
-        local_path = LOCAL_STORAGE_ROOT / bucket / storage_path
+        root = (LOCAL_STORAGE_ROOT / bucket).resolve()
+        local_path = (root / storage_path).resolve()
+        namespace = root / (f"tenant/{organization_id}"
+            if storage_path.startswith("tenant/") else str(organization_id))
+        if namespace not in local_path.parents:
+            raise RuntimeError("Storage object key is outside the verified tenant namespace.")
         if local_path.exists():
             local_path.unlink()
             logger.info("Deleted local storage object")
@@ -533,6 +620,8 @@ def copy_object(
     dest_path: str,
 ) -> None:
     """Copy an object within or between buckets (used by venue sync staging)."""
+    if _is_registration_attempt_key(dest_path):
+        raise RuntimeError("Managed registration attempt keys cannot be copy targets.")
     s3 = _get_s3_client()
     try:
         with _storage_operation("copy_object"):
@@ -558,6 +647,8 @@ def move_object(
     """
     if source_path == dest_path:
         return
+    if _is_registration_attempt_key(source_path) or _is_registration_attempt_key(dest_path):
+        raise RuntimeError("Managed registration attempt keys cannot be moved.")
 
     if settings.STORAGE_MODE == "local":
         src = LOCAL_STORAGE_ROOT / source_bucket / source_path
@@ -695,6 +786,10 @@ def upload_bytes(
         verified_organization_id=verified_organization_id,
         allow_platform=allow_platform,
     )
+    if _is_registration_attempt_key(storage_path):
+        return upload_fileobj(bucket, storage_path, io.BytesIO(data), content_type,
+            verified_organization_id=verified_organization_id, allow_platform=allow_platform,
+            write_once=True, expected_checksum=hashlib.sha256(data).hexdigest())
     if settings.STORAGE_MODE == "local":
         local_path = LOCAL_STORAGE_ROOT / bucket / storage_path
         local_path.parent.mkdir(parents=True, exist_ok=True)
@@ -725,28 +820,63 @@ def upload_fileobj(
     *,
     verified_organization_id: uuid.UUID | None = None,
     allow_platform: bool = False,
+    write_once: bool = False,
+    expected_checksum: str | None = None,
 ) -> None:
     """Upload a seekable file object without materializing it in memory."""
-    _assert_tenant_storage_path(
+    organization_id = _assert_tenant_storage_path(
         storage_path,
         verified_organization_id=verified_organization_id,
         allow_platform=allow_platform,
     )
+    _assert_tenant_storage_path(
+        storage_path,
+        verified_organization_id=verified_organization_id,
+    )
+    if _is_registration_attempt_key(storage_path) and not write_once:
+        raise ValueError("Managed registration attempt writes must be conditional.")
+    if write_once and (not _is_registration_attempt_key(storage_path)
+            or not re.fullmatch(r"[a-fA-F0-9]{64}", expected_checksum or "")):
+        raise ValueError("Write-once uploads require a managed attempt key and verified checksum.")
+
+    def check_identical_existing() -> None:
+        try:
+            get_object_metadata(bucket=bucket, storage_path=storage_path,
+                verified_organization_id=verified_organization_id)
+        except FileNotFoundError:
+            raise RegistrationUploadWriteConflict("Upload attempt key is fenced or contended.") from None
+        digest = hashlib.sha256()
+        for chunk in iter_object_chunks(bucket, storage_path, verified_organization_id=verified_organization_id):
+            digest.update(chunk)
+        if digest.hexdigest().lower() != expected_checksum.lower():
+            raise RegistrationUploadWriteConflict("Upload attempt contains a different payload.")
     if settings.STORAGE_MODE == "local":
-        local_path = LOCAL_STORAGE_ROOT / bucket / storage_path
+        root = (LOCAL_STORAGE_ROOT / bucket).resolve()
+        local_path = (root / storage_path).resolve()
+        if root not in local_path.parents:
+            raise RuntimeError("Storage object key is outside the configured bucket.")
+        if write_once and root / f"tenant/{organization_id}" not in local_path.parents:
+            raise RuntimeError("Storage object key is outside the verified tenant namespace.")
         local_path.parent.mkdir(parents=True, exist_ok=True)
-        with _storage_operation("upload_fileobj"), local_path.open("wb") as destination:
-            shutil.copyfileobj(fileobj, destination, length=1024 * 1024)
+        try:
+            with _storage_operation("upload_fileobj"), local_path.open("xb" if write_once else "wb") as destination:
+                shutil.copyfileobj(fileobj, destination, length=1024 * 1024)
+        except FileExistsError:
+            if not write_once:
+                raise
+            check_identical_existing()
         return
 
     try:
         with _storage_operation("upload_fileobj"):
-            _get_s3_client().upload_fileobj(
-                fileobj,
-                bucket,
-                storage_path,
-                ExtraArgs={"ContentType": content_type},
-            )
+            if write_once:
+                _get_s3_client().put_object(Bucket=bucket, Key=storage_path, Body=fileobj,
+                    ContentType=content_type, IfNoneMatch="*")
+            else:
+                _get_s3_client().upload_fileobj(fileobj, bucket, storage_path, ExtraArgs={"ContentType": content_type})
     except ClientError as exc:
+        if write_once and int((exc.response.get("ResponseMetadata") or {}).get("HTTPStatusCode") or 0) in {409, 412}:
+            check_identical_existing()
+            return
         logger.error("Storage file-object upload failed: {}", type(exc).__name__)
         raise RuntimeError("Storage upload failed.") from exc

@@ -8,6 +8,7 @@
 # =============================================================
 
 from pathlib import Path
+import re
 from typing import Any, List
 
 from pydantic import field_validator, model_validator
@@ -23,6 +24,9 @@ class Settings(BaseSettings):
     API_BASE_URL: str = "http://127.0.0.1:8000"
     DEPLOYMENT_PROFILE: str = "local"       # local | staging | production
     environment: str = "development"        # development | staging | production
+    # Runtime API identities must not create default accounts, run DDL or
+    # reconcile global catalogues implicitly. Legacy local bootstrap is opt-in.
+    ENABLE_DEVELOPMENT_BOOTSTRAP: bool = False
     debug: bool = False
     PUBLIC_DEMO_SIGNUP_ENABLED: bool = False
     PUBLIC_DEMO_PLAN_NAME: str = "Free Trial"
@@ -99,20 +103,33 @@ class Settings(BaseSettings):
     DEFAULT_PAGE_SIZE: int = 20
     MAX_PAGE_SIZE: int = 100
 
-    # ── Cloud Storage (Cloudflare R2 / AWS S3-compatible) ─
-    STORAGE_MODE: str = "local"                      # "local" or "s3"
+    # ── Cloud Storage (MinIO in development; R2/S3 in hosted environments) ─
+    # Persistent uploads use the S3-compatible object-storage contract.
+    # STORAGE_LOCAL_PATH is retained only as a migration source and legacy
+    # test escape hatch; application writes use STORAGE_MODE=s3.
+    STORAGE_MODE: str = "s3"
     STORAGE_LOCAL_PATH: str = "data/storage"
-    S3_ENDPOINT_URL: str = ""                       # Private/internal S3-compatible endpoint
-    S3_PUBLIC_ENDPOINT_URL: str = ""                # Browser/device endpoint for presigned URLs
-    S3_ACCESS_KEY_ID: str = ""
-    S3_SECRET_ACCESS_KEY: str = ""
+    S3_ENDPOINT_URL: str = "http://127.0.0.1:9000"       # Private/internal endpoint
+    S3_PUBLIC_ENDPOINT_URL: str = "http://127.0.0.1:9000"  # Browser/device endpoint
+    S3_ACCESS_KEY_ID: str = "minioadmin"
+    S3_SECRET_ACCESS_KEY: str = "minioadmin"
     S3_BUCKET_PRESENTATIONS: str = "presentations"
     S3_BUCKET_POSTERS: str = "posters"
     S3_BUCKET_THUMBNAILS: str = "thumbnails"
     S3_BUCKET_IMPORTS: str = "imports"
     S3_BUCKET_ASSETS: str = "assets"
     S3_BUCKET_EXPORTS: str = "exports"
-    S3_REGION: str = "auto"
+    S3_BUCKET_REGISTRATION_UPLOADS: str = "registration-uploads"
+
+    @field_validator("S3_BUCKET_REGISTRATION_UPLOADS")
+    @classmethod
+    def validate_registration_upload_bucket(cls, value: str) -> str:
+        # Deliberately use the portable, non-dotted subset of S3 bucket names.
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]", value):
+            raise ValueError("Registration upload bucket must be a 3-63 character lowercase S3 name")
+        return value
+    S3_REGION: str = "us-east-1"
+    S3_FORCE_PATH_STYLE: bool = True
     S3_PRESIGNED_EXPIRY_SECONDS: int = 3600        # 1 hour
     # Bounded S3-compatible client behavior. These apply equally to MinIO,
     # AWS S3, and Cloudflare R2 and prevent a worker from hanging indefinitely.
@@ -132,6 +149,25 @@ class Settings(BaseSettings):
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
 
+    # ── Invoice PDF identity and certificate signing ─────
+    # The PKCS#12 certificate is mounted as a secret file. Never store its
+    # bytes or password in the database or repository.
+    INVOICE_ISSUER_NAME: str = "EventOS IT Solutions"
+    INVOICE_ISSUER_ADDRESS: str = "Delhi, India"
+    INVOICE_ISSUER_GSTIN: str = ""
+    INVOICE_ISSUER_PAN: str = ""
+    INVOICE_ISSUER_SAC: str = "998314"
+    INVOICE_ISSUER_WEBSITE: str = "www.eventos.com"
+    INVOICE_ISSUER_EMAIL: str = "billing@eventos.com"
+    INVOICE_ISSUER_PHONE: str = "+91 11 4703 8800"
+    INVOICE_SIGNING_PKCS12_PATH: str = ""
+    INVOICE_SIGNING_PKCS12_PASSWORD: str = ""
+    INVOICE_SIGNER_NAME: str = "EventOS IT Solutions"
+    INVOICE_SIGNING_REASON: str = "Authorised EventOS tax invoice"
+    INVOICE_SIGNING_LOCATION: str = "Delhi, India"
+    INVOICE_SIGNING_TSA_URL: str = ""
+    INVOICE_PDF_REQUIRE_CRYPTOGRAPHIC_SIGNATURE: bool = False
+
     # ── WhatsApp (Meta Cloud API) ─────────────────────────
     WHATSAPP_API_URL: str = "https://graph.facebook.com/v18.0"
     WHATSAPP_PHONE_NUMBER_ID: str = ""
@@ -141,7 +177,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
     REDIS_CACHE_URL: str = ""
     REDIS_LOCK_URL: str = ""
-    REDIS_OPERATION_TIMEOUT_SECONDS: float = 0.25
+    REDIS_OPERATION_TIMEOUT_SECONDS: float = 3.0
     REDIS_LOCK_TTL_SECONDS: int = 30
     CELERY_BROKER_URL: str = "redis://127.0.0.1:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://127.0.0.1:6379/1"
@@ -290,6 +326,8 @@ class Settings(BaseSettings):
             return self
 
         errors: list[str] = []
+        if self.ENABLE_DEVELOPMENT_BOOTSTRAP:
+            errors.append("ENABLE_DEVELOPMENT_BOOTSTRAP is forbidden in production")
         if self.JWT_SECRET_KEY == "change-me-in-production" or len(self.JWT_SECRET_KEY) < 32:
             errors.append("JWT_SECRET_KEY must be a rotated secret of at least 32 characters")
         if not self.PROPOSAL_SHARE_SECRET or len(self.PROPOSAL_SHARE_SECRET) < 32:
@@ -302,6 +340,20 @@ class Settings(BaseSettings):
             errors.append("PORTAL_JWT_SECRET must be at least 32 characters")
         if not self.ENFORCE_PRIVILEGED_MFA:
             errors.append("ENFORCE_PRIVILEGED_MFA must be enabled")
+        if not self.INVOICE_PDF_REQUIRE_CRYPTOGRAPHIC_SIGNATURE:
+            errors.append("INVOICE_PDF_REQUIRE_CRYPTOGRAPHIC_SIGNATURE must be enabled")
+        if not self.INVOICE_SIGNING_PKCS12_PATH:
+            errors.append("INVOICE_SIGNING_PKCS12_PATH must reference a mounted secret")
+        if not self.INVOICE_SIGNING_PKCS12_PASSWORD:
+            errors.append("INVOICE_SIGNING_PKCS12_PASSWORD must be configured")
+        for name, value in (
+            ("INVOICE_ISSUER_GSTIN", self.INVOICE_ISSUER_GSTIN),
+            ("INVOICE_ISSUER_PAN", self.INVOICE_ISSUER_PAN),
+            ("INVOICE_ISSUER_ADDRESS", self.INVOICE_ISSUER_ADDRESS),
+            ("INVOICE_ISSUER_EMAIL", self.INVOICE_ISSUER_EMAIL),
+        ):
+            if not value:
+                errors.append(f"{name} must be configured")
         if not self.REQUIRE_RLS_SAFE_RUNTIME_ROLE:
             errors.append("REQUIRE_RLS_SAFE_RUNTIME_ROLE must be enabled")
         if self.ACCESS_TOKEN_EXPIRE_MINUTES > 60:
@@ -318,6 +370,14 @@ class Settings(BaseSettings):
             errors.append("API_BASE_URL must use HTTPS")
         if self.STORAGE_MODE != "s3":
             errors.append("STORAGE_MODE must be s3")
+        if self.S3_ENDPOINT_URL.startswith(("http://127.0.0.1", "http://localhost", "http://minio")):
+            errors.append("S3_ENDPOINT_URL must point to hosted object storage in production")
+        if self.S3_PUBLIC_ENDPOINT_URL.startswith(("http://127.0.0.1", "http://localhost", "http://minio")):
+            errors.append("S3_PUBLIC_ENDPOINT_URL must not point to local MinIO in production")
+        if self.S3_ACCESS_KEY_ID == "minioadmin" or self.S3_SECRET_ACCESS_KEY == "minioadmin":
+            errors.append("S3 credentials must not use the development MinIO defaults in production")
+        if self.S3_ENDPOINT_URL and not (self.S3_ACCESS_KEY_ID and self.S3_SECRET_ACCESS_KEY):
+            errors.append("S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY are required for an explicit production endpoint")
         if not self.REDIS_URL.startswith("rediss://"):
             errors.append("REDIS_URL must use TLS")
         for name, value in (("REDIS_CACHE_URL", self.REDIS_CACHE_URL), ("REDIS_LOCK_URL", self.REDIS_LOCK_URL)):

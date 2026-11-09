@@ -1,0 +1,34 @@
+{
+  "organization_id": "0a62c7fc-5ee2-40fb-871c-2c74d59098cf",
+  "mode": "REVIEW_ONLY",
+  "apply": false,
+  "metadata_changed": false,
+  "provider_io_performed": false,
+  "records": [
+    {
+      "upload_id": "05a869cb-efe4-4cf0-936e-a3ab40a535e3",
+      "reservation_id": "4ed96e18-a6d6-4a5c-aae9-f55e3d496951",
+      "event_id": "f0207598-9676-432d-ab6f-6251337cd116",
+      "status": "REVIEW_REQUIRED",
+      "proposed_field": "metadata_json.storage_path",
+      "proposed_source": "DurableUpload.object_key",
+      "object_key_sha256": "b09ba4a00849f8f0320183e49ceee25d95b9028f6983e432f57bbe7083323471",
+      "current_state_sha256": "29d0439ec8d2d3edddd24b852f246d6d5b897ad7e338b381a5f0a6e6f69ef3fb",
+      "release_audit_id": "807aa782-8463-4edd-b2ed-c74427117bfc"
+    }
+  ],
+  "next_cursor": null,
+  "retry_page": false,
+  "database": "category_a_rehearsal_20261015",
+  "build_id": "33b3f156-dirty-review-only",
+  "restricted_role_and_reconciliation_indexes_verified": true,
+  "cohort_source": "EXPLICIT_IDS",
+  "environment": "local_rehearsal",
+  "database_state_unchanged": true,
+  "before_state_sha256": "5eb420d693119034bf5f887563310e19beadae487d7985c1ca96a6fa35cd809e",
+  "after_state_sha256": "5eb420d693119034bf5f887563310e19beadae487d7985c1ca96a6fa35cd809e",
+  "runtime_role_proof": "SET LOCAL ROLE; not independent runtime login",
+  "provider_identity_from_owner": "MinIO; original instance and bucket unconfirmed",
+  "storage_repair_status": "NOT_APPLIED",
+  "production_acceptance": "NOT_RUN"
+}

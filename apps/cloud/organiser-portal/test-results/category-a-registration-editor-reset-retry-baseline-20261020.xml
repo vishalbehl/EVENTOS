@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="7" failures="2" errors="0" time="0.8506503">
+    <testsuite name="test/category-a/registration-editor-unavailable.test.tsx" timestamp="2026-10-20T10:29:38.227Z" hostname="Vishal" tests="7" failures="2" errors="0" skipped="5" time="0.8506503">
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="never opens a substitute editor after a required source fails (403)" time="0">
+            <skipped/>
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="never opens a substitute editor after a required source fails (404)" time="0">
+            <skipped/>
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="never opens a substitute editor after a required source fails (503)" time="0">
+            <skipped/>
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="shows an intentionally empty server form without a fabricated default or reset" time="0">
+            <skipped/>
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="keeps a valid copy editable when its historical root is unavailable, without resetting from a fixture" time="0">
+            <skipped/>
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="binds the selected server blueprint when reset is saved, preserving its disabled features" time="0.7787186">
+            <failure message="expected &quot;vi.fn()&quot; to be called with arguments: [ 4, ObjectContaining{…} ]
+
+Received:
+
+  1st vi.fn() call:
+
+  [
+    4,
+-   ObjectContaining {
++   {
++     &quot;fields&quot;: [],
++     &quot;is_live&quot;: false,
+      &quot;settings&quot;: {
+        &quot;enable_payment&quot;: false,
+        &quot;enable_terms&quot;: false,
+      },
+-     &quot;template_id&quot;: &quot;source&quot;,
++     &quot;terms_and_conditions&quot;: &quot;&quot;,
+    },
+  ]
+
+
+Number of calls: 1
+" type="AssertionError">
+AssertionError: expected &quot;vi.fn()&quot; to be called with arguments: [ 4, ObjectContaining{…} ]
+
+Received:
+
+  1st vi.fn() call:
+
+  [
+    4,
+-   ObjectContaining {
++   {
++     &quot;fields&quot;: [],
++     &quot;is_live&quot;: false,
+      &quot;settings&quot;: {
+        &quot;enable_payment&quot;: false,
+        &quot;enable_terms&quot;: false,
+      },
+-     &quot;template_id&quot;: &quot;source&quot;,
++     &quot;terms_and_conditions&quot;: &quot;&quot;,
+    },
+  ]
+
+
+Number of calls: 1
+
+ ❯ test/category-a/registration-editor-unavailable.test.tsx:86:22
+            </failure>
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="honours retry-after without automatically reading or replaying a mutation" time="0.0686747">
+            <failure message="expected false to be true // Object.is equality" type="AssertionError">
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ test/category-a/registration-editor-unavailable.test.tsx:96:26
+            </failure>
+        </testcase>
+    </testsuite>
+</testsuites>

@@ -31,6 +31,7 @@ from app.modules.billing.services.capability_diagnostics_service import (
     CapabilityDiagnosticsService,
 )
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
+from app.modules.billing.plan_feature_bundles import EVENT_PLAN_FEATURE_BUNDLES
 from app.modules.platform.models.organization_console import (
     EntitlementOverrideRequest,
     EventCommercialContract,
@@ -40,6 +41,36 @@ from app.modules.platform.models.organization import Organization
 
 
 class EventEntitlementService:
+    FREE_TIER_EVENT_LIMITS: dict[str, int] = {
+        "max_registrations": 25,
+        "max_speakers": 5,
+        "max_sessions": 5,
+        "max_rooms": 2,
+        "max_ticket_categories": 2,
+        "max_badge_templates": 1,
+        "max_certificate_templates": 1,
+        "max_emails_per_event": 100,
+        "storage_quota_mb": 1024,
+        "max_exports_per_event": 5,
+        "max_event_team_members": 2,
+    }
+
+    FREE_TIER_EVENT_FEATURES: dict[str, Any] = {
+        "FEAT_EVENT_PLANNING": True,
+        "FEAT_REGISTRATION_PORTAL": "BASIC",
+        "FEAT_REGISTRATION_FORMS": "STANDARD",
+        "FEAT_SPEAKER_PORTAL": "PARTIAL",
+        "FEAT_SPEAKER_PROFILES": "BASIC",
+        "FEAT_SESSION_MANAGEMENT": True,
+        "FEAT_DEFAULT_THEME": True,
+        "FEAT_BADGE_TEMPLATES": 1,
+        "FEAT_CERTIFICATE_TEMPLATES": 1,
+        "FEAT_FILE_UPLOADS": True,
+        "FEAT_EMAIL_NOTIFICATIONS": 100,
+        "FEAT_COMMUNICATION_CENTER": True,
+        "FEAT_ATTENDEE_CHECKIN": "BASIC",
+    }
+
     @staticmethod
     def _typed_value(raw: Any) -> tuple[str, Any]:
         if isinstance(raw, dict) and "value" in raw:
@@ -77,10 +108,15 @@ class EventEntitlementService:
         limits: dict[str, dict[str, Any]],
         source_breakdown: dict[str, list[dict[str, Any]]],
         hard_ceilings: dict[str, Any],
+        *,
+        feature_keys: set[str] | None = None,
+        include_limits: bool = True,
     ) -> None:
         """Give the seeded main tenant every capability with no quota ceiling."""
         hard_ceilings.clear()
         for key, definition in FEATURE_DEFINITIONS.items():
+            if feature_keys is not None and key not in feature_keys:
+                continue
             value_type = definition.get("value_type", "BOOLEAN")
             if value_type in {"TIER", "ENUM"}:
                 allowed_values = definition.get("allowed_values", [])
@@ -101,6 +137,8 @@ class EventEntitlementService:
                 "value": value,
             }]
         for key, definition in LIMIT_DEFINITIONS.items():
+            if not include_limits:
+                break
             limits[key] = {
                 # None is the canonical unlimited allowance. Usage remains
                 # metered, but reservation enforcement never exhausts it.
@@ -119,6 +157,42 @@ class EventEntitlementService:
             }]
 
     @staticmethod
+    async def _paid_event_plan_code(
+        db: AsyncSession,
+        organization_id: uuid.UUID,
+        event_id: uuid.UUID,
+        activation: Any,
+    ) -> str | None:
+        """Resolve the immutable Event-plan identity behind an activation."""
+        if not activation or activation.status != "ACTIVE":
+            return None
+        if activation.expires_at and activation.expires_at <= datetime.now(timezone.utc):
+            return None
+        from app.modules.billing.models.cloud_commercial import (
+            CommercialAccount,
+            CommercialContract,
+            CommercialContractItem,
+            CommercialOffer,
+        )
+
+        return await db.scalar(
+            select(CommercialOffer.code)
+            .join(CommercialContractItem, CommercialContractItem.offer_id == CommercialOffer.id)
+            .join(CommercialContract, CommercialContract.id == CommercialContractItem.contract_id)
+            .join(CommercialAccount, CommercialAccount.id == CommercialContract.commercial_account_id)
+            .where(
+                CommercialContract.id == activation.commercial_contract_id,
+                CommercialContract.status == "ACTIVE",
+                CommercialContract.starts_at <= datetime.now(timezone.utc),
+                or_(CommercialContract.ends_at.is_(None), CommercialContract.ends_at > datetime.now(timezone.utc)),
+                CommercialAccount.owner_organization_id == organization_id,
+                CommercialContractItem.event_id == event_id,
+                CommercialOffer.product_family == "EVENT",
+            )
+            .limit(1)
+        )
+
+    @staticmethod
     async def resolve(
         db: AsyncSession,
         organization_id: uuid.UUID,
@@ -127,6 +201,8 @@ class EventEntitlementService:
         explain: bool = True,
         at: datetime | None = None,
         ignore_rollout_flag: bool = False,
+        feature_keys: set[str] | None = None,
+        include_limits: bool = True,
     ) -> dict[str, Any]:
         now = at or datetime.now(timezone.utc)
         organization = await db.get(Organization, organization_id)
@@ -134,7 +210,12 @@ class EventEntitlementService:
             organization and organization.has_unrestricted_capabilities
         )
         base = await EntitlementResolver.resolve_event_entitlements(
-            db, organization_id, event_id, explain=True
+            db,
+            organization_id,
+            event_id,
+            explain=True,
+            feature_keys=feature_keys,
+            include_limits=include_limits,
         )
         activation = base.get("activation")
         features = {key: dict(value) for key, value in base.get("features", {}).items()}
@@ -170,6 +251,10 @@ class EventEntitlementService:
             dict((contract.source or {}).get("ceiling_sources", {})) if contract else {}
         )
         contract_lineage: dict[str, list[dict[str, Any]]] = {}
+        paid_compatibility_features: dict[str, dict[str, Any]] = {}
+        paid_plan_code = await EventEntitlementService._paid_event_plan_code(
+            db, organization_id, event_id, activation
+        )
 
         # A versioned event contract replaces the mutable plan snapshot as the
         # commercial baseline. Legacy activation data is retained only for
@@ -178,6 +263,8 @@ class EventEntitlementService:
             contract_entitlements = dict(contract.entitlements or {})
 
             for key, raw in contract_entitlements.items():
+                if feature_keys is not None and key not in feature_keys:
+                    continue
                 value_type, value = EventEntitlementService._typed_value(raw)
                 if value_type in {"BOOLEAN", "TIER", "ENUM"}:
                     features[key] = {"enabled": EventEntitlementService._feature_enabled(value), "value": value, "value_type": value_type, "scope_type": "EVENT_SCOPED", "source_type": "CONTRACT_SNAPSHOT", "source_ref": str(contract.id)}
@@ -208,6 +295,8 @@ class EventEntitlementService:
                 if not isinstance(addon_values, dict) and isinstance(addon, dict) and addon.get("key"):
                     addon_values = {addon["key"]: addon.get("value", True)}
                 for key, raw_requested in (addon_values or {}).items():
+                    if feature_keys is not None and key not in feature_keys:
+                        continue
                     value_type, requested = EventEntitlementService._typed_value(raw_requested)
                     operation = str(addon.get("operation", "INCREMENT" if isinstance(requested, (int, float)) and not isinstance(requested, bool) else "REPLACE")).upper()
                     quantity = max(1, int(addon.get("quantity") or 1))
@@ -235,9 +324,66 @@ class EventEntitlementService:
                             "overage_policy": previous_limit.get("overage_policy", {"action": "DENY"}),
                         }
                     contract_lineage.setdefault(key, []).append({"source": "PURCHASED_ADDON", "source_ref": str(addon.get("id") or addon.get("key") or contract.id), "operation": operation, "quantity": quantity, "value": value})
-        override_rows = (
-            await db.scalars(
-                select(EntitlementOverrideRequest).where(
+        else:
+            for key, value in EVENT_PLAN_FEATURE_BUNDLES.get(paid_plan_code or "", {}).items():
+                if feature_keys is not None and key not in feature_keys:
+                    continue
+                current = features.get(key)
+                if current and current.get("enabled"):
+                    continue
+                value_type, typed_value = EventEntitlementService._typed_value(value)
+                features[key] = {
+                    "enabled": EventEntitlementService._feature_enabled(typed_value),
+                    "value": typed_value,
+                    "value_type": value_type,
+                    "scope_type": "EVENT_SCOPED",
+                    "source_type": "PAID_PLAN_COMPATIBILITY",
+                    "source_ref": paid_plan_code,
+                }
+                paid_compatibility_features[key] = dict(features[key])
+                contract_lineage.setdefault(key, []).append({
+                    "source": "PAID_PLAN_COMPATIBILITY",
+                    "source_ref": paid_plan_code,
+                    "value": typed_value,
+                })
+            if not activation and not internal_unrestricted:
+                for key, limit_val in EventEntitlementService.FREE_TIER_EVENT_LIMITS.items():
+                    if key not in limits or limits[key].get("limit_value") is None:
+                        limits[key] = {
+                            "limit_value": limit_val,
+                            "value_type": "LIMIT",
+                            "scope_type": "EVENT_SCOPED",
+                            "source_type": "FREE_TIER_BASELINE",
+                            "source_ref": "Free Tier Baseline",
+                            "enforcement_mode": "HARD",
+                            "overage_policy": {"action": "DENY"},
+                        }
+                        contract_lineage.setdefault(key, []).append({
+                            "source": "FREE_TIER_BASELINE",
+                            "source_ref": "Free Tier Baseline",
+                            "value": limit_val,
+                        })
+                for key, feat_val in EventEntitlementService.FREE_TIER_EVENT_FEATURES.items():
+                    if feature_keys is not None and key not in feature_keys:
+                        continue
+                    if key not in features or not features[key].get("enabled"):
+                        val_type, val = EventEntitlementService._typed_value(feat_val)
+                        features[key] = {
+                            "enabled": EventEntitlementService._feature_enabled(val),
+                            "value": val,
+                            "value_type": val_type,
+                            "scope_type": "EVENT_SCOPED",
+                            "source_type": "FREE_TIER_BASELINE",
+                            "source_ref": "Free Tier Baseline",
+                        }
+                        contract_lineage.setdefault(key, []).append({
+                            "source": "FREE_TIER_BASELINE",
+                            "source_ref": "Free Tier Baseline",
+                            "value": val,
+                        })
+            baseline_features = {key: value.get("value", bool(value.get("enabled"))) for key, value in features.items()}
+            baseline_limits = {key: value.get("limit_value") for key, value in limits.items()}
+        override_statement = select(EntitlementOverrideRequest).where(
                     EntitlementOverrideRequest.organization_id == organization_id,
                     EntitlementOverrideRequest.status == "APPROVED",
                     EntitlementOverrideRequest.effective_at <= now,
@@ -250,8 +396,11 @@ class EventEntitlementService:
                         EntitlementOverrideRequest.event_id == event_id,
                     ),
                 )
+        if feature_keys is not None or not include_limits:
+            override_statement = override_statement.where(
+                EntitlementOverrideRequest.entitlement_key.in_(feature_keys or set())
             )
-        ).all()
+        override_rows = (await db.scalars(override_statement)).all()
         # Organization grants precede event grants. Restrictions are always last.
         override_rows = sorted(
             (row for row in override_rows if not row.entitlement_key.startswith("usage.")),
@@ -376,6 +525,21 @@ class EventEntitlementService:
             for key, value in source_breakdown.items()
             if key in REGISTRATION_CAPABILITY_KEYS or key in REGISTRATION_LIMIT_KEYS
         }
+        canonical_free_tier_limits = {
+            key: dict(value)
+            for key, value in limits.items()
+            if value.get("source_type") == "FREE_TIER_BASELINE"
+        }
+        canonical_free_tier_features = {
+            key: dict(value)
+            for key, value in features.items()
+            if value.get("source_type") == "FREE_TIER_BASELINE"
+        }
+        canonical_free_tier_sources = {
+            key: list(value)
+            for key, value in source_breakdown.items()
+            if any(item.get("source") == "FREE_TIER_BASELINE" for item in value)
+        }
         if compatibility_mode:
             logger.bind(
                 diagnostic_type="LEGACY_RESOLVER_CALL",
@@ -399,6 +563,10 @@ class EventEntitlementService:
                 #     },
                 # )
             features, limits = legacy_features, legacy_limits
+            # These values were implicit in historical paid Event plans and
+            # are safe in both legacy and canonical rollout modes because the
+            # active, settled Event-plan activation was revalidated above.
+            features.update(paid_compatibility_features)
             values = {
                 **{key: value.get("value", bool(value.get("enabled"))) for key, value in features.items()},
                 **{key: value.get("limit_value") for key, value in limits.items()},
@@ -410,13 +578,22 @@ class EventEntitlementService:
             features.update(canonical_registration_features)
             limits.update(canonical_registration_limits)
             source_breakdown.update(canonical_registration_sources)
+            # Free tier draft baseline applies across all domains when no contract is present
+            features.update(canonical_free_tier_features)
+            limits.update(canonical_free_tier_limits)
+            source_breakdown.update(canonical_free_tier_sources)
         # Apply this last so plans, add-ons, administrative restrictions,
         # legacy rollout state, and hard ceilings can never lock the seeded
         # main organization. Authentication and actor permissions remain a
         # separate concern in the operation gate.
         if internal_unrestricted:
             EventEntitlementService._apply_internal_unrestricted_baseline(
-                features, limits, source_breakdown, hard_ceilings
+                features,
+                limits,
+                source_breakdown,
+                hard_ceilings,
+                feature_keys=feature_keys,
+                include_limits=include_limits,
             )
 
         values = {
@@ -433,6 +610,24 @@ class EventEntitlementService:
         resolution_version = hashlib.sha256(
             json.dumps(version_material, sort_keys=True, default=str, separators=(",", ":")).encode()
         ).hexdigest()
+        active_activation = bool(
+            activation
+            and activation.status == "ACTIVE"
+            and (activation.expires_at is None or activation.expires_at > now)
+            and paid_plan_code
+        )
+        manual_contract = bool(
+            contract
+            and isinstance(contract.source, dict)
+            and contract.source.get("approved_request_id")
+        )
+        lifecycle_blocked = bool(
+            activation and activation.status in {"SUSPENDED", "EXPIRED", "TRANSFER_PENDING"}
+        )
+        access_available = bool(
+            internal_unrestricted
+            or (not lifecycle_blocked and (active_activation or manual_contract))
+        )
         result = {
             "event_id": str(event_id),
             "activation_id": str(activation.id) if activation else None,
@@ -448,8 +643,8 @@ class EventEntitlementService:
             "rollout_mode": "SHADOW" if compatibility_mode and shadow_enabled else "LEGACY" if compatibility_mode else "ENFORCED",
             "canonical_projection": canonical_projection if compatibility_mode and shadow_enabled else None,
             "availability": {
-                "available": bool(contract or internal_unrestricted),
-                "reason": None if (contract or internal_unrestricted) else "EVENT_CONTRACT_BACKFILL_REQUIRED",
+                "available": access_available,
+                "reason": None if access_available else "ACTIVE_EVENT_PLAN_REQUIRED",
                 "legacy_activation_available": bool(activation and getattr(activation, "current_snapshot_set_id", None)),
             },
         }

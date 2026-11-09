@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1200" viewBox="0 0 1920 1200" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="160" y1="20" x2="1760" y2="1180" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0E050B"/><stop offset=".28" stop-color="#1B0A17"/><stop offset=".65" stop-color="#280E23"/><stop offset="1" stop-color="#12081B"/>
+    </linearGradient>
+    <linearGradient id="sakuraWaveA" x1="960" y1="440" x2="960" y2="1080" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2C1226"/><stop offset="1" stop-color="#1B0A18"/>
+    </linearGradient>
+    <linearGradient id="sakuraWaveB" x1="960" y1="600" x2="960" y2="1200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1F0D1C"/><stop offset="1" stop-color="#0F050E"/>
+    </linearGradient>
+    <filter id="softGlow"><feGaussianBlur stdDeviation="55"/></filter>
+    <pattern id="sakuraGrid" width="128" height="128" patternUnits="userSpaceOnUse">
+      <path d="M128 0H0V128" stroke="#F43F5E" stroke-opacity=".06"/>
+    </pattern>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#sky)"/>
+  <ellipse cx="580" cy="220" rx="520" ry="240" fill="#F43F5E" fill-opacity=".18" filter="url(#softGlow)"/>
+  <ellipse cx="1460" cy="240" rx="480" ry="250" fill="#C084FC" fill-opacity=".18" filter="url(#softGlow)"/>
+  <circle cx="960" cy="200" r="260" fill="#FB7185" fill-opacity=".15" filter="url(#softGlow)"/>
+  <path d="M0 650C160 580 300 630 470 560C640 480 800 570 980 490C1160 420 1320 500 1500 440C1670 380 1800 420 1920 370V1200H0V650Z" fill="url(#sakuraWaveA)" fill-opacity=".9"/>
+  <path d="M0 810C170 730 330 790 510 710C700 630 860 720 1040 640C1230 560 1400 650 1590 580C1740 530 1840 560 1920 520V1200H0V810Z" fill="#1C0B19" fill-opacity=".88"/>
+  <path d="M0 950C190 870 370 920 560 840C750 760 920 850 1110 770C1310 690 1480 780 1680 700C1810 650 1870 670 1920 640V1200H0V950Z" fill="url(#sakuraWaveB)" fill-opacity=".98"/>
+  <rect width="1920" height="1200" fill="url(#sakuraGrid)"/>
+</svg>
+

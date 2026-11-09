@@ -10,7 +10,7 @@ describe("Command Center navigation catalogue", () => {
   });
 
   it("searches labels, groups, and operational keywords", () => {
-    expect(searchDestinations("snapshot").map((item) => item.href)).toContain("/business/subscription/entitlements");
+    expect(searchDestinations("snapshot").map((item) => item.href)).toContain("/business/pricing/cloud-plans");
     expect(searchDestinations("reconciliation").some((item) => item.group === "Finance")).toBe(true);
     expect(searchDestinations("rbac").map((item) => item.label)).toEqual(expect.arrayContaining(["Roles", "Permissions"]));
   });

@@ -38,6 +38,9 @@ class Invoice(Base):
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+    commercial_contract_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("commerce.plan_contracts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
 class InvoiceItem(Base):
     __tablename__ = "invoice_items"
@@ -47,18 +50,57 @@ class InvoiceItem(Base):
     description: Mapped[str] = mapped_column(String(255), nullable=False)
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    commercial_offer_code: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    commercial_offer_version_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("commerce.plan_versions.id", ondelete="SET NULL"), nullable=True
+    )
+    commercial_contract_item_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("commerce.contract_items.id", ondelete="SET NULL"), nullable=True
+    )
+    tax_rate: Mapped[float] = mapped_column(Numeric(5, 2), default=18, server_default="18")
+    tax_amount: Mapped[float] = mapped_column(Numeric(12, 2), default=0, server_default="0")
 
 class PaymentMethod(Base):
     __tablename__ = "payment_methods"
+    __table_args__ = {"schema": "commerce"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), index=True)
-    provider: Mapped[str] = mapped_column(String(50), default="stripe")
+    provider: Mapped[str] = mapped_column(String(50), default="STRIPE")
     provider_payment_method_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_customer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     card_brand: Mapped[Optional[str]] = mapped_column(String(50))
     card_last4: Mapped[Optional[str]] = mapped_column(String(4))
+    expires_month: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    expires_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    retired_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class PaymentMethodSetup(Base):
+    """Short-lived correlation for a provider-hosted payment-method setup."""
+
+    __tablename__ = "payment_method_setups"
+    __table_args__ = (
+        UniqueConstraint("gateway_id", "provider_session_id", name="uq_payment_method_setup_provider_session"),
+        {"schema": "commerce"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
+    gateway_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("commerce.payment_gateways.id", ondelete="RESTRICT"), nullable=False)
+    provider: Mapped[str] = mapped_column(String(30), nullable=False)
+    provider_session_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_customer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING", index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
 
 class OrganizationBillingProfile(Base):

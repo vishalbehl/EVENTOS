@@ -2,7 +2,10 @@
 
 import { useState, useEffect } from 'react'
 import { ShieldCheck, Save, ToggleLeft, ToggleRight, Users, ClipboardList, Lock, Eye } from 'lucide-react'
-import { useEvent, useUpdateEvent } from '@/hooks/useEvents'
+import { useUpdateEvent } from '@/hooks/useEvents'
+import { useEventEditSession } from '@/hooks/useEventEditSession'
+import type { ApiError } from '@/lib/api-client'
+import { useOperationAccess } from '@/lib/capabilities'
 import { toast } from 'sonner'
 
 interface Toggle {
@@ -44,40 +47,59 @@ const COLOR_MAP: Record<string, string> = {
 }
 
 export default function AccessTab({ eventId }: { eventId: string }) {
-  const { data: event } = useEvent(eventId)
-  const updateEvent = useUpdateEvent(eventId)
+  const edit = useEventEditSession(eventId)
+  const { event } = edit
+  const [loadedEvent, setLoadedEvent] = useState<typeof event>()
+  const updateEvent = useUpdateEvent(eventId, edit.version)
+  const planningAccess = useOperationAccess('events.planning.manage')
+  const formAccess = useOperationAccess('registration.forms.manage')
+  const speakerAccess = useOperationAccess('speakers.manage')
+  const canSave = planningAccess.enabled && formAccess.enabled && speakerAccess.enabled
   const [values, setValues] = useState<Record<string, boolean>>({
     registration_allowed: true,
     participants_list_allowed: true,
     speaker_window_required: true,
   })
-  const [saving, setSaving] = useState(false)
+  const saving = updateEvent.isPending
 
   useEffect(() => {
     if (event) {
       setValues({
-        registration_allowed: (event as any).registration_allowed ?? true,
-        participants_list_allowed: (event as any).participants_list_allowed ?? true,
-        speaker_window_required: (event as any).speaker_window_required ?? true,
+        registration_allowed: event.registration_settings?.registration_allowed ?? true,
+        participants_list_allowed: event.registration_settings?.participants_list_allowed ?? true,
+        speaker_window_required: event.speaker_settings?.window_required ?? true,
       })
+      setLoadedEvent(event)
     }
   }, [event])
 
   const handleSave = async () => {
-    setSaving(true)
+    if (!edit.ready || !canSave || updateEvent.isPending || edit.reloading) return
     try {
-      await updateEvent.mutateAsync(values as any)
+      const saved = await updateEvent.mutateAsync({
+        registration_settings: {
+          registration_allowed: values.registration_allowed,
+          participants_list_allowed: values.participants_list_allowed,
+        },
+        speaker_settings: { window_required: values.speaker_window_required },
+      })
+      if (!edit.complete(saved)) return
       toast.success('Access settings saved.')
-    } catch {
-      toast.error('Failed to save access settings.')
-    } finally {
-      setSaving(false)
+    } catch (failure) {
+      if (!edit.isCurrent()) return
+      const error = failure as ApiError
+      toast.error([409, 412].includes(error.status ?? 0)
+        ? 'The settings changed. Your edits are preserved; discard and reload before saving again.'
+        : error.message || 'Failed to save access settings. Your edits are preserved.')
     }
   }
 
   const toggle = (key: string) => {
+    edit.markDirty()
     setValues(prev => ({ ...prev, [key]: !prev[key] }))
   }
+
+  if (!edit.ready || loadedEvent !== event) return <p role={edit.error ? 'alert' : 'status'}>{edit.error || 'Loading current access settings…'}</p>
 
   return (
     <div className="space-y-6 w-full max-w-7xl mx-auto">
@@ -91,13 +113,18 @@ export default function AccessTab({ eventId }: { eventId: string }) {
         </div>
         <button
           onClick={handleSave}
-          disabled={saving}
+          disabled={updateEvent.isPending || edit.reloading || !canSave}
           className="flex items-center gap-2 h-9 px-6 bg-[var(--pri)] hover:bg-[var(--pri-hover)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-50 transition-all shrink-0"
         >
           <Save className="h-3.5 w-3.5" />
           {saving ? 'Saving...' : 'Save'}
         </button>
       </div>
+
+      <button type="button" onClick={edit.reload} disabled={updateEvent.isPending || edit.reloading} className="text-xs underline">
+        Discard edits and reload
+      </button>
+      {edit.error && <p role="alert">{edit.error}</p>}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Toggles List */}
@@ -131,6 +158,11 @@ export default function AccessTab({ eventId }: { eventId: string }) {
                     </div>
                   </div>
                   <button
+                    type="button"
+                    role="switch"
+                    aria-checked={isOn}
+                    aria-label={item.label}
+                    disabled={updateEvent.isPending || edit.reloading}
                     onClick={() => toggle(item.key)}
                     className="shrink-0 transition-colors"
                   >

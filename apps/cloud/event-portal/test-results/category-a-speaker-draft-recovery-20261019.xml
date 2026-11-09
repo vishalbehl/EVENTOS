@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="1" failures="0" errors="0" time="1.428912">
+    <testsuite name="test/category-a/speaker-workspace-recovery.test.tsx" timestamp="2026-10-19T13:13:14.008Z" hostname="Vishal" tests="1" failures="0" errors="0" skipped="0" time="1.428912">
+        <testcase classname="test/category-a/speaker-workspace-recovery.test.tsx" name="retains unsaved biography through an unavailable response and explicit read retry, but not an identity switch" time="1.4227092">
+        </testcase>
+    </testsuite>
+</testsuites>

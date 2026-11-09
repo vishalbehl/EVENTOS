@@ -12,7 +12,7 @@ router = APIRouter(prefix="/deployments", tags=["deployment-management"])
 async def project(db, project_id, user):
     row = await DeploymentQueryService(db).get_project(
         project_id=project_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
     )
     if row is None: raise HTTPException(404, "Project not found.")
     return row
@@ -22,7 +22,7 @@ class DeploymentIn(BaseModel):
 async def create_deployment(project_id: uuid.UUID, payload: DeploymentIn, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     row = await DeploymentCommandService(db).create_deployment(
         project_id=project_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
         **payload.model_dump(),
     )
     return {"id": str(row.id), "deployment_number": row.deployment_number, "deployment_status": row.deployment_status}
@@ -35,12 +35,12 @@ async def checklists(
 ):
     row = await DeploymentQueryService(db).get_deployment_for_organization(
         deployment_id=deployment_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
     )
     if row is None: raise HTTPException(404, "Deployment not found.")
     rows = await DeploymentQueryService(db).list_checklists(
         deployment_id=deployment_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
         limit=limit,
     )
     return [{"id": str(item.id), "title": item.title, "status": item.status} for item in rows]
@@ -48,7 +48,7 @@ async def checklists(
 async def update_checklist(checklist_id: uuid.UUID, status: str = Query(...), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     row = await DeploymentCommandService(db).update_checklist(
         checklist_id=checklist_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
         status=status,
     )
     return {"id": str(row.id), "status": row.status}
@@ -59,14 +59,14 @@ async def readiness(project_id: uuid.UUID, db: AsyncSession = Depends(get_db), u
 async def complete(deployment_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     row = await DeploymentCommandService(db).complete(
         deployment_id=deployment_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
     )
     return {"id": str(row.id), "deployment_status": row.deployment_status}
 @router.post("/projects/{project_id}/risks")
 async def create_risk(project_id: uuid.UUID, payload: dict[str, Any] = Body(...), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     row = await DeploymentCommandService(db).create_risk(
         project_id=project_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
         payload=payload,
     )
     return {"id": str(row.id), "status": row.status, "title": row.title}
@@ -79,7 +79,7 @@ async def list_risks(
 ):
     rows = await DeploymentQueryService(db).list_risks(
         project_id=project_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
         limit=limit,
     )
     return [{"id": str(row.id), "status": row.status, "title": row.title} for row in rows]
@@ -87,7 +87,7 @@ async def list_risks(
 async def update_risk(risk_id: uuid.UUID, payload: dict[str, Any] = Body(...), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     row = await DeploymentCommandService(db).update_risk(
         risk_id=risk_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
         payload=payload,
     )
     return {"id": str(row.id), "status": row.status, "title": row.title}

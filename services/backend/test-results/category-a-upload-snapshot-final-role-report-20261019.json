@@ -1,0 +1,17 @@
+{
+  "organization_id": "5a6ed530-6787-4985-87cc-92faf98345d3",
+  "apply": false,
+  "records": [
+    {
+      "upload_id": "c9026cf9-cd64-4011-a895-f83b244e0b1c",
+      "status": "RECORDED_SEALED"
+    }
+  ],
+  "input_cursor": null,
+  "next_cursor": null,
+  "retry_page": false,
+  "database": "category_a_rehearsal_20261015",
+  "build_id": "33b3f156-dirty-fixed-upload-cohort-final-validation",
+  "restricted_role_and_reconciliation_indexes_verified": true,
+  "cohort_source": "CAPTURED_PAGE"
+}

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="12" failures="0" errors="0" time="0.0342943">
+    <testsuite name="test/category-a/scan-gated-registration-upload.test.tsx" timestamp="2026-10-27T17:37:05.060Z" hostname="Vishal" tests="12" failures="0" errors="0" skipped="0" time="0.0342943">
+        <testcase classname="test/category-a/scan-gated-registration-upload.test.tsx" name="scan-gated public registration uploads &gt; returns only after the controlled status endpoint reports ready" time="0.0119482">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-registration-upload.test.tsx" name="scan-gated public registration uploads &gt; rejects a foreign status origin before polling" time="0.0032981">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-registration-upload.test.tsx" name="scan-gated public registration uploads &gt; rejects a status query before polling" time="0.0015834">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-registration-upload.test.tsx" name="scan-gated public registration uploads &gt; rejects a different event before polling" time="0.0010346">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-registration-upload.test.tsx" name="scan-gated public registration uploads &gt; rejects a provider download before polling" time="0.0013036">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-registration-upload.test.tsx" name="scan-gated public registration uploads &gt; rejects a status response for another upload" time="0.0012353">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-registration-upload.test.tsx" name="scan-gated public registration uploads &gt; requires a new attempt after terminal status failed" time="0.0015167">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-registration-upload.test.tsx" name="scan-gated public registration uploads &gt; requires a new attempt after terminal status quarantined" time="0.0004909">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-registration-upload.test.tsx" name="scan-gated public registration uploads &gt; requires a new attempt after terminal status deleted" time="0.0012549">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-registration-upload.test.tsx" name="scan-gated public registration uploads &gt; requires a new attempt after terminal status cleanup_pending" time="0.0007665">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-registration-upload.test.tsx" name="scan-gated public registration uploads &gt; honours bounded Retry-After before explicitly polling again" time="0.0057847">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-registration-upload.test.tsx" name="scan-gated public registration uploads &gt; does not expose an incomplete acceptance receipt" time="0.0009165">
+        </testcase>
+    </testsuite>
+</testsuites>

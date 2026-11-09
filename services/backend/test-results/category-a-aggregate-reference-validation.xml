@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="26" time="123.790" timestamp="2026-10-17T14:46:06.606627+05:30" hostname="Vishal"><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[foreign-REGISTRATION_FORM]" time="23.935" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[foreign-ABSTRACT_FORM]" time="2.937" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[retired-REGISTRATION_FORM]" time="3.022" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[retired-ABSTRACT_FORM]" time="3.059" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[other_event-REGISTRATION_FORM]" time="3.014" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[other_event-ABSTRACT_FORM]" time="3.080" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[conflicting_events-REGISTRATION_FORM]" time="3.037" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[conflicting_events-ABSTRACT_FORM]" time="3.034" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[wrong_kind-REGISTRATION_FORM]" time="3.009" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[wrong_kind-ABSTRACT_FORM]" time="2.996" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[parent_category-REGISTRATION_FORM]" time="3.033" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[parent_category-ABSTRACT_FORM]" time="2.869" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[valid-REGISTRATION_FORM]" time="3.115" /><testcase classname="tests.test_aggregate_reference_validation" name="test_cohort_rechecks_old_approvals_and_keeps_history[valid-ABSTRACT_FORM]" time="3.171" /><testcase classname="tests.test_aggregate_reference_validation" name="test_reviewed_registration_detachment_preserves_valid_category_and_history" time="3.344"><failure message="sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/20/xd2s)">tests\test_aggregate_reference_validation.py:106: in test_reviewed_registration_detachment_preserves_valid_category_and_history
+    async with TenantContextGuard.scoped(db, super_admin.organization_id):
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:569: in __get__
+    return self.impl.get(state, dict_)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:1096: in get
+    value = self._fire_loader_callables(state, key, passive)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:1126: in _fire_loader_callables
+    return state._load_expired(state, passive)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\state.py:828: in _load_expired
+    self.manager.expired_attribute_loader(self, toload, passive)
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:1674: in load_scalar_attributes
+    result = load_on_ident(
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:510: in load_on_ident
+    return load_on_pk_identity(
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:695: in load_on_pk_identity
+    session.execute(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2372: in execute
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2368: in _handle_dbapi_exception
+    raise exc_info[1].with_traceback(exc_info[2])
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:123: in await_only
+    raise exc.MissingGreenlet(
+E   sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/20/xd2s)</failure></testcase><testcase classname="tests.test_catalogue_aggregate_repair_scope" name="test_customer_document_block_review_repair_and_replay_from_platform[REGISTRATION_FORM]" time="6.642" /><testcase classname="tests.test_catalogue_aggregate_repair_scope" name="test_customer_document_block_review_repair_and_replay_from_platform[ABSTRACT_FORM]" time="5.544" /><testcase classname="tests.test_catalogue_aggregate_repair_scope" name="test_customer_document_block_review_repair_and_replay_from_platform[FORM_CATEGORY]" time="5.562" /><testcase classname="tests.test_catalogue_worker_context" name="test_reconciliation_pages_over_one_hundred_without_loss_or_duplicate_evidence" time="12.531" /><testcase classname="tests.test_catalogue_worker_context" name="test_committed_dispatch_recovers_after_lease_and_preserves_context" time="2.591" /><testcase classname="tests.test_catalogue_worker_context" name="test_reconciliation_uses_target_and_restores_inherited_context[platform]" time="2.191" /><testcase classname="tests.test_catalogue_worker_context" name="test_reconciliation_uses_target_and_restores_inherited_context[customer]" time="2.187" /><testcase classname="tests.test_catalogue_worker_context" name="test_global_taxonomy_duplicate_count_includes_global_rows" time="2.362" /><testcase classname="tests.test_catalogue_retirement_registration" name="test_global_retirement_reassigns_registration_and_carries_blocked_evidence[category]" time="3.285" /><testcase classname="tests.test_catalogue_retirement_registration" name="test_global_retirement_reassigns_registration_and_carries_blocked_evidence[template]" time="2.901" /><testcase classname="tests.test_catalogue_retirement_registration" name="test_reviewed_global_category_repair_preserves_history_and_replay" time="5.550" /></testsuite></testsuites>

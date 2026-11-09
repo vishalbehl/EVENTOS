@@ -280,6 +280,8 @@ class LifecycleJobOut(BaseModel):
     failure_reason: Optional[str]
     manifest_checksum: str
     attempt_count: int
+    dispatch_attempts: int
+    next_dispatch_at: Optional[datetime]
     version: int
     started_at: Optional[datetime]
 
@@ -409,20 +411,6 @@ class ApprovalDecision(StrictWriteModel):
     decision: Literal["APPROVED", "REJECTED"]
     reason: str = Field(min_length=12, max_length=2000)
     case_reference: str | None = Field(default=None, min_length=2, max_length=160)
-
-
-class CommercialAccessDecision(StrictWriteModel):
-    decision: Literal["APPROVED", "REJECTED"]
-    reason: str = Field(min_length=12, max_length=2000)
-    case_reference: str = Field(min_length=2, max_length=160)
-    effective_at: Optional[datetime] = None
-    ends_at: Optional[datetime] = None
-
-    @model_validator(mode="after")
-    def service_period_is_ordered(self):
-        if self.ends_at and self.effective_at and self.ends_at <= self.effective_at:
-            raise ValueError("ends_at must be later than effective_at")
-        return self
 
 
 class CapabilityRestrictionCreate(StrictWriteModel):

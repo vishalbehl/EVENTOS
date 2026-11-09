@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.billing.models.event_activation import EventActivation
 from app.modules.billing.models.licensing import EntitlementGrant, GrantConsumption
-from app.modules.billing.models.subscription import OrganizationSubscription
+from app.modules.billing.models.cloud_commercial import CommercialAccount, CommercialContract
 from app.modules.events.models.event import Event
 
 
@@ -65,25 +65,31 @@ class BillingActivationQueryService:
         )
         return list((await self.db.scalars(statement)).all())
 
-    async def list_active_subscriptions(
+    async def list_active_contracts(
         self, organization_id: uuid.UUID, *, limit: int = MAX_PAGE_SIZE
     ) -> list[dict]:
-        """Return the small subscription projection used by the billing list route."""
+        """Return active canonical commercial contracts for the organization."""
         statement = (
             select(
-                OrganizationSubscription.id.label("subscription_id"),
-                OrganizationSubscription.plan_id,
-                OrganizationSubscription.status,
-                OrganizationSubscription.trial_ends_at,
-                OrganizationSubscription.current_period_end,
+                CommercialContract.id.label("contract_id"),
+                CommercialContract.contract_type,
+                CommercialContract.status,
+                CommercialContract.starts_at,
+                CommercialContract.ends_at,
+                CommercialContract.billing_interval,
+                CommercialContract.currency,
+            )
+            .join(
+                CommercialAccount,
+                CommercialAccount.id == CommercialContract.commercial_account_id,
             )
             .where(
-                OrganizationSubscription.organization_id == organization_id,
-                OrganizationSubscription.status.in_(("ACTIVE", "TRIAL")),
+                CommercialAccount.owner_organization_id == organization_id,
+                CommercialContract.status == "ACTIVE",
             )
             .order_by(
-                OrganizationSubscription.created_at.desc(),
-                OrganizationSubscription.id.desc(),
+                CommercialContract.created_at.desc(),
+                CommercialContract.id.desc(),
             )
             .limit(self._limit(limit))
         )

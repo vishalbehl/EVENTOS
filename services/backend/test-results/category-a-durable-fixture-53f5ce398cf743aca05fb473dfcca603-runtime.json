@@ -1,0 +1,22 @@
+{
+  "status": "PASSED",
+  "database": "category_a_restore_20261021_53f5ce398cf7",
+  "login": "category_a_checkpoint_53f5ce398cf7",
+  "stage": "independent_completion_read",
+  "runtime_role_is_safe": true,
+  "missing_canary_policies": [],
+  "completion_status": "COMPLETED",
+  "streams_total": 2,
+  "streams_completed": 2,
+  "pages_completed": 8,
+  "checked_count": 216,
+  "blocked_count": 4,
+  "category_documents_quarantined": 2,
+  "historical_category_evidence_preserved": true,
+  "malformed_taxonomy_projection_refused": true,
+  "operational_consumer_quarantined": true,
+  "page_transactions": 8,
+  "actual_restricted_login": true,
+  "default_platform_customer_flow": "NOT_RUN",
+  "provider_io": "NOT_RUN"
+}

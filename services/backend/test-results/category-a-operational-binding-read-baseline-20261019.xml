@@ -1,0 +1,1090 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="22" skipped="0" tests="42" time="81.231" timestamp="2026-10-19T18:21:37.480129+05:30" hostname="Vishal"><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[retired_parent-administration-SURVEY]" time="19.536"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF3C0DE80&gt;
+event = &lt;Event id=2f102ff3-7c88-4a65-ac97-ae6688be79e1 short_code=TCBA7E status=draft&gt;
+purpose = 'SURVEY', reader = 'administration', defect = 'retired_parent'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[retired_parent-administration-SPEAKER_INTAKE]" time="1.331"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF46B0050&gt;
+event = &lt;Event id=9a536e80-105b-4d8b-94f7-732abdbd499f short_code=TCF35F status=draft&gt;
+purpose = 'SPEAKER_INTAKE', reader = 'administration', defect = 'retired_parent'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[retired_parent-public-SURVEY]" time="1.381"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF45DBD90&gt;
+event = &lt;Event id=5f403479-903e-4a17-9141-5a8e9f63fb56 short_code=TCDA59 status=draft&gt;
+purpose = 'SURVEY', reader = 'public', defect = 'retired_parent'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[retired_parent-public-SPEAKER_INTAKE]" time="1.373"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF69C4510&gt;
+event = &lt;Event id=65bdb975-78ad-4916-806e-1e135bb0b174 short_code=TCC670 status=draft&gt;
+purpose = 'SPEAKER_INTAKE', reader = 'public', defect = 'retired_parent'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[deleted_parent-administration-SURVEY]" time="1.367"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF69C5480&gt;
+event = &lt;Event id=50ceac5d-f420-48ba-b6e5-af69f2fa0f6e short_code=TCC1FF status=draft&gt;
+purpose = 'SURVEY', reader = 'administration', defect = 'deleted_parent'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[deleted_parent-administration-SPEAKER_INTAKE]" time="1.435"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BEDA395B0&gt;
+event = &lt;Event id=6b53395d-ef68-4787-8d10-6b07a76268e2 short_code=TC2B6D status=draft&gt;
+purpose = 'SPEAKER_INTAKE', reader = 'administration', defect = 'deleted_parent'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[deleted_parent-public-SURVEY]" time="1.313"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF6A41150&gt;
+event = &lt;Event id=2f1739f7-8d38-4fb4-95ab-33e83a76c896 short_code=TC6180 status=draft&gt;
+purpose = 'SURVEY', reader = 'public', defect = 'deleted_parent'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[deleted_parent-public-SPEAKER_INTAKE]" time="1.338"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF6A408D0&gt;
+event = &lt;Event id=ca44cf9b-5bd6-4a96-8b1e-aee6af3e7c64 short_code=TCB810 status=draft&gt;
+purpose = 'SPEAKER_INTAKE', reader = 'public', defect = 'deleted_parent'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[foreign_parent-administration-SURVEY]" time="1.331"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF69D6850&gt;
+event = &lt;Event id=7ffe9270-367c-4154-b86d-0b3d6a9aeff9 short_code=TC0C58 status=draft&gt;
+purpose = 'SURVEY', reader = 'administration', defect = 'foreign_parent'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[foreign_parent-administration-SPEAKER_INTAKE]" time="1.422"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF69D5C50&gt;
+event = &lt;Event id=cd424b68-0b68-4493-9248-a47f7e01e4b7 short_code=TC69D5 status=draft&gt;
+purpose = 'SPEAKER_INTAKE', reader = 'administration', defect = 'foreign_parent'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[foreign_parent-public-SURVEY]" time="1.354"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF6A054F0&gt;
+event = &lt;Event id=44624a0e-1dbb-4a7b-b36d-6fd80385518b short_code=TCD2E4 status=draft&gt;
+purpose = 'SURVEY', reader = 'public', defect = 'foreign_parent'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[foreign_parent-public-SPEAKER_INTAKE]" time="1.230"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF6A065D0&gt;
+event = &lt;Event id=0ec787e0-f1c4-420a-8e70-7104570fedc7 short_code=TC2FE7 status=draft&gt;
+purpose = 'SPEAKER_INTAKE', reader = 'public', defect = 'foreign_parent'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[retired_template-administration-SURVEY]" time="1.370" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[retired_template-administration-SPEAKER_INTAKE]" time="1.313" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[retired_template-public-SURVEY]" time="1.355"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF698B930&gt;
+event = &lt;Event id=0eebdb14-e5e9-423e-b549-7ea4781b6a76 short_code=TC9B8E status=draft&gt;
+purpose = 'SURVEY', reader = 'public', defect = 'retired_template'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[retired_template-public-SPEAKER_INTAKE]" time="1.325"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF65DA990&gt;
+event = &lt;Event id=b17630f6-2d5d-4e4c-9fda-b57de81ca411 short_code=TC4B8B status=draft&gt;
+purpose = 'SPEAKER_INTAKE', reader = 'public', defect = 'retired_template'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[deleted_template-administration-SURVEY]" time="1.359" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[deleted_template-administration-SPEAKER_INTAKE]" time="1.580" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[deleted_template-public-SURVEY]" time="1.388"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF67435F0&gt;
+event = &lt;Event id=4db067ad-862d-4e93-93ea-c04276b7c317 short_code=TCEDE6 status=draft&gt;
+purpose = 'SURVEY', reader = 'public', defect = 'deleted_template'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[deleted_template-public-SPEAKER_INTAKE]" time="1.195"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF6A88AF0&gt;
+event = &lt;Event id=f8169a2a-bccd-4b84-9488-25ddef5432b5 short_code=TC607C status=draft&gt;
+purpose = 'SPEAKER_INTAKE', reader = 'public', defect = 'deleted_template'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[conflicting_events-administration-SURVEY]" time="1.419" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[conflicting_events-administration-SPEAKER_INTAKE]" time="1.374" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[conflicting_events-public-SURVEY]" time="1.334" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[conflicting_events-public-SPEAKER_INTAKE]" time="1.362" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[wrong_scope-administration-SURVEY]" time="1.400" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[wrong_scope-administration-SPEAKER_INTAKE]" time="1.409" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[wrong_scope-public-SURVEY]" time="1.382"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF69F85F0&gt;
+event = &lt;Event id=d6c94526-86ef-406f-8567-ce1560cbe27c short_code=TC6191 status=draft&gt;
+purpose = 'SURVEY', reader = 'public', defect = 'wrong_scope'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[wrong_scope-public-SPEAKER_INTAKE]" time="1.353"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF6A98470&gt;
+event = &lt;Event id=2d1d2f42-40b0-4735-aec5-a4186e346746 short_code=TC7962 status=draft&gt;
+purpose = 'SPEAKER_INTAKE', reader = 'public', defect = 'wrong_scope'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+&gt;               with pytest.raises(HTTPException) as denied:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;
+
+tests\test_operational_binding_read_lifecycle.py:54: Failed</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[wrong_purpose-administration-SURVEY]" time="1.367" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[wrong_purpose-administration-SPEAKER_INTAKE]" time="1.409" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[wrong_purpose-public-SURVEY]" time="1.354" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[wrong_purpose-public-SPEAKER_INTAKE]" time="1.345" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[malformed_settings-administration-SURVEY]" time="1.420"><failure message="AttributeError: 'list' object has no attribute 'get'">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF6A98D70&gt;
+event = &lt;Event id=b6c99b40-55f7-45ba-9527-52522d811721 short_code=TC0064 status=draft&gt;
+purpose = 'SURVEY', reader = 'administration', defect = 'malformed_settings'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+                with pytest.raises(HTTPException) as denied:
+&gt;                   await call(db, event=event, purpose=purpose)
+
+tests\test_operational_binding_read_lifecycle.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF6A98D70&gt;
+
+    from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+    await lock_catalogue_reference_writes(db)
+    binding = await db.scalar(select(EventFormTemplateBinding).where(
+        EventFormTemplateBinding.organization_id == event.organization_id,
+        EventFormTemplateBinding.event_id == event.id,
+        EventFormTemplateBinding.purpose == purpose).execution_options(populate_existing=True))
+    if binding is None:
+        return None, None
+    template = await db.scalar(select(FormTemplate).where(
+        FormTemplate.id == binding.template_id,
+        FormTemplate.organization_id == event.organization_id,
+        FormTemplate.scope_type == "EVENT", FormTemplate.is_active.is_(True),
+        FormTemplate.deleted_at.is_(None)).options(joinedload(FormTemplate.category))
+        .execution_options(shared_form_catalogue=True, populate_existing=True))
+    expected = {"speaker", "speaker_intake"} if purpose == "SPEAKER_INTAKE" else {"survey"}
+    valid = template is not None and template.category_key in expected and isinstance(template.settings, dict)
+&gt;   if valid:
+            ^^
+E   AttributeError: 'list' object has no attribute 'get'
+
+app\modules\registration\application\operational_binding_commands.py:44: AttributeError</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[malformed_settings-administration-SPEAKER_INTAKE]" time="1.260"><failure message="AttributeError: 'list' object has no attribute 'get'">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF6A9AE10&gt;
+event = &lt;Event id=7df88d8b-989a-4567-a17c-5b6dcb0c5913 short_code=TCF5A9 status=draft&gt;
+purpose = 'SPEAKER_INTAKE', reader = 'administration'
+defect = 'malformed_settings'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+                with pytest.raises(HTTPException) as denied:
+&gt;                   await call(db, event=event, purpose=purpose)
+
+tests\test_operational_binding_read_lifecycle.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF6A9AE10&gt;
+
+    from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+    await lock_catalogue_reference_writes(db)
+    binding = await db.scalar(select(EventFormTemplateBinding).where(
+        EventFormTemplateBinding.organization_id == event.organization_id,
+        EventFormTemplateBinding.event_id == event.id,
+        EventFormTemplateBinding.purpose == purpose).execution_options(populate_existing=True))
+    if binding is None:
+        return None, None
+    template = await db.scalar(select(FormTemplate).where(
+        FormTemplate.id == binding.template_id,
+        FormTemplate.organization_id == event.organization_id,
+        FormTemplate.scope_type == "EVENT", FormTemplate.is_active.is_(True),
+        FormTemplate.deleted_at.is_(None)).options(joinedload(FormTemplate.category))
+        .execution_options(shared_form_catalogue=True, populate_existing=True))
+    expected = {"speaker", "speaker_intake"} if purpose == "SPEAKER_INTAKE" else {"survey"}
+    valid = template is not None and template.category_key in expected and isinstance(template.settings, dict)
+&gt;   if valid:
+            ^^
+E   AttributeError: 'list' object has no attribute 'get'
+
+app\modules\registration\application\operational_binding_commands.py:44: AttributeError</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[malformed_settings-public-SURVEY]" time="1.315"><failure message="AttributeError: 'list' object has no attribute 'get'">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF6A9AF90&gt;
+event = &lt;Event id=0bc8cfaf-84d9-46cd-82df-0b8937f3249c short_code=TC0962 status=draft&gt;
+purpose = 'SURVEY', reader = 'public', defect = 'malformed_settings'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+                with pytest.raises(HTTPException) as denied:
+&gt;                   await call(db, event=event, purpose=purpose)
+
+tests\test_operational_binding_read_lifecycle.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF6A9AF90&gt;
+
+                category = template.category
+                valid = (category is not None and category.is_active and category.deleted_at is None
+                    and category.organization_id in (None, event.organization_id))
+        if not valid:
+            raise HTTPException(503 if public else 409, detail={"code":
+                "OPERATIONAL_FORM_RECONCILIATION_REQUIRED" if public else "FORM_BINDING_RECONCILIATION_REQUIRED"})
+        return binding, template
+    
+    
+    def _response(binding, event_id, purpose, template=None):
+        return OperationalBindingResponse(
+            id=binding.id if binding else None, event_id=event_id, purpose=purpose,
+            template_id=binding.template_id if binding else None,
+            version=int(binding.version or 1) if binding else 1, template=template)
+    
+    
+    async def get_operational_binding(db, *, event, purpose):
+&gt;       if purpose not in PURPOSE_CATEGORY:
+                       ^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'list' object has no attribute 'get'
+
+app\modules\registration\application\operational_binding_commands.py:66: AttributeError</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[malformed_settings-public-SPEAKER_INTAKE]" time="1.379"><failure message="AttributeError: 'list' object has no attribute 'get'">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF69F8BF0&gt;
+event = &lt;Event id=9378c814-4fb1-4a7e-85cd-943c786083f3 short_code=TC70F5 status=draft&gt;
+purpose = 'SPEAKER_INTAKE', reader = 'public', defect = 'malformed_settings'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("purpose", ["SURVEY", "SPEAKER_INTAKE"])
+    @pytest.mark.parametrize("reader", ["administration", "public"])
+    @pytest.mark.parametrize("defect", ["retired_parent", "deleted_parent", "foreign_parent", "retired_template",
+        "deleted_template", "conflicting_events", "wrong_scope", "wrong_purpose", "malformed_settings", "valid"])
+    async def test_binding_read_rechecks_complete_live_hierarchy(db, event, purpose, reader, defect):
+        foreign = Organization(name="Foreign binding-read fixture", slug=f"binding-read-{uuid.uuid4().hex}")
+        db.add(foreign)
+        await db.flush()
+        category = FormCategory(organization_id=foreign.id if defect == "foreign_parent" else None,
+            name="Reviewed taxonomy", slug=f"taxonomy-{uuid.uuid4().hex}", is_system=True,
+            is_active=defect != "retired_parent",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_parent" else None)
+        db.add(category)
+        await db.flush()
+        settings = {"_event_id": str(event.id)}
+        if defect == "conflicting_events":
+            settings["event_id"] = str(uuid.uuid4())
+        template = FormTemplate(organization_id=event.organization_id, category_id=category.id,
+            name="Owned operational copy", slug=f"operational-read-{uuid.uuid4().hex}",
+            scope_type="ORGANIZATION" if defect == "wrong_scope" else "EVENT",
+            category_key="abstract" if defect == "wrong_purpose" else "survey" if purpose == "SURVEY" else "speaker_intake",
+            fields=[], settings=["invalid"] if defect == "malformed_settings" else settings,
+            is_active=defect != "retired_template",
+            deleted_at=datetime.now(timezone.utc) if defect == "deleted_template" else None)
+        db.add(template)
+        await db.flush()
+        binding = EventFormTemplateBinding(organization_id=event.organization_id, event_id=event.id,
+            purpose=purpose, template_id=template.id)
+        db.add(binding)
+        await db.commit()
+        call = get_operational_binding if reader == "administration" else get_operational_form_projection
+        async with TenantContextGuard.scoped(db, event.organization_id):
+            if defect == "valid":
+                result = await call(db, event=event, purpose=purpose)
+                assert (result.template_id == template.id) if reader == "administration" else result["purpose"] == purpose
+            else:
+                with pytest.raises(HTTPException) as denied:
+&gt;                   await call(db, event=event, purpose=purpose)
+
+tests\test_operational_binding_read_lifecycle.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023BF69F8BF0&gt;
+
+                category = template.category
+                valid = (category is not None and category.is_active and category.deleted_at is None
+                    and category.organization_id in (None, event.organization_id))
+        if not valid:
+            raise HTTPException(503 if public else 409, detail={"code":
+                "OPERATIONAL_FORM_RECONCILIATION_REQUIRED" if public else "FORM_BINDING_RECONCILIATION_REQUIRED"})
+        return binding, template
+    
+    
+    def _response(binding, event_id, purpose, template=None):
+        return OperationalBindingResponse(
+            id=binding.id if binding else None, event_id=event_id, purpose=purpose,
+            template_id=binding.template_id if binding else None,
+            version=int(binding.version or 1) if binding else 1, template=template)
+    
+    
+    async def get_operational_binding(db, *, event, purpose):
+&gt;       if purpose not in PURPOSE_CATEGORY:
+                       ^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'list' object has no attribute 'get'
+
+app\modules\registration\application\operational_binding_commands.py:66: AttributeError</failure></testcase><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[valid-administration-SURVEY]" time="1.356" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[valid-administration-SPEAKER_INTAKE]" time="1.336" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[valid-public-SURVEY]" time="1.360" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_binding_read_rechecks_complete_live_hierarchy[valid-public-SPEAKER_INTAKE]" time="1.379" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_only_absent_binding_is_unconfigured[SURVEY]" time="1.363" /><testcase classname="tests.test_operational_binding_read_lifecycle" name="test_only_absent_binding_is_unconfigured[SPEAKER_INTAKE]" time="4.336" /></testsuite></testsuites>

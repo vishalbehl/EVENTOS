@@ -177,7 +177,7 @@ async def reset_feature_toggles(
         detail={
             "code": "COMMAND_CENTER_CONTROL_REQUIRED",
             "message": (
-                "Event-local feature toggles are retired. Use plan, add-on, "
+                "Event-local feature toggles are retired. Use offer, capacity add-on, "
                 "grant, restriction, or flag controls in Command Center."
             ),
             "capabilities_url": f"/events/{event.id}/capabilities",

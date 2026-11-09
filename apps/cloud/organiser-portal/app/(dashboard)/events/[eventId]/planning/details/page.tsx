@@ -1,7 +1,7 @@
 'use client'
 
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Globe, Building2, MapPin, Calendar, Users, Info, Clock, 
@@ -20,7 +20,7 @@ import { useEvent, useUpdateEvent } from '@/hooks/useEvents'
 import { useSessions } from '@/hooks/useSessions'
 import { apiClient } from '@/lib/api-client'
 import { cn } from '@/lib/utils'
-import { useAuthStore } from '@/store/use-auth-store'
+import { accessContextCacheKey, useAuthStore } from '@/store/use-auth-store'
 import { Skeleton } from '@/components/ui/skeleton'
 import { CountryStateEntry, fetchCountryStates, getStatesForCountry } from '@/lib/country-states'
 import { useEventCapabilities } from '@/lib/capabilities'
@@ -71,11 +71,18 @@ export default function EventPlanningDetailsPage() {
   const { eventId } = useParams()
   const router = useRouter()
   const eventIdValue = eventId as string
-  const { user } = useAuthStore()
+  const { user, activeContext, isContextSwitching } = useAuthStore()
+  const formContext = `${user?.id}:${accessContextCacheKey(activeContext, user?.organization_id)}:${eventIdValue}`
+  const currentContext = useRef(formContext)
+  currentContext.current = formContext
+  const [loadedFormContext, setLoadedFormContext] = useState<string | null>(null)
 
   const { data: event, isLoading: eventLoading, refetch: refetchEvent } = useEvent(eventIdValue)
   const { data: sessions } = useSessions(eventIdValue)
-  const updateEvent = useUpdateEvent(eventIdValue)
+  const [formVersion, setFormVersion] = useState<number | null>(null)
+  const [formDirty, setFormDirty] = useState(false)
+  const editRevision = useRef(0)
+  const updateEvent = useUpdateEvent(eventIdValue, formVersion)
   const { data: capabilityData } = useEventCapabilities()
 
   const isAdmin = useMemo(() => {
@@ -94,7 +101,7 @@ export default function EventPlanningDetailsPage() {
   const [isUploadingImage, setIsUploadingImage] = useState(false)
 
   // Master Form State
-  const [form, setForm] = useState({
+  const [form, setFormState] = useState({
     name: '',
     short_code: '',
     country: '',
@@ -128,6 +135,21 @@ export default function EventPlanningDetailsPage() {
     registration_enabled: true,
     speaker_enabled: true,
   })
+
+  const setForm: typeof setFormState = (value) => {
+    editRevision.current += 1
+    setFormDirty(true)
+    setFormState(value)
+  }
+
+  useEffect(() => {
+    setFormDirty(false)
+    setFormVersion(null)
+    setLoadedFormContext(null)
+    setUsers([])
+    setAnalytics(null)
+    setIsSaving(false)
+  }, [formContext])
 
   useEffect(() => {
     fetchCountryStates().then(setCountryStates).catch(console.error)
@@ -166,11 +188,13 @@ export default function EventPlanningDetailsPage() {
   }, [activeTab, isAdmin, eventIdValue])
 
   useEffect(() => {
-    if (!event) return
+    if (!event || event.id !== eventIdValue || formDirty || isContextSwitching) return
+    setFormVersion(event.version)
+    setLoadedFormContext(formContext)
     const details = (event as any).organizer_details || { name: '', email: '', phone: '', website: '' }
     const vDetails = (event as any).venue_details || {}
 
-    setForm((current) => ({
+    setFormState((current) => ({
       ...current,
       name: event.name || '',
       short_code: event.short_code || '',
@@ -205,7 +229,7 @@ export default function EventPlanningDetailsPage() {
       registration_enabled: (event as any).registration_settings?.enabled ?? true,
       speaker_enabled: (event as any).speaker_settings?.enabled ?? true,
     }))
-  }, [event])
+  }, [event, eventIdValue, formDirty, formContext, isContextSwitching])
 
   const allowedFormats = useMemo(() => csvFormats(form.allowed_formats), [form.allowed_formats])
 
@@ -219,6 +243,9 @@ export default function EventPlanningDetailsPage() {
   const sessionsCount = sessions?.length || 0
 
   const handleSave = async () => {
+    if (isSaving || formVersion === null || isContextSwitching || loadedFormContext !== formContext) return
+    const submittedContext = formContext
+    const submittedRevision = editRevision.current
     setIsSaving(true)
     try {
       const eventPayload: Record<string, unknown> = {
@@ -241,24 +268,40 @@ export default function EventPlanningDetailsPage() {
         venue_images: form.venue_images || [],
         venue_details: form.venue_details,
         registration_settings: {
-          ...((event as any)?.registration_settings || {}),
           enabled: form.registration_enabled,
         },
         speaker_settings: {
-          ...((event as any)?.speaker_settings || {}),
           enabled: form.speaker_enabled,
         },
       }
       if (form.start_date) eventPayload.start_date = form.start_date
       if (form.end_date) eventPayload.end_date = form.end_date
 
-      await updateEvent.mutateAsync(eventPayload)
+      const saved = await updateEvent.mutateAsync(eventPayload)
+      if (currentContext.current !== submittedContext) return
+      setFormVersion(saved.version)
+      if (editRevision.current === submittedRevision) setFormDirty(false)
       toast.success('Event planning & details updated successfully! 🚀')
       refetchEvent()
     } catch (error: any) {
-      toast.error(error?.message || 'Could not save configuration.')
+      if (currentContext.current !== submittedContext) return
+      toast.error([409, 412].includes(error?.status)
+        ? 'The event changed or a retry conflicts. Your edits are preserved; reload current details before saving again.'
+        : error?.message || 'Could not save configuration.')
     } finally {
-      setIsSaving(false)
+      if (currentContext.current === submittedContext) setIsSaving(false)
+    }
+  }
+
+  const reloadDetails = async () => {
+    const requestedContext = formContext
+    try {
+      const refreshed = await refetchEvent({ throwOnError: true })
+      if (currentContext.current !== requestedContext) return
+      if (!refreshed.data || refreshed.data.id !== eventIdValue) throw new Error('Current event details are unavailable.')
+      setFormDirty(false)
+    } catch (error: any) {
+      if (currentContext.current === requestedContext) toast.error(error?.message || 'Reload failed. Your edits are preserved.')
     }
   }
 
@@ -297,7 +340,7 @@ export default function EventPlanningDetailsPage() {
     }
   }
 
-  if (eventLoading) {
+  if (eventLoading || isContextSwitching || loadedFormContext !== formContext) {
     return (
       <div className="w-full p-6 space-y-6">
         <Skeleton className="h-8 w-64 rounded-lg bg-[var(--bg-surface-2)]" />
@@ -324,10 +367,14 @@ export default function EventPlanningDetailsPage() {
         </div>
 
         <div className="flex items-center gap-3">
+          <button type="button" onClick={reloadDetails} disabled={isSaving}
+            className="text-xs underline disabled:opacity-50">
+            Discard edits and reload
+          </button>
           <button
             type="button"
             onClick={handleSave}
-            disabled={isSaving}
+            disabled={isSaving || formVersion === null}
             className="inline-flex items-center gap-2 rounded-lg bg-[var(--pri)] px-4 py-2 text-xs font-bold text-[var(--primary-contrast)] shadow-md shadow-[var(--pri)]/20 hover:opacity-95 transition-all cursor-pointer disabled:opacity-50"
           >
             {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}

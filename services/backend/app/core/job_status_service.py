@@ -13,6 +13,7 @@ from app.modules.files.models.file import DurableUpload
 from app.modules.registration.models.import_job import ImportJob
 from app.modules.events.models.event import Event
 from app.modules.files.infrastructure.repositories import DurableUploadRepository
+from app.modules.rbac.services.event_scope import owned_event_scope
 
 
 class JobStatusService:
@@ -60,7 +61,8 @@ class JobStatusService:
                 )
             )
             .join(Event, Event.id == ImportJob.event_id)
-            .where(ImportJob.id == job_id, Event.organization_id == organization_id)
+            .where(ImportJob.id == job_id, Event.organization_id == organization_id,
+                   owned_event_scope(db, ImportJob.event_id, organization_id))
         )
         if job is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")

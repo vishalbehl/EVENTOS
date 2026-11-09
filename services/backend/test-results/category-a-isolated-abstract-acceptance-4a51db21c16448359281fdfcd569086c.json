@@ -1,0 +1,21 @@
+{
+  "status": "PASSED",
+  "environment": "local_isolated_rehearsal",
+  "run_id": "4a51db21c16448359281fdfcd569086c",
+  "scenario": "delegated",
+  "scope": "WORKSPACE",
+  "database": "category_a_restore_20261020_4a51db21c164",
+  "backup_database": "category_a_restore_20261020_4eeff58ce5f1",
+  "backup_evidence_sha256": "68ddc0cff7625306cb388b92b85d7c2ed0e3ad54bfc6b3a3aa8e8936f1b78042",
+  "started_at": "2026-10-20T11:13:25.789982+00:00",
+  "application_workers_providers": "NOT_STARTED",
+  "production_acceptance": "NOT_RUN",
+  "fixture_artifact": "category-a-abstract-fixture-4a51db21c16448359281fdfcd569086c.json",
+  "runtime_artifact": "category-a-delegated-form-runtime-c5793015c9b04103b0789c4fc037d587.json",
+  "runtime_artifact_sha256": "0815d7c291798542fc65f6989c677812c30c2cdeb78883c70ccce190a7435f28",
+  "runtime_status": "PASSED",
+  "checks_verified": 16,
+  "final_clone_quarantined": true,
+  "completed_at": "2026-10-20T11:13:51.431845+00:00",
+  "probe_sha256": "b32d0b480eda1209dc79202d37bb985e6eb0545660ad2e75565441422d64879d"
+}

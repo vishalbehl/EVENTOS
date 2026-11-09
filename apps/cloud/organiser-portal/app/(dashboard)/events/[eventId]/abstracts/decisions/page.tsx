@@ -1,5 +1,6 @@
-import { AbstractWorkspace } from "@/components/organizer/abstracts/AbstractWorkspace";
+import { redirect } from "next/navigation";
 
-export default function AbstractDecisionsPage() {
-  return <AbstractWorkspace view="decisions" />;
+export default async function AbstractDecisionsPage({ params }: { params: Promise<{ eventId: string }> }) {
+  const { eventId } = await params;
+  redirect(`/events/${eventId}/abstracts/submissions`);
 }

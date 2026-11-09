@@ -26,6 +26,9 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@eventos/form-builder-studio": [
+        "../../../packages/form-builder-studio/src/index.ts"
       ]
     }
   },

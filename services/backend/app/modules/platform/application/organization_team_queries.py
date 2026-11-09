@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.events.models.event import Event
+from app.modules.rbac.models.organization_member import OrganizationMember
+
 from app.modules.platform.models.organization_console import (
     OrganizationTeam,
     OrganizationTeamEvent,
@@ -65,6 +68,7 @@ class OrganizationTeamQueryService:
                 ).where(
                     OrganizationTeamMember.organization_id == organization_id,
                     OrganizationTeamMember.team_id.in_(team_ids),
+                    self._owned_member(organization_id),
                 )
             )
             for row in member_rows:
@@ -75,14 +79,16 @@ class OrganizationTeamQueryService:
                     OrganizationTeamEvent.team_id,
                     OrganizationTeamEvent.event_id,
                     OrganizationTeamEvent.permissions,
+                    OrganizationTeamEvent.authorization_version,
                 ).where(
                     OrganizationTeamEvent.organization_id == organization_id,
                     OrganizationTeamEvent.team_id.in_(team_ids),
+                    self._owned_event(organization_id),
                 )
             )
             for row in event_rows:
                 events_by_team[row.team_id].append(
-                    {"event_id": row.event_id, "permissions": row.permissions}
+                    {"event_id": row.event_id, "permissions": row.permissions, "authorization_version": row.authorization_version}
                 )
 
         return [
@@ -122,13 +128,16 @@ class OrganizationTeamQueryService:
         ).where(
             OrganizationTeamMember.organization_id == organization_id,
             OrganizationTeamMember.team_id == team_id,
+            self._owned_member(organization_id),
         ).order_by(OrganizationTeamMember.organization_member_id.asc()))).all())
         event_rows = (await self.db.execute(select(
             OrganizationTeamEvent.event_id,
             OrganizationTeamEvent.permissions,
+            OrganizationTeamEvent.authorization_version,
         ).where(
             OrganizationTeamEvent.organization_id == organization_id,
             OrganizationTeamEvent.team_id == team_id,
+            self._owned_event(organization_id),
         ).order_by(OrganizationTeamEvent.event_id.asc()))).all()
         return OrganizationTeamProjection(
             id=row.id,
@@ -137,9 +146,30 @@ class OrganizationTeamQueryService:
             version=row.version,
             member_ids=member_ids,
             events=[
-                {"event_id": event_id, "permissions": permissions}
-                for event_id, permissions in event_rows
+                {"event_id": event_id, "permissions": permissions, "authorization_version": authorization_version}
+                for event_id, permissions, authorization_version in event_rows
             ],
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
+
+    @staticmethod
+    def _owned_member(organization_id):
+        # Recorded bindings cannot expose a foreign subject even before legacy
+        # composite constraints have been reconciled and validated. Do not use
+        # identity home tenancy as a substitute for membership ownership.
+        member = OrganizationMember.__table__
+        binding = OrganizationTeamMember.__table__
+        return select(member.c.id).where(
+            member.c.id == binding.c.organization_member_id,
+            member.c.organization_id == organization_id,
+        ).correlate(binding).exists()
+
+    @staticmethod
+    def _owned_event(organization_id):
+        event = Event.__table__
+        binding = OrganizationTeamEvent.__table__
+        return select(event.c.id).where(
+            event.c.id == binding.c.event_id,
+            event.c.organization_id == organization_id,
+        ).correlate(binding).exists()

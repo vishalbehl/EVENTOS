@@ -36,7 +36,7 @@ export function FloatingNeedsAttentionBoard() {
   const eventAttention = useEventNeedsAttention(eventId);
 
   const activeQuery = eventId ? eventAttention : orgAttention;
-  const rawItems: AttentionItem[] = activeQuery.data || [];
+  const rawItems: AttentionItem[] = Array.isArray(activeQuery.data) ? activeQuery.data : [];
 
   const [isOpen, setIsOpen] = useState(false);
   const [filter, setFilter] = useState<SeverityFilter>("all");

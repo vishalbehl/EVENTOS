@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
@@ -11,6 +12,9 @@ from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
 from app.modules.audit.models.audit_domain_tables import DataExport
 from app.modules.crm.models.crm_domain_tables import ProposalShare
+from app.modules.commercial.models import CommercialQuote, CommercialQuoteLineItem
+from app.modules.commercial.quote_schemas import QuoteUpdate
+from app.modules.commercial.quote_service import apply_quote_payload
 from tests.conftest import auth_headers
 
 
@@ -41,6 +45,71 @@ def quote_payload(organization_id: uuid.UUID, event_id: uuid.UUID) -> dict:
             },
         ],
     }
+
+
+def test_cloud_quote_revision_preserves_commercial_identity_when_only_price_changes() -> None:
+    offer_version_id = uuid.uuid4()
+    request_id = uuid.uuid4()
+    quote = CommercialQuote(
+        organization_id=uuid.uuid4(),
+        event_id=None,
+        quote_number="QTE-CLOUD-TEST",
+        title="Cloud commercial quote",
+        status="DRAFT",
+        currency="INR",
+        validity_days=30,
+        discount_type="NONE",
+        discount_value=Decimal("0"),
+        tax_rate=Decimal("18"),
+        subtotal=Decimal("0"),
+        discount_amount=Decimal("0"),
+        taxable_amount=Decimal("0"),
+        tax_amount=Decimal("0"),
+        total_amount=Decimal("0"),
+        created_by=uuid.uuid4(),
+    )
+    quote.line_items = [CommercialQuoteLineItem(
+        category="EMC",
+        name="EMC Enterprise",
+        quantity=1,
+        duration_days=1,
+        unit_rate=0,
+        line_subtotal=0,
+        sort_order=0,
+        product_family="EMC",
+        offer_code="EMC_ENTERPRISE",
+        offer_version_id=offer_version_id,
+        allocation_version_id=offer_version_id,
+        commercial_request_id=request_id,
+        tax_rate=Decimal("18"),
+        source_snapshot_json={"entitlement_snapshot": {"annual_registrations": 50000}},
+    )]
+    update = QuoteUpdate(
+        expected_version=1,
+        reason="Set approved enterprise commercial price",
+        title=quote.title,
+        currency="INR",
+        validity_days=30,
+        discount_type="NONE",
+        discount_value=0,
+        tax_rate=18,
+        line_items=[{
+            "category": "EMC",
+            "name": "EMC Enterprise",
+            "quantity": 1,
+            "duration_days": 1,
+            "unit_rate": 900000,
+        }],
+    )
+
+    apply_quote_payload(quote, update)
+
+    revised = quote.line_items[0]
+    assert revised.offer_code == "EMC_ENTERPRISE"
+    assert revised.offer_version_id == offer_version_id
+    assert revised.commercial_request_id == request_id
+    assert revised.source_snapshot_json["entitlement_snapshot"]["annual_registrations"] == 50000
+    assert revised.line_subtotal == Decimal("900000.00")
 
 
 @pytest.mark.asyncio
@@ -136,7 +205,6 @@ async def test_quote_scope_hides_foreign_tenant_event(
     foreign_org = Organization(
         name="Foreign Quote Org",
         slug=f"foreign-quote-{uuid.uuid4().hex[:8]}",
-        plan="pro",
     )
     db.add(foreign_org)
     await db.flush()

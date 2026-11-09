@@ -6,6 +6,7 @@ from sqlalchemy import select
 from app.dependencies import DB
 from app.modules.billing.models.payment_gateway import PaymentGateway
 from app.modules.billing.services.provider_webhook_service import ProviderWebhookService
+from app.modules.billing.services.payment_method_provider_service import PaymentMethodProviderService
 
 
 router = APIRouter(prefix="/billing/provider-webhooks", tags=["billing-provider-webhooks"])
@@ -17,6 +18,9 @@ async def receive_provider_webhook(gateway_id: uuid.UUID, request: Request, db: 
     if not gateway:
         raise HTTPException(status_code=404, detail="Webhook endpoint not found.")
     body = await request.body()
+    if PaymentMethodProviderService.is_setup_event(gateway, body):
+        receipt = await PaymentMethodProviderService.execute_setup_webhook(db, gateway, body, request.headers)
+        return {"status": receipt.status, "receipt_id": str(receipt.id)}
     normalized = ProviderWebhookService.verify_and_normalize(gateway, body, request.headers)
     receipt = await ProviderWebhookService.execute_command(db, gateway, normalized, body)
     return {"status": receipt.status, "receipt_id": str(receipt.id)}

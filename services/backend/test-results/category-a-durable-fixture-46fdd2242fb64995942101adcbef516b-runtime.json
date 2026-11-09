@@ -1,0 +1,31 @@
+{
+  "status": "PASSED",
+  "database": "category_a_restore_20261021_46fdd2242fb6",
+  "login": "category_a_checkpoint_46fdd2242fb6",
+  "stage": "independent_completion_read",
+  "runtime_role_is_safe": true,
+  "missing_canary_policies": [],
+  "completion_status": "COMPLETED",
+  "streams_total": 2,
+  "streams_completed": 2,
+  "pages_completed": 8,
+  "checked_count": 221,
+  "blocked_count": 7,
+  "long_key_transition_commands": 4,
+  "actual_key_lengths": [
+    100,
+    100,
+    100,
+    12,
+    100
+  ],
+  "replay_audit_count": 4,
+  "mandatory_receipts": 4,
+  "historical_evidence_unchanged": true,
+  "operational_purpose_preserved": true,
+  "actual_column_limit": 100,
+  "page_transactions": 8,
+  "actual_restricted_login": true,
+  "default_platform_customer_flow": "NOT_RUN",
+  "provider_io": "NOT_RUN"
+}

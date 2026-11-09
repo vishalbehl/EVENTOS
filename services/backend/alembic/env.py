@@ -46,7 +46,12 @@ target_metadata = Base.metadata
 
 # ── Override DB URL from .env (not from alembic.ini) ──────
 # Always use the SYNC driver for Alembic (psycopg2, not asyncpg)
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL_SYNC)
+_migration_url = os.environ.get("MIGRATION_DATABASE_URL_SYNC", "")
+if not _migration_url:
+    if settings.DEPLOYMENT_PROFILE in {"staging", "production"}:
+        raise RuntimeError("A dedicated MIGRATION_DATABASE_URL_SYNC is required; runtime credentials cannot run deployment migrations.")
+    _migration_url = settings.DATABASE_URL_SYNC  # Local development compatibility only.
+config.set_main_option("sqlalchemy.url", _migration_url.replace("%", "%%"))
 
 
 def include_object(object, name, type_, reflected, compare_to):

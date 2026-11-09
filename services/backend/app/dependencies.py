@@ -23,7 +23,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated, AsyncIterator, List, Optional
 
-from fastapi import Depends, Header, HTTPException, Path, Query, Request, status
+from fastapi import Depends, Header, HTTPException, Path, Query, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from loguru import logger
@@ -39,6 +39,28 @@ from app.modules.platform.models.organization import Organization
 from app.modules.identity.models.refresh_token import RefreshToken
 from app.modules.events.models.speaker import Speaker
 from app.modules.identity.models.user import User
+
+
+# These handlers independently validate their requested scope or operate only on
+# authenticated identity. Match the resolved handler, never caller-controlled
+# URL substrings: adding an access/workspace route must not grant an exemption.
+_IDENTITY_CONTEXT_ENDPOINTS = frozenset({
+    ("app.modules.rbac.routers.access_foundation", "contexts"),
+    ("app.modules.rbac.routers.access_foundation", "select_context"),
+    ("app.modules.rbac.routers.access_foundation", "bootstrap"),
+    ("app.modules.rbac.routers.access_foundation", "workspaces"),
+    ("app.modules.rbac.routers.access_foundation", "create_workspace"),
+    ("app.modules.rbac.routers.access_foundation", "update_workspace"),
+    ("app.modules.rbac.routers.access_foundation", "workspace_events"),
+    ("app.modules.rbac.routers.access_foundation", "change_event_workspace"),
+    ("app.modules.rbac.routers.access_foundation", "workspace_members"),
+    ("app.modules.rbac.routers.access_foundation", "change_workspace_member"),
+    ("app.modules.rbac.routers.access_foundation", "ownership_candidates"),
+    ("app.modules.rbac.routers.organisations", "invitation_preview"),
+    ("app.modules.rbac.routers.organisations", "accept_invite"),
+    ("app.modules.identity.routers.auth", "logout"),
+    ("app.modules.identity.routers.auth", "get_me"),
+})
 
 
 # =============================================================
@@ -87,7 +109,13 @@ class TokenData:
     org  = organization UUID string
     jti  = JWT ID (unique per token, for future blacklisting)
     """
-    __slots__ = ("user_id", "role", "organization_id", "jti", "amr", "auth_time", "impersonator_id", "impersonation_session_id")
+    __slots__ = (
+        "user_id", "role", "organization_id", "jti", "amr", "auth_time",
+        "impersonator_id", "impersonation_session_id", "auth_revision",
+        "session_id", "access_mode", "active_organization_id",
+        "acting_organization_id", "active_workspace_id", "active_event_id",
+        "relationship_id",
+    )
 
     def __init__(
         self,
@@ -99,6 +127,14 @@ class TokenData:
         auth_time: Optional[datetime] = None,
         impersonator_id: Optional[uuid.UUID] = None,
         impersonation_session_id: Optional[uuid.UUID] = None,
+        auth_revision: int | None = None,
+        session_id: Optional[uuid.UUID] = None,
+        access_mode: str = "DIRECT",
+        active_organization_id: Optional[uuid.UUID] = None,
+        acting_organization_id: Optional[uuid.UUID] = None,
+        active_workspace_id: Optional[uuid.UUID] = None,
+        active_event_id: Optional[uuid.UUID] = None,
+        relationship_id: Optional[uuid.UUID] = None,
     ) -> None:
         self.user_id = user_id
         self.role = role
@@ -108,6 +144,14 @@ class TokenData:
         self.auth_time = auth_time
         self.impersonator_id = impersonator_id
         self.impersonation_session_id = impersonation_session_id
+        self.auth_revision = auth_revision
+        self.session_id = session_id
+        self.access_mode = access_mode
+        self.active_organization_id = active_organization_id or organization_id
+        self.acting_organization_id = acting_organization_id or self.active_organization_id
+        self.active_workspace_id = active_workspace_id
+        self.active_event_id = active_event_id
+        self.relationship_id = relationship_id
 
 
 async def get_token_data(
@@ -167,12 +211,22 @@ async def get_token_data(
     org: Optional[str] = payload.get("org")
     jti: Optional[str] = payload.get("jti")
     token_type: Optional[str] = payload.get("type")
+    auth_revision = payload.get("auth_revision")
     amr_claim = payload.get("amr") or []
     auth_time_claim = payload.get("auth_time")
     impersonator_claim = payload.get("impersonator_id")
     impersonation_session_claim = payload.get("impersonation_session_id")
+    session_claim = payload.get("sid")
+    access_mode = payload.get("ctx_mode") or "DIRECT"
+    active_org_claim = payload.get("ctx_org") or org
+    acting_org_claim = payload.get("ctx_actor_org") or active_org_claim
+    workspace_claim = payload.get("ctx_ws")
+    event_claim = payload.get("ctx_event")
+    relationship_claim = payload.get("ctx_rel")
 
     if not sub or not role or not org or not jti:
+        raise _unauthorized
+    if type(auth_revision) is not int or auth_revision < 1 or token_type != "access":
         raise _unauthorized
 
     # Reject refresh tokens used as access tokens
@@ -188,7 +242,23 @@ async def get_token_data(
         organization_id = uuid.UUID(org)
         impersonator_id = uuid.UUID(impersonator_claim) if impersonator_claim else None
         impersonation_session_id = uuid.UUID(impersonation_session_claim) if impersonation_session_claim else None
+        session_id = uuid.UUID(session_claim) if session_claim else None
+        active_organization_id = uuid.UUID(active_org_claim)
+        acting_organization_id = uuid.UUID(acting_org_claim)
+        active_workspace_id = uuid.UUID(workspace_claim) if workspace_claim else None
+        active_event_id = uuid.UUID(event_claim) if event_claim else None
+        relationship_id = uuid.UUID(relationship_claim) if relationship_claim else None
     except ValueError:
+        raise _unauthorized
+
+    if access_mode not in {"DIRECT", "DELEGATED"}:
+        raise _unauthorized
+    if access_mode == "DIRECT":
+        if (acting_organization_id != active_organization_id or relationship_id is not None or
+                active_event_id is not None):
+            raise _unauthorized
+    elif (session_id is None or active_workspace_id is None or relationship_id is None or
+          acting_organization_id == active_organization_id):
         raise _unauthorized
 
     auth_time = None
@@ -219,6 +289,14 @@ async def get_token_data(
         auth_time=auth_time,
         impersonator_id=impersonator_id,
         impersonation_session_id=impersonation_session_id,
+        auth_revision=auth_revision,
+        session_id=session_id,
+        access_mode=access_mode,
+        active_organization_id=active_organization_id,
+        acting_organization_id=acting_organization_id,
+        active_workspace_id=active_workspace_id,
+        active_event_id=active_event_id,
+        relationship_id=relationship_id,
     )
 
 
@@ -231,6 +309,7 @@ TokenDep = Annotated[TokenData, Depends(get_token_data)]
 # =============================================================
 
 async def get_current_user(
+    request: Request,
     token_data: TokenDep,
     db: DB,
 ) -> User:
@@ -238,27 +317,38 @@ async def get_current_user(
     Loads the full User ORM object from the database using
     the user_id extracted from the JWT.
     """
-    if token_data.role == "developer":
-        # Resolve user if present (OAuth2 flow)
-        if token_data.user_id:
-            from sqlalchemy.orm import selectinload
-            result = await db.execute(
-                select(User).options(selectinload(User.organization)).where(User.id == token_data.user_id)
+    # Authenticate the immutable identity inside its own tenant before any
+    # delegated operational selector is applied. Dependency graphs may resolve
+    # this function more than once; a prior resolver can already have selected
+    # the client tenant, which must never hide or replace the acting identity.
+    from app.core.tenant_context import TenantContextGuard
+    identity_context = tenant_org_id.set(token_data.organization_id)
+    try:
+        await TenantContextGuard.apply(db, token_data.organization_id)
+
+        if token_data.role == "developer":
+            # Resolve user if present (OAuth2 flow)
+            if token_data.user_id:
+                from sqlalchemy.orm import selectinload
+                result = await db.execute(
+                    select(User).options(selectinload(User.organization)).where(User.id == token_data.user_id)
+                )
+                user = result.scalar_one_or_none()
+                if user:
+                    return user
+
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Service identities cannot use user-authorized endpoints.",
             )
-            user = result.scalar_one_or_none()
-            if user:
-                return user
 
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Service identities cannot use user-authorized endpoints.",
+        from sqlalchemy.orm import selectinload
+        result = await db.execute(
+            select(User).options(selectinload(User.organization)).where(User.id == token_data.user_id)
         )
-
-    from sqlalchemy.orm import selectinload
-    result = await db.execute(
-        select(User).options(selectinload(User.organization)).where(User.id == token_data.user_id)
-    )
-    user = result.scalar_one_or_none()
+        user = result.scalar_one_or_none()
+    finally:
+        tenant_org_id.reset(identity_context)
 
     if user is None:
         raise HTTPException(
@@ -267,13 +357,53 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if token_data.role != "super_admin" and user.organization_id != token_data.organization_id:
+    # The immutable identity tenant remains bound to the token. The operational
+    # tenant selector is validated separately below and never replaces this
+    # identity check.
+    if user.organization_id != token_data.organization_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token tenant does not match the user account.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if user.deleted_at is not None or not user.is_active or user.auth_revision != token_data.auth_revision:
+        raise HTTPException(status_code=401, detail="Session revoked. Sign in again.",
+            headers={"WWW-Authenticate": "Bearer"})
+
+    # Identity-only endpoints must remain available when a formerly selected
+    # delegated context is revoked, allowing the user to enumerate and select a
+    # still-authorised context or end the session. Every customer-resource path
+    # revalidates accepted membership / active delegation before its first
+    # business query, then binds PostgreSQL RLS to the validated target tenant.
+    endpoint = request.scope.get("endpoint")
+    is_identity_only = (
+        getattr(endpoint, "__module__", None),
+        getattr(endpoint, "__name__", None),
+    ) in _IDENTITY_CONTEXT_ENDPOINTS
+    is_platform_identity = bool(
+        user.organization is not None and user.organization.is_platform_org
+    )
+    if not is_identity_only and not is_platform_identity:
+        from app.modules.rbac.services.access_contexts import validate_request_selector
+
+        await validate_request_selector(db, user, token_data)
+        # Keep the validated selector active for the rest of the request. The
+        # outer TenantContextMiddleware owns the reset, including error paths.
+        tenant_org_id.set(token_data.active_organization_id)
+        await TenantContextGuard.apply(db, token_data.active_organization_id)
+        db.info["customer_request_selector_validated"] = (
+            token_data,
+            db.sync_session.get_transaction(),
+        )
+    # Request-scoped compatibility adapter for legacy services that receive the
+    # ORM identity but not TokenDep. This is an unmapped Python attribute and is
+    # never persisted; protected customer paths reached this point only after
+    # the live validation above.
+    user._request_token_data = token_data
+    if not is_platform_identity and not is_identity_only:
+        db.info["customer_request_identity"] = user.id
+        db.info["customer_request_selector"] = token_data
     return user
 
 
@@ -344,6 +474,15 @@ ROLE_HIERARCHY = [
 ]
 
 
+async def require_platform_administrator(request: Request, response: Response, token: TokenDep,
+    user: Annotated[User, Depends(require_active_user)], db: DB) -> User:
+    # Lazy import avoids a dependency/module cycle. Delegate to the same current
+    # platform permission admission used by canonical platform endpoints.
+    from app.modules.rbac.services.platform_permissions import require_platform_permission
+    admission = require_platform_permission("platform:administration:manage")
+    return await admission(request=request, response=response, token=token, user=user, db=db)
+
+
 def require_roles(*allowed_roles: str):
     """
     Dependency factory that restricts endpoint access to
@@ -362,9 +501,26 @@ def require_roles(*allowed_roles: str):
             )]
         ): ...
     """
+    if frozenset(allowed_roles) == {"super_admin"}:
+        return require_platform_administrator
+
     async def _check_role(
         user: Annotated[User, Depends(require_active_user)],
+        token_data: TokenDep,
+        db: DB,
     ) -> User:
+        org_id = token_data.acting_organization_id or token_data.organization_id
+        if org_id and user.role != "super_admin":
+            from app.modules.rbac.services.permission_service import get_user_permissions
+            perms = await get_user_permissions(
+                db, user.id, event_id=token_data.active_event_id,
+                organization_id=org_id, workspace_id=token_data.active_workspace_id,
+            )
+            if not perms:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={"code": "PERMISSION_DENIED", "message": "No active permissions in selected tenant scope."},
+                )
         if user.role not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -455,6 +611,64 @@ TechOrAbove = Annotated[
 ]
 
 
+def require_scoped_permission(action: str):
+    """
+    Authoritative action permission check against the active tenant context.
+    Resolves grants through membership, role, team, and explicit scope with denials winning.
+    """
+    async def _check_permission(
+        user: Annotated[User, Depends(require_active_user)],
+        token_data: TokenDep,
+        db: DB,
+    ) -> User:
+        org_id = token_data.acting_organization_id or token_data.organization_id
+        workspace_id = token_data.active_workspace_id
+        event_id = token_data.active_event_id
+
+        from app.modules.rbac.services.permission_service import get_user_permissions
+        permissions = await get_user_permissions(
+            db, user.id, event_id=event_id,
+            organization_id=org_id, workspace_id=workspace_id,
+        )
+        if action not in permissions:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"code": "PERMISSION_DENIED", "required_action": action, "message": f"Action {action} is not permitted for your current scope."},
+            )
+        return user
+
+    return _check_permission
+
+
+def require_scoped_permissions(*actions: str):
+    """
+    Authoritative permission check requiring all specified actions to be granted.
+    """
+    async def _check_permissions(
+        user: Annotated[User, Depends(require_active_user)],
+        token_data: TokenDep,
+        db: DB,
+    ) -> User:
+        org_id = token_data.acting_organization_id or token_data.organization_id
+        workspace_id = token_data.active_workspace_id
+        event_id = token_data.active_event_id
+
+        from app.modules.rbac.services.permission_service import get_user_permissions
+        permissions = set(await get_user_permissions(
+            db, user.id, event_id=event_id,
+            organization_id=org_id, workspace_id=workspace_id,
+        ))
+        missing = [act for act in actions if act not in permissions]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"code": "PERMISSION_DENIED", "missing_actions": missing, "message": f"Missing required action(s): {', '.join(missing)}."},
+            )
+        return user
+
+    return _check_permissions
+
+
 
 # =============================================================
 # SECTION 5 — ORGANIZATION OWNERSHIP CHECK
@@ -462,6 +676,7 @@ TechOrAbove = Annotated[
 
 async def verify_org_membership(
     user: Annotated[User, Depends(require_active_user)],
+    token_data: TokenDep,
     db: DB,
 ) -> Organization:
     """
@@ -471,10 +686,12 @@ async def verify_org_membership(
     Raises 404 if organization not found (shouldn't happen
     in practice but guards against data integrity issues).
     """
-    result = await db.execute(
-        select(Organization).where(Organization.id == user.organization_id)
-    )
-    org = result.scalar_one_or_none()
+    from app.modules.rbac.services.access_contexts import selected_request_context
+    async with selected_request_context(db, user, token_data, event_id=token_data.active_event_id):
+        result = await db.execute(
+            select(Organization).where(Organization.id == token_data.active_organization_id)
+        )
+        org = result.scalar_one_or_none()
     if org is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -493,83 +710,55 @@ OrgMember = Annotated[Organization, Depends(verify_org_membership)]
 async def get_current_event(
     event_id: Annotated[uuid.UUID, Path(description="Event UUID")],
     user: ActiveUser,
+    token_data: TokenDep,
     db: DB,
 ) -> Event:
     """
     Loads an Event from the path parameter {event_id}.
-    Verifies the event belongs to the authenticated or impersonated organization.
+    Verifies live membership/delegation and event scope in the selected organisation.
 
     Raises 404 if event not found.
-    Raises 403 if event belongs to a different organization.
+    Foreign or unassigned events return concealed 404. Platform inspection uses
+    separate, explicitly authorised platform endpoints.
 
     Usage in router:
         @router.get("/events/{event_id}/sessions")
         async def list_sessions(event: CurrentEvent): ...
     """
-    stmt = select(Event).where(Event.id == event_id, Event.deleted_at.is_(None))
-    if user.role in ("super_admin", "system_admin"):
-        stmt = stmt.execution_options(skip_tenant_filter=True)
-        
-    result = await db.execute(stmt)
-    event = result.scalar_one_or_none()
-
-    if event is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Event {event_id} not found.",
-        )
-
-    # Apply restricted-workspace assignment checks after tenant ownership.
-    if user.role not in ("super_admin", "system_admin"):
-        if event.organization_id != user.organization_id:
-            # Return 404 not 403 — don't leak existence of other orgs' events
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Event {event_id} not found.",
-            )
-        
-        # Enforce assignments for restricted roles (excluding Admins and Organisers)
-        if user.role in ["session_manager", "technician", "volunteer"]:
-            from app.modules.rbac.models.rbac import UserAccessNode
-            from app.modules.agenda.models import Room
-            from app.modules.agenda.models import Session
-            from sqlalchemy import and_, or_
-            # Check if assigned to the event itself, OR any room/session within this event
-            assignment_id = await db.scalar(
-                select(UserAccessNode.id).where(
-                    UserAccessNode.user_id == user.id,
-                    or_(
-                        and_(UserAccessNode.node_id == event_id, UserAccessNode.node_type == 'EVENT'),
-                        and_(
-                            UserAccessNode.node_type == 'ROOM',
-                            UserAccessNode.node_id.in_(select(Room.id).where(Room.event_id == event_id))
-                        ),
-                        and_(
-                            UserAccessNode.node_type == 'SESSION',
-                            UserAccessNode.node_id.in_(select(Session.id).where(Session.event_id == event_id))
-                        )
-                    )
-                ).limit(1)
-            )
-            if not assignment_id:
-                # Also check UserEventAssignment (legacy table)
-                from app.modules.rbac.models.user_assignment import UserEventAssignment
-                legacy_id = await db.scalar(
-                    select(UserEventAssignment.id).where(
-                        UserEventAssignment.user_id == user.id,
-                        UserEventAssignment.event_id == event_id
-                    ).limit(1)
-                )
-                if not legacy_id:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="You are not assigned to this event or any of its rooms/sessions."
-                    )
-
-    return event
+    from app.modules.rbac.services.event_scope import customer_event
+    # Global/platform labels are not customer membership. Action checks remain separate.
+    return await customer_event(db, user, event_id, token_data)
 
 
 CurrentEvent = Annotated[Event, Depends(get_current_event)]
+
+
+def current_event_for_action(action: str):
+    """Return an event dependency using the route's explicit scoped action.
+
+    The generic event dependency deliberately requires delegated EVENTS:VIEW.
+    A route with a narrower client-approved delegation must name that action so
+    container loading does not accidentally require an unrelated permission.
+    """
+    from app.modules.rbac.services.permission_catalogue import canonical_action
+
+    permission = canonical_action(action)
+    if permission is None:
+        raise ValueError(f"Unknown customer action: {action}")
+
+    async def dependency(
+        event_id: Annotated[uuid.UUID, Path(description="Event UUID")],
+        user: ActiveUser,
+        token_data: TokenDep,
+        db: DB,
+    ) -> Event:
+        from app.modules.rbac.services.event_scope import customer_event
+
+        return await customer_event(
+            db, user, event_id, token_data, action=permission
+        )
+
+    return dependency
 
 
 # =============================================================
@@ -832,17 +1021,16 @@ def assert_owns_event(user: User, event: Event) -> None:
     """
     Inline helper (not a Depends) — raises 403 if the user does
     not own the given event's organization.
-    Super admins bypass this check.
+    No platform/global role bypass is permitted. This is ownership only, not a
+    substitute for accepted membership and the canonical permission decision.
 
     Use inside route handlers after loading both user and event:
         assert_owns_event(user, event)
     """
-    if user.role == "super_admin":
-        return
     if event.organization_id != user.organization_id:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to access this event.",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "RESOURCE_NOT_FOUND"},
         )
 
 

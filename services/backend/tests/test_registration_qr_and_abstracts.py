@@ -6,6 +6,8 @@ import pytest
 from sqlalchemy import select
 
 from app.modules.abstracts.models import AbstractCall, AbstractForm
+from app.modules.audit.models.audit_log import AuditLog, compute_audit_hash
+from app.modules.platform.models.idempotency import IdempotencyRecord
 from app.modules.registration.models.participant import Participant
 from tests.conftest import activate_event_for_test, auth_headers
 
@@ -19,7 +21,7 @@ async def test_abstract_setup_and_form_gets_are_read_only_when_unconfigured(
     event,
     organizer,
 ):
-    await activate_event_for_test(db, event)
+    await activate_event_for_test(db, event, abstracts=True)
     headers = auth_headers(organizer)
 
     setup = await client.get(f"/api/v1/events/{event.id}/abstracts/setup", headers=headers)
@@ -33,13 +35,87 @@ async def test_abstract_setup_and_form_gets_are_read_only_when_unconfigured(
     assert await db.scalar(select(AbstractForm).where(AbstractForm.event_id == event.id)) is None
 
 
+async def test_abstract_form_http_write_requires_version_and_stable_retry(
+    client,
+    db,
+    event,
+    organizer,
+):
+    await activate_event_for_test(db, event, abstracts=True)
+    path = f"/api/v1/events/{event.id}/abstracts/form"
+    payload = {
+        "title": "HTTP protected abstract form",
+        "schema": {"fields": [], "settings": {}},
+        "publish": False,
+    }
+    identity = auth_headers(organizer)
+
+    missing = await client.put(path, json=payload, headers=identity)
+    assert missing.status_code == 428
+
+    retry = f"abstract-http-{uuid.uuid4()}"
+    headers = {**identity, "If-Match": "1", "Idempotency-Key": retry}
+    saved = await client.put(path, json=payload, headers=headers)
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert body["version"] == 2 and body["publish"] is False
+
+    replay = await client.put(path, json=payload, headers=headers)
+    assert replay.status_code == 200 and replay.json() == body
+
+    changed = await client.put(
+        path,
+        json={**payload, "title": "Changed retry payload"},
+        headers=headers,
+    )
+    assert changed.status_code == 409
+
+    stale = await client.put(
+        path,
+        json=payload,
+        headers={
+            **identity,
+            "If-Match": "1",
+            "Idempotency-Key": f"abstract-http-stale-{uuid.uuid4()}",
+        },
+    )
+    assert stale.status_code == 412
+
+    foreign = await client.put(
+        f"/api/v1/events/{uuid.uuid4()}/abstracts/form",
+        json=payload,
+        headers={
+            **identity,
+            "If-Match": "1",
+            "Idempotency-Key": f"abstract-http-foreign-{uuid.uuid4()}",
+        },
+    )
+    assert foreign.status_code == 404
+
+    receipt = await db.scalar(
+        select(IdempotencyRecord).where(IdempotencyRecord.idempotency_key == retry)
+    )
+    assert receipt is not None and receipt.status == "COMPLETED"
+    audits = list(
+        (
+            await db.scalars(
+                select(AuditLog).where(
+                    AuditLog.correlation_id == receipt.id,
+                    AuditLog.action_type == "ABSTRACT_FORM_UPDATED",
+                )
+            )
+        ).all()
+    )
+    assert len(audits) == 1 and compute_audit_hash(audits[0]) == audits[0].row_hash
+
+
 async def test_registration_confirmation_qr_issue_rotate_and_verify(
     client,
     db,
     event,
     organizer,
 ):
-    await activate_event_for_test(db, event)
+    await activate_event_for_test(db, event, confirmation_qr=True)
     participant = Participant(
         event_id=event.id,
         regno="REG-QR-001",
@@ -182,11 +258,14 @@ async def test_organiser_standalone_abstract_workflow(
     event,
     organizer,
 ):
-    await activate_event_for_test(db, event)
+    await activate_event_for_test(db, event, abstracts=True)
     abstract_text = (
         "This study evaluates a resilient entitlement architecture across "
         "event-scoped workloads using deterministic capability resolution."
     )
+
+    loaded_setup = await client.get(f"/api/v1/events/{event.id}/abstracts/setup", headers=auth_headers(organizer))
+    assert loaded_setup.status_code == 200, loaded_setup.text
 
     setup = await client.put(
         f"/api/v1/events/{event.id}/abstracts/setup",
@@ -202,7 +281,8 @@ async def test_organiser_standalone_abstract_workflow(
             "email_triggers": {},
             "blind_review_enabled": True,
         },
-        headers={**auth_headers(organizer), "Idempotency-Key": f"abstract-setup-{uuid.uuid4()}"},
+        headers={**auth_headers(organizer), "If-Match": str(loaded_setup.json()["version"]),
+            "Idempotency-Key": f"abstract-setup-{uuid.uuid4()}"},
     )
     assert setup.status_code == 200, setup.text
     assert setup.json()["status"] == "OPEN"
@@ -252,6 +332,19 @@ async def test_organiser_standalone_abstract_workflow(
     )
     assert assignments.status_code == 200, assignments.text
     assignment_id = assignments.json()[0]["id"]
+
+    plan = await client.post(f"/api/v1/events/{event.id}/programme/evaluation-plans",
+        json={"name": "Persisted scoring contract", "rubric": [
+            {"key": "scientific_merit", "label": "Scientific merit", "max": 5, "weight": 50},
+            {"key": "clarity", "label": "Clarity", "max": 5, "weight": 50}],
+            "reviewer_ids": [reviewer.json()["id"]]},
+        headers={**auth_headers(organizer), "Idempotency-Key": f"abstract-plan-{uuid.uuid4()}"})
+    assert plan.status_code == 201, plan.text
+    activated = await client.post(f"/api/v1/events/{event.id}/programme/evaluation-plans/{plan.json()['id']}/apply",
+        json={"assignments_per_submission": 1}, headers={**auth_headers(organizer),
+            "If-Match": str(plan.json()["version"]), "Idempotency-Key": f"abstract-plan-apply-{uuid.uuid4()}"})
+    assert activated.status_code == 200, activated.text
+    assert activated.json()["submissions_unfilled"] == 0
 
     reviewed = await client.post(
         f"/api/v1/events/{event.id}/abstracts/assignments/{assignment_id}/reviews",

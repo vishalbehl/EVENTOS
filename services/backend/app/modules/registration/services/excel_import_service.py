@@ -703,7 +703,6 @@ async def _get_or_create_speaker(
             country=row.country,
             designation=row.designation,
             upload_token=token,
-            speaker_code=token[:8].upper(),
             upload_status="pending",
         )
         db.add(speaker)

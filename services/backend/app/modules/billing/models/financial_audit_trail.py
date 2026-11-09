@@ -21,10 +21,10 @@ class FinancialAuditTrail(Base):
     activity_type values:
         'INVOICE_CREATED' | 'PAYMENT_RECEIVED' | 'REFUND_APPROVED' |
         'CREDIT_NOTE_ISSUED' | 'GATEWAY_CONFIG_CHANGED' |
-        'SUBSCRIPTION_CREATED' | 'PLAN_CHANGED' | 'TAX_RULE_UPDATED'
+        'CONTRACT_CREATED' | 'OFFER_CHANGED' | 'TAX_RULE_UPDATED'
 
     entity_type values:
-        'INVOICE' | 'PAYMENT' | 'REFUND' | 'CREDIT_NOTE' | 'GATEWAY' | 'SUBSCRIPTION'
+        'INVOICE' | 'PAYMENT' | 'REFUND' | 'CREDIT_NOTE' | 'GATEWAY' | 'CONTRACT'
     """
     __tablename__ = "financial_audit_trail"
     __table_args__ = (

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -16,6 +17,7 @@ class _Session:
         self.commits = 0
         self.rollbacks = 0
         self.flushes = 0
+        self.info = {}
 
     async def __aenter__(self):
         return self
@@ -79,7 +81,16 @@ def _install(monkeypatch, row, *, metadata=None, chunks=b"%PDF-1.7", scan=None):
         current.status = target
         return current
 
-    monkeypatch.setattr(upload_jobs, "AsyncSessionLocal", _SessionFactory(session))
+    @asynccontextmanager
+    async def tenant_session(_organization_id):
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+
+    from app.tasks import tenant_job_scope
+    monkeypatch.setattr(tenant_job_scope, "tenant_job_session", tenant_session)
     monkeypatch.setattr(upload_jobs, "DurableUploadRepository", _Repository)
     monkeypatch.setattr(upload_jobs.UploadService, "apply_transition", transition)
     monkeypatch.setattr(
@@ -100,15 +111,15 @@ async def test_upload_integrity_matrix_quarantines_size_checksum_signature_and_m
     session, transitions = _install(monkeypatch, row, metadata=8)
     result = await upload_jobs._process(row.id, organization_id, "size-task")
     assert result["status"] == "quarantined"
-    assert transitions[-1] == ("uploaded", "quarantined")
-    assert session.commits == 1
+    assert transitions[-1] == ("verifying", "quarantined")
+    assert session.commits == 2
 
     row = _row(checksum="0" * 64)
     session, transitions = _install(monkeypatch, row)
     result = await upload_jobs._process(row.id, organization_id, "checksum-task")
     assert result["status"] == "quarantined"
-    assert transitions[-1] == ("uploaded", "quarantined")
-    assert session.commits == 1
+    assert transitions[-1] == ("verifying", "quarantined")
+    assert session.commits == 2
 
     row = _row()
     session, transitions = _install(monkeypatch, row)
@@ -120,15 +131,15 @@ async def test_upload_integrity_matrix_quarantines_size_checksum_signature_and_m
     result = await upload_jobs._process(row.id, organization_id, "signature-task")
     assert result["status"] == "quarantined"
     assert transitions[-1] == ("verifying", "quarantined")
-    assert session.commits == 1
+    assert session.commits == 2
 
     row = _row()
     session, transitions = _install(monkeypatch, row, scan=ScanResult("infected", "EICAR"))
     monkeypatch.setattr(upload_jobs, "validate_file_signature", real_validate_file_signature)
     result = await upload_jobs._process(row.id, organization_id, "malware-task")
     assert result["status"] == "quarantined"
-    assert transitions[-1] == ("scanning", "quarantined")
-    assert session.commits == 1
+    assert transitions[-1] == ("verifying", "quarantined")
+    assert session.commits == 2
 
 
 @pytest.mark.asyncio
@@ -143,18 +154,20 @@ async def test_upload_storage_and_antivirus_outages_rollback_and_remain_retryabl
     monkeypatch.setattr(upload_jobs, "get_object_metadata", storage_timeout)
     with pytest.raises(TimeoutError):
         await upload_jobs._process(row.id, organization_id, "storage-timeout")
-    assert session.rollbacks == 1
-    assert row.status == "uploaded"
-    assert transitions == [("uploaded", "uploaded")]
+    # Verification happens after the short claim transaction has committed and
+    # released its connection, so there is no open transaction to roll back.
+    assert session.rollbacks == 0
+    assert row.status == "verifying"
+    assert transitions == [("uploaded", "verifying")]
 
     row = _row()
     session, transitions = _install(monkeypatch, row, scan=ScanResult("unavailable"))
     monkeypatch.setattr(upload_jobs.settings, "ANTIVIRUS_REQUIRED", True)
     with pytest.raises(RuntimeError, match="temporarily unavailable"):
         await upload_jobs._process(row.id, organization_id, "scanner-timeout")
-    assert session.rollbacks == 1
-    assert row.status == "scanning"
-    assert transitions[-1] == ("verifying", "scanning")
+    assert session.rollbacks == 0
+    assert row.status == "verifying"
+    assert transitions == [("uploaded", "verifying")]
 
 
 @pytest.mark.asyncio

@@ -1,9 +1,10 @@
 import uuid
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 class WorkflowStepCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     step_name: str = Field(min_length=1, max_length=100)
     step_order: int = Field(ge=1)
     config: Dict[str, Any] = Field(default_factory=dict)
@@ -17,9 +18,10 @@ class WorkflowStepOut(BaseModel):
     config: Dict[str, Any]
 
 class WorkflowCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=255)
     description: Optional[str] = None
-    steps: List[WorkflowStepCreate] = Field(min_length=1)
+    steps: List[WorkflowStepCreate] = Field(min_length=1, max_length=100)
 
 class WorkflowOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -44,6 +46,7 @@ class WorkflowTaskOut(BaseModel):
     instance_id: uuid.UUID
     step_id: uuid.UUID
     status: str
+    version: int
     created_at: datetime
     step: Optional[WorkflowStepOut] = None
     assignments: List[WorkflowAssignmentOut] = []
@@ -68,4 +71,10 @@ class WorkflowInstanceOut(BaseModel):
     history: List[WorkflowHistoryOut] = []
 
 class CompleteTaskRequest(BaseModel):
-    comment: Optional[str] = None
+    model_config = ConfigDict(extra="forbid")
+    comment: str = Field(min_length=3, max_length=500)
+
+    @field_validator("comment", mode="before")
+    @classmethod
+    def meaningful_reason(cls, value):
+        return value.strip() if isinstance(value, str) else value

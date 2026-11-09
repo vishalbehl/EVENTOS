@@ -39,7 +39,7 @@ class OrganizerOrganizationCommandService:
             if organization is None:
                 raise HTTPException(status_code=404, detail="Organization not found")
             if organization.profile_version != if_match:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+                raise HTTPException(status_code=status.HTTP_412_PRECONDITION_FAILED, detail={
                     "code": "VERSION_CONFLICT",
                     "current_version": organization.profile_version,
                 })
@@ -74,13 +74,14 @@ class OrganizerOrganizationCommandService:
 
     @staticmethod
     def _snapshot(organization: Organization) -> dict:
+        address = organization.billing_address or {}
         return {
-            "id": str(organization.id), "name": organization.name,
+            "id": str(organization.id), "name": organization.name, "description": organization.description,
             "legal_name": organization.legal_name, "registration_number": organization.registration_number,
             "organization_type": organization.organization_type, "industry": organization.industry,
             "billing_email": organization.billing_email, "contact_email": organization.contact_email,
             "contact_phone": organization.contact_phone, "website_url": organization.website_url,
-            "billing_address": organization.billing_address or {}, "portal_name": organization.portal_name,
+            "billing_address": {key: address.get(key) for key in ("line1", "line2", "city", "state", "postal_code", "country") if address.get(key) is not None},
             "country": organization.country, "timezone": organization.timezone,
             "language": organization.language, "date_format": organization.date_format,
             "time_format": organization.time_format, "currency": organization.currency,

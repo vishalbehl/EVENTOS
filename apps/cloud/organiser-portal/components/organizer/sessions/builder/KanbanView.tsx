@@ -12,6 +12,7 @@ import {
   closestCorners,
 } from "@dnd-kit/core";
 import { useSessionBuilderStore, BuilderSession } from "@/store/useSessionBuilderStore";
+import { getISODateInTZ, getFallbackTimezone } from "@/lib/utils";
 import { RoomColumn } from "./RoomColumn";
 import { SessionCard } from "./SessionCard";
 
@@ -26,6 +27,8 @@ export function KanbanView({ onAddSessionForRoom }: KanbanViewProps) {
   const searchQuery = useSessionBuilderStore((s) => s.searchQuery);
   const trackFilter = useSessionBuilderStore((s) => s.trackFilter);
   const moveSession = useSessionBuilderStore((s) => s.moveSession);
+  const storeTz = useSessionBuilderStore((s) => s.eventTimezone);
+  const eventTimezone = storeTz || getFallbackTimezone();
 
   const [activeSession, setActiveSession] = useState<BuilderSession | null>(null);
 
@@ -37,10 +40,10 @@ export function KanbanView({ onAddSessionForRoom }: KanbanViewProps) {
     })
   );
 
-  // Filter sessions by selected date, search query, track filter
+  // Filter sessions by selected date in event timezone, search query, track filter
   const filteredSessions = useMemo(() => {
     return sessions.filter((s) => {
-      const matchesDate = !selectedDate || s.start_time.startsWith(selectedDate);
+      const matchesDate = !selectedDate || (s.start_time && getISODateInTZ(s.start_time, eventTimezone) === selectedDate);
       const matchesSearch =
         !searchQuery ||
         s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -48,7 +51,7 @@ export function KanbanView({ onAddSessionForRoom }: KanbanViewProps) {
       const matchesTrack = !trackFilter || s.track_id === trackFilter;
       return matchesDate && matchesSearch && matchesTrack;
     });
-  }, [sessions, selectedDate, searchQuery, trackFilter]);
+  }, [sessions, selectedDate, searchQuery, trackFilter, eventTimezone]);
 
   // Group sessions by room_id
   const sessionsByRoom = useMemo(() => {

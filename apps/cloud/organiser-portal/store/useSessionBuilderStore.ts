@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { formatLocalDate } from "@/lib/utils";
+import { formatLocalDate, getFallbackTimezone, getISODateInTZ } from "@/lib/utils";
 
 export type ViewMode = "kanban" | "timeline" | "list" | "calendar";
 
@@ -28,6 +28,7 @@ export interface BuilderTalk {
 
 export interface BuilderSession {
   id: string;
+  version?: number;
   event_id: string;
   session_code: string;
   name: string;
@@ -79,12 +80,24 @@ export interface BuilderTrack {
 }
 
 export interface SchedulingConflict {
-  type: "room_overlap" | "speaker_conflict" | "out_of_bounds" | "capacity_mismatch" | "travel_time" | "session_overflow" | "unassigned_moderator";
+  type: "room_overlap" | "speaker_conflict" | "out_of_bounds" | "missing_room" | "speaker_unconfirmed" | "speaker_upload_pending" | "capacity_mismatch" | "travel_time" | "session_overflow" | "unassigned_moderator";
   session_ids: string[];
   speaker_id?: string | null;
   room_id?: string | null;
   description: string;
   severity: "error" | "warning";
+}
+
+export interface AcceptedAbstractCandidate {
+  id: string;
+  code: string;
+  title: string;
+  abstract_type: string;
+  topic?: string | null;
+  track?: string | null;
+  presenter_name?: string | null;
+  presenter_email?: string | null;
+  speaker_ready: boolean;
 }
 
 interface SnapshotState {
@@ -97,6 +110,7 @@ interface SessionBuilderState {
   rooms: BuilderRoom[];
   tracks: BuilderTrack[];
   unscheduledSpeakers: BuilderSpeaker[];
+  acceptedCandidates: AcceptedAbstractCandidate[];
   conflicts: SchedulingConflict[];
   eventTimezone: string;
   eventStartDate: string | null;
@@ -125,6 +139,7 @@ interface SessionBuilderState {
     rooms: BuilderRoom[];
     tracks: BuilderTrack[];
     unscheduled_speakers: BuilderSpeaker[];
+    accepted_candidates?: AcceptedAbstractCandidate[];
     conflicts: SchedulingConflict[];
     event_timezone: string;
     event_start_date?: string | null;
@@ -158,8 +173,10 @@ interface SessionBuilderState {
   redo: () => void;
   markSaved: () => void;
   setIsSaving: (saving: boolean) => void;
+  setServerConflicts: (conflicts: SchedulingConflict[]) => void;
   recomputeConflicts: () => void;
   setZoomLevel: (zoom: number) => void;
+  resetForAccessContext: () => void;
 }
 
 const MAX_HISTORY = 50;
@@ -169,8 +186,9 @@ export const useSessionBuilderStore = create<SessionBuilderState>((set, get) => 
   rooms: [],
   tracks: [],
   unscheduledSpeakers: [],
+  acceptedCandidates: [],
   conflicts: [],
-  eventTimezone: "UTC",
+  eventTimezone: getFallbackTimezone(),
   eventStartDate: null,
   eventEndDate: null,
 
@@ -189,20 +207,45 @@ export const useSessionBuilderStore = create<SessionBuilderState>((set, get) => 
   history: [],
   future: [],
 
+  resetForAccessContext: () => set({
+    sessions: [],
+    rooms: [],
+    tracks: [],
+    unscheduledSpeakers: [],
+    acceptedCandidates: [],
+    conflicts: [],
+    eventTimezone: getFallbackTimezone(),
+    eventStartDate: null,
+    eventEndDate: null,
+    selectedDate: formatLocalDate(new Date()),
+    selectedSessionId: null,
+    searchQuery: "",
+    trackFilter: null,
+    isConflictPanelOpen: false,
+    isQuickEditOpen: false,
+    isDirty: false,
+    isSaving: false,
+    lastSavedAt: null,
+    history: [],
+    future: [],
+  }),
+
   setSnapshot: (data) => {
+    const tz = data.event_timezone || getFallbackTimezone();
     const dates = data.sessions
       .filter((s) => s.start_time)
-      .map((s) => s.start_time.split("T")[0].split(" ")[0])
+      .map((s) => getISODateInTZ(s.start_time, tz))
       .sort();
-    const defaultDate = dates[0] || data.event_start_date?.split("T")[0]?.split(" ")[0] || formatLocalDate(new Date());
+    const defaultDate = dates[0] || (data.event_start_date ? getISODateInTZ(data.event_start_date, tz) : formatLocalDate(new Date()));
 
     set({
       sessions: data.sessions,
       rooms: data.rooms,
       tracks: data.tracks,
       unscheduledSpeakers: data.unscheduled_speakers,
+      acceptedCandidates: data.accepted_candidates || [],
       conflicts: data.conflicts,
-      eventTimezone: data.event_timezone || "UTC",
+      eventTimezone: tz,
       eventStartDate: data.event_start_date || null,
       eventEndDate: data.event_end_date || null,
       selectedDate: defaultDate,
@@ -429,6 +472,7 @@ export const useSessionBuilderStore = create<SessionBuilderState>((set, get) => 
     }),
 
   setIsSaving: (isSaving) => set({ isSaving }),
+  setServerConflicts: (conflicts) => set({ conflicts }),
   
   setZoomLevel: (zoom) => set({ zoomLevel: zoom }),
 

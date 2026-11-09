@@ -158,6 +158,10 @@ def test_celery_beat_only_schedules_tenant_safe_jobs():
         "compare-organizer-entitlements-nightly",
         "recover-email-campaign-dispatches",
         "recover-import-dispatches",
+        "recover-registration-upload-dispatches",
+        "recover-catalogue-reconciliation-runs",
+        "recover-lifecycle-dispatches",
+        "recover-abandoned-storage-attempts",
     }
     assert schedule["flush-api-usage-every-5-minutes"]["task"] == "app.tasks.platform_tasks.flush_api_usage"
     assert schedule["reconcile-organizer-usage-nightly"]["task"] == (
@@ -175,6 +179,10 @@ def test_celery_beat_only_schedules_tenant_safe_jobs():
     assert schedule["recover-import-dispatches"]["task"] == (
         "app.tasks.recover_import_dispatches"
     )
+    assert schedule["recover-registration-upload-dispatches"]["task"] == "app.tasks.program_upload_recovery.recover"
+    assert schedule["recover-catalogue-reconciliation-runs"]["task"] == "app.tasks.catalogue_reconciliation.recover_runs"
+    assert schedule["recover-lifecycle-dispatches"]["task"] == "app.tasks.lifecycle_dispatch.recover"
+    assert schedule["recover-abandoned-storage-attempts"]["task"] == "app.tasks.recover_abandoned_uploads"
 
 
 def test_global_platform_job_stubs_fail_closed():

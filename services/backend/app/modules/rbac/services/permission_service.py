@@ -1,141 +1,142 @@
+"""Customer permissions resolved from accepted, tenant-scoped authority only."""
+from __future__ import annotations
+
 import uuid
-from typing import List, Set, Optional
-from sqlalchemy import select, and_, or_
+from typing import Optional
+from sqlalchemy import and_, or_, select, literal
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.modules.rbac.models.rbac import Role, Permission, RolePermission, UserRoleAssignment, ScopedPermission, UserAccessNode, RoleInheritanceMap
+
+from app.database import tenant_org_id
+from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
-from app.modules.billing.capability_registry import OPERATION_PERMISSIONS
+from app.modules.platform.models.organization import Organization
+from app.modules.rbac.models.organization_member import OrganizationMember
+from app.modules.rbac.models.rbac import Permission, Role, RolePermission, UserRoleAssignment, ScopedPermission, UserAccessNode, RoleInheritanceMap
+from app.modules.rbac.models.access_foundation import OperationalWorkspace, WorkspaceRoleBinding
+from app.modules.rbac.services.permission_catalogue import canonical_action, organization_defaults, WORKSPACE_ROLES, OPERATIONAL_ACTIONS
 
-async def get_user_permissions(
-    db: AsyncSession, 
-    user_id: uuid.UUID, 
-    event_id: Optional[uuid.UUID] = None
-) -> List[str]:
-    """
-    Resolves the full set of permission codes for a user in a given context.
-    
-    Resolution Logic:
-    1. Global Roles: Get all roles assigned to user without an event_id.
-    2. Event Roles: Get all roles assigned to user for the specific event_id.
-    3. Inherited Roles: Expand the role set by traversing the RoleInheritanceMap.
-    4. Permission codes: Fetch all codes from Permissions linked to these roles.
-    5. Scoped Permissions: Add/Remove permissions explicitly granted for this scope.
-    6. Access Nodes: Incorporate permissions defined in UserAccessNode (JSONB).
-    """
-    
-    # 1. Fetch assigned roles (Global + Event-specific)
-    user_res = await db.execute(select(User.role).where(User.id == user_id))
-    user_system_role = user_res.scalar_one_or_none()
 
-    # ── Super Admin Bypass ─────────────────────────────────────
-    if user_system_role == "super_admin":
-        return ["*"]
+def resolve_overrides(grants: set[str], overrides: list[tuple[str, bool]]) -> set[str]:
+    """Denials win independently of query/row order."""
+    def _norm(c: str) -> str | None:
+        if c == "*":
+            return None
+        can = canonical_action(c)
+        return can if can is not None else c
 
-    role_stmt = select(UserRoleAssignment.role_id).where(UserRoleAssignment.user_id == user_id)
-    if event_id:
-        role_stmt = role_stmt.where(
-            or_(
-                UserRoleAssignment.event_id == event_id,
-                UserRoleAssignment.event_id == None
-            )
-        )
+    grants = {c for code in grants if (c := _norm(code)) is not None}
+    allowed = {c for code, value in overrides if value and (c := _norm(code)) is not None}
+    denied = {c for code, value in overrides if not value and (c := _norm(code)) is not None}
+    return (grants | allowed) - denied
+
+
+async def get_user_permissions(db: AsyncSession, user_id: uuid.UUID, event_id: Optional[uuid.UUID] = None,
+                               organization_id: Optional[uuid.UUID] = None,
+                               workspace_id: Optional[uuid.UUID] = None) -> list[str]:
+    org = organization_id or tenant_org_id.get()
+    if org is None:
+        # Missing request context is not repaired from an identity's home tenant.
+        return []
+    active = await db.scalar(select(Organization.organization_kind).where(Organization.id == org,
+        Organization.is_active.is_(True), Organization.suspended_at.is_(None), Organization.is_platform_org.is_(False)))
+    if active is None:
+        return []
+    # A global role label, an unaccepted invite and an old JWT cannot substitute
+    # for live membership. Missing legacy proof is a reconciliation failure.
+    member = await db.scalar(select(OrganizationMember).where(
+        OrganizationMember.user_id == user_id, OrganizationMember.organization_id == org,
+        OrganizationMember.is_active.is_(True), OrganizationMember.accepted_at.is_not(None),
+    ).execution_options(populate_existing=True))
+    if member is None:
+        return []
+    identity = User.__table__
+    if await db.scalar(select(identity.c.id).where(identity.c.id == user_id,
+            identity.c.is_active.is_(True), identity.c.deleted_at.is_(None))) is None:
+        return []
+    if event_id is not None:
+        from app.modules.rbac.services.event_scope import visible_event_predicate
+        owned = (await db.execute(select(Event.id, Event.operational_workspace_id).where(Event.id == event_id,
+            visible_event_predicate(user_id, org), Event.deleted_at.is_(None)))
+        ).first()
+        if owned is None or (workspace_id is not None and owned.operational_workspace_id != workspace_id):
+            return []
+        workspace_id = owned.operational_workspace_id
+    workspace_grants = frozenset()
+    if workspace_id is not None:
+        workspace = await db.scalar(select(OperationalWorkspace.id).where(
+            OperationalWorkspace.id == workspace_id, OperationalWorkspace.organization_id == org,
+            OperationalWorkspace.status == "ACTIVE"))
+        if workspace is None:
+            return []
+        binding = await db.scalar(select(WorkspaceRoleBinding.role).where(
+            WorkspaceRoleBinding.organization_id == org, WorkspaceRoleBinding.workspace_id == workspace_id,
+            WorkspaceRoleBinding.member_id == member.id, WorkspaceRoleBinding.is_active.is_(True)))
+        workspace_grants = WORKSPACE_ROLES.get(binding, frozenset())
+
+    role, assignment, inheritance = Role.__table__.c, UserRoleAssignment.__table__.c, RoleInheritanceMap.__table__.c
+    context = assignment.event_id.is_(None)
+    if event_id is not None:
+        context = or_(context, assignment.event_id == event_id)
+    explicit_org = assignment.organization_id == org
+    if event_id is not None:
+        # Legacy null-org event assignments are admissible only after proving
+        # the requested event belongs to this accepted member's organisation.
+        explicit_org = or_(explicit_org, and_(assignment.organization_id.is_(None), assignment.event_id == event_id))
+    # Core projections allow explicitly validated global system templates without
+    # disabling the ORM tenant filter for a customer query.
+    roots = select(role.id, assignment.event_id.is_not(None).label("event_scoped")).select_from(Role.__table__.join(UserRoleAssignment.__table__, assignment.role_id == role.id)).where(
+        assignment.user_id == user_id, assignment.revoked_at.is_(None), explicit_org, context,
+        role.deleted_at.is_(None), or_(role.organization_id == org, and_(role.organization_id.is_(None), role.is_system_role.is_(True))),
+    ).cte("scoped_roles", recursive=True)
+    inherited = select(role.id, roots.c.event_scoped).select_from(Role.__table__.join(RoleInheritanceMap.__table__, inheritance.parent_role_id == role.id).join(
+        roots, roots.c.id == inheritance.child_role_id
+    )).where(role.deleted_at.is_(None), or_(role.organization_id == org, and_(role.organization_id.is_(None), role.is_system_role.is_(True))))
+    # UNION (not UNION ALL) deduplicates and terminates even on legacy cycles;
+    # no one-query-per-role traversal or unbounded recursion in Python.
+    roles = roots.union(inherited)
+    grants = set((await db.scalars(select(Permission.code).join(RolePermission, RolePermission.permission_id == Permission.id)
+        .join(roles, roles.c.id == RolePermission.role_id)
+        .where(or_(roles.c.event_scoped == literal(False), Permission.code.in_(OPERATIONAL_ACTIONS))))).all())
+    org_defaults = organization_defaults(member.org_role, active)
+    if event_id is not None:
+        grants = {g for g in grants if g in OPERATIONAL_ACTIONS}
+        grants.update(g for g in org_defaults if g in OPERATIONAL_ACTIONS)
+        # A verified workspace binding inherits only operational actions into
+        # events owned by that workspace, never organisation administration.
+        grants.update(g for g in workspace_grants if g in OPERATIONAL_ACTIONS)
     else:
-        role_stmt = role_stmt.where(UserRoleAssignment.event_id == None)
-        
-    res = await db.execute(role_stmt)
-    role_ids = set(res.scalars().all())
-    
-    if not role_ids and user_system_role:
-        # Match system role name to Role model
-        system_role_res = await db.execute(select(Role.id).where(Role.name == user_system_role))
-        system_role_id = system_role_res.scalar_one_or_none()
-        if system_role_id:
-            role_ids.add(system_role_id)
-        
-        # If still no roles and they are 'organiser' or 'admin', provide basic defaults
-        # to prevent complete lockout during migration
-        if not role_ids and user_system_role in ["admin", "organiser"]:
-            defaults = [
-                "EVENTS:VIEW", "EVENTS:EDIT", "SESSIONS:VIEW", "SPEAKERS:VIEW", "FILES:VIEW", 
-                "ROOMS:MANAGE", "FILES:APPROVE", "FILES:REJECT", "FILES:DOWNLOAD",
-                "ANALYTICS:VIEW", "POSTERS:VIEW", "USERS:VIEW", "SETTINGS:EDIT",
-                "OPERATIONS.REQUESTS:MANAGE", "OPERATIONS.PROJECTS:MANAGE", 
-                "OPERATIONS.RESOURCES:MANAGE", "OPERATIONS.DEPLOYMENTS:MANAGE",
-                "technology.request:create", "technology.request:view", 
-                "technology.request:edit", "technology.request:cancel", 
-                "technology.quote:view", "technology.status:view",
-                "operations:manage", "projects:manage", "resources:manage", 
-                "deployments:manage", "risks:manage", "readiness:manage"
-            ]
-            defaults.extend(
-                permission
-                for permission in OPERATION_PERMISSIONS.values()
-                if permission is not None
-            )
-            return sorted(set(defaults))
+        grants.update(org_defaults)
+        grants.update(workspace_grants)
 
-
-    # 2. Expand Inherited Roles
-    expanded_roles = set(role_ids)
-    to_process = list(role_ids)
-    while to_process:
-        current_id = to_process.pop()
-        inherit_stmt = select(RoleInheritanceMap.child_role_id).where(RoleInheritanceMap.parent_role_id == current_id)
-        i_res = await db.execute(inherit_stmt)
-        children = i_res.scalars().all()
-        for child_id in children:
-            if child_id not in expanded_roles:
-                expanded_roles.add(child_id)
-                to_process.append(child_id)
-
-    # 3. Get Permission Codes from Roles
-    perm_codes: Set[str] = set()
-    if expanded_roles:
-        perm_stmt = (
-            select(Permission.code)
-            .join(RolePermission)
-            .where(RolePermission.role_id.in_(list(expanded_roles)))
-        )
-        p_res = await db.execute(perm_stmt)
-        perm_codes.update(p_res.scalars().all())
-
-    # 4. Scoped Permissions (Explicit Overrides)
-    if event_id:
-        scoped_stmt = (
-            select(Permission.code, ScopedPermission.is_allowed)
-            .join(Permission)
-            .where(
-                ScopedPermission.user_id == user_id,
-                ScopedPermission.scope_type == 'EVENT',
-                ScopedPermission.scope_id == event_id
-            )
-        )
-        s_res = await db.execute(scoped_stmt)
-        for code, allowed in s_res.all():
-            if allowed:
-                perm_codes.add(code)
-            else:
-                perm_codes.discard(code)
-
-    # 5. Access Nodes (JSONB overrides)
-    node_stmt = select(UserAccessNode.permissions).where(
-        UserAccessNode.user_id == user_id
-    )
-    if event_id:
-        node_stmt = node_stmt.where(
-            or_(
-                and_(UserAccessNode.node_type == 'EVENT', UserAccessNode.node_id == event_id),
-                # Add checks for rooms/sessions in event if needed, but start simple
-            )
-        )
-    
-    n_res = await db.execute(node_stmt)
-    for node_perms in n_res.scalars().all():
-        # Expecting dict like {"FILES:APPROVE": True, "EVENTS:VIEW": False}
-        for code, allowed in node_perms.items():
-            if allowed:
-                perm_codes.add(code)
-            else:
-                perm_codes.discard(code)
-
-    return sorted(list(perm_codes))
+    scope = and_(ScopedPermission.scope_type == "ORGANIZATION", ScopedPermission.scope_id == org)
+    nodes = and_(UserAccessNode.node_type == "ORGANIZATION", UserAccessNode.node_id == org)
+    if workspace_id is not None:
+        scope = or_(scope, and_(ScopedPermission.scope_type == "WORKSPACE", ScopedPermission.scope_id == workspace_id))
+        nodes = or_(nodes, and_(UserAccessNode.node_type == "WORKSPACE", UserAccessNode.node_id == workspace_id))
+    if event_id is not None:
+        scope = or_(scope, and_(ScopedPermission.scope_type == "EVENT", ScopedPermission.scope_id == event_id))
+        nodes = or_(nodes, and_(UserAccessNode.node_type == "EVENT", UserAccessNode.node_id == event_id))
+    override_rows = (await db.execute(select(Permission.code, ScopedPermission.is_allowed, ScopedPermission.scope_type).join(
+        Permission, Permission.id == ScopedPermission.permission_id).where(ScopedPermission.user_id == user_id, scope))).all()
+    overrides = [(code, allowed) for code, allowed, scope_type in override_rows
+                 if not allowed or scope_type == "ORGANIZATION" or canonical_action(code) in OPERATIONAL_ACTIONS]
+    if event_id is not None:
+        from fastapi import HTTPException
+        from app.modules.rbac.models.user_assignment import UserEventAssignment
+        event_values = await db.scalar(select(UserEventAssignment.permissions).where(
+            UserEventAssignment.user_id == user_id, UserEventAssignment.event_id == event_id))
+        if event_values is not None:
+            if (not isinstance(event_values, dict) or len(event_values) > 32
+                    or any(code not in OPERATIONAL_ACTIONS or type(value) is not bool for code, value in event_values.items())):
+                raise HTTPException(503, detail={"code": "EVENT_ACCESS_RECONCILIATION_REQUIRED"})
+            overrides.extend(event_values.items())
+    if event_id is not None:
+        from app.modules.rbac.services.team_access import team_event_overrides
+        overrides.extend(await team_event_overrides(db, member.id, org, event_id))
+    node_rows = (await db.execute(select(UserAccessNode.permissions, UserAccessNode.node_type).where(UserAccessNode.user_id == user_id, nodes))).all()
+    for values, node_type in node_rows:
+        if not isinstance(values, dict) or any(not isinstance(value, bool) for value in values.values()):
+            return []  # malformed access configuration cannot manufacture allows
+        overrides.extend((code, allowed) for code, allowed in values.items()
+                         if not allowed or node_type == "ORGANIZATION" or canonical_action(code) in OPERATIONAL_ACTIONS)
+    return sorted(resolve_overrides(grants, overrides))

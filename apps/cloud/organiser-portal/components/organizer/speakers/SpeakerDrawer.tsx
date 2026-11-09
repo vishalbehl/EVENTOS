@@ -220,7 +220,9 @@ export function SpeakerDrawer({ speaker, eventId, onClose }: SpeakerDrawerProps)
     };
   }, []);
 
-  const totalSlots = (talks?.length ?? 0) + speakerPosters.length;
+  const totalSlots = talks !== undefined
+    ? ((talks?.length ?? 0) + speakerPosters.length)
+    : (speaker.talks_count || 0);
   const uploadedTalks =
     talks?.filter((t) =>
       ["uploaded", "approved", "valid", "pending_validation"].includes(t.file_status)
@@ -573,7 +575,7 @@ export function SpeakerDrawer({ speaker, eventId, onClose }: SpeakerDrawerProps)
                         {
                           recipient: speaker.email,
                           template: "upload_invite",
-                          link: `${window.location.origin}/${eventId}/${speaker.speaker_code || speaker.id}?tab=profile`,
+                          link: `${window.location.origin}/${eventId}/${speaker.id}?tab=profile`,
                         },
                         { headers: { "Idempotency-Key": crypto.randomUUID() } }
                       );

@@ -3,7 +3,7 @@
 # =============================================================
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field, ConfigDict
 class OrganizationCreate(BaseModel):
     name: str = Field(min_length=2, max_length=255)
     slug: str = Field(min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
-    plan: str = Field(default="basic")
 
 
 class OrganizationUpdate(BaseModel):
@@ -44,11 +43,12 @@ class OrganizationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    organization_kind: Literal["NORMAL", "EMC", "CLIENT"]
+    lifecycle_state: Literal["ACTIVE", "SUSPENDED", "ARCHIVED"]
+    archived_at: Optional[datetime] = None
     name: str
     slug: str
     logo_url: Optional[str] = None
-    plan: str
-    plan_expires_at: Optional[datetime] = None
     primary_color: str = "#6366f1"
     secondary_color: str = "#8b5cf6"
     billing_email: Optional[str] = None
@@ -74,9 +74,6 @@ class OrganizationResponse(BaseModel):
     currency: str = "INR (₹)"
     onboarding_step: int = 0
     onboarding_draft: Optional[dict] = None
-    max_events: int = 1
-    max_users: int = 2
-    max_storage_gb: int = 10
     is_active: bool = True
     onboarding_completed: bool = False
     created_at: datetime
@@ -108,7 +105,7 @@ class EnrichedOrgResponse(BaseModel):
     name: str
     slug: str
     logo_url: Optional[str] = None
-    plan: str
+    offer_name: str
     country: str = "IN"
     timezone: str = "Asia/Kolkata"
     billing_email: Optional[str] = None
@@ -118,7 +115,7 @@ class EnrichedOrgResponse(BaseModel):
     created_at: datetime
 
     # Enriched fields
-    subscription_status: str = "NOT_CONFIGURED"
+    contract_status: str = "NOT_CONFIGURED"
     health_score: Optional[int] = None
     health_status: str = "NOT_MEASURED"
     user_count: Optional[int] = None
@@ -144,9 +141,9 @@ class FeatureOverrideItem(BaseModel):
     category: Optional[str] = None
     description: Optional[str] = None
     is_addon: bool = False
-    plan_default: bool          # whether the feature is on for this org's current plan
-    override: Optional[bool]    # None = use_plan_default, True = force_enable, False = force_disable
-    effective_value: bool       # resolved: override if set, else plan_default
+    offer_default: bool         # whether the feature is on for this organization's current offer
+    override: Optional[bool]    # None = use_offer_default, True = force_enable, False = force_disable
+    effective_value: bool       # resolved: override if set, else offer_default
 
 
 class FeatureOverrideUpsert(BaseModel):

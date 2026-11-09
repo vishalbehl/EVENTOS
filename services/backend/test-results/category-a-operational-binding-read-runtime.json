@@ -1,0 +1,180 @@
+{
+  "status": "PASSED",
+  "scope": "isolated_actual_runtime_login_direct_accepted_owner",
+  "operation": "binding-read",
+  "checks": [
+    {
+      "purpose": "SURVEY",
+      "case": "valid",
+      "reader": "administration",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SURVEY",
+      "case": "valid",
+      "reader": "public",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SURVEY",
+      "case": "foreign_parent",
+      "reader": "administration",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SURVEY",
+      "case": "foreign_parent",
+      "reader": "public",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SURVEY",
+      "case": "retired_parent",
+      "reader": "administration",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SURVEY",
+      "case": "retired_parent",
+      "reader": "public",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SURVEY",
+      "case": "retired_template",
+      "reader": "administration",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SURVEY",
+      "case": "retired_template",
+      "reader": "public",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SURVEY",
+      "case": "conflicting_events",
+      "reader": "administration",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SURVEY",
+      "case": "conflicting_events",
+      "reader": "public",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SURVEY",
+      "case": "foreign_lineage",
+      "reader": "administration",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SURVEY",
+      "case": "foreign_lineage",
+      "reader": "public",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SURVEY",
+      "case": "retired_owned_lineage",
+      "reader": "administration",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SURVEY",
+      "case": "retired_owned_lineage",
+      "reader": "public",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SPEAKER_INTAKE",
+      "case": "valid",
+      "reader": "administration",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SPEAKER_INTAKE",
+      "case": "valid",
+      "reader": "public",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SPEAKER_INTAKE",
+      "case": "foreign_parent",
+      "reader": "administration",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SPEAKER_INTAKE",
+      "case": "foreign_parent",
+      "reader": "public",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SPEAKER_INTAKE",
+      "case": "retired_parent",
+      "reader": "administration",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SPEAKER_INTAKE",
+      "case": "retired_parent",
+      "reader": "public",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SPEAKER_INTAKE",
+      "case": "retired_template",
+      "reader": "administration",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SPEAKER_INTAKE",
+      "case": "retired_template",
+      "reader": "public",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SPEAKER_INTAKE",
+      "case": "conflicting_events",
+      "reader": "administration",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SPEAKER_INTAKE",
+      "case": "conflicting_events",
+      "reader": "public",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SPEAKER_INTAKE",
+      "case": "foreign_lineage",
+      "reader": "administration",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SPEAKER_INTAKE",
+      "case": "foreign_lineage",
+      "reader": "public",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SPEAKER_INTAKE",
+      "case": "retired_owned_lineage",
+      "reader": "administration",
+      "expected_decision_verified": true
+    },
+    {
+      "purpose": "SPEAKER_INTAKE",
+      "case": "retired_owned_lineage",
+      "reader": "public",
+      "expected_decision_verified": true
+    }
+  ],
+  "shared_catalogue_role_verified": true,
+  "foreign_category_concealment_verified": true,
+  "business_changes_rolled_back": true,
+  "independent_binding_restoration_verified": true,
+  "independent_original_state_restoration_verified": true
+}

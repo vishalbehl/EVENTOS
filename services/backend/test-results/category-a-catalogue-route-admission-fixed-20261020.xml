@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="10" time="35.098" timestamp="2026-10-20T22:37:20.442527+05:30" hostname="Vishal"><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[member-id]" time="17.971" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[member-slug]" time="1.696" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[unentitled_owner-id]" time="2.216" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[unentitled_owner-slug]" time="2.213" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[unaccepted-id]" time="0.926"><failure message="assert 404 == 403&#10; +  where 404 = &lt;Response [404 Not Found]&gt;.status_code">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000015EA73C2650&gt;
+organization = &lt;Organization id=02c27e9e-e492-45f3-a000-706c9aca490f slug=test-org-b89ea4cd&gt;
+organizer = &lt;User id=1ee3fe1b-7cc3-4cc1-aa4b-23b83634bcd9 email=organizer-ed480f@test.com role=organiser&gt;
+super_admin = &lt;User id=05ba056a-9896-4abf-8d92-987897f93d7a email=admin-d40589@test.com role=super_admin&gt;
+identifier = 'id', restriction = 'unaccepted'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("identifier", ["id", "slug"])
+    @pytest.mark.parametrize("restriction", ["member", "unentitled_owner", "unaccepted", "platform"])
+    async def test_global_template_detail_requires_same_action_as_list(db, organization, organizer, super_admin,
+            identifier, restriction):
+        actor = organizer
+        if restriction == "platform":
+            actor = super_admin
+        if restriction in {"member", "unaccepted"}:
+            actor = User(organization_id=organization.id, email=f"catalogue-member-{uuid.uuid4().hex}@example.test",
+                first_name="Catalogue", last_name="Member", role="organiser", is_active=True)
+            db.add(actor)
+            await db.flush()
+            db.add(UserOrganizationMembership(organization_id=organization.id, user_id=actor.id,
+                org_role="member", accepted_at=datetime.now(timezone.utc) if restriction == "member" else None,
+                is_active=True))
+        source = FormTemplate(name="Shared catalogue admission fixture", slug=f"route-catalogue-{uuid.uuid4().hex}",
+            scope_type="GLOBAL", category_key="registration", fields=[], settings={})
+        db.add(source)
+        await db.commit()
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+    
+        async def identity():
+            return actor
+    
+        async def database():
+            async with TenantContextGuard.scoped(db, actor.organization_id):
+                yield db
+    
+        app.dependency_overrides[get_current_user] = identity
+        app.dependency_overrides[get_db] = database
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            listing = await client.get("/api/v1/forms/templates")
+&gt;           assert listing.status_code == 403
+E           assert 404 == 403
+E            +  where 404 = &lt;Response [404 Not Found]&gt;.status_code
+
+tests\test_catalogue_customer_route_admission.py:57: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[unaccepted-slug]" time="1.001"><failure message="assert 404 == 403&#10; +  where 404 = &lt;Response [404 Not Found]&gt;.status_code">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000015EA42E3530&gt;
+organization = &lt;Organization id=a9fa4e86-29af-4d5e-862f-96bebc07be0d slug=test-org-686f07fe&gt;
+organizer = &lt;User id=ba97efc3-b5d2-4037-8adf-1eeb14d03a2d email=organizer-e9caa1@test.com role=organiser&gt;
+super_admin = &lt;User id=37cc48df-3ad5-4307-a3d9-02617c5e0f76 email=admin-4def1c@test.com role=super_admin&gt;
+identifier = 'slug', restriction = 'unaccepted'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("identifier", ["id", "slug"])
+    @pytest.mark.parametrize("restriction", ["member", "unentitled_owner", "unaccepted", "platform"])
+    async def test_global_template_detail_requires_same_action_as_list(db, organization, organizer, super_admin,
+            identifier, restriction):
+        actor = organizer
+        if restriction == "platform":
+            actor = super_admin
+        if restriction in {"member", "unaccepted"}:
+            actor = User(organization_id=organization.id, email=f"catalogue-member-{uuid.uuid4().hex}@example.test",
+                first_name="Catalogue", last_name="Member", role="organiser", is_active=True)
+            db.add(actor)
+            await db.flush()
+            db.add(UserOrganizationMembership(organization_id=organization.id, user_id=actor.id,
+                org_role="member", accepted_at=datetime.now(timezone.utc) if restriction == "member" else None,
+                is_active=True))
+        source = FormTemplate(name="Shared catalogue admission fixture", slug=f"route-catalogue-{uuid.uuid4().hex}",
+            scope_type="GLOBAL", category_key="registration", fields=[], settings={})
+        db.add(source)
+        await db.commit()
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+    
+        async def identity():
+            return actor
+    
+        async def database():
+            async with TenantContextGuard.scoped(db, actor.organization_id):
+                yield db
+    
+        app.dependency_overrides[get_current_user] = identity
+        app.dependency_overrides[get_db] = database
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            listing = await client.get("/api/v1/forms/templates")
+&gt;           assert listing.status_code == 403
+E           assert 404 == 403
+E            +  where 404 = &lt;Response [404 Not Found]&gt;.status_code
+
+tests\test_catalogue_customer_route_admission.py:57: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[platform-id]" time="0.915"><failure message="assert 404 == 403&#10; +  where 404 = &lt;Response [404 Not Found]&gt;.status_code">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000015EA7A096A0&gt;
+organization = &lt;Organization id=9b6e0202-b0ac-40c1-8f74-15947b2114cd slug=test-org-37210172&gt;
+organizer = &lt;User id=97f48053-476a-4bc1-a366-e718efb26fd5 email=organizer-d45e9a@test.com role=organiser&gt;
+super_admin = &lt;User id=6fdb8731-e127-4b93-9a99-e3e382e11a5f email=admin-7e05e5@test.com role=super_admin&gt;
+identifier = 'id', restriction = 'platform'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("identifier", ["id", "slug"])
+    @pytest.mark.parametrize("restriction", ["member", "unentitled_owner", "unaccepted", "platform"])
+    async def test_global_template_detail_requires_same_action_as_list(db, organization, organizer, super_admin,
+            identifier, restriction):
+        actor = organizer
+        if restriction == "platform":
+            actor = super_admin
+        if restriction in {"member", "unaccepted"}:
+            actor = User(organization_id=organization.id, email=f"catalogue-member-{uuid.uuid4().hex}@example.test",
+                first_name="Catalogue", last_name="Member", role="organiser", is_active=True)
+            db.add(actor)
+            await db.flush()
+            db.add(UserOrganizationMembership(organization_id=organization.id, user_id=actor.id,
+                org_role="member", accepted_at=datetime.now(timezone.utc) if restriction == "member" else None,
+                is_active=True))
+        source = FormTemplate(name="Shared catalogue admission fixture", slug=f"route-catalogue-{uuid.uuid4().hex}",
+            scope_type="GLOBAL", category_key="registration", fields=[], settings={})
+        db.add(source)
+        await db.commit()
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+    
+        async def identity():
+            return actor
+    
+        async def database():
+            async with TenantContextGuard.scoped(db, actor.organization_id):
+                yield db
+    
+        app.dependency_overrides[get_current_user] = identity
+        app.dependency_overrides[get_db] = database
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            listing = await client.get("/api/v1/forms/templates")
+&gt;           assert listing.status_code == 403
+E           assert 404 == 403
+E            +  where 404 = &lt;Response [404 Not Found]&gt;.status_code
+
+tests\test_catalogue_customer_route_admission.py:57: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[platform-slug]" time="0.870"><failure message="assert 404 == 403&#10; +  where 404 = &lt;Response [404 Not Found]&gt;.status_code">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000015EA7A0D040&gt;
+organization = &lt;Organization id=b8da3eeb-67ce-48f4-8472-6fb194d529f6 slug=test-org-2773945a&gt;
+organizer = &lt;User id=7df93cb4-0b0c-42a7-b945-f33d6bfaa10b email=organizer-87eeb5@test.com role=organiser&gt;
+super_admin = &lt;User id=8e746cb4-bd45-4107-965a-ab42c75b9179 email=admin-ef17b8@test.com role=super_admin&gt;
+identifier = 'slug', restriction = 'platform'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("identifier", ["id", "slug"])
+    @pytest.mark.parametrize("restriction", ["member", "unentitled_owner", "unaccepted", "platform"])
+    async def test_global_template_detail_requires_same_action_as_list(db, organization, organizer, super_admin,
+            identifier, restriction):
+        actor = organizer
+        if restriction == "platform":
+            actor = super_admin
+        if restriction in {"member", "unaccepted"}:
+            actor = User(organization_id=organization.id, email=f"catalogue-member-{uuid.uuid4().hex}@example.test",
+                first_name="Catalogue", last_name="Member", role="organiser", is_active=True)
+            db.add(actor)
+            await db.flush()
+            db.add(UserOrganizationMembership(organization_id=organization.id, user_id=actor.id,
+                org_role="member", accepted_at=datetime.now(timezone.utc) if restriction == "member" else None,
+                is_active=True))
+        source = FormTemplate(name="Shared catalogue admission fixture", slug=f"route-catalogue-{uuid.uuid4().hex}",
+            scope_type="GLOBAL", category_key="registration", fields=[], settings={})
+        db.add(source)
+        await db.commit()
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+    
+        async def identity():
+            return actor
+    
+        async def database():
+            async with TenantContextGuard.scoped(db, actor.organization_id):
+                yield db
+    
+        app.dependency_overrides[get_current_user] = identity
+        app.dependency_overrides[get_db] = database
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            listing = await client.get("/api/v1/forms/templates")
+&gt;           assert listing.status_code == 403
+E           assert 404 == 403
+E            +  where 404 = &lt;Response [404 Not Found]&gt;.status_code
+
+tests\test_catalogue_customer_route_admission.py:57: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_selected_event_detail_remains_available[id]" time="2.227" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_selected_event_detail_remains_available[slug]" time="3.909" /></testsuite></testsuites>

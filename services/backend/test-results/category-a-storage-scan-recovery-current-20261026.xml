@@ -1,0 +1,272 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="37" time="41.122" timestamp="2026-10-26T11:21:30.927989+05:30" hostname="Vishal"><testcase classname="tests.test_upload_storage_scanner_integration" name="test_storage_cleanup_rejects_foreign_and_noncanonical_keys[foreign]" time="15.638" /><testcase classname="tests.test_upload_storage_scanner_integration" name="test_storage_cleanup_rejects_foreign_and_noncanonical_keys[traversal]" time="0.014" /><testcase classname="tests.test_upload_storage_scanner_integration" name="test_storage_cleanup_rejects_foreign_and_noncanonical_keys[backslash]" time="0.011" /><testcase classname="tests.test_upload_storage_scanner_integration" name="test_real_provider_fence_blocks_delayed_conditional_registration_put[False]" time="2.632" /><testcase classname="tests.test_upload_storage_scanner_integration" name="test_real_provider_fence_blocks_delayed_conditional_registration_put[True]" time="0.841" /><testcase classname="tests.test_upload_storage_scanner_integration" name="test_generic_storage_operations_cannot_bypass_managed_attempt_fence[copy]" time="0.092" /><testcase classname="tests.test_upload_storage_scanner_integration" name="test_generic_storage_operations_cannot_bypass_managed_attempt_fence[move_source]" time="0.089" /><testcase classname="tests.test_upload_storage_scanner_integration" name="test_generic_storage_operations_cannot_bypass_managed_attempt_fence[move_target]" time="0.051" /><testcase classname="tests.test_upload_storage_scanner_integration" name="test_real_scan_moves_only_clean_object_to_ready[False]" time="3.314"><failure message="RuntimeError: Antivirus scanning is temporarily unavailable.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001B26ACDD010&gt;
+event = &lt;Event id=abe39be0-a676-456a-b3bc-900c992f124b short_code=TCDEA5 status=draft&gt;
+object_storage = None
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001B26AD96F20&gt;
+infected = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("infected", [False, True])
+    async def test_real_scan_moves_only_clean_object_to_ready(db, event, object_storage, monkeypatch, infected):
+        from app.tasks import upload_jobs, tenant_job_scope
+        # EICAR is an inert industry antivirus test string, not executable malware.
+        data = (b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+            if infected else b"Category A clean upload integration fixture.\n")
+        key = f"tenant/{event.organization_id}/event/{event.id}/registration_upload/document/{uuid.uuid4()}.txt"
+        row = DurableUpload(organization_id=event.organization_id, event_id=event.id,
+            object_key=key, storage_bucket=settings.S3_BUCKET_REGISTRATION_UPLOADS, original_filename="document.txt",
+            mime_type="text/plain", size_bytes=len(data), checksum=hashlib.sha256(data).hexdigest(),
+            status="uploaded")
+        db.add(row)
+        await db.commit()
+        storage.upload_bytes(row.storage_bucket, key, data, verified_organization_id=event.organization_id)
+    
+        @asynccontextmanager
+        async def sessions():
+            yield db
+    
+        monkeypatch.setattr(tenant_job_scope, "AsyncSessionLocal", sessions)
+&gt;       result = await upload_jobs._process(row.id, event.organization_id, "real-scan")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_upload_storage_scanner_integration.py:181: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+upload_id = UUID('f69eea70-4ea1-4a98-ac4c-25779f7cb808')
+organization_id = UUID('489f87b9-c1e6-49ec-9f41-4932f88dab9c')
+task_id = 'real-scan'
+
+    async def _process(upload_id: uuid.UUID, organization_id: uuid.UUID, task_id: str) -&gt; dict:
+        from app.tasks.tenant_job_scope import tenant_job_session
+        # Claim and snapshot in a short transaction. Object storage, hashing and
+        # antivirus scanning run after the row lock and DB connection are released.
+        async with tenant_job_session(organization_id) as db:
+            row = await DurableUploadRepository(db).get_by_id(
+                upload_id=upload_id,
+                organization_id=organization_id,
+                for_update=True,
+            )
+            if row is None:
+                return {"upload_id": str(upload_id), "status": "missing"}
+            if row.status in {"ready", "failed", "quarantined", "deleted"}:
+                return {"upload_id": str(upload_id), "status": row.status, "idempotent": True}
+            if row.status == "cleanup_pending":
+                return {"upload_id": str(upload_id), "status": row.status, "in_progress": True}
+            if row.task_id and row.task_id != task_id and row.updated_at &gt; datetime.now(timezone.utc) - timedelta(minutes=15):
+                return {"upload_id": str(upload_id), "status": row.status, "in_progress": True}
+            row.task_id = task_id[:255]
+            if row.status == "uploaded":
+                await UploadService.apply_transition(db, row, "verifying", task_id=task_id)
+            snapshot = (row.storage_bucket or settings.S3_BUCKET_ASSETS, row.object_key,
+                int(row.size_bytes), row.checksum, row.mime_type)
+            await db.commit()
+    
+        try:
+            metadata = get_object_metadata(bucket=snapshot[0], storage_path=snapshot[1],
+                verified_organization_id=organization_id)
+            error = None
+            if int(metadata["size"]) != snapshot[2]:
+                error = "Uploaded object size does not match the declared size."
+            if error is None and snapshot[3]:
+                digest = hashlib.sha256()
+                for chunk in iter_object_chunks(snapshot[0], snapshot[1], verified_organization_id=organization_id):
+                    digest.update(chunk)
+                if digest.hexdigest().lower() != snapshot[3].lower():
+                    error = "Uploaded object checksum does not match the declared checksum."
+            if error is None:
+                signature_prefix = b"".join(islice(iter_object_chunks(
+                    snapshot[0], snapshot[1], verified_organization_id=organization_id), 1))[:1024 * 1024]
+                try:
+                    validate_file_signature(signature_prefix, snapshot[4])
+                except Exception as exc:
+                    error = str(getattr(exc, "detail", "File signature does not match declared MIME type."))
+            if error is None:
+                scan = scan_chunks(iter_object_chunks(snapshot[0], snapshot[1], verified_organization_id=organization_id))
+                if scan.status == "infected":
+                    error = f"Antivirus detected {scan.signature or 'malware'}."
+                elif scan.status == "unavailable" and settings.ANTIVIRUS_REQUIRED:
+&gt;                   raise RuntimeError("Antivirus scanning is temporarily unavailable.")
+E                   RuntimeError: Antivirus scanning is temporarily unavailable.
+
+app\tasks\upload_jobs.py:289: RuntimeError</failure></testcase><testcase classname="tests.test_upload_storage_scanner_integration" name="test_real_scan_moves_only_clean_object_to_ready[True]" time="0.939"><failure message="RuntimeError: Antivirus scanning is temporarily unavailable.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001B26ACEEE90&gt;
+event = &lt;Event id=1d23e91a-04d0-44aa-bae5-2a7531bb675b short_code=TC5F43 status=draft&gt;
+object_storage = None
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001B26AD970E0&gt;
+infected = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("infected", [False, True])
+    async def test_real_scan_moves_only_clean_object_to_ready(db, event, object_storage, monkeypatch, infected):
+        from app.tasks import upload_jobs, tenant_job_scope
+        # EICAR is an inert industry antivirus test string, not executable malware.
+        data = (b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+            if infected else b"Category A clean upload integration fixture.\n")
+        key = f"tenant/{event.organization_id}/event/{event.id}/registration_upload/document/{uuid.uuid4()}.txt"
+        row = DurableUpload(organization_id=event.organization_id, event_id=event.id,
+            object_key=key, storage_bucket=settings.S3_BUCKET_REGISTRATION_UPLOADS, original_filename="document.txt",
+            mime_type="text/plain", size_bytes=len(data), checksum=hashlib.sha256(data).hexdigest(),
+            status="uploaded")
+        db.add(row)
+        await db.commit()
+        storage.upload_bytes(row.storage_bucket, key, data, verified_organization_id=event.organization_id)
+    
+        @asynccontextmanager
+        async def sessions():
+            yield db
+    
+        monkeypatch.setattr(tenant_job_scope, "AsyncSessionLocal", sessions)
+&gt;       result = await upload_jobs._process(row.id, event.organization_id, "real-scan")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_upload_storage_scanner_integration.py:181: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+upload_id = UUID('10f5db64-d8f2-4749-a91a-ae5fabc50d1a')
+organization_id = UUID('e47dc7eb-64c6-47dd-aebd-ee7cbcd9fb01')
+task_id = 'real-scan'
+
+    async def _process(upload_id: uuid.UUID, organization_id: uuid.UUID, task_id: str) -&gt; dict:
+        from app.tasks.tenant_job_scope import tenant_job_session
+        # Claim and snapshot in a short transaction. Object storage, hashing and
+        # antivirus scanning run after the row lock and DB connection are released.
+        async with tenant_job_session(organization_id) as db:
+            row = await DurableUploadRepository(db).get_by_id(
+                upload_id=upload_id,
+                organization_id=organization_id,
+                for_update=True,
+            )
+            if row is None:
+                return {"upload_id": str(upload_id), "status": "missing"}
+            if row.status in {"ready", "failed", "quarantined", "deleted"}:
+                return {"upload_id": str(upload_id), "status": row.status, "idempotent": True}
+            if row.status == "cleanup_pending":
+                return {"upload_id": str(upload_id), "status": row.status, "in_progress": True}
+            if row.task_id and row.task_id != task_id and row.updated_at &gt; datetime.now(timezone.utc) - timedelta(minutes=15):
+                return {"upload_id": str(upload_id), "status": row.status, "in_progress": True}
+            row.task_id = task_id[:255]
+            if row.status == "uploaded":
+                await UploadService.apply_transition(db, row, "verifying", task_id=task_id)
+            snapshot = (row.storage_bucket or settings.S3_BUCKET_ASSETS, row.object_key,
+                int(row.size_bytes), row.checksum, row.mime_type)
+            await db.commit()
+    
+        try:
+            metadata = get_object_metadata(bucket=snapshot[0], storage_path=snapshot[1],
+                verified_organization_id=organization_id)
+            error = None
+            if int(metadata["size"]) != snapshot[2]:
+                error = "Uploaded object size does not match the declared size."
+            if error is None and snapshot[3]:
+                digest = hashlib.sha256()
+                for chunk in iter_object_chunks(snapshot[0], snapshot[1], verified_organization_id=organization_id):
+                    digest.update(chunk)
+                if digest.hexdigest().lower() != snapshot[3].lower():
+                    error = "Uploaded object checksum does not match the declared checksum."
+            if error is None:
+                signature_prefix = b"".join(islice(iter_object_chunks(
+                    snapshot[0], snapshot[1], verified_organization_id=organization_id), 1))[:1024 * 1024]
+                try:
+                    validate_file_signature(signature_prefix, snapshot[4])
+                except Exception as exc:
+                    error = str(getattr(exc, "detail", "File signature does not match declared MIME type."))
+            if error is None:
+                scan = scan_chunks(iter_object_chunks(snapshot[0], snapshot[1], verified_organization_id=organization_id))
+                if scan.status == "infected":
+                    error = f"Antivirus detected {scan.signature or 'malware'}."
+                elif scan.status == "unavailable" and settings.ANTIVIRUS_REQUIRED:
+&gt;                   raise RuntimeError("Antivirus scanning is temporarily unavailable.")
+E                   RuntimeError: Antivirus scanning is temporarily unavailable.
+
+app\tasks\upload_jobs.py:289: RuntimeError</failure></testcase><testcase classname="tests.test_upload_storage_scanner_integration" name="test_scanner_outage_does_not_publish_ready_and_same_attempt_recovers" time="1.592"><failure message="RuntimeError: Antivirus scanning is temporarily unavailable.">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001B26ACEFED0&gt;
+event = &lt;Event id=53d08352-56bb-47e8-a434-434609d0f36d short_code=TCBB9D status=draft&gt;
+object_storage = None
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001B26CAC7690&gt;
+
+    @pytest.mark.asyncio
+    async def test_scanner_outage_does_not_publish_ready_and_same_attempt_recovers(
+        db, event, object_storage, monkeypatch,
+    ):
+        from app.tasks import upload_jobs, tenant_job_scope
+        data = b"Scanner interruption recovery fixture.\n"
+        key = f"tenant/{event.organization_id}/event/{event.id}/registration_upload/document/{uuid.uuid4()}.txt"
+        row = DurableUpload(organization_id=event.organization_id, event_id=event.id,
+            object_key=key, storage_bucket=settings.S3_BUCKET_REGISTRATION_UPLOADS, original_filename="document.txt",
+            mime_type="text/plain", size_bytes=len(data), status="uploaded")
+        db.add(row)
+        await db.commit()
+        storage.upload_bytes(row.storage_bucket, key, data, verified_organization_id=event.organization_id)
+    
+        @asynccontextmanager
+        async def sessions():
+            yield db
+    
+        monkeypatch.setattr(tenant_job_scope, "AsyncSessionLocal", sessions)
+        # A disconnected local endpoint exercises the real socket error path.
+        monkeypatch.setattr(settings, "ANTIVIRUS_COMMAND", "tcp://127.0.0.1:0")
+        with pytest.raises(RuntimeError, match="temporarily unavailable"):
+            await upload_jobs._process(row.id, event.organization_id, "recoverable-scan")
+        await db.refresh(row)
+        assert row.status == "verifying" and row.completed_at is None
+        monkeypatch.setattr(settings, "ANTIVIRUS_COMMAND", "tcp://127.0.0.1:3310")
+&gt;       result = await upload_jobs._process(row.id, event.organization_id, "recoverable-scan")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_upload_storage_scanner_integration.py:217: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+upload_id = UUID('b309b0fe-7bb1-4a6b-a405-782092ce1072')
+organization_id = UUID('69f5704a-4df0-428a-95fe-2a112c0344f5')
+task_id = 'recoverable-scan'
+
+    async def _process(upload_id: uuid.UUID, organization_id: uuid.UUID, task_id: str) -&gt; dict:
+        from app.tasks.tenant_job_scope import tenant_job_session
+        # Claim and snapshot in a short transaction. Object storage, hashing and
+        # antivirus scanning run after the row lock and DB connection are released.
+        async with tenant_job_session(organization_id) as db:
+            row = await DurableUploadRepository(db).get_by_id(
+                upload_id=upload_id,
+                organization_id=organization_id,
+                for_update=True,
+            )
+            if row is None:
+                return {"upload_id": str(upload_id), "status": "missing"}
+            if row.status in {"ready", "failed", "quarantined", "deleted"}:
+                return {"upload_id": str(upload_id), "status": row.status, "idempotent": True}
+            if row.status == "cleanup_pending":
+                return {"upload_id": str(upload_id), "status": row.status, "in_progress": True}
+            if row.task_id and row.task_id != task_id and row.updated_at &gt; datetime.now(timezone.utc) - timedelta(minutes=15):
+                return {"upload_id": str(upload_id), "status": row.status, "in_progress": True}
+            row.task_id = task_id[:255]
+            if row.status == "uploaded":
+                await UploadService.apply_transition(db, row, "verifying", task_id=task_id)
+            snapshot = (row.storage_bucket or settings.S3_BUCKET_ASSETS, row.object_key,
+                int(row.size_bytes), row.checksum, row.mime_type)
+            await db.commit()
+    
+        try:
+            metadata = get_object_metadata(bucket=snapshot[0], storage_path=snapshot[1],
+                verified_organization_id=organization_id)
+            error = None
+            if int(metadata["size"]) != snapshot[2]:
+                error = "Uploaded object size does not match the declared size."
+            if error is None and snapshot[3]:
+                digest = hashlib.sha256()
+                for chunk in iter_object_chunks(snapshot[0], snapshot[1], verified_organization_id=organization_id):
+                    digest.update(chunk)
+                if digest.hexdigest().lower() != snapshot[3].lower():
+                    error = "Uploaded object checksum does not match the declared checksum."
+            if error is None:
+                signature_prefix = b"".join(islice(iter_object_chunks(
+                    snapshot[0], snapshot[1], verified_organization_id=organization_id), 1))[:1024 * 1024]
+                try:
+                    validate_file_signature(signature_prefix, snapshot[4])
+                except Exception as exc:
+                    error = str(getattr(exc, "detail", "File signature does not match declared MIME type."))
+            if error is None:
+                scan = scan_chunks(iter_object_chunks(snapshot[0], snapshot[1], verified_organization_id=organization_id))
+                if scan.status == "infected":
+                    error = f"Antivirus detected {scan.signature or 'malware'}."
+                elif scan.status == "unavailable" and settings.ANTIVIRUS_REQUIRED:
+&gt;                   raise RuntimeError("Antivirus scanning is temporarily unavailable.")
+E                   RuntimeError: Antivirus scanning is temporarily unavailable.
+
+app\tasks\upload_jobs.py:289: RuntimeError</failure></testcase><testcase classname="tests.test_registration_upload_dispatch" name="test_publish_is_off_loop_and_tenant_bound" time="0.027" /><testcase classname="tests.test_registration_upload_dispatch" name="test_broker_failure_returns_pending_without_retry" time="0.007" /><testcase classname="tests.test_registration_upload_dispatch" name="test_dispatch_has_eight_slot_bound_without_wait_queue" time="0.011" /><testcase classname="tests.test_registration_upload_dispatch" name="test_cancelled_request_does_not_release_running_publish_slot" time="0.007" /><testcase classname="tests.test_registration_upload_dispatch" name="test_executor_rejection_retains_durable_pending_contract" time="0.005" /><testcase classname="tests.test_registration_upload_dispatch" name="test_real_broker_connection_failure_is_bounded_and_pending" time="0.123" /><testcase classname="tests.test_upload_recovery_scope" name="test_new_registration_bucket_configuration_rejects_nonportable_names[registration_uploads]" time="0.013" /><testcase classname="tests.test_upload_recovery_scope" name="test_new_registration_bucket_configuration_rejects_nonportable_names[UPPERCASE]" time="0.013" /><testcase classname="tests.test_upload_recovery_scope" name="test_new_registration_bucket_configuration_rejects_nonportable_names[../foreign]" time="0.013" /><testcase classname="tests.test_upload_recovery_scope" name="test_new_registration_bucket_configuration_rejects_nonportable_names[a]" time="0.013" /><testcase classname="tests.test_upload_recovery_scope" name="test_new_registration_bucket_configuration_rejects_nonportable_names[xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]" time="0.008" /><testcase classname="tests.test_upload_recovery_scope" name="test_upload_recovery_fence_rejects_late_finalisation" time="0.005" /><testcase classname="tests.test_upload_recovery_scope" name="test_waiting_finalizer_rechecks_committed_recovery_claim" time="0.560" /><testcase classname="tests.test_upload_recovery_scope" name="test_recovery_binds_target_under_forced_rls_and_preserves_consumed_usage[missing-RESERVED]" time="1.307" /><testcase classname="tests.test_upload_recovery_scope" name="test_recovery_binds_target_under_forced_rls_and_preserves_consumed_usage[missing-CONSUMED]" time="0.982" /><testcase classname="tests.test_upload_recovery_scope" name="test_recovery_binds_target_under_forced_rls_and_preserves_consumed_usage[size_mismatch-RESERVED]" time="1.116" /><testcase classname="tests.test_upload_recovery_scope" name="test_recovery_binds_target_under_forced_rls_and_preserves_consumed_usage[size_mismatch-CONSUMED]" time="0.923" /><testcase classname="tests.test_upload_recovery_scope" name="test_recovery_discovery_is_bounded_and_does_not_inherit_customer_scope" time="0.553" /><testcase classname="tests.test_upload_cleanup_claim_takeover" name="test_cleanup_intent_cannot_be_revived_by_newer_recovery" time="1.404" /><testcase classname="tests.test_upload_cleanup_claim_takeover" name="test_stale_cleanup_intent_rechecks_current_locked_state[superseded]" time="0.536" /><testcase classname="tests.test_upload_cleanup_claim_takeover" name="test_stale_cleanup_intent_rechecks_current_locked_state[consumed]" time="0.548" /><testcase classname="tests.test_upload_cleanup_claim_takeover" name="test_stale_cleanup_intent_rechecks_current_locked_state[ready]" time="0.536" /><testcase classname="tests.test_upload_cleanup_claim_takeover" name="test_stale_cleanup_intent_rechecks_current_locked_state[changed_path]" time="0.572" /><testcase classname="tests.test_upload_cleanup_claim_takeover" name="test_cleanup_intent_is_idempotent_and_processing_cannot_publish_it" time="0.700" /><testcase classname="tests.test_upload_cleanup_claim_takeover" name="test_cleanup_provider_failure_retains_intent_and_quota_until_recovery" time="0.993" /><testcase classname="tests.test_upload_cleanup_claim_takeover" name="test_late_storage_write_cannot_create_orphan_after_missing_recovery" time="2.796" /></testsuite></testsuites>

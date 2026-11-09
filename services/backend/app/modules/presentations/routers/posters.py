@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -22,6 +22,7 @@ from app.modules.presentations.schemas.poster import (
 )
 from app.schemas.common import MessageResponse
 from app.modules.presentations.schemas.file import FileDownloadResponse
+from app.modules.presentations.application.queries import PosterQueryService
 from app.services import upload_service
 from app.websocket.events import broadcast_file_event, EventType
 from app.core.dependencies.feature_gate import require_event_operation
@@ -35,13 +36,9 @@ async def list_poster_categories(
     db: AsyncSession = Depends(get_db),
 ) -> List[str]:
     """Get unique categories used in posters for this event."""
-    result = await db.execute(
-        select(Poster.category)
-        .where(Poster.event_id == event.id, Poster.category.isnot(None))
-        .distinct()
+    return await PosterQueryService(db).list_categories(
+        organization_id=event.organization_id, event_id=event.id
     )
-    return [r[0] for r in result.all() if r[0]]
-
 
 
 # ── CRUD ──────────────────────────────────────────────────────
@@ -60,12 +57,11 @@ async def list_posters(
     """List ePosters for this event. Supports filtering by status and screen."""
     from app.modules.events.models.speaker import Speaker
     from app.modules.agenda.models import Session
-    from sqlalchemy import or_
 
     q = select(Poster, Speaker.first_name, Speaker.last_name, Speaker.email).outerjoin(Speaker, Poster.speaker_id == Speaker.id).where(Poster.event_id == event.id)
 
     # Apply restricted access filtering for non-admin roles
-    if current_user.role not in ["super_admin", "admin", "organiser"]:
+    if current_user.role not in ["super_admin", "admin", "organiser", "organizer"]:
         from app.modules.rbac.models.rbac import UserAccessNode
         from app.modules.rbac.models.user_assignment import UserEventAssignment
 
@@ -112,7 +108,7 @@ async def list_posters(
     q = q.order_by(Poster.display_order, Poster.submitted_at)
     q = q.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(q)
-    
+
     posters_with_names = []
     for row in result.all():
         poster = row[0]
@@ -465,14 +461,12 @@ async def get_screen_posters(
     Returns approved, scheduled posters for the given screen.
     Ordered by is_featured (desc) then display_order.
     """
-    result = await db.execute(
-        select(Poster).where(
-            Poster.event_id == event.id,
-            Poster.status == "approved",
-            func.concat(',', Poster.display_screen, ',').like(f'%,{screen_id.strip().lower()},%'),
-        ).order_by(Poster.is_featured.desc(), Poster.display_order)
+    posters = await PosterQueryService(db).list_for_screen(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        screen_id=screen_id,
     )
-    return [PosterResponse.model_validate(p) for p in result.scalars().all()]
+    return [PosterResponse.model_validate(poster) for poster in posters]
 
 
 # ── Batch operations ──────────────────────────────────────────

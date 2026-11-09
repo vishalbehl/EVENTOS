@@ -1,5 +1,2 @@
-import { BillingPaymentMethodsTab } from "@/components/organizer/workspace/billing/BillingPaymentMethodsTab";
-
-export default function Page() {
-  return <BillingPaymentMethodsTab />;
-}
+import { redirect } from "next/navigation";
+export default function Page() { redirect("/commercial/payment-methods"); }

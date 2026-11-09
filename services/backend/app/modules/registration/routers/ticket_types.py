@@ -3,11 +3,14 @@ from __future__ import annotations
 
 from typing import Dict, Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, Header
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, status, Header, Response
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_db, get_current_event, CurrentEvent, get_current_user
+from app.dependencies import get_db, get_current_event, CurrentEvent, get_current_user, require_active_user, require_step_up
+from app.modules.events.models.event import Event
+from app.modules.registration.schemas.pricing_configuration import PricingConfigurationUpdate, PricingConfigurationResponse
 from app.modules.identity.models.user import User
 from app.modules.registration.application.commands import PricingCommandService
 from app.modules.registration.application.queries import PricingQueryService
@@ -23,7 +26,32 @@ router = APIRouter(prefix="/events/{event_id}/pricing", tags=["pricing"], depend
 # ── Tier management ───────────────────────────────────────────────────────────
 
 class TiersSaveRequest(BaseModel):
-    tiers: List[str]
+    model_config = ConfigDict(extra="forbid")
+    tiers: List[str] = Field(min_length=1, max_length=100)
+
+
+@router.get("/configuration", response_model=PricingConfigurationResponse)
+async def get_pricing_configuration(event: CurrentEvent, response: Response,
+                                    db: AsyncSession = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
+    owned = await db.scalar(select(Event).where(Event.id == event.id,
+        Event.organization_id == event.organization_id, Event.deleted_at.is_(None))
+        .with_for_update(read=True).execution_options(populate_existing=True))
+    if owned is None:
+        raise HTTPException(404, detail={"code": "EVENT_NOT_FOUND"})
+    result = await PricingCommandService.snapshot(db, event=owned)
+    await db.commit()
+    return result
+
+
+@router.post("/configuration", response_model=PricingConfigurationResponse, dependencies=[Depends(require_step_up)])
+async def save_pricing_configuration(payload: PricingConfigurationUpdate, event: CurrentEvent,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(require_active_user),
+    if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key")):
+    return await PricingCommandService.configure(db, event=event,
+        changes=payload.model_dump(mode="json"), actor=current_user,
+        if_match=if_match, idempotency_key=idempotency_key)
 
 
 @router.get("/tiers", response_model=List[str])
@@ -33,18 +61,18 @@ async def get_tiers(
 ) -> List[str]:
     """Return tier names configured for this event."""
     reg_settings = getattr(event, "registration_settings", {}) or {}
-    tiers = reg_settings.get("tiers", [])
-    if not tiers:
-        tiers = await PricingQueryService(db).list_distinct_tiers(event_id=event.id)
-    return tiers
+    setting_tiers = reg_settings.get("tiers", []) or []
+    db_tiers = await PricingQueryService(db).list_distinct_tiers(event_id=event.id)
+    combined = list(dict.fromkeys([t.strip() for t in setting_tiers if t and t.strip()] + [t.strip() for t in db_tiers if t and t.strip()]))
+    return combined
 
 
-@router.post("/tiers", response_model=MessageResponse)
+@router.post("/tiers", response_model=MessageResponse, dependencies=[Depends(require_step_up)])
 async def save_tiers(
     payload: TiersSaveRequest,
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_user),
     if_match: Optional[str] = Header(None, alias="If-Match"),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ) -> MessageResponse:
@@ -69,8 +97,9 @@ async def get_tier_schedules(
 # ── Pricing matrix ────────────────────────────────────────────────────────────
 
 class PricingSaveRequest(BaseModel):
-    pricingData: Dict[str, Any]
-    tierSchedules: Optional[Dict[str, Dict[str, Optional[str]]]] = None
+    model_config = ConfigDict(extra="forbid")
+    pricingData: Dict[str, Any] = Field(max_length=10000)
+    tierSchedules: Optional[Dict[str, Dict[str, Optional[str]]]] = Field(default=None, max_length=100)
 
 
 @router.get("", response_model=Dict[str, float])
@@ -95,12 +124,12 @@ async def get_pricing(
     return {str(name): float(price) for name, price in (cached or {}).items()}
 
 
-@router.post("", response_model=MessageResponse)
+@router.post("", response_model=MessageResponse, dependencies=[Depends(require_step_up)])
 async def save_pricing(
     payload: PricingSaveRequest,
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_user),
     if_match: Optional[str] = Header(None, alias="If-Match"),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ) -> MessageResponse:

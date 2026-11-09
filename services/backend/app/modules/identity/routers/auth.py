@@ -28,12 +28,15 @@ _CC_COOKIE_PATH = "/api/v1/auth/command-center"
 _GENERIC_AUTH_ERROR = "Authentication could not be completed."
 
 
-def _is_platform_admin(user: User) -> bool:
-    return bool(
-        user.role == "super_admin"
-        or getattr(user, "platform_role", None) == "SUPER_ADMIN"
-        or getattr(user, "is_platform_admin", False)
-    )
+async def _is_platform_admin(db: AsyncSession, user: User) -> bool:
+    from app.modules.rbac.services.platform_permissions import platform_permission_authority
+    try:
+        await platform_permission_authority(db, user.id, "platform:staff:view")
+        return True
+    except HTTPException as exc:
+        if exc.status_code != 403:
+            raise
+        return False
 
 
 def _validate_cookie_origin(request: Request) -> None:
@@ -116,7 +119,7 @@ async def command_center_login(
             access_expires_minutes=settings.COMMAND_CENTER_ACCESS_TOKEN_EXPIRE_MINUTES,
         )
         user: User = result["user"]
-        if not _is_platform_admin(user) or not ip_is_allowed(ip, user.allowed_ips):
+        if not await _is_platform_admin(db, user) or not ip_is_allowed(ip, user.allowed_ips):
             await auth_service.revoke_refresh_token_family(
                 db, hashlib.sha256(result["refresh_token"].encode()).hexdigest(), reason="access_denied"
             )
@@ -174,11 +177,11 @@ async def command_center_refresh(
         raise HTTPException(status_code=401, detail="Session expired.", headers={"X-Error-Code": "session_expired"})
     user = (await db.execute(select(User).options(selectinload(User.organization)).where(User.id == record.user_id))).scalar_one_or_none()
     ip = resolve_client_ip(request)
-    if user is None or not user.is_active or not _is_platform_admin(user) or not ip_is_allowed(ip, user.allowed_ips):
+    if user is None or not user.is_active or not await _is_platform_admin(db, user) or not ip_is_allowed(ip, user.allowed_ips):
         _clear_command_center_cookie(response)
         raise HTTPException(status_code=401, detail="Session expired.", headers={"X-Error-Code": "session_expired"})
     try:
-        new_plain, _ = await auth_service.rotate_refresh_token(
+        new_plain, new_record = await auth_service.rotate_refresh_token(
             db, token_hash, user, ip_address=ip, user_agent=request.headers.get("user-agent")
         )
     except ValueError:
@@ -189,12 +192,19 @@ async def command_center_refresh(
         await db.commit()
         _clear_command_center_cookie(response)
         raise HTTPException(status_code=401, detail="Session expired.", headers={"X-Error-Code": "session_expired"})
-    await db.commit()
     access = auth_service.create_access_token(
         user,
+        session_id=new_record.family_id,
+        access_mode=new_record.access_mode,
+        active_organization_id=new_record.active_organization_id,
+        acting_organization_id=new_record.acting_organization_id,
+        active_workspace_id=new_record.active_workspace_id,
+        active_event_id=new_record.active_event_id,
+        relationship_id=new_record.relationship_id,
         mfa_authenticated_at=record.mfa_authenticated_at,
         expires_minutes=settings.COMMAND_CENTER_ACCESS_TOKEN_EXPIRE_MINUTES,
     )
+    await db.commit()
     remember_me = request.cookies.get(f"{settings.COMMAND_CENTER_COOKIE_NAME}_persistent") == "1"
     _set_command_center_cookie(response, new_plain, remember_me)
     return CommandCenterTokenResponse(
@@ -233,7 +243,7 @@ async def command_center_logout_all(
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     _validate_cookie_origin(request)
-    if not _is_platform_admin(current_user):
+    if not await _is_platform_admin(db, current_user):
         raise HTTPException(status_code=403, detail="Access denied.")
     await auth_service.revoke_user_refresh_tokens(db, current_user.id, reason="logout_all")
     await auth_service.write_auth_audit(
@@ -252,7 +262,7 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
     """Authenticate with email + password. Returns JWT access token."""
-    ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else None)
+    ip = resolve_client_ip(request)
     ua = request.headers.get("User-Agent")
     try:
         result = await auth_service.login(
@@ -300,20 +310,48 @@ async def refresh_token(
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive.")
 
-    ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else None)
+    try:
+        from app.modules.rbac.services.access_contexts import lock_session_family, validate_persisted_context
+        await lock_session_family(db, record.family_id)
+        await db.refresh(record)
+        if record.is_revoked or record.is_expired:
+            raise HTTPException(401, detail={"code": "SESSION_NOT_ACTIVE"})
+        await validate_persisted_context(db, user, record)
+    except HTTPException:
+        await auth_service.revoke_refresh_token_family(
+            db, token_hash, reason="session_context_revoked"
+        )
+        await auth_service.write_auth_audit(
+            db, user_id=user.id, action="refresh_context_revoked",
+            ip_address=resolve_client_ip(request), user_agent=request.headers.get("User-Agent"),
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "SESSION_CONTEXT_REVOKED"},
+        ) from None
+
+    ip = resolve_client_ip(request)
     ua = request.headers.get("User-Agent")
     try:
-        new_plain, _ = await auth_service.rotate_refresh_token(
+        new_plain, new_record = await auth_service.rotate_refresh_token(
             db, token_hash, user, ip_address=ip, user_agent=ua,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc))
 
-    await db.commit()
     new_access = auth_service.create_access_token(
         user,
+        session_id=new_record.family_id,
+        access_mode=new_record.access_mode,
+        active_organization_id=new_record.active_organization_id,
+        acting_organization_id=new_record.acting_organization_id,
+        active_workspace_id=new_record.active_workspace_id,
+        active_event_id=new_record.active_event_id,
+        relationship_id=new_record.relationship_id,
         mfa_authenticated_at=record.mfa_authenticated_at,
     )
+    await db.commit()
     return TokenResponse(
         access_token=new_access,
         refresh_token=new_plain,

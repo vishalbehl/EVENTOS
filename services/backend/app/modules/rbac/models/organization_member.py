@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -32,6 +32,9 @@ class OrganizationMember(Base):
     org_role: Mapped[str] = mapped_column(String(20), nullable=False, default="member")
     invited_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id"), nullable=True)
     invite_token: Mapped[Optional[str]] = mapped_column(String(64), unique=True, nullable=True)
+    invite_token_digest: Mapped[Optional[str]] = mapped_column(String(64), unique=True, nullable=True)
+    invite_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    invite_consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     invite_email: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     invite_first_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     invite_last_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -46,6 +49,12 @@ class OrganizationMember(Base):
     user: Mapped[Optional["User"]] = relationship("User", foreign_keys=[user_id])
 
     __table_args__ = (
+        CheckConstraint("invite_token IS NULL", name="ck_membership_no_raw_invite_token"),
+        UniqueConstraint("organization_id", "id", name="uq_organization_member_owner"),
         Index("uix_organization_members_org_user", "organization_id", "user_id", unique=True),
+        Index("ix_accepted_active_owners", "organization_id", "id",
+              postgresql_where=text("org_role = 'owner' AND is_active = true AND accepted_at IS NOT NULL")),
+        Index("ix_membership_context_page", "user_id", "organization_id",
+              postgresql_where=text("is_active = true AND accepted_at IS NOT NULL")),
         {"schema": "organizer_access"},
     )

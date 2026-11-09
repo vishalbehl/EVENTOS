@@ -4,6 +4,12 @@ x-default-logging: &default-logging
     max-size: "10m"
     max-file: "5"
 
+x-worker-image: &worker-image
+  image: conf-platform-workers:latest
+  build:
+    context: .
+    dockerfile: infrastructure/docker/workers.Dockerfile
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -81,51 +87,6 @@ services:
       retries: 10
       start_period: 120s
 
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    env_file:
-      - .env.staging
-    ports:
-      - "0.0.0.0:9000:9000"
-      - "0.0.0.0:9001:9001"
-    mem_limit: 1g
-    cpus: "1.00"
-    logging: *default-logging
-    volumes:
-      - type: bind
-        source: D:\conf-platform\minio
-        target: /data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 20s
-
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    env_file:
-      - .env.staging
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -eu
-        mc alias set staging http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
-        mc admin user add staging "$$MINIO_APP_ACCESS_KEY" "$$MINIO_APP_SECRET_KEY" || true
-        mc admin policy attach staging readwrite --user "$$MINIO_APP_ACCESS_KEY"
-        for bucket in presentations posters thumbnails imports assets exports event-branding quarantine; do
-          mc mb --ignore-existing "staging/$$bucket"
-          mc anonymous set none "staging/$$bucket"
-        done
-        echo "MinIO staging buckets are ready."
-    restart: "no"
-    logging: *default-logging
-
   caddy:
     image: caddy:2-alpine
     depends_on:
@@ -183,15 +144,18 @@ services:
     env_file:
       - .env.staging
     environment:
-      DATABASE_URL_SYNC: postgresql+psycopg2://postgres:postgres@postgres:5432/eventos_db
-      DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@postgres:5432/eventos_db
+      DATABASE_URL_SYNC: ${RUNTIME_DATABASE_URL_SYNC:?Configure a least-privilege cloud runtime login}
+      DATABASE_URL_ASYNC: ${RUNTIME_DATABASE_URL_ASYNC:?Configure the same least-privilege cloud runtime login}
+      REQUIRE_RLS_SAFE_RUNTIME_ROLE: ${REQUIRE_RLS_SAFE_RUNTIME_ROLE:-false}
+      MIGRATION_DATABASE_URL_SYNC: ""
       REDIS_URL: redis://redis:6379/0
       REDIS_CACHE_URL: redis://redis:6379/2
       REDIS_LOCK_URL: redis://redis:6379/3
+      REDIS_OPERATION_TIMEOUT_SECONDS: 3.0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       CONF_PLATFORM_ROOT: /workspace
-      S3_ENDPOINT_URL: http://minio:9000
+      S3_ENDPOINT_URL: http://cloud-minio:9000
       S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://127.0.0.1:9000}
       ANTIVIRUS_COMMAND: tcp://clamav:3310
       API_BASE_URL: http://127.0.0.1:8000
@@ -199,8 +163,6 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      minio:
         condition: service_healthy
       clamav:
         condition: service_healthy
@@ -217,29 +179,28 @@ services:
     logging: *default-logging
 
   workers:
-    build:
-      context: ./services/backend
-      dockerfile: Dockerfile
+    <<: *worker-image
     command: ["celery", "-A", "app.worker:celery_app", "worker", "--loglevel=INFO", "--queues=critical,default,notifications"]
     env_file:
       - .env.staging
     environment:
-      DATABASE_URL_SYNC: postgresql+psycopg2://postgres:postgres@postgres:5432/eventos_db
-      DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@postgres:5432/eventos_db
+      DATABASE_URL_SYNC: ${RUNTIME_DATABASE_URL_SYNC:?Configure a least-privilege cloud runtime login}
+      DATABASE_URL_ASYNC: ${RUNTIME_DATABASE_URL_ASYNC:?Configure the same least-privilege cloud runtime login}
+      REQUIRE_RLS_SAFE_RUNTIME_ROLE: ${REQUIRE_RLS_SAFE_RUNTIME_ROLE:-false}
+      MIGRATION_DATABASE_URL_SYNC: ""
       REDIS_URL: redis://redis:6379/0
       REDIS_CACHE_URL: redis://redis:6379/2
       REDIS_LOCK_URL: redis://redis:6379/3
+      REDIS_OPERATION_TIMEOUT_SECONDS: 3.0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
-      S3_ENDPOINT_URL: http://minio:9000
+      S3_ENDPOINT_URL: http://cloud-minio:9000
       S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://127.0.0.1:9000}
       ANTIVIRUS_COMMAND: tcp://clamav:3310
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      minio:
         condition: service_healthy
       clamav:
         condition: service_healthy
@@ -252,33 +213,29 @@ services:
     healthcheck:
       disable: true
 
-  # Heavy work has its own pool so imports, files, videos, reports, and
-  # reconciliation cannot consume the worker capacity reserved for critical
-  # commands and user-facing notifications.
   workers-processing:
-    build:
-      context: ./services/backend
-      dockerfile: Dockerfile
+    <<: *worker-image
     command: ["celery", "-A", "app.worker:celery_app", "worker", "--loglevel=INFO", "--queues=files,videos,imports,search,reports,reconciliation"]
     env_file:
       - .env.staging
     environment:
-      DATABASE_URL_SYNC: postgresql+psycopg2://postgres:postgres@postgres:5432/eventos_db
-      DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@postgres:5432/eventos_db
+      DATABASE_URL_SYNC: ${RUNTIME_DATABASE_URL_SYNC:?Configure a least-privilege cloud runtime login}
+      DATABASE_URL_ASYNC: ${RUNTIME_DATABASE_URL_ASYNC:?Configure the same least-privilege cloud runtime login}
+      REQUIRE_RLS_SAFE_RUNTIME_ROLE: ${REQUIRE_RLS_SAFE_RUNTIME_ROLE:-false}
+      MIGRATION_DATABASE_URL_SYNC: ""
       REDIS_URL: redis://redis:6379/0
       REDIS_CACHE_URL: redis://redis:6379/2
       REDIS_LOCK_URL: redis://redis:6379/3
+      REDIS_OPERATION_TIMEOUT_SECONDS: 3.0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
-      S3_ENDPOINT_URL: http://minio:9000
+      S3_ENDPOINT_URL: http://cloud-minio:9000
       S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://127.0.0.1:9000}
       ANTIVIRUS_COMMAND: tcp://clamav:3310
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      minio:
         condition: service_healthy
       clamav:
         condition: service_healthy
@@ -291,32 +248,29 @@ services:
     healthcheck:
       disable: true
 
-  # Compatibility task families live in a separate image and queue namespace.
-  # This prevents an application worker from consuming an unregistered task.
   workers-legacy:
-    build:
-      context: .
-      dockerfile: services/workers/Dockerfile
+    <<: *worker-image
     command: ["celery", "-A", "workers.celery_app:app", "worker", "--loglevel=INFO", "--queues=legacy-default,legacy-files,legacy-videos,legacy-imports,legacy-search,legacy-reports,legacy-reconciliation,legacy-notifications"]
     env_file:
       - .env.staging
     environment:
-      DATABASE_URL_SYNC: postgresql+psycopg2://postgres:postgres@postgres:5432/eventos_db
-      DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@postgres:5432/eventos_db
+      DATABASE_URL_SYNC: ${RUNTIME_DATABASE_URL_SYNC:?Configure a least-privilege cloud runtime login}
+      DATABASE_URL_ASYNC: ${RUNTIME_DATABASE_URL_ASYNC:?Configure the same least-privilege cloud runtime login}
+      REQUIRE_RLS_SAFE_RUNTIME_ROLE: ${REQUIRE_RLS_SAFE_RUNTIME_ROLE:-false}
+      MIGRATION_DATABASE_URL_SYNC: ""
       REDIS_URL: redis://redis:6379/0
       REDIS_CACHE_URL: redis://redis:6379/2
       REDIS_LOCK_URL: redis://redis:6379/3
+      REDIS_OPERATION_TIMEOUT_SECONDS: 3.0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
-      S3_ENDPOINT_URL: http://minio:9000
+      S3_ENDPOINT_URL: http://cloud-minio:9000
       S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://127.0.0.1:9000}
       ANTIVIRUS_COMMAND: tcp://clamav:3310
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      minio:
         condition: service_healthy
       clamav:
         condition: service_healthy

@@ -4,9 +4,12 @@
   --base: #f0f1f3;
   --surf: #ffffff;
   --card: #ffffff;
+  --card-bg: #ffffff;
+  --card-solid: #ffffff;
   --raised: #f7f7f8;
   --inset: #f3f3f4;
   --border: #e3e4e7;
+  --border-default: #e3e4e7;
   --text: #202124;
   --muted: #55585d;
   --pri: #252629;
@@ -25,12 +28,15 @@
 
 [data-theme="dark"] {
   color-scheme: dark;
-  --base: #000000;
-  --surf: #111111;
-  --card: #0a0a0a;
-  --raised: #121212;
-  --inset: #1b1b1d;
-  --border: #303034;
+  --base: #08090d;
+  --surf: #161a29;
+  --card: #121522;
+  --card-bg: #121522;
+  --card-solid: #121522;
+  --raised: #181c2e;
+  --inset: #0e101a;
+  --border: #262b3d;
+  --border-default: #262b3d;
   --text: #f7f7f8;
   --muted: #929298;
   --pri: #f4f4f5;

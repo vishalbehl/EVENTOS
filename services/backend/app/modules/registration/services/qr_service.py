@@ -24,7 +24,7 @@ from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
 
 from app.config import settings
-from app.modules.presentations.services.upload_service import build_thumbnail_path, upload_bytes
+from app.modules.presentations.services.upload_service import build_thumbnail_path, upload_bytes, create_presigned_download
 
 
 # ── URL builders ──────────────────────────────────────────────
@@ -97,7 +97,6 @@ def generate_speaker_badge_qr(
     speaker_id: uuid.UUID,
     speaker_name: str,
     event_name: str,
-    speaker_code: str,
     *,
     reg_no: Optional[str] = None,
     include_label: bool = True,
@@ -109,7 +108,7 @@ def generate_speaker_badge_qr(
       - Event Name on top as header
       - Speaker Name above the QR code
       - The QR code itself
-      - Access Code or Registration No below the QR code
+      - Registration No or Speaker identifier below the QR code
 
     Returns raw PNG bytes.
     """
@@ -117,8 +116,8 @@ def generate_speaker_badge_qr(
         qr_text = reg_no
         code_text = f"Registration No: {reg_no}"
     else:
-        qr_text = speaker_code.upper()
-        code_text = f"Access Code: {speaker_code.upper()}"
+        qr_text = str(speaker_id)
+        code_text = f"Speaker: {speaker_name}"
 
     qr_bytes = generate_qr_code(qr_text, box_size=12, border=3)
 
@@ -192,7 +191,8 @@ def generate_and_upload_speaker_qr(
     speaker_id: uuid.UUID,
     speaker_name: str,
     event_name: str,
-    speaker_code: str,
+    *,
+    reg_no: Optional[str] = None,
 ) -> str:
     """
     Full pipeline:
@@ -202,7 +202,7 @@ def generate_and_upload_speaker_qr(
 
     Raises RuntimeError if upload fails.
     """
-    png_bytes = generate_speaker_badge_qr(speaker_id, speaker_name, event_name, speaker_code)
+    png_bytes = generate_speaker_badge_qr(speaker_id, speaker_name, event_name, reg_no=reg_no)
 
     # Storage path: thumbnails/qr/{speaker_id}.png
     storage_path = f"thumbnails/qr/{speaker_id}.png"
@@ -214,11 +214,11 @@ def generate_and_upload_speaker_qr(
         content_type="image/png",
     )
 
-    # Construct the public URL
-    if settings.STORAGE_MODE == "local":
-        qr_url = f"{settings.API_BASE_URL}/api/v1/storage/{settings.S3_BUCKET_THUMBNAILS}/{storage_path}"
-    else:
-        qr_url = f"{settings.S3_ENDPOINT_URL}/{settings.S3_BUCKET_THUMBNAILS}/{storage_path}"
+    qr_url = create_presigned_download(
+        bucket=settings.S3_BUCKET_THUMBNAILS,
+        storage_path=storage_path,
+        inline=True,
+    )
     logger.info(f"Generated and uploaded QR for speaker {speaker_id}: {qr_url}")
     return qr_url
 

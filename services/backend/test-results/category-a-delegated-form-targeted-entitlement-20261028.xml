@@ -1,0 +1,597 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="3" time="70.395" timestamp="2026-10-28T09:29:12.048234+05:30" hostname="Vishal"><testcase classname="tests.test_delegated_form_management" name="test_registration_form_narrow_enforcement_matches_full_policy" time="13.255" /><testcase classname="tests.test_delegated_form_management" name="test_client_approved_delegated_binding_http_contract[SURVEY-survey]" time="39.248"><properties><property name="operational_binding_max_queries" value="66" /><property name="operational_binding_max_duration_ms" value="2391" /><property name="operational_binding_relation_counts" value="{&quot;platform.organizations&quot;:6,&quot;events.events&quot;:5,&quot;identity.users&quot;:3,&quot;organizer_access.organization_members&quot;:3,&quot;organizer_access.permissions&quot;:3,&quot;platform.idempotency_records&quot;:3,&quot;of&quot;:3,&quot;design.form_templates&quot;:3,&quot;command_center_audit.logs&quot;:3,&quot;organizer_access.emc_client_delegations&quot;:2,&quot;organizer_access.emc_client_relationships&quot;:2,&quot;organizer_access.operational_workspaces&quot;:2,&quot;design.portal_theme_settings&quot;:2,&quot;organizer_access.organization_access_revisions&quot;:2,&quot;organizer_access.user_roles&quot;:2,&quot;scoped_roles&quot;:2,&quot;organizer_access.scoped_permissions&quot;:2,&quot;access.user_access_nodes&quot;:2,&quot;commerce.entitlement_override_requests&quot;:2,&quot;design.event_form_template_bindings&quot;:2,&quot;design.form_categories&quot;:2,&quot;identity.refresh_tokens&quot;:1,&quot;organizer_access.user_role_assignments&quot;:1,&quot;organizer_access.role_inheritance_maps&quot;:1,&quot;organizer_access.role_permissions&quot;:1,&quot;commerce.capability_revisions&quot;:1,&quot;commerce.commercial_contracts&quot;:1,&quot;commerce.commercial_accounts&quot;:1,&quot;commerce.commercial_contract_items&quot;:1,&quot;commerce.commercial_offers&quot;:1,&quot;commerce.commercial_offer_versions&quot;:1,&quot;commerce.commercial_offer_entitlements&quot;:1,&quot;commerce.organization_feature_overrides&quot;:1,&quot;commerce.feature_catalog&quot;:1,&quot;commerce.event_activations&quot;:1,&quot;commerce.event_commercial_contracts&quot;:1,&quot;platform.feature_flags&quot;:1,&quot;commerce.capability_restrictions&quot;:1,&quot;platform.platform_flag_definitions&quot;:1}" /></properties><failure message="assert not True&#10; +  where True = any(&lt;generator object test_client_approved_delegated_binding_http_contract.&lt;locals&gt;.&lt;genexpr&gt; at 0x000002033502B510&gt;)">client = &lt;httpx.AsyncClient object at 0x0000020330C5A3C0&gt;
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x00000203190B74D0&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x2032ee271f0&gt;
+purpose = 'SURVEY', category_slug = 'survey'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x0000020329AA2ED0&gt;
+record_property = &lt;function record_property.&lt;locals&gt;.append_property at 0x0000020333C50220&gt;
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("purpose", "category_slug"),
+        [("SURVEY", "survey"), ("SPEAKER_INTAKE", "speaker_intake")],
+    )
+    async def test_client_approved_delegated_binding_http_contract(
+        client,
+        db,
+        delegated_cohort,
+        purpose,
+        category_slug,
+        monkeypatch,
+        record_property,
+    ):
+        from app.modules.identity.services.auth_service import create_access_token
+    
+        data = delegated_cohort
+        emc_id = data.emc.id
+        client_id = data.client.id
+        owner_id = data.owner.id
+        event_id = data.event.id
+        workspace_id = data.workspace.id
+        member_id = data.member.id
+        async with TenantContextGuard.scoped(db, data.client.id):
+            category = await CategoryCommands.execute(
+                db,
+                operation="create",
+                actor=data.owner,
+                payload=FormCategoryCreate(
+                    name=f"Client {category_slug} category", slug=category_slug
+                ),
+                idempotency_key=retry_key(),
+            )
+            source = await TemplateCommands.execute(
+                db,
+                operation="create",
+                actor=data.owner,
+                payload=FormTemplateCreate(
+                    name=f"Client {category_slug} source",
+                    category_id=category.id,
+                    category_key=category_slug,
+                    fields=[],
+                    settings={},
+                ),
+                idempotency_key=retry_key(),
+            )
+    
+        request_payload = RelationshipRequest(
+            client_organization_id=client_id,
+            reason="Explicit client-approved HTTP form delegation",
+            scopes=[{
+                "member_id": member_id,
+                "workspace_id": workspace_id,
+                "event_id": event_id,
+                "actions": ["REG_CONFIG:FORM"],
+            }],
+        )
+        async with TenantContextGuard.scoped(db, emc_id):
+            requested = await request_relationship(
+                db, data.actor, emc_id, request_payload, retry_key()
+            )
+        relationship_id = uuid.UUID(requested["id"])
+        async with TenantContextGuard.scoped(db, client_id):
+            active = await transition_relationship(
+                db,
+                data.owner,
+                client_id,
+                relationship_id,
+                RelationshipTransition(
+                    action="accept", reason="Client owner approved HTTP form delegation"
+                ),
+                requested["version"],
+                retry_key(),
+            )
+        async with TenantContextGuard.scoped(db, emc_id):
+            session = await persist_refresh_token(
+                db,
+                data.actor,
+                uuid.uuid4().hex,
+                access_mode="DELEGATED",
+                active_organization_id=client_id,
+                acting_organization_id=emc_id,
+                active_workspace_id=workspace_id,
+                active_event_id=event_id,
+                relationship_id=relationship_id,
+            )
+            await db.commit()
+    
+        token = create_access_token(
+            data.actor,
+            session_id=session.family_id,
+            access_mode="DELEGATED",
+            active_organization_id=client_id,
+            acting_organization_id=emc_id,
+            active_workspace_id=workspace_id,
+            active_event_id=event_id,
+            relationship_id=relationship_id,
+        )
+        identity = {"Authorization": f"Bearer {token}"}
+        request_metrics = []
+    
+        def capture_request_metrics(method, path, status, duration_ms, query_count, db_ms):
+            request_metrics.append({
+                "method": method,
+                "path": path,
+                "status": status,
+                "duration_ms": duration_ms,
+                "query_count": query_count,
+                "db_ms": db_ms,
+            })
+    
+        monkeypatch.setattr(
+            "app.middleware.request_logging.observe_request",
+            capture_request_metrics,
+        )
+        path = (
+            f"/api/v1/forms/templates/events/{event_id}"
+            f"/operational-bindings/{purpose}"
+        )
+        payload = {
+            "source_template_id": str(source.id),
+            "source_version": source.version,
+            "fields": [],
+            "settings": {},
+        }
+    
+        missing = await client.put(path, json=payload, headers=identity)
+        assert missing.status_code == 428, missing.text
+    
+        retry = f"delegated-http-{uuid.uuid4()}"
+        headers = {**identity, "If-Match": "1", "Idempotency-Key": retry}
+        binding_statements = []
+    
+        def capture_binding_statements(
+            _connection, _cursor, statement, _parameters, _context, _executemany
+        ):
+            binding_statements.append(statement)
+    
+        sync_engine = db.get_bind().engine
+        sqlalchemy_event.listen(
+            sync_engine, "before_cursor_execute", capture_binding_statements
+        )
+        try:
+            saved = await client.put(path, json=payload, headers=headers)
+        finally:
+            sqlalchemy_event.remove(
+                sync_engine, "before_cursor_execute", capture_binding_statements
+            )
+        assert saved.status_code == 200, saved.text
+        assert saved.headers["cache-control"] == "no-store"
+        assert saved.json()["version"] == 2
+    
+        replay = await client.put(path, json=payload, headers=headers)
+        assert replay.status_code == 200 and replay.json() == saved.json()
+    
+        changed = await client.put(
+            path,
+            json={**payload, "settings": {"description": "changed retry"}},
+            headers=headers,
+        )
+        assert changed.status_code == 409
+    
+        foreign = await client.put(
+            f"/api/v1/forms/templates/events/{uuid.uuid4()}/operational-bindings/{purpose}",
+            json=payload,
+            headers={
+                **identity,
+                "If-Match": "1",
+                "Idempotency-Key": f"delegated-http-foreign-{uuid.uuid4()}",
+            },
+        )
+        assert foreign.status_code == 404
+    
+        catalogue = await client.post(
+            "/api/v1/forms/templates",
+            json={"name": "Delegation must not grant catalogue administration"},
+            headers={**identity, "Idempotency-Key": f"delegated-http-catalogue-{uuid.uuid4()}"},
+        )
+        assert catalogue.status_code == 403
+    
+        registration_path = f"/api/v1/events/{event_id}/registration/form-config"
+        registration_payload = {"is_live": False, "fields": [], "settings": {}}
+        registration_missing = await client.post(
+            registration_path, json=registration_payload, headers=identity
+        )
+        assert registration_missing.status_code == 428, registration_missing.text
+    
+        registration_retry = f"delegated-http-registration-{uuid.uuid4()}"
+        registration_headers = {
+            **identity,
+            "If-Match": "1",
+            "Idempotency-Key": registration_retry,
+        }
+        registration_saved = await client.post(
+            registration_path, json=registration_payload, headers=registration_headers
+        )
+        assert registration_saved.status_code == 200, registration_saved.text
+        assert registration_saved.json()["version"] == 2
+    
+        registration_replay = await client.post(
+            registration_path, json=registration_payload, headers=registration_headers
+        )
+        assert registration_replay.status_code == 200
+        assert registration_replay.json() == registration_saved.json()
+    
+        registration_changed = await client.post(
+            registration_path,
+            json={**registration_payload, "is_live": True},
+            headers=registration_headers,
+        )
+        assert registration_changed.status_code == 409
+    
+        registration_stale = await client.post(
+            registration_path,
+            json=registration_payload,
+            headers={
+                **identity,
+                "If-Match": "1",
+                "Idempotency-Key": f"delegated-http-registration-stale-{uuid.uuid4()}",
+            },
+        )
+        assert registration_stale.status_code == 412
+    
+        async with TenantContextGuard.scoped(db, client_id):
+            owner = await db.get(User, owner_id, populate_existing=True)
+            await transition_relationship(
+                db,
+                owner,
+                client_id,
+                relationship_id,
+                RelationshipTransition(
+                    action="suspend", reason="Client owner revoked delegated HTTP access"
+                ),
+                active["version"],
+                retry_key(),
+            )
+            await db.commit()
+    
+        revoked = await client.put(
+            path,
+            json=payload,
+            headers={
+                **identity,
+                "If-Match": "2",
+                "Idempotency-Key": f"delegated-http-revoked-{uuid.uuid4()}",
+            },
+        )
+        assert revoked.status_code == 404
+    
+        registration_revoked = await client.post(
+            registration_path,
+            json=registration_payload,
+            headers={
+                **identity,
+                "If-Match": "2",
+                "Idempotency-Key": f"delegated-http-registration-revoked-{uuid.uuid4()}",
+            },
+        )
+        assert registration_revoked.status_code == 404
+    
+        successful_binding_writes = [
+            metric for metric in request_metrics
+            if metric["method"] == "PUT"
+            and metric["path"] == path
+            and metric["status"] == 200
+        ]
+        assert successful_binding_writes
+        maximum_queries = max(metric["query_count"] for metric in successful_binding_writes)
+        maximum_duration_ms = max(metric["duration_ms"] for metric in successful_binding_writes)
+        record_property("operational_binding_max_queries", maximum_queries)
+        record_property("operational_binding_max_duration_ms", maximum_duration_ms)
+        relation_counts = Counter(
+            match.group(1).lower()
+            for statement in binding_statements
+            for match in re.finditer(
+                r'\b(?:FROM|JOIN|UPDATE|INSERT\s+INTO)\s+([a-zA-Z0-9_."]+)',
+                statement,
+                re.IGNORECASE,
+            )
+        )
+        record_property(
+            "operational_binding_relation_counts",
+            json.dumps(dict(relation_counts.most_common()), separators=(",", ":")),
+        )
+&gt;       assert not any(
+            relation.strip('"').endswith("feature_catalog")
+            for relation in relation_counts
+        )
+E       assert not True
+E        +  where True = any(&lt;generator object test_client_approved_delegated_binding_http_contract.&lt;locals&gt;.&lt;genexpr&gt; at 0x000002033502B510&gt;)
+
+tests\test_delegated_form_management.py:539: AssertionError</failure></testcase><testcase classname="tests.test_delegated_form_management" name="test_client_approved_delegated_binding_http_contract[SPEAKER_INTAKE-speaker_intake]" time="16.755"><properties><property name="operational_binding_max_queries" value="66" /><property name="operational_binding_max_duration_ms" value="1005" /><property name="operational_binding_relation_counts" value="{&quot;platform.organizations&quot;:6,&quot;events.events&quot;:5,&quot;identity.users&quot;:3,&quot;organizer_access.organization_members&quot;:3,&quot;organizer_access.permissions&quot;:3,&quot;platform.idempotency_records&quot;:3,&quot;of&quot;:3,&quot;design.form_templates&quot;:3,&quot;command_center_audit.logs&quot;:3,&quot;organizer_access.emc_client_delegations&quot;:2,&quot;organizer_access.emc_client_relationships&quot;:2,&quot;organizer_access.operational_workspaces&quot;:2,&quot;design.portal_theme_settings&quot;:2,&quot;organizer_access.organization_access_revisions&quot;:2,&quot;organizer_access.user_roles&quot;:2,&quot;scoped_roles&quot;:2,&quot;organizer_access.scoped_permissions&quot;:2,&quot;access.user_access_nodes&quot;:2,&quot;commerce.entitlement_override_requests&quot;:2,&quot;design.event_form_template_bindings&quot;:2,&quot;design.form_categories&quot;:2,&quot;identity.refresh_tokens&quot;:1,&quot;organizer_access.user_role_assignments&quot;:1,&quot;organizer_access.role_inheritance_maps&quot;:1,&quot;organizer_access.role_permissions&quot;:1,&quot;commerce.capability_revisions&quot;:1,&quot;commerce.commercial_contracts&quot;:1,&quot;commerce.commercial_accounts&quot;:1,&quot;commerce.commercial_contract_items&quot;:1,&quot;commerce.commercial_offers&quot;:1,&quot;commerce.commercial_offer_versions&quot;:1,&quot;commerce.commercial_offer_entitlements&quot;:1,&quot;commerce.organization_feature_overrides&quot;:1,&quot;commerce.feature_catalog&quot;:1,&quot;commerce.event_activations&quot;:1,&quot;commerce.event_commercial_contracts&quot;:1,&quot;platform.feature_flags&quot;:1,&quot;commerce.capability_restrictions&quot;:1,&quot;platform.platform_flag_definitions&quot;:1}" /></properties><failure message="assert not True&#10; +  where True = any(&lt;generator object test_client_approved_delegated_binding_http_contract.&lt;locals&gt;.&lt;genexpr&gt; at 0x0000020334C04E10&gt;)">client = &lt;httpx.AsyncClient object at 0x00000203190B7250&gt;
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000020335ADE5D0&gt;
+delegated_cohort = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] SimpleNamespace object at 0x203352941f0&gt;
+purpose = 'SPEAKER_INTAKE', category_slug = 'speaker_intake'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x0000020335AD51D0&gt;
+record_property = &lt;function record_property.&lt;locals&gt;.append_property at 0x0000020333CEA200&gt;
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("purpose", "category_slug"),
+        [("SURVEY", "survey"), ("SPEAKER_INTAKE", "speaker_intake")],
+    )
+    async def test_client_approved_delegated_binding_http_contract(
+        client,
+        db,
+        delegated_cohort,
+        purpose,
+        category_slug,
+        monkeypatch,
+        record_property,
+    ):
+        from app.modules.identity.services.auth_service import create_access_token
+    
+        data = delegated_cohort
+        emc_id = data.emc.id
+        client_id = data.client.id
+        owner_id = data.owner.id
+        event_id = data.event.id
+        workspace_id = data.workspace.id
+        member_id = data.member.id
+        async with TenantContextGuard.scoped(db, data.client.id):
+            category = await CategoryCommands.execute(
+                db,
+                operation="create",
+                actor=data.owner,
+                payload=FormCategoryCreate(
+                    name=f"Client {category_slug} category", slug=category_slug
+                ),
+                idempotency_key=retry_key(),
+            )
+            source = await TemplateCommands.execute(
+                db,
+                operation="create",
+                actor=data.owner,
+                payload=FormTemplateCreate(
+                    name=f"Client {category_slug} source",
+                    category_id=category.id,
+                    category_key=category_slug,
+                    fields=[],
+                    settings={},
+                ),
+                idempotency_key=retry_key(),
+            )
+    
+        request_payload = RelationshipRequest(
+            client_organization_id=client_id,
+            reason="Explicit client-approved HTTP form delegation",
+            scopes=[{
+                "member_id": member_id,
+                "workspace_id": workspace_id,
+                "event_id": event_id,
+                "actions": ["REG_CONFIG:FORM"],
+            }],
+        )
+        async with TenantContextGuard.scoped(db, emc_id):
+            requested = await request_relationship(
+                db, data.actor, emc_id, request_payload, retry_key()
+            )
+        relationship_id = uuid.UUID(requested["id"])
+        async with TenantContextGuard.scoped(db, client_id):
+            active = await transition_relationship(
+                db,
+                data.owner,
+                client_id,
+                relationship_id,
+                RelationshipTransition(
+                    action="accept", reason="Client owner approved HTTP form delegation"
+                ),
+                requested["version"],
+                retry_key(),
+            )
+        async with TenantContextGuard.scoped(db, emc_id):
+            session = await persist_refresh_token(
+                db,
+                data.actor,
+                uuid.uuid4().hex,
+                access_mode="DELEGATED",
+                active_organization_id=client_id,
+                acting_organization_id=emc_id,
+                active_workspace_id=workspace_id,
+                active_event_id=event_id,
+                relationship_id=relationship_id,
+            )
+            await db.commit()
+    
+        token = create_access_token(
+            data.actor,
+            session_id=session.family_id,
+            access_mode="DELEGATED",
+            active_organization_id=client_id,
+            acting_organization_id=emc_id,
+            active_workspace_id=workspace_id,
+            active_event_id=event_id,
+            relationship_id=relationship_id,
+        )
+        identity = {"Authorization": f"Bearer {token}"}
+        request_metrics = []
+    
+        def capture_request_metrics(method, path, status, duration_ms, query_count, db_ms):
+            request_metrics.append({
+                "method": method,
+                "path": path,
+                "status": status,
+                "duration_ms": duration_ms,
+                "query_count": query_count,
+                "db_ms": db_ms,
+            })
+    
+        monkeypatch.setattr(
+            "app.middleware.request_logging.observe_request",
+            capture_request_metrics,
+        )
+        path = (
+            f"/api/v1/forms/templates/events/{event_id}"
+            f"/operational-bindings/{purpose}"
+        )
+        payload = {
+            "source_template_id": str(source.id),
+            "source_version": source.version,
+            "fields": [],
+            "settings": {},
+        }
+    
+        missing = await client.put(path, json=payload, headers=identity)
+        assert missing.status_code == 428, missing.text
+    
+        retry = f"delegated-http-{uuid.uuid4()}"
+        headers = {**identity, "If-Match": "1", "Idempotency-Key": retry}
+        binding_statements = []
+    
+        def capture_binding_statements(
+            _connection, _cursor, statement, _parameters, _context, _executemany
+        ):
+            binding_statements.append(statement)
+    
+        sync_engine = db.get_bind().engine
+        sqlalchemy_event.listen(
+            sync_engine, "before_cursor_execute", capture_binding_statements
+        )
+        try:
+            saved = await client.put(path, json=payload, headers=headers)
+        finally:
+            sqlalchemy_event.remove(
+                sync_engine, "before_cursor_execute", capture_binding_statements
+            )
+        assert saved.status_code == 200, saved.text
+        assert saved.headers["cache-control"] == "no-store"
+        assert saved.json()["version"] == 2
+    
+        replay = await client.put(path, json=payload, headers=headers)
+        assert replay.status_code == 200 and replay.json() == saved.json()
+    
+        changed = await client.put(
+            path,
+            json={**payload, "settings": {"description": "changed retry"}},
+            headers=headers,
+        )
+        assert changed.status_code == 409
+    
+        foreign = await client.put(
+            f"/api/v1/forms/templates/events/{uuid.uuid4()}/operational-bindings/{purpose}",
+            json=payload,
+            headers={
+                **identity,
+                "If-Match": "1",
+                "Idempotency-Key": f"delegated-http-foreign-{uuid.uuid4()}",
+            },
+        )
+        assert foreign.status_code == 404
+    
+        catalogue = await client.post(
+            "/api/v1/forms/templates",
+            json={"name": "Delegation must not grant catalogue administration"},
+            headers={**identity, "Idempotency-Key": f"delegated-http-catalogue-{uuid.uuid4()}"},
+        )
+        assert catalogue.status_code == 403
+    
+        registration_path = f"/api/v1/events/{event_id}/registration/form-config"
+        registration_payload = {"is_live": False, "fields": [], "settings": {}}
+        registration_missing = await client.post(
+            registration_path, json=registration_payload, headers=identity
+        )
+        assert registration_missing.status_code == 428, registration_missing.text
+    
+        registration_retry = f"delegated-http-registration-{uuid.uuid4()}"
+        registration_headers = {
+            **identity,
+            "If-Match": "1",
+            "Idempotency-Key": registration_retry,
+        }
+        registration_saved = await client.post(
+            registration_path, json=registration_payload, headers=registration_headers
+        )
+        assert registration_saved.status_code == 200, registration_saved.text
+        assert registration_saved.json()["version"] == 2
+    
+        registration_replay = await client.post(
+            registration_path, json=registration_payload, headers=registration_headers
+        )
+        assert registration_replay.status_code == 200
+        assert registration_replay.json() == registration_saved.json()
+    
+        registration_changed = await client.post(
+            registration_path,
+            json={**registration_payload, "is_live": True},
+            headers=registration_headers,
+        )
+        assert registration_changed.status_code == 409
+    
+        registration_stale = await client.post(
+            registration_path,
+            json=registration_payload,
+            headers={
+                **identity,
+                "If-Match": "1",
+                "Idempotency-Key": f"delegated-http-registration-stale-{uuid.uuid4()}",
+            },
+        )
+        assert registration_stale.status_code == 412
+    
+        async with TenantContextGuard.scoped(db, client_id):
+            owner = await db.get(User, owner_id, populate_existing=True)
+            await transition_relationship(
+                db,
+                owner,
+                client_id,
+                relationship_id,
+                RelationshipTransition(
+                    action="suspend", reason="Client owner revoked delegated HTTP access"
+                ),
+                active["version"],
+                retry_key(),
+            )
+            await db.commit()
+    
+        revoked = await client.put(
+            path,
+            json=payload,
+            headers={
+                **identity,
+                "If-Match": "2",
+                "Idempotency-Key": f"delegated-http-revoked-{uuid.uuid4()}",
+            },
+        )
+        assert revoked.status_code == 404
+    
+        registration_revoked = await client.post(
+            registration_path,
+            json=registration_payload,
+            headers={
+                **identity,
+                "If-Match": "2",
+                "Idempotency-Key": f"delegated-http-registration-revoked-{uuid.uuid4()}",
+            },
+        )
+        assert registration_revoked.status_code == 404
+    
+        successful_binding_writes = [
+            metric for metric in request_metrics
+            if metric["method"] == "PUT"
+            and metric["path"] == path
+            and metric["status"] == 200
+        ]
+        assert successful_binding_writes
+        maximum_queries = max(metric["query_count"] for metric in successful_binding_writes)
+        maximum_duration_ms = max(metric["duration_ms"] for metric in successful_binding_writes)
+        record_property("operational_binding_max_queries", maximum_queries)
+        record_property("operational_binding_max_duration_ms", maximum_duration_ms)
+        relation_counts = Counter(
+            match.group(1).lower()
+            for statement in binding_statements
+            for match in re.finditer(
+                r'\b(?:FROM|JOIN|UPDATE|INSERT\s+INTO)\s+([a-zA-Z0-9_."]+)',
+                statement,
+                re.IGNORECASE,
+            )
+        )
+        record_property(
+            "operational_binding_relation_counts",
+            json.dumps(dict(relation_counts.most_common()), separators=(",", ":")),
+        )
+&gt;       assert not any(
+            relation.strip('"').endswith("feature_catalog")
+            for relation in relation_counts
+        )
+E       assert not True
+E        +  where True = any(&lt;generator object test_client_approved_delegated_binding_http_contract.&lt;locals&gt;.&lt;genexpr&gt; at 0x0000020334C04E10&gt;)
+
+tests\test_delegated_form_management.py:539: AssertionError</failure></testcase></testsuite></testsuites>

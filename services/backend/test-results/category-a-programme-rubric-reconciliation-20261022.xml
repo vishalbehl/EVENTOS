@@ -1,0 +1,1092 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="7" skipped="0" tests="20" time="51.940" timestamp="2026-10-22T10:36:23.401579+05:30" hostname="Vishal"><testcase classname="tests.test_programme_rubric_reconciliation" name="test_programme_rubric_pages_are_bounded_and_do_not_normalize_scoring" time="16.012" /><testcase classname="tests.test_programme_rubric_reconciliation" name="test_old_valid_evidence_is_immutable_and_current_block_survives_retry" time="1.840" /><testcase classname="tests.test_programme_rubric_reconciliation" name="test_review_projection_repair_and_retry_preserve_unrelated_plan_data" time="1.927"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR NO KEY UPDATE cannot be applied to the nullable side of an outer join&#10;[SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 &#10;FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id &#10;WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND lower(events.events.status) != $3::VARCHAR AND events.events.organization_id = $4::UUID FOR NO KEY UPDATE]&#10;[parameters: (UUID('1047a7b0-2698-45fd-94f1-428b05b0b5c4'), UUID('255cfccb-b429-4555-b75b-490fd3d5b576'), 'archived', UUID('255cfccb-b429-4555-b75b-490fd3d5b576'))]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">self = &lt;sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_cursor object at 0x000002774AD6F760&gt;
+operation = 'SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.event... IS NULL AND lower(events.events.status) != $3::VARCHAR AND events.events.organization_id = $4::UUID FOR NO KEY UPDATE'
+parameters = (UUID('1047a7b0-2698-45fd-94f1-428b05b0b5c4'), UUID('255cfccb-b429-4555-b75b-490fd3d5b576'), 'archived', UUID('255cfccb-b429-4555-b75b-490fd3d5b576'))
+
+    async def _prepare_and_execute(self, operation, parameters):
+        adapt_connection = self._adapt_connection
+    
+        async with adapt_connection._execute_mutex:
+            if not adapt_connection._started:
+                await adapt_connection._start_transaction()
+    
+            if parameters is None:
+                parameters = ()
+    
+            try:
+                prepared_stmt, attributes = await adapt_connection._prepare(
+                    operation, self._invalidate_schema_cache_asof
+                )
+    
+                if attributes:
+                    self.description = [
+                        (
+                            attr.name,
+                            attr.type.oid,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        for attr in attributes
+                    ]
+                else:
+                    self.description = None
+    
+                if self.server_side:
+                    self._cursor = await prepared_stmt.cursor(*parameters)
+                    self.rowcount = -1
+                else:
+&gt;                   self._rows = deque(await prepared_stmt.fetch(*parameters))
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+&gt;   ???
+E   asyncpg.exceptions.FeatureNotSupportedError: FOR NO KEY UPDATE cannot be applied to the nullable side of an outer join
+
+asyncpg/protocol/protocol.pyx:205: FeatureNotSupportedError
+
+The above exception was the direct cause of the following exception:
+
+self = &lt;sqlalchemy.engine.base.Connection object at 0x00000277498327B0&gt;
+dialect = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGDialect_asyncpg object at 0x000002774765AD50&gt;
+context = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGExecutionContext_asyncpg object at 0x000002774A6D07C0&gt;
+statement = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGCompiler_asyncpg object at 0x000002774AA79090&gt;
+parameters = [(UUID('1047a7b0-2698-45fd-94f1-428b05b0b5c4'), UUID('255cfccb-b429-4555-b75b-490fd3d5b576'), 'archived', UUID('255cfccb-b429-4555-b75b-490fd3d5b576'))]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -&gt; CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+&gt;                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x0000027747794C80&gt;&gt;
+error = FeatureNotSupportedError('FOR NO KEY UPDATE cannot be applied to the nullable side of an outer join')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR NO KEY UPDATE cannot be applied to the nullable side of an outer join
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: Error
+
+The above exception was the direct cause of the following exception:
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x00000277485DEFD0&gt;
+event = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] Event object at 0x277485df890&gt;
+super_admin = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] User object at 0x2774a6da570&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x0000027748637E00&gt;
+
+    @pytest.mark.asyncio
+    async def test_review_projection_repair_and_retry_preserve_unrelated_plan_data(db, event, super_admin, monkeypatch):
+        row = plan(event)
+        db.add(row)
+        await db.commit()
+        before = (deepcopy(row.scope_filter), deepcopy(row.reviewer_ids), row.status, row.name)
+        await scan(db, event, super_admin, monkeypatch)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            page = await list_blocked_aggregate_documents(response=Response(), resource_type="PROGRAMME_RUBRIC",
+                cursor=None, page_size=50, db=db, current_user=super_admin)
+            assert [issue.resource_id for issue in page.items] == [row.id]
+            assert page.items[0].current_document is None
+            assert "private-plan-data" not in page.model_dump_json()
+            assert "do-not-project-this" not in page.model_dump_json()
+            key = f"reviewed-rubric-{uuid.uuid4()}"
+&gt;           result = await repair(db, row.id, super_admin, key=key)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_programme_rubric_reconciliation.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_programme_rubric_reconciliation.py:45: in repair
+    return await repair_aggregate_document(db, resource_type="PROGRAMME_RUBRIC", resource_id=row_id,
+app\modules\registration\application\aggregate_reconciliation.py:137: in repair_aggregate_document
+    owned_event = await lock_scoring_event(db, organization_id=target_organization,
+app\modules\programme\rubric_integrity.py:13: in lock_scoring_event
+    row = await db.scalar(select(Event).where(Event.id == event_id,
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:504: in scalar
+    return await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2420: in scalar
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x0000027747794C80&gt;&gt;
+error = FeatureNotSupportedError('FOR NO KEY UPDATE cannot be applied to the nullable side of an outer join')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR NO KEY UPDATE cannot be applied to the nullable side of an outer join
+E                   [SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 
+E                   FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id 
+E                   WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND lower(events.events.status) != $3::VARCHAR AND events.events.organization_id = $4::UUID FOR NO KEY UPDATE]
+E                   [parameters: (UUID('1047a7b0-2698-45fd-94f1-428b05b0b5c4'), UUID('255cfccb-b429-4555-b75b-490fd3d5b576'), 'archived', UUID('255cfccb-b429-4555-b75b-490fd3d5b576'))]
+E                   (Background on this error at: https://sqlalche.me/e/20/dbapi)
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: DBAPIError</failure></testcase><testcase classname="tests.test_programme_rubric_reconciliation" name="test_rubric_repair_rejects_plan_mass_assignment[reviewer_ids]" time="1.495"><failure message="sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/20/xd2s)">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000002774AF4B360&gt;
+event = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] Event object at 0x2774aa7bc50&gt;
+super_admin = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] User object at 0x2774a6d1ae0&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002774AE0DE80&gt;
+extra = 'reviewer_ids'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("extra", ["reviewer_ids", "scope_filter", "status", "event_id", "organization_id"])
+    async def test_rubric_repair_rejects_plan_mass_assignment(db, event, super_admin, monkeypatch, extra):
+        row = plan(event)
+        db.add(row)
+        await db.commit()
+        await scan(db, event, super_admin, monkeypatch)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            with pytest.raises(HTTPException) as denied:
+                await repair(db, row.id, super_admin, document={"rubric": criteria(1), extra: []})
+            assert denied.value.status_code == 422
+&gt;       async with TenantContextGuard.scoped(db, event.organization_id):
+                                                 ^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_programme_rubric_reconciliation.py:156: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:569: in __get__
+    return self.impl.get(state, dict_)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:1096: in get
+    value = self._fire_loader_callables(state, key, passive)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:1126: in _fire_loader_callables
+    return state._load_expired(state, passive)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\state.py:828: in _load_expired
+    self.manager.expired_attribute_loader(self, toload, passive)
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:1674: in load_scalar_attributes
+    result = load_on_ident(
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:510: in load_on_ident
+    return load_on_pk_identity(
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:695: in load_on_pk_identity
+    session.execute(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2372: in execute
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2368: in _handle_dbapi_exception
+    raise exc_info[1].with_traceback(exc_info[2])
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+awaitable = &lt;coroutine object AsyncAdapt_asyncpg_cursor._prepare_and_execute at 0x000002774866F610&gt;
+
+    def await_only(awaitable: Awaitable[_T]) -&gt; _T:
+        """Awaits an async function in a sync method.
+    
+        The sync method must be inside a :func:`greenlet_spawn` context.
+        :func:`await_only` calls cannot be nested.
+    
+        :param awaitable: The coroutine to call.
+    
+        """
+        # this is called in the context greenlet while running fn
+        current = getcurrent()
+        if not getattr(current, "__sqlalchemy_greenlet_provider__", False):
+            _safe_cancel_awaitable(awaitable)
+    
+&gt;           raise exc.MissingGreenlet(
+                "greenlet_spawn has not been called; can't call await_only() "
+                "here. Was IO attempted in an unexpected place?"
+            )
+E           sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/20/xd2s)
+
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:123: MissingGreenlet</failure></testcase><testcase classname="tests.test_programme_rubric_reconciliation" name="test_rubric_repair_rejects_plan_mass_assignment[scope_filter]" time="1.327"><failure message="sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/20/xd2s)">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000002774AF4BBB0&gt;
+event = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] Event object at 0x2774aa7ad50&gt;
+super_admin = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] User object at 0x2774af76150&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002774AEED5C0&gt;
+extra = 'scope_filter'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("extra", ["reviewer_ids", "scope_filter", "status", "event_id", "organization_id"])
+    async def test_rubric_repair_rejects_plan_mass_assignment(db, event, super_admin, monkeypatch, extra):
+        row = plan(event)
+        db.add(row)
+        await db.commit()
+        await scan(db, event, super_admin, monkeypatch)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            with pytest.raises(HTTPException) as denied:
+                await repair(db, row.id, super_admin, document={"rubric": criteria(1), extra: []})
+            assert denied.value.status_code == 422
+&gt;       async with TenantContextGuard.scoped(db, event.organization_id):
+                                                 ^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_programme_rubric_reconciliation.py:156: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:569: in __get__
+    return self.impl.get(state, dict_)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:1096: in get
+    value = self._fire_loader_callables(state, key, passive)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:1126: in _fire_loader_callables
+    return state._load_expired(state, passive)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\state.py:828: in _load_expired
+    self.manager.expired_attribute_loader(self, toload, passive)
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:1674: in load_scalar_attributes
+    result = load_on_ident(
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:510: in load_on_ident
+    return load_on_pk_identity(
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:695: in load_on_pk_identity
+    session.execute(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2372: in execute
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2368: in _handle_dbapi_exception
+    raise exc_info[1].with_traceback(exc_info[2])
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+awaitable = &lt;coroutine object AsyncAdapt_asyncpg_cursor._prepare_and_execute at 0x000002774866F8B0&gt;
+
+    def await_only(awaitable: Awaitable[_T]) -&gt; _T:
+        """Awaits an async function in a sync method.
+    
+        The sync method must be inside a :func:`greenlet_spawn` context.
+        :func:`await_only` calls cannot be nested.
+    
+        :param awaitable: The coroutine to call.
+    
+        """
+        # this is called in the context greenlet while running fn
+        current = getcurrent()
+        if not getattr(current, "__sqlalchemy_greenlet_provider__", False):
+            _safe_cancel_awaitable(awaitable)
+    
+&gt;           raise exc.MissingGreenlet(
+                "greenlet_spawn has not been called; can't call await_only() "
+                "here. Was IO attempted in an unexpected place?"
+            )
+E           sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/20/xd2s)
+
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:123: MissingGreenlet</failure></testcase><testcase classname="tests.test_programme_rubric_reconciliation" name="test_rubric_repair_rejects_plan_mass_assignment[status]" time="1.225"><failure message="sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/20/xd2s)">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000002774A751FD0&gt;
+event = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] Event object at 0x2774aa7b390&gt;
+super_admin = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] User object at 0x2774cccdc70&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002774B28F7E0&gt;
+extra = 'status'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("extra", ["reviewer_ids", "scope_filter", "status", "event_id", "organization_id"])
+    async def test_rubric_repair_rejects_plan_mass_assignment(db, event, super_admin, monkeypatch, extra):
+        row = plan(event)
+        db.add(row)
+        await db.commit()
+        await scan(db, event, super_admin, monkeypatch)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            with pytest.raises(HTTPException) as denied:
+                await repair(db, row.id, super_admin, document={"rubric": criteria(1), extra: []})
+            assert denied.value.status_code == 422
+&gt;       async with TenantContextGuard.scoped(db, event.organization_id):
+                                                 ^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_programme_rubric_reconciliation.py:156: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:569: in __get__
+    return self.impl.get(state, dict_)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:1096: in get
+    value = self._fire_loader_callables(state, key, passive)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:1126: in _fire_loader_callables
+    return state._load_expired(state, passive)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\state.py:828: in _load_expired
+    self.manager.expired_attribute_loader(self, toload, passive)
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:1674: in load_scalar_attributes
+    result = load_on_ident(
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:510: in load_on_ident
+    return load_on_pk_identity(
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:695: in load_on_pk_identity
+    session.execute(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2372: in execute
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2368: in _handle_dbapi_exception
+    raise exc_info[1].with_traceback(exc_info[2])
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+awaitable = &lt;coroutine object AsyncAdapt_asyncpg_cursor._prepare_and_execute at 0x000002774C6F0D60&gt;
+
+    def await_only(awaitable: Awaitable[_T]) -&gt; _T:
+        """Awaits an async function in a sync method.
+    
+        The sync method must be inside a :func:`greenlet_spawn` context.
+        :func:`await_only` calls cannot be nested.
+    
+        :param awaitable: The coroutine to call.
+    
+        """
+        # this is called in the context greenlet while running fn
+        current = getcurrent()
+        if not getattr(current, "__sqlalchemy_greenlet_provider__", False):
+            _safe_cancel_awaitable(awaitable)
+    
+&gt;           raise exc.MissingGreenlet(
+                "greenlet_spawn has not been called; can't call await_only() "
+                "here. Was IO attempted in an unexpected place?"
+            )
+E           sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/20/xd2s)
+
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:123: MissingGreenlet</failure></testcase><testcase classname="tests.test_programme_rubric_reconciliation" name="test_rubric_repair_rejects_plan_mass_assignment[event_id]" time="1.558"><failure message="sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/20/xd2s)">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000002774A6D29C0&gt;
+event = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] Event object at 0x2774aa7bb10&gt;
+super_admin = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] User object at 0x2774b2e73f0&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002774CAE5FD0&gt;
+extra = 'event_id'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("extra", ["reviewer_ids", "scope_filter", "status", "event_id", "organization_id"])
+    async def test_rubric_repair_rejects_plan_mass_assignment(db, event, super_admin, monkeypatch, extra):
+        row = plan(event)
+        db.add(row)
+        await db.commit()
+        await scan(db, event, super_admin, monkeypatch)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            with pytest.raises(HTTPException) as denied:
+                await repair(db, row.id, super_admin, document={"rubric": criteria(1), extra: []})
+            assert denied.value.status_code == 422
+&gt;       async with TenantContextGuard.scoped(db, event.organization_id):
+                                                 ^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_programme_rubric_reconciliation.py:156: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:569: in __get__
+    return self.impl.get(state, dict_)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:1096: in get
+    value = self._fire_loader_callables(state, key, passive)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:1126: in _fire_loader_callables
+    return state._load_expired(state, passive)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\state.py:828: in _load_expired
+    self.manager.expired_attribute_loader(self, toload, passive)
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:1674: in load_scalar_attributes
+    result = load_on_ident(
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:510: in load_on_ident
+    return load_on_pk_identity(
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:695: in load_on_pk_identity
+    session.execute(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2372: in execute
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2368: in _handle_dbapi_exception
+    raise exc_info[1].with_traceback(exc_info[2])
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+awaitable = &lt;coroutine object AsyncAdapt_asyncpg_cursor._prepare_and_execute at 0x000002774C6F1150&gt;
+
+    def await_only(awaitable: Awaitable[_T]) -&gt; _T:
+        """Awaits an async function in a sync method.
+    
+        The sync method must be inside a :func:`greenlet_spawn` context.
+        :func:`await_only` calls cannot be nested.
+    
+        :param awaitable: The coroutine to call.
+    
+        """
+        # this is called in the context greenlet while running fn
+        current = getcurrent()
+        if not getattr(current, "__sqlalchemy_greenlet_provider__", False):
+            _safe_cancel_awaitable(awaitable)
+    
+&gt;           raise exc.MissingGreenlet(
+                "greenlet_spawn has not been called; can't call await_only() "
+                "here. Was IO attempted in an unexpected place?"
+            )
+E           sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/20/xd2s)
+
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:123: MissingGreenlet</failure></testcase><testcase classname="tests.test_programme_rubric_reconciliation" name="test_rubric_repair_rejects_plan_mass_assignment[organization_id]" time="1.524"><failure message="sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/20/xd2s)">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000002774A6D1E10&gt;
+event = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] Event object at 0x2774cca1810&gt;
+super_admin = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] User object at 0x2774b2b5630&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002774CAE5630&gt;
+extra = 'organization_id'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("extra", ["reviewer_ids", "scope_filter", "status", "event_id", "organization_id"])
+    async def test_rubric_repair_rejects_plan_mass_assignment(db, event, super_admin, monkeypatch, extra):
+        row = plan(event)
+        db.add(row)
+        await db.commit()
+        await scan(db, event, super_admin, monkeypatch)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            with pytest.raises(HTTPException) as denied:
+                await repair(db, row.id, super_admin, document={"rubric": criteria(1), extra: []})
+            assert denied.value.status_code == 422
+&gt;       async with TenantContextGuard.scoped(db, event.organization_id):
+                                                 ^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_programme_rubric_reconciliation.py:156: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:569: in __get__
+    return self.impl.get(state, dict_)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:1096: in get
+    value = self._fire_loader_callables(state, key, passive)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\attributes.py:1126: in _fire_loader_callables
+    return state._load_expired(state, passive)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\state.py:828: in _load_expired
+    self.manager.expired_attribute_loader(self, toload, passive)
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:1674: in load_scalar_attributes
+    result = load_on_ident(
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:510: in load_on_ident
+    return load_on_pk_identity(
+.venv\Lib\site-packages\sqlalchemy\orm\loading.py:695: in load_on_pk_identity
+    session.execute(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2372: in execute
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2368: in _handle_dbapi_exception
+    raise exc_info[1].with_traceback(exc_info[2])
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+awaitable = &lt;coroutine object AsyncAdapt_asyncpg_cursor._prepare_and_execute at 0x000002774C6F1540&gt;
+
+    def await_only(awaitable: Awaitable[_T]) -&gt; _T:
+        """Awaits an async function in a sync method.
+    
+        The sync method must be inside a :func:`greenlet_spawn` context.
+        :func:`await_only` calls cannot be nested.
+    
+        :param awaitable: The coroutine to call.
+    
+        """
+        # this is called in the context greenlet while running fn
+        current = getcurrent()
+        if not getattr(current, "__sqlalchemy_greenlet_provider__", False):
+            _safe_cancel_awaitable(awaitable)
+    
+&gt;           raise exc.MissingGreenlet(
+                "greenlet_spawn has not been called; can't call await_only() "
+                "here. Was IO attempted in an unexpected place?"
+            )
+E           sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/20/xd2s)
+
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:123: MissingGreenlet</failure></testcase><testcase classname="tests.test_programme_rubric_reconciliation" name="test_committed_score_prevents_rubric_repair_and_rolls_back_receipt" time="1.339"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR NO KEY UPDATE cannot be applied to the nullable side of an outer join&#10;[SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 &#10;FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id &#10;WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND lower(events.events.status) != $3::VARCHAR AND events.events.organization_id = $4::UUID FOR NO KEY UPDATE]&#10;[parameters: (UUID('35ebc17d-d68c-4656-b643-d5371b80d58e'), UUID('31cd72b9-ad0a-4d9b-a845-65bd70ae3757'), 'archived', UUID('31cd72b9-ad0a-4d9b-a845-65bd70ae3757'))]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">self = &lt;sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_cursor object at 0x000002774B2CE3E0&gt;
+operation = 'SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.event... IS NULL AND lower(events.events.status) != $3::VARCHAR AND events.events.organization_id = $4::UUID FOR NO KEY UPDATE'
+parameters = (UUID('35ebc17d-d68c-4656-b643-d5371b80d58e'), UUID('31cd72b9-ad0a-4d9b-a845-65bd70ae3757'), 'archived', UUID('31cd72b9-ad0a-4d9b-a845-65bd70ae3757'))
+
+    async def _prepare_and_execute(self, operation, parameters):
+        adapt_connection = self._adapt_connection
+    
+        async with adapt_connection._execute_mutex:
+            if not adapt_connection._started:
+                await adapt_connection._start_transaction()
+    
+            if parameters is None:
+                parameters = ()
+    
+            try:
+                prepared_stmt, attributes = await adapt_connection._prepare(
+                    operation, self._invalidate_schema_cache_asof
+                )
+    
+                if attributes:
+                    self.description = [
+                        (
+                            attr.name,
+                            attr.type.oid,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        for attr in attributes
+                    ]
+                else:
+                    self.description = None
+    
+                if self.server_side:
+                    self._cursor = await prepared_stmt.cursor(*parameters)
+                    self.rowcount = -1
+                else:
+&gt;                   self._rows = deque(await prepared_stmt.fetch(*parameters))
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+&gt;   ???
+E   asyncpg.exceptions.FeatureNotSupportedError: FOR NO KEY UPDATE cannot be applied to the nullable side of an outer join
+
+asyncpg/protocol/protocol.pyx:205: FeatureNotSupportedError
+
+The above exception was the direct cause of the following exception:
+
+self = &lt;sqlalchemy.engine.base.Connection object at 0x000002774AF5B890&gt;
+dialect = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGDialect_asyncpg object at 0x000002774765AD50&gt;
+context = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGExecutionContext_asyncpg object at 0x000002774A6D18C0&gt;
+statement = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGCompiler_asyncpg object at 0x000002774AA79090&gt;
+parameters = [(UUID('35ebc17d-d68c-4656-b643-d5371b80d58e'), UUID('31cd72b9-ad0a-4d9b-a845-65bd70ae3757'), 'archived', UUID('31cd72b9-ad0a-4d9b-a845-65bd70ae3757'))]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -&gt; CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+&gt;                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x000002774AF5B020&gt;&gt;
+error = FeatureNotSupportedError('FOR NO KEY UPDATE cannot be applied to the nullable side of an outer join')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR NO KEY UPDATE cannot be applied to the nullable side of an outer join
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: Error
+
+The above exception was the direct cause of the following exception:
+
+db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000002774AF77950&gt;
+event = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] Event object at 0x2774aa7b390&gt;
+super_admin = &lt;[MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place?") raised in repr()] User object at 0x27748692f90&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002774B2C5DA0&gt;
+
+    @pytest.mark.asyncio
+    async def test_committed_score_prevents_rubric_repair_and_rolls_back_receipt(db, event, super_admin, monkeypatch):
+        row = plan(event)
+        db.add(row)
+        review = await add_review(db, event)
+        await db.commit()
+        await scan(db, event, super_admin, monkeypatch)
+        key = f"graded-rubric-{uuid.uuid4()}"
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            with pytest.raises(HTTPException) as denied:
+&gt;               await repair(db, row.id, super_admin, key=key)
+
+tests\test_programme_rubric_reconciliation.py:171: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_programme_rubric_reconciliation.py:45: in repair
+    return await repair_aggregate_document(db, resource_type="PROGRAMME_RUBRIC", resource_id=row_id,
+app\modules\registration\application\aggregate_reconciliation.py:137: in repair_aggregate_document
+    owned_event = await lock_scoring_event(db, organization_id=target_organization,
+app\modules\programme\rubric_integrity.py:13: in lock_scoring_event
+    row = await db.scalar(select(Event).where(Event.id == event_id,
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:504: in scalar
+    return await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2420: in scalar
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x000002774AF5B020&gt;&gt;
+error = FeatureNotSupportedError('FOR NO KEY UPDATE cannot be applied to the nullable side of an outer join')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR NO KEY UPDATE cannot be applied to the nullable side of an outer join
+E                   [SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 
+E                   FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id 
+E                   WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND lower(events.events.status) != $3::VARCHAR AND events.events.organization_id = $4::UUID FOR NO KEY UPDATE]
+E                   [parameters: (UUID('35ebc17d-d68c-4656-b643-d5371b80d58e'), UUID('31cd72b9-ad0a-4d9b-a845-65bd70ae3757'), 'archived', UUID('31cd72b9-ad0a-4d9b-a845-65bd70ae3757'))]
+E                   (Background on this error at: https://sqlalche.me/e/20/dbapi)
+
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: DBAPIError</failure></testcase><testcase classname="tests.test_programme_rubric_reconciliation" name="test_new_durable_stream_must_finish_rubric_stage" time="3.630" /><testcase classname="tests.test_programme_rubric_reconciliation" name="test_completed_legacy_stream_cannot_claim_rubric_coverage" time="0.481" /><testcase classname="tests.test_catalogue_durable_pages" name="test_global_then_205_owned_categories_survive_missing_continuation_publish" time="4.464" /><testcase classname="tests.test_catalogue_durable_pages" name="test_checkpoint_audit_failure_rolls_back_flushed_page_and_cursor" time="2.386" /><testcase classname="tests.test_catalogue_durable_pages" name="test_lost_initial_message_reclaims_generation_and_rejects_old_message" time="1.076" /><testcase classname="tests.test_catalogue_durable_pages" name="test_legacy_dispatched_run_is_not_reported_complete" time="0.413" /><testcase classname="tests.test_catalogue_durable_pages" name="test_committed_platform_revocation_stops_page_execution" time="0.802" /><testcase classname="tests.test_catalogue_durable_pages" name="test_database_rejects_invalid_work_ownership_stage_and_completion[owner]" time="0.409" /><testcase classname="tests.test_catalogue_durable_pages" name="test_database_rejects_invalid_work_ownership_stage_and_completion[stage]" time="0.424" /><testcase classname="tests.test_catalogue_durable_pages" name="test_database_rejects_invalid_work_ownership_stage_and_completion[counter]" time="0.441" /><testcase classname="tests.test_catalogue_durable_pages" name="test_database_rejects_invalid_work_ownership_stage_and_completion[fake_completion]" time="2.190" /></testsuite></testsuites>

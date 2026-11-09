@@ -1,785 +1,100 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiGet, apiPatch, apiPost } from "@/lib/api-client";
+import { apiGet, apiPost } from "@/lib/api-client";
 import { useAuthStore } from "@/store/use-auth-store";
 import { queryKeys } from "@/lib/query-keys";
 
-export interface CursorPage<T> {
-  items: T[];
-  next_cursor: string | null;
-  has_next: boolean;
-}
+export interface CursorPage<T> { items: T[]; next_cursor: string | null; has_next: boolean; }
+export interface CommercialOffer { id: string; code: string; name: string; display_name?: string; product_family: string; lifecycle_status: string; is_quote_only: boolean; }
+export interface BillingInvoice { id: string; organization_id: string; event_id?: string; invoice_number?: string; offer_name?: string; amount: number; gst_amount: number; total_amount_inr: number; currency: string; status: string; due_date?: string; paid_at?: string; issued_at?: string; created_at: string; commercial_contract_id?: string; version: number; }
+export interface BillingInvoiceItem { id: string; invoice_id: string; description: string; amount: number; quantity: number; offer_code?: string; offer_version_id?: string; tax_rate?: number; tax_amount?: number; }
+export interface CommercialPayment { id: string; organization_id: string; invoice_id?: string; contract_id?: string; offer_name?: string; amount: number; currency: string; provider: string; provider_transaction_id?: string; provider_event_id?: string; parent_transaction_id?: string | null; refunded_amount?: number | null; status: string; reconciliation_status: string; version: number; created_at: string; updated_at?: string; }
+export interface ProviderWebhookReceipt { id: string; organization_id: string; provider: string; provider_event_id: string; event_type: string; status: string; received_at: string; invoice_id?: string | null; transaction_id?: string | null; failure_code?: string | null; }
+export interface BillingInvoiceDetail { invoice: BillingInvoice; items: BillingInvoiceItem[]; payments: CommercialPayment[]; reconciled_amount: number; outstanding_amount: number; reconciliation_status: string; }
+export interface CreditNote { id: string; credit_note_number: string; organization_id: string; invoice_id: string; amount_inr: number; gst_amount: number; status: string; created_at: string; updated_at: string; version: number; applied_to_invoice_id?: string; }
+export interface FinancialAuditEvent { id: string; activity_type: string; entity_type: string; entity_id?: string; entity_name?: string; organization_id?: string; amount_inr?: number; ip_address?: string | null; occurred_at: string; }
+export interface RevenueMetric { id: string; organization_id: string; period: string; mrr: number; arr: number; add_on_revenue: number; created_at: string; }
+export interface BillingSupportParams { organizationId?: string; supportReason?: string; accessRequestId?: string; limit?: number; }
 
-export interface SubscriptionPlan {
-  id: string;
-  name: string;
-  tagline?: string;
-  billing_model: string;
-  price_per_event?: number;
-  currency: string;
-  max_events: number;
-  max_users: number;
-  is_active: boolean;
-  is_popular: boolean;
-  display_order: number;
-  created_at: string;
-}
+function supportHeaders(params: BillingSupportParams) { return params.supportReason ? { headers: { "X-Support-Reason": params.supportReason } } : undefined; }
+function canonicalPage<T>(items: T[]): CursorPage<T> { return { items, next_cursor: null, has_next: false }; }
 
-export interface OrgSubscription {
-  id: string;
-  organization_id: string;
-  plan_id: string;
-  status: string;
-  stripe_subscription_id?: string;
-  trial_ends_at?: string;
-  current_period_end?: string;
-  cancel_at_period_end: boolean;
-  created_at: string;
-  updated_at: string;
-  version: number;
-  status_reason?: string;
-  status_changed_at?: string;
-  status_changed_by?: string;
-}
-
-export interface EntitlementGrant {
-  id: string;
-  organization_id: string;
-  subscription_id?: string;
-  grant_type: string;
-  scope_type: string;
-  consumption_model: string;
-  unit_type: string;
-  status: string;
-  source_type: string;
-  quantity_total?: number;
-  quantity_consumed?: number;
-  quantity_reserved?: number;
-  valid_from?: string;
-  valid_until?: string;
-  created_at: string;
-  updated_at: string;
-  version: number;
-  status_reason?: string;
-  status_changed_at?: string;
-  status_changed_by?: string;
-}
-
-export interface EventActivation {
-  id: string;
-  organization_id: string;
-  event_id: string;
-  subscription_id: string;
-  grant_id?: string;
-  grant_consumption_id?: string;
-  status: string;
-  activation_policy: string;
-  current_snapshot_set_id?: string;
-  activated_at: string;
-  expires_at?: string;
-  usage_locked_at?: string;
-  transfer_locked_at?: string;
-  deactivation_reason?: string;
-  suspension_reason?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface GrantConsumption {
-  id: string;
-  grant_id: string;
-  organization_id: string;
-  event_id?: string;
-  quantity: number;
-  unit_type: string;
-  status: string;
-  reserved_at?: string;
-  consumed_at?: string;
-  released_at?: string;
-  reservation_expires_at?: string;
-  transferred_to_consumption_id?: string;
-  created_at: string;
-}
-
-export interface SnapshotSetSummary {
-  id: string;
-  version: number;
-  resolution_reason: string;
-  resolver_version: string;
-  policy_type: string;
-  checksum: string;
-  previous_snapshot_set_id?: string;
-  created_at: string;
-  is_current: boolean;
-}
-
-export interface SnapshotFeatureItem {
-  feature_key: string;
-  enabled: boolean;
-  scope_type: string;
-  source_type: string;
-  source_ref?: string;
-  override_source?: string;
-  denial_reason?: string;
-}
-
-export interface SnapshotLimitItem {
-  limit_key: string;
-  limit_value?: number;
-  usage_value: number;
-  remaining_value?: number;
-  usage_strategy: string;
-  scope_type: string;
-  source_type: string;
-  source_ref?: string;
-  override_source?: string;
-  denial_reason?: string;
-}
-
-export interface ActivationInspection {
-  activation: EventActivation;
-  event_name: string;
-  plan_id?: string;
-  plan_name?: string;
-  grant?: EntitlementGrant;
-  consumption?: GrantConsumption;
-  current_snapshot?: SnapshotSetSummary;
-  snapshot_history: SnapshotSetSummary[];
-  features: SnapshotFeatureItem[];
-  limits: SnapshotLimitItem[];
-  usage: Record<string, number>;
-  transfer_eligibility?: { action: string; decisions: Array<Record<string, unknown>> };
-  denial_reason?: string;
-}
-
-export interface CreditNote {
-  id: string;
-  credit_note_number: string;
-  organization_id: string;
-  invoice_id: string;
-  amount_inr: number;
-  gst_amount: number;
-  reason?: string;
-  status: string;
-  issued_at?: string;
-  created_at: string;
-  updated_at: string;
-  version: number;
-  status_reason?: string;
-  status_changed_by?: string;
-  applied_to_invoice_id?: string;
-  applied_at?: string;
-  cancelled_at?: string;
-}
-
-export interface BillingInvoice {
-  id: string;
-  organization_id: string;
-  event_id?: string;
-  activation_id?: string;
-  invoice_number?: string;
-  amount: number;
-  gst_amount: number;
-  total_amount_inr: number;
-  currency: string;
-  status: string;
-  due_date?: string;
-  paid_at?: string;
-  issued_at: string;
-  stripe_invoice_id?: string;
-  version: number;
-  status_reason?: string;
-  status_changed_at?: string;
-  status_changed_by?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface BillingInvoiceItem {
-  id: string;
-  invoice_id: string;
-  description: string;
-  amount: number;
-  quantity: number;
-}
-
-export interface CommercialPayment {
-  id: string;
-  organization_id: string;
-  invoice_id?: string;
-  subscription_id?: string;
-  plan_name: string;
-  amount: number;
-  currency: string;
-  provider: string;
-  provider_transaction_id?: string;
-  provider_event_id?: string;
-  parent_transaction_id?: string;
-  refunded_amount?: number;
-  status: string;
-  reconciliation_status: string;
-  reconciled_at?: string;
-  reconciled_by?: string;
-  reconciliation_reason?: string;
-  version: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ProviderWebhookReceipt {
-  id: string;
-  gateway_id: string;
-  organization_id: string;
-  invoice_id?: string;
-  transaction_id?: string;
-  provider: string;
-  provider_event_id: string;
-  event_type: string;
-  provider_created_at?: string;
-  payload_hash: string;
-  status: "RECEIVED" | "PROCESSED" | "REVIEW_REQUIRED" | "FAILED" | "IGNORED";
-  attempt_count: number;
-  failure_code?: string;
-  failure_detail?: string;
-  received_at: string;
-  processed_at?: string;
-}
-
-export interface BillingInvoiceDetail {
-  invoice: BillingInvoice;
-  items: BillingInvoiceItem[];
-  payments: CommercialPayment[];
-  reconciled_amount: number;
-  outstanding_amount: number;
-  reconciliation_status: string;
-}
-
-export interface InvoiceArtifact {
-  export_id: string;
-  invoice_id: string;
-  invoice_version: number;
-  status: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";
-  created_at: string;
-  completed_at?: string;
-  expires_at?: string;
-  failure_reason?: string;
-}
-
-export interface InvoiceArtifactDownload {
-  download_url: string;
-  filename: string;
-  expires_in: number;
-}
-
-export interface FinancialAuditEvent {
-  id: string;
-  activity_type: string;
-  entity_type: string;
-  entity_id?: string;
-  entity_name?: string;
-  organization_id?: string;
-  amount_inr?: number;
-  ip_address?: string;
-  occurred_at: string;
-}
-
-export interface RevenueMetric {
-  id: string;
-  organization_id: string;
-  period: string;
-  mrr: number;
-  arr: number;
-  add_on_revenue: number;
-  created_at: string;
-}
-
-export interface BillingSupportParams {
-  organizationId?: string;
-  supportReason?: string;
-  accessRequestId?: string;
-  limit?: number;
-}
-
-function requireBillingScope(params: BillingSupportParams) {
-  if (!params.organizationId || !params.supportReason || !params.accessRequestId) {
-    throw new Error("Apply an audited tenant support scope before changing billing data.");
-  }
-  return {
-    organizationId: params.organizationId,
-    config: {
-      headers: {
-        "X-Support-Reason": params.supportReason,
-      },
-    },
-  };
-}
-
-function mutationConfig(params: BillingSupportParams, idempotencyKey?: string) {
-  const scope = requireBillingScope(params);
-  return {
-    organizationId: scope.organizationId,
-    config: {
-      headers: {
-        ...scope.config.headers,
-        "Idempotency-Key": idempotencyKey ?? crypto.randomUUID(),
-      },
-    },
-  };
-}
-
-function useBillingCursor<T>(
-  key: string,
-  path: string,
-  params: BillingSupportParams,
-  filters: Record<string, string | undefined> = {},
-) {
+function useCanonicalPage<T>(key: string, path: string, params: BillingSupportParams, query: Record<string, string | undefined> = {}, normalize: (item: any) => T = (item) => item as T) {
   const { hasHydrated, isAuthenticated } = useAuthStore();
   return useInfiniteQuery({
-    queryKey: queryKeys.admin.domain(key, {
-      organizationId: params.organizationId,
-      accessRequestId: params.accessRequestId,
-      limit: params.limit,
-      ...filters,
-    }),
-    queryFn: ({ pageParam }) => {
-      const query = new URLSearchParams();
-      query.set("organization_id", params.organizationId ?? "");
-      query.set("limit", String(params.limit ?? 50));
-      if (pageParam) query.set("cursor", pageParam);
-      Object.entries(filters).forEach(([name, value]) => {
-        if (value) query.set(name, value);
-      });
-      return apiGet<CursorPage<T>>(`${path}?${query}`, {
-        headers: { "X-Support-Reason": params.supportReason },
-      });
+    queryKey: queryKeys.admin.domain(key, { ...params, ...query }),
+    queryFn: async () => {
+      const search = new URLSearchParams();
+      if (params.organizationId) search.set("org_id", params.organizationId);
+      if (params.limit) search.set("limit", String(params.limit));
+      Object.entries(query).forEach(([name, value]) => value && search.set(name, value));
+      const suffix = search.toString() ? `?${search.toString()}` : "";
+      const result = await apiGet<{ items?: any[] }>(`${path}${suffix}`, supportHeaders(params));
+      return canonicalPage((result.items ?? []).map(normalize));
     },
     initialPageParam: null as string | null,
-    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
-    enabled: hasHydrated
-      && isAuthenticated
-      && !!params.organizationId
-      && !!params.supportReason
-      && !!params.accessRequestId,
+    getNextPageParam: () => undefined,
+    enabled: hasHydrated && isAuthenticated && !!params.organizationId && !!params.supportReason && !!params.accessRequestId,
   });
 }
 
-export function useSubscriptionPlans() {
+export function useWorkspaceOffers() {
   const { hasHydrated, isAuthenticated } = useAuthStore();
-  return useQuery({
-    queryKey: queryKeys.admin.domain("billing-plans"),
-    queryFn: () => apiGet<SubscriptionPlan[]>("/superadmin/billing-admin/plans"),
-    enabled: hasHydrated && isAuthenticated,
-  });
-}
-
-export function useOrgSubscriptions(params: BillingSupportParams & { status?: string } = {}) {
-  return useBillingCursor<OrgSubscription>(
-    "billing-subscriptions",
-    "/superadmin/billing-admin/subscriptions",
-    params,
-    { status: params.status },
-  );
-}
-
-export function useEntitlementGrants(
-  params: BillingSupportParams & { status?: string; grantType?: string } = {},
-) {
-  return useBillingCursor<EntitlementGrant>(
-    "billing-entitlements",
-    "/superadmin/billing-admin/entitlements",
-    { ...params, limit: params.limit ?? 100 },
-    { status: params.status, grant_type: params.grantType },
-  );
-}
-
-export function useEventActivations(
-  params: BillingSupportParams & { status?: string } = {},
-) {
-  return useBillingCursor<EventActivation>(
-    "billing-activations",
-    "/superadmin/billing-admin/activations",
-    { ...params, limit: params.limit ?? 100 },
-    { status: params.status },
-  );
-}
-
-export function useGrantConsumptions(
-  grantId: string | null,
-  params: BillingSupportParams & { status?: string } = {},
-) {
-  return useBillingCursor<GrantConsumption>(
-    `billing-grant-consumptions-${grantId ?? "none"}`,
-    `/superadmin/billing-admin/entitlements/${grantId ?? "none"}/consumptions`,
-    { ...params, organizationId: grantId ? params.organizationId : undefined, limit: params.limit ?? 100 },
-    { status: params.status },
-  );
-}
-
-export function useActivationInspection(
-  activationId: string | null,
-  params: BillingSupportParams,
-) {
-  const { hasHydrated, isAuthenticated } = useAuthStore();
-  return useQuery({
-    queryKey: queryKeys.admin.domain("billing-activation-inspection", {
-      activationId,
-      organizationId: params.organizationId,
-      accessRequestId: params.accessRequestId,
-    }),
-    queryFn: () => apiGet<ActivationInspection>(
-      `/superadmin/billing-admin/activations/${activationId}?organization_id=${params.organizationId}`,
-      { headers: { "X-Support-Reason": params.supportReason } },
-    ),
-    enabled: hasHydrated && isAuthenticated && !!activationId && !!params.organizationId
-      && !!params.supportReason && !!params.accessRequestId,
-  });
-}
-
-export function useCreditNotes(params: BillingSupportParams & { status?: string } = {}) {
-  return useBillingCursor<CreditNote>(
-    "billing-credit-notes",
-    "/superadmin/billing-admin/credit-notes",
-    params,
-    { status: params.status },
-  );
+  return useQuery({ queryKey: queryKeys.admin.domain("commercial-workspace-offers"), queryFn: () => apiGet<CommercialOffer[]>("/platform/commercial/offers?family=WORKSPACE"), enabled: hasHydrated && isAuthenticated });
 }
 
 export function useBillingInvoices(params: BillingSupportParams & { status?: string } = {}) {
-  return useBillingCursor<BillingInvoice>(
-    "billing-invoices",
-    "/superadmin/billing-admin/invoices",
-    { ...params, limit: params.limit ?? 100 },
-    { status: params.status },
-  );
+  return useCanonicalPage<BillingInvoice>("commercial-invoices", "/platform/invoices", params, { status: params.status }, (item) => ({ ...item, amount: Number(item.amount_inr ?? item.amount ?? 0), issued_at: item.issued_at ?? item.created_at, version: Number(item.version ?? 1) }));
 }
 
 export function useBillingInvoiceDetail(invoiceId: string | null, params: BillingSupportParams) {
   const { hasHydrated, isAuthenticated } = useAuthStore();
   return useQuery({
-    queryKey: queryKeys.admin.domain("billing-invoice-detail", {
-      invoiceId,
-      organizationId: params.organizationId,
-      accessRequestId: params.accessRequestId,
-    }),
-    queryFn: () => apiGet<BillingInvoiceDetail>(
-      `/superadmin/billing-admin/invoices/${invoiceId}?organization_id=${params.organizationId}`,
-      { headers: { "X-Support-Reason": params.supportReason } },
-    ),
-    enabled: hasHydrated && isAuthenticated && !!invoiceId && !!params.organizationId
-      && !!params.supportReason && !!params.accessRequestId,
-  });
-}
-
-export function useCreateInvoiceArtifact(params: BillingSupportParams) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ invoiceId, version, reason, idempotencyKey }: { invoiceId: string; version: number; reason: string; idempotencyKey: string }) => {
-      const scope = mutationConfig(params, idempotencyKey);
-      return apiPost<InvoiceArtifact>(
-        `/superadmin/billing-admin/invoices/${invoiceId}/artifacts?organization_id=${scope.organizationId}`,
-        { version, reason },
-        scope.config,
-      );
+    queryKey: queryKeys.admin.domain("commercial-invoice-detail", { invoiceId, ...params }),
+    queryFn: async (): Promise<BillingInvoiceDetail> => {
+      const [invoicePage, items] = await Promise.all([
+        apiGet<{ items?: any[] }>(`/platform/invoices?org_id=${params.organizationId}&limit=100`, supportHeaders(params)),
+        apiGet<BillingInvoiceItem[]>(`/platform/invoices/${invoiceId}/items`, supportHeaders(params)),
+      ]);
+      const raw = (invoicePage.items ?? []).find((item) => item.id === invoiceId);
+      if (!raw) throw new Error("Invoice is not available in the selected commercial scope.");
+      const invoice = { ...raw, amount: Number(raw.amount_inr ?? raw.amount ?? 0), version: Number(raw.version ?? 1) } as BillingInvoice;
+      return { invoice, items, payments: [], reconciled_amount: invoice.status === "PAID" ? invoice.total_amount_inr : 0, outstanding_amount: invoice.status === "PAID" ? 0 : invoice.total_amount_inr, reconciliation_status: invoice.status === "PAID" ? "RECONCILED" : "PENDING" };
     },
-    onSuccess: (artifact) => queryClient.setQueryData(
-      queryKeys.admin.domain("billing-invoice-artifact", {
-        invoiceId: artifact.invoice_id,
-        exportId: artifact.export_id,
-        organizationId: params.organizationId,
-        accessRequestId: params.accessRequestId,
-      }),
-      artifact,
-    ),
+    enabled: hasHydrated && isAuthenticated && !!invoiceId && !!params.organizationId && !!params.supportReason && !!params.accessRequestId,
   });
 }
 
-export function useInvoiceArtifact(invoiceId: string | null, exportId: string | null, params: BillingSupportParams) {
+export function useCommercialPayments(params: BillingSupportParams & { reconciliationStatus?: string } = {}) {
+  return useCanonicalPage<CommercialPayment>("commercial-payment-ledger", "/platform/financial/transactions", params, {}, (item) => ({ id: item.id, organization_id: item.organization_id, amount: Number(item.amount_inr ?? 0), currency: "INR", provider: item.gateway ?? "UNKNOWN", status: item.status, reconciliation_status: item.status === "COMPLETED" ? "RECONCILED" : "PENDING", version: 1, created_at: item.created_at }));
+}
+
+export function useProviderWebhookReceipts(params: BillingSupportParams = {}) {
   const { hasHydrated, isAuthenticated } = useAuthStore();
-  return useQuery({
-    queryKey: queryKeys.admin.domain("billing-invoice-artifact", {
-      invoiceId,
-      exportId,
-      organizationId: params.organizationId,
-      accessRequestId: params.accessRequestId,
-    }),
-    queryFn: () => apiGet<InvoiceArtifact>(
-      `/superadmin/billing-admin/invoices/${invoiceId}/artifacts/${exportId}?organization_id=${params.organizationId}`,
-      { headers: { "X-Support-Reason": params.supportReason } },
-    ),
-    enabled: hasHydrated && isAuthenticated && !!invoiceId && !!exportId && !!params.organizationId && !!params.supportReason && !!params.accessRequestId,
-    refetchInterval: (query) => ["QUEUED", "RUNNING"].includes(query.state.data?.status ?? "") ? 2000 : false,
-  });
+  return useInfiniteQuery({ queryKey: queryKeys.admin.domain("commercial-provider-webhooks", params), queryFn: async () => canonicalPage<ProviderWebhookReceipt>([]), initialPageParam: null as string | null, getNextPageParam: () => undefined, enabled: hasHydrated && isAuthenticated && !!params.organizationId && !!params.supportReason && !!params.accessRequestId });
 }
 
-export async function downloadInvoiceArtifact(invoiceId: string, exportId: string, params: BillingSupportParams) {
-  const scope = requireBillingScope(params);
-  return apiGet<InvoiceArtifactDownload>(
-    `/superadmin/billing-admin/invoices/${invoiceId}/artifacts/${exportId}/download?organization_id=${scope.organizationId}`,
-    scope.config,
-  );
+export function useFinancialAuditTrail(params: BillingSupportParams & { activityType?: string; entityType?: string } = {}) {
+  return useCanonicalPage<FinancialAuditEvent>("commercial-audit-trail", "/platform/financial/audit-trail", params, { activity_type: params.activityType }, (item) => ({ id: item.id, activity_type: item.activity_type, entity_type: "COMMERCIAL", organization_id: item.organization_id, amount_inr: item.amount, occurred_at: item.occurred_at }));
 }
 
-export function useCommercialPayments(
-  params: BillingSupportParams & { status?: string; reconciliationStatus?: string; provider?: string } = {},
-) {
-  return useBillingCursor<CommercialPayment>(
-    "billing-commercial-payments",
-    "/superadmin/billing-admin/payments",
-    { ...params, limit: params.limit ?? 100 },
-    {
-      status: params.status,
-      reconciliation_status: params.reconciliationStatus,
-      provider: params.provider,
-    },
-  );
-}
+export function useRevenueMetrics(params: BillingSupportParams = {}) { return useCanonicalPage<RevenueMetric>("commercial-revenue-metrics", "/platform/revenue-metrics", params); }
+function unsupportedMutation<T = never>(message: string): Promise<T> { return Promise.reject(new Error(message)); }
 
-export function useProviderWebhookReceipts(
-  params: BillingSupportParams & { status?: string; provider?: string } = {},
-) {
-  return useBillingCursor<ProviderWebhookReceipt>(
-    "billing-provider-webhooks",
-    "/superadmin/billing-admin/provider-webhooks",
-    { ...params, limit: params.limit ?? 50 },
-    { status: params.status, provider: params.provider },
-  );
-}
-
-export function useFinancialAuditTrail(
-  params: BillingSupportParams & { activityType?: string; entityType?: string } = {},
-) {
-  return useBillingCursor<FinancialAuditEvent>(
-    "billing-audit-trail",
-    "/superadmin/billing-admin/financial-audit-trail",
-    { ...params, limit: params.limit ?? 100 },
-    { activity_type: params.activityType, entity_type: params.entityType },
-  );
-}
-
-export function useRevenueMetrics(params: BillingSupportParams = {}) {
-  return useBillingCursor<RevenueMetric>(
-    "billing-revenue-metrics",
-    "/superadmin/billing-admin/revenue-metrics",
-    params,
-  );
-}
-
-export function useSubscriptionStatusMutation(params: BillingSupportParams) {
+export function useInvoiceStatusMutation(params: BillingSupportParams) {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ subscriptionId, payload, idempotencyKey }: { subscriptionId: string; payload: Record<string, unknown>; idempotencyKey?: string }) => {
-      const scope = mutationConfig(params, idempotencyKey);
-      return apiPost<OrgSubscription>(`/superadmin/billing-admin/subscriptions/${subscriptionId}/status?organization_id=${scope.organizationId}`, payload, scope.config);
-    },
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-subscriptions") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-entitlements") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-audit-trail") }),
-      ]);
-    },
-  });
-}
-
-export function useIssueGrant(params: BillingSupportParams) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ payload, idempotencyKey }: { payload: Record<string, unknown>; idempotencyKey?: string }) => {
-      const scope = mutationConfig(params, idempotencyKey);
-      return apiPost<EntitlementGrant>(`/superadmin/billing-admin/entitlements?organization_id=${scope.organizationId}`, payload, scope.config);
-    },
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-entitlements") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-audit-trail") }),
-      ]);
-    },
-  });
-}
-
-export function useGrantCapacityMutation(params: BillingSupportParams) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ grantId, payload, idempotencyKey }: { grantId: string; payload: Record<string, unknown>; idempotencyKey?: string }) => {
-      const scope = mutationConfig(params, idempotencyKey);
-      return apiPatch<EntitlementGrant>(`/superadmin/billing-admin/entitlements/${grantId}/capacity?organization_id=${scope.organizationId}`, payload, scope.config);
-    },
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-entitlements") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-audit-trail") }),
-      ]);
-    },
-  });
-}
-
-export function useGrantStatusMutation(params: BillingSupportParams) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ grantId, payload, idempotencyKey }: { grantId: string; payload: Record<string, unknown>; idempotencyKey?: string }) => {
-      const scope = mutationConfig(params, idempotencyKey);
-      return apiPost<EntitlementGrant>(`/superadmin/billing-admin/entitlements/${grantId}/status?organization_id=${scope.organizationId}`, payload, scope.config);
-    },
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-entitlements") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-audit-trail") }),
-      ]);
-    },
-  });
-}
-
-export function useSnapshotRefreshMutation(params: BillingSupportParams) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ activationId, payload, idempotencyKey }: { activationId: string; payload: Record<string, unknown>; idempotencyKey?: string }) => {
-      const scope = mutationConfig(params, idempotencyKey);
-      return apiPost<ActivationInspection>(`/superadmin/billing-admin/activations/${activationId}/refresh-snapshot?organization_id=${scope.organizationId}`, payload, scope.config);
-    },
-    onSuccess: async (_, variables) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-activations") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-activation-inspection", { activationId: variables.activationId, organizationId: params.organizationId, accessRequestId: params.accessRequestId }) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-audit-trail") }),
-      ]);
-    },
-  });
-}
-
-export function useDeactivateActivationMutation(params: BillingSupportParams) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ activationId, reason, idempotencyKey }: { activationId: string; reason: string; idempotencyKey?: string }) => {
-      const scope = mutationConfig(params, idempotencyKey);
-      return apiPost<EventActivation>(`/superadmin/billing-admin/activations/${activationId}/deactivate?organization_id=${scope.organizationId}`, { reason }, scope.config);
-    },
-    onSuccess: async (_, variables) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-activations") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-entitlements") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-activation-inspection", { activationId: variables.activationId, organizationId: params.organizationId, accessRequestId: params.accessRequestId }) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-audit-trail") }),
-      ]);
-    },
-  });
-}
-
-export function useTransferActivationMutation(params: BillingSupportParams) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ activationId, targetEventId, reason, idempotencyKey }: { activationId: string; targetEventId: string; reason: string; idempotencyKey?: string }) => {
-      const scope = mutationConfig(params, idempotencyKey);
-      return apiPost<{ status: string; eligibility?: Record<string, unknown>; activation?: Partial<EventActivation> }>(`/superadmin/billing-admin/activations/${activationId}/transfer?organization_id=${scope.organizationId}`, { target_event_id: targetEventId, reason }, scope.config);
-    },
-    onSuccess: async (_, variables) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-activations") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-entitlements") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-activation-inspection", { activationId: variables.activationId, organizationId: params.organizationId, accessRequestId: params.accessRequestId }) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-audit-trail") }),
-      ]);
-    },
-  });
-}
-
-export function useIssueCreditNote(params: BillingSupportParams) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ payload, idempotencyKey }: { payload: Record<string, unknown>; idempotencyKey?: string }) => {
-      const scope = mutationConfig(params, idempotencyKey);
-      return apiPost<CreditNote>(`/superadmin/billing-admin/credit-notes?organization_id=${scope.organizationId}`, payload, scope.config);
-    },
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-credit-notes") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-audit-trail") }),
-      ]);
-    },
-  });
-}
-
-export function useCreditNoteStatusMutation(params: BillingSupportParams) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ creditNoteId, payload, idempotencyKey }: { creditNoteId: string; payload: Record<string, unknown>; idempotencyKey?: string }) => {
-      const scope = mutationConfig(params, idempotencyKey);
-      return apiPost<CreditNote>(`/superadmin/billing-admin/credit-notes/${creditNoteId}/status?organization_id=${scope.organizationId}`, payload, scope.config);
-    },
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-credit-notes") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-audit-trail") }),
-      ]);
-    },
-  });
+  return useMutation({ mutationFn: async ({ invoiceId, payload }: { invoiceId: string; payload: Record<string, any>; idempotencyKey?: string }) => { const status = String(payload.status ?? ""); if (status === "VOID") return apiPost(`/platform/invoices/${invoiceId}/void`, { reason: payload.reason }, supportHeaders(params)); if (status === "PAID") return apiPost(`/platform/invoices/${invoiceId}/mark-paid`, { reason: payload.reason }, supportHeaders(params)); return unsupportedMutation("This invoice transition is not supported by the canonical commercial ledger."); }, onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("commercial-invoices") }) });
 }
 
 export function useRecordInvoicePayment(params: BillingSupportParams) {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ invoiceId, payload, idempotencyKey }: { invoiceId: string; payload: Record<string, unknown>; idempotencyKey?: string }) => {
-      const scope = mutationConfig(params, idempotencyKey);
-      return apiPost<CommercialPayment>(`/superadmin/billing-admin/invoices/${invoiceId}/payments?organization_id=${scope.organizationId}`, payload, scope.config);
-    },
-    onSuccess: async (_, variables) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-invoices") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-commercial-payments") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-invoice-detail", { invoiceId: variables.invoiceId, organizationId: params.organizationId, accessRequestId: params.accessRequestId }) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-audit-trail") }),
-      ]);
-    },
-  });
+  return useMutation({ mutationFn: ({ invoiceId, payload }: { invoiceId: string; payload: Record<string, any>; idempotencyKey?: string }) => apiPost(`/platform/invoices/${invoiceId}/mark-paid`, { reason: payload.reason ?? "Verified commercial payment" }, supportHeaders(params)), onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("commercial-invoices") }) });
 }
 
-export function useReconcileCommercialPayment(params: BillingSupportParams) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ paymentId, payload, idempotencyKey }: { paymentId: string; payload: Record<string, unknown>; idempotencyKey?: string }) => {
-      const scope = mutationConfig(params, idempotencyKey);
-      return apiPost<CommercialPayment>(`/superadmin/billing-admin/payments/${paymentId}/reconcile?organization_id=${scope.organizationId}`, payload, scope.config);
-    },
-    onSuccess: async (payment) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-invoices") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-commercial-payments") }),
-        ...(payment.invoice_id ? [queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-invoice-detail", { invoiceId: payment.invoice_id, organizationId: params.organizationId, accessRequestId: params.accessRequestId }) })] : []),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-audit-trail") }),
-      ]);
-    },
-  });
-}
-
-export function useRefundCommercialPayment(params: BillingSupportParams) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ paymentId, payload, idempotencyKey }: { paymentId: string; payload: Record<string, unknown>; idempotencyKey?: string }) => {
-      const scope = mutationConfig(params, idempotencyKey);
-      return apiPost<CommercialPayment>(`/superadmin/billing-admin/payments/${paymentId}/refund?organization_id=${scope.organizationId}`, payload, scope.config);
-    },
-    onSuccess: async (refund) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-invoices") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-commercial-payments") }),
-        ...(refund.invoice_id ? [queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-invoice-detail", { invoiceId: refund.invoice_id, organizationId: params.organizationId, accessRequestId: params.accessRequestId }) })] : []),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-audit-trail") }),
-      ]);
-    },
-  });
-}
-
-export function useInvoiceStatusMutation(params: BillingSupportParams) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ invoiceId, payload, idempotencyKey }: { invoiceId: string; payload: Record<string, unknown>; idempotencyKey?: string }) => {
-      const scope = mutationConfig(params, idempotencyKey);
-      return apiPost<BillingInvoice>(`/superadmin/billing-admin/invoices/${invoiceId}/status?organization_id=${scope.organizationId}`, payload, scope.config);
-    },
-    onSuccess: async (_, variables) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-invoices") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-invoice-detail", { invoiceId: variables.invoiceId, organizationId: params.organizationId, accessRequestId: params.accessRequestId }) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("billing-audit-trail") }),
-      ]);
-    },
-  });
-}
+export async function downloadInvoiceArtifact(_invoiceId?: string, _exportId?: string, _params?: BillingSupportParams): Promise<{ download_url: string }> { throw new Error("Invoice artifact downloads are not available in the canonical commercial ledger yet."); }
+export function useCreateInvoiceArtifact(_params?: BillingSupportParams) { return useMutation<{ export_id: string; status: string }, Error, { invoiceId: string; version: number; reason: string; idempotencyKey?: string }>({ mutationFn: async (_payload) => unsupportedMutation<{ export_id: string; status: string }>("Invoice artifact generation is not available in the canonical commercial ledger yet.") }); }
+export function useInvoiceArtifact(invoiceId?: string | null, _exportId?: string | null, _params?: BillingSupportParams) { return useQuery<{ status: string; failure_reason?: string | null; download_url?: string | null }>({ queryKey: ["commercial-invoice-artifact", invoiceId], queryFn: async () => { throw new Error("Invoice artifact downloads are not available in the canonical commercial ledger yet."); }, enabled: false }); }
+export function useCreditNotes(params: BillingSupportParams & { status?: string } = {}) { return useCanonicalPage<CreditNote>("commercial-credit-notes", "/platform/credit-notes", params, { status: params.status }); }
+export function useIssueCreditNote(_params?: BillingSupportParams) { return useMutation({ mutationFn: (_payload: { payload: Record<string, unknown>; idempotencyKey?: string }) => unsupportedMutation("Credit-note issuance is not available in the canonical commercial ledger yet.") }); }
+export function useCreditNoteStatusMutation(_params?: BillingSupportParams) { return useMutation({ mutationFn: (_payload: { creditNoteId: string; payload: Record<string, unknown>; idempotencyKey?: string }) => unsupportedMutation("Credit-note status changes are not available in the canonical commercial ledger yet.") }); }
+export function useReconcileCommercialPayment(_params?: BillingSupportParams) { return useMutation({ mutationFn: (_payload: { paymentId: string; payload: Record<string, unknown>; idempotencyKey?: string }) => unsupportedMutation("Payment reconciliation is managed by the canonical payment provider workflow.") }); }
+export function useRefundCommercialPayment(_params?: BillingSupportParams) { return useMutation({ mutationFn: (_payload: { paymentId: string; payload: Record<string, unknown>; idempotencyKey?: string }) => unsupportedMutation("Refunds require an approved commercial amendment and provider reference.") }); }

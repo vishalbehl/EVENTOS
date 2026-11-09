@@ -6,6 +6,7 @@ and meter bindings live in code so an admin edit cannot remove enforcement.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 
@@ -258,9 +259,9 @@ if set(OPERATION_ENFORCEMENT_SITES) != set(OPERATION_FEATURES):
 # None is reserved for public/device flows or policy-only evaluation.
 OPERATION_PERMISSIONS: dict[str, str | None] = {
     "events.planning.manage": "EVENTS:EDIT",
-    "branding.custom_domain.manage": None,
-    "branding.white_label.publish": None,
-    "branding.custom_login.publish": None,
+    "branding.custom_domain.manage": "organization:branding:manage",
+    "branding.white_label.publish": "organization:branding:manage",
+    "branding.custom_login.publish": "organization:branding:manage",
     "registration.manage": "PARTICIPANTS:CREATE",
     "registration.read": "PARTICIPANTS:VIEW",
     "registration.submit": None,
@@ -605,18 +606,6 @@ MUTATION_CONTROL_EXEMPTIONS: dict[str, dict[str, str]] = {
         "mode": "COMMAND_CENTER_POLICY",
         "reason": "Impersonation is governed privileged access, not a commercial capability.",
     },
-    "modules/rbac/routers/organisations.py:calculate_price": {
-        "mode": "NON_GRANTING_COMMERCIAL_WORKFLOW",
-        "reason": "Pricing preview does not activate a plan, add-on, grant, or contract.",
-    },
-    "modules/rbac/routers/organisations.py:request_commercial_access": {
-        "mode": "NON_GRANTING_COMMERCIAL_WORKFLOW",
-        "reason": "Creates a pending request and cannot grant access without Command Center approval.",
-    },
-    "modules/rbac/routers/organisations.py:subscribe_organization": {
-        "mode": "GOVERNED_DENIAL",
-        "reason": "Legacy self-subscription always directs the organizer to an approval request.",
-    },
     "modules/rbac/routers/organisations.py:superadmin_upsert_feature_override": {
         "mode": "GOVERNED_DENIAL",
         "reason": "Legacy Boolean override writes are retired in favor of typed dual approval.",
@@ -669,6 +658,19 @@ PLATFORM_HARD_CEILINGS: dict[str, int] = {
 }
 
 CATALOG_LIMIT_KEYS: dict[str, str] = {
+    # Current versioned workspace catalogue keys.
+    "active_events": "max_events",
+    "team_members": "max_users",
+    # Current versioned Event-plan catalogue keys.
+    "registrations": "max_registrations",
+    "speakers": "max_speakers",
+    "event_email_credits": "max_emails_per_event",
+    "storage_gb": "storage_quota_mb",
+    "venue_rooms": "max_rooms",
+    "venue_registration_devices": "max_devices_per_event",
+    "venue_room_devices": "max_devices_per_event",
+    "venue_srr_devices": "max_devices_per_event",
+    # Legacy catalogue aliases retained for existing contract snapshots.
     "LIMIT_EVENTS": "max_events",
     "LIMIT_ORGANIZER_USERS": "max_users",
     "LIMIT_EVENT_TEAM_MEMBERS": "max_event_team_members",
@@ -690,6 +692,11 @@ CATALOG_LIMIT_KEYS: dict[str, str] = {
     "LIMIT_EXPORTS": "max_exports_per_event",
     "LIMIT_DEVICES": "max_devices_per_event",
 }
+
+
+def unknown_active_feature_keys(keys: Iterable[str]) -> list[str]:
+    """One read-only classification rule for startup, sync and rollout checks."""
+    return sorted({key for key in keys if key not in FEATURE_DEFINITIONS and not key.startswith("LIMIT_")})
 
 
 def registry_coverage() -> dict[str, Any]:

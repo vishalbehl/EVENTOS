@@ -10,7 +10,6 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.modules.billing.models.event_activation import EventActivation
-    from app.modules.billing.models.subscription import Addon, OrganizationSubscription, SubscriptionPlan
     from app.modules.events.models.event import Event
     from app.modules.platform.models.organization import Organization
 
@@ -19,7 +18,7 @@ class EntitlementGrant(Base):
     __tablename__ = "entitlement_grants"
     __table_args__ = (
         Index("ix_entitlement_grants_org_id", "organization_id"),
-        Index("ix_entitlement_grants_subscription_id", "subscription_id"),
+        Index("ix_entitlement_grants_commercial_contract_id", "commercial_contract_id"),
         Index("ix_entitlement_grants_status", "status"),
         {"schema": "commerce"},
     )
@@ -28,8 +27,8 @@ class EntitlementGrant(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False
     )
-    subscription_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("commerce.organization_subscriptions.id", ondelete="SET NULL"), nullable=True
+    commercial_contract_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("commerce.plan_contracts.id", ondelete="SET NULL"), nullable=True
     )
     grant_type: Mapped[str] = mapped_column(String(50), nullable=False, default="EVENT_UNIT")
     scope_type: Mapped[str] = mapped_column(String(30), nullable=False, default="EVENT")
@@ -61,9 +60,6 @@ class EntitlementGrant(Base):
     )
 
     organization: Mapped["Organization"] = relationship("Organization")
-    subscription: Mapped[Optional["OrganizationSubscription"]] = relationship(
-        "OrganizationSubscription", back_populates="entitlement_grants"
-    )
     consumptions: Mapped[List["GrantConsumption"]] = relationship(
         "GrantConsumption", back_populates="grant", cascade="all, delete-orphan"
     )
@@ -245,12 +241,10 @@ class ActivationTransferPolicy(Base):
     operator: Mapped[str] = mapped_column(String(20), nullable=False, default=">=")
     threshold_value: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     action: Mapped[str] = mapped_column(String(30), nullable=False, default="ALLOW")
-    plan_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("commerce.subscription_plans.id", ondelete="CASCADE"), nullable=True
+    offer_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("commerce.plans.id", ondelete="CASCADE"), nullable=True
     )
     grant_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )
-
-    plan: Mapped[Optional["SubscriptionPlan"]] = relationship("SubscriptionPlan")

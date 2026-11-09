@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { FileUp, Upload, CheckCircle2, AlertCircle, Loader2, FileText, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { apiClient } from "@/lib/api-client";
 
 export default function GlobalPosterUploadPage() {

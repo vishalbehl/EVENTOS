@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="12" failures="1" errors="0" time="1.4497678">
+    <testsuite name="lib/api-client.test.ts" timestamp="2026-10-19T12:14:45.898Z" hostname="Vishal" tests="5" failures="1" errors="0" skipped="0" time="0.7550637">
+        <testcase classname="lib/api-client.test.ts" name="apiClient &gt; adds auth headers and request metadata to requests" time="0.610615">
+        </testcase>
+        <testcase classname="lib/api-client.test.ts" name="apiClient &gt; preserves an explicit authorization header for bounded session operations" time="0.0255091">
+        </testcase>
+        <testcase classname="lib/api-client.test.ts" name="apiClient &gt; maps problem responses into ApiError with a stable code" time="0.05429">
+        </testcase>
+        <testcase classname="lib/api-client.test.ts" name="apiClient &gt; refreshes once and replays a request with the rotated token" time="0.0381251">
+            <failure message="promise rejected &quot;ApiError: Expired { status: 401, …(6) }&quot; instead of resolving" type="AssertionError">
+AssertionError: promise rejected &quot;ApiError: Expired { status: 401, …(6) }&quot; instead of resolving
+ ❯ lib/api-client.test.ts:115:65
+
+Caused by: Caused by: ApiError: Expired
+ ❯ toApiError lib/api-client.ts:127:10
+ ❯ lib/api-client.ts:221:31
+ ❯ Axios.request ../../../node_modules/axios/lib/core/Axios.js:41:14
+ ❯ ApiClient.get lib/api-client.ts:251:13
+ ❯ lib/api-client.test.ts:115:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { status: 401, code: &apos;HTTP_401&apos;, problem: { detail: &apos;Expired&apos; }, requestId: &apos;07180231-46de-4c68-ac63-d9da4dd79c70&apos;, correlationId: &apos;07180231-46de-4c68-ac63-d9da4dd79c70&apos;, retryable: false, retryAfter: undefined }
+            </failure>
+        </testcase>
+        <testcase classname="lib/api-client.test.ts" name="apiClient &gt; parses plain and encoded download filenames" time="0.0032344">
+        </testcase>
+    </testsuite>
+    <testsuite name="services/auth-service.test.ts" timestamp="2026-10-19T12:14:45.920Z" hostname="Vishal" tests="2" failures="0" errors="0" skipped="0" time="0.2948583">
+        <testcase classname="services/auth-service.test.ts" name="authService privileged login &gt; submits the MFA code and stores a verified administrator session" time="0.2148933">
+        </testcase>
+        <testcase classname="services/auth-service.test.ts" name="authService privileged login &gt; revokes and refuses a valid non-administrator identity" time="0.0544398">
+        </testcase>
+    </testsuite>
+    <testsuite name="services/auth-session-races.test.ts" timestamp="2026-10-19T12:14:45.924Z" hostname="Vishal" tests="3" failures="0" errors="0" skipped="0" time="0.3359838">
+        <testcase classname="services/auth-session-races.test.ts" name="session response ordering &gt; does not let an old failed restoration log out a newly installed session" time="0.2413006">
+        </testcase>
+        <testcase classname="services/auth-session-races.test.ts" name="session response ordering &gt; does not resurrect a session when an old successful restoration finishes after logout" time="0.0390427">
+        </testcase>
+        <testcase classname="services/auth-session-races.test.ts" name="session response ordering &gt; does not merge an obsolete profile into a different logged-in identity" time="0.0272277">
+        </testcase>
+    </testsuite>
+    <testsuite name="store/use-auth-store.test.ts" timestamp="2026-10-19T12:14:45.931Z" hostname="Vishal" tests="2" failures="0" errors="0" skipped="0" time="0.063862">
+        <testcase classname="store/use-auth-store.test.ts" name="privileged auth persistence &gt; does not persist credentials when remember me is disabled" time="0.0176834">
+        </testcase>
+        <testcase classname="store/use-auth-store.test.ts" name="privileged auth persistence &gt; persists only non-secret administrator metadata and never impersonation tokens" time="0.0046873">
+        </testcase>
+    </testsuite>
+</testsuites>

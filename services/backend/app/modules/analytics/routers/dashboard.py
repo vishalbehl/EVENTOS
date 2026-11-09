@@ -52,17 +52,16 @@ async def _get_accessible_event(
     current_user: User,
     event_id: uuid.UUID,
 ) -> Event:
-    event = await AnalyticsDashboardQueryService(db).get_event_for_scope(
-        event_id=event_id,
-        organization_id=current_user.organization_id,
-        is_platform_admin=current_user.role == "super_admin",
-    )
-    if not event:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Event {event_id} not found",
-        )
-
+    from app.modules.rbac.services.event_scope import customer_event
+    from app.modules.rbac.services.access_contexts import selected_request_context
+    token = getattr(current_user, "_request_token_data", None)
+    if token is None:
+        raise HTTPException(401, detail={"code": "SESSION_CONTEXT_REQUIRED"})
+    event = await customer_event(db, current_user, event_id, token)
+    async with selected_request_context(
+        db, current_user, token, event_id=event.id, action="ANALYTICS:VIEW"
+    ):
+        pass
     return event
 
 
@@ -200,7 +199,7 @@ async def get_superadmin_mrr_history(
 
     Strategy:
       1. Try commerce.revenue_metrics table first (pre-aggregated, accurate).
-      2. If empty, compute from commerce.subscription_transactions grouped by month.
+      2. If empty, compute from commerce.revenue_metrics grouped by month.
     """
     rows = await AnalyticsDashboardQueryService(db).superadmin_mrr_history(months=months)
     return [MrrDataPoint.model_validate(row) for row in rows]

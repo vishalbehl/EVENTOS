@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 from uuid import UUID
 import base64
@@ -12,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
+from app.modules.rbac.services.platform_permissions import require_platform_permission, platform_permission_authority
 from app.dependencies import StepUpAuth, get_db
 from app.modules.identity.models.user import User
 from app.modules.identity.models.refresh_token import RefreshToken
@@ -23,10 +26,12 @@ from app.modules.platform.models.organization import Organization
 from app.modules.platform.models.feature import FeatureCatalog
 from app.modules.platform.models.health import OrganizationHealth
 from app.modules.analytics.models.usage import OrganizationUsage
-from app.modules.billing.models.subscription import (
-    SubscriptionPlan, OrganizationSubscription, PlanFeature, 
-    OrganizationFeature, Addon, AddonFeature, CommercialTemplateVersion, OrganizationAddon, 
-    ActivityTimeline, RevenueMetric
+from app.modules.billing.models.commercial_support import (
+    OrganizationFeature, ActivityTimeline, RevenueMetric
+)
+from app.modules.billing.models.cloud_commercial import (
+    CommercialOffer, CommercialOfferVersion, CommercialOfferEntitlement,
+    CommercialContract, CommercialContractItem, CommercialAccount,
 )
 from app.modules.billing.models.billing_domain_tables import Invoice, InvoiceItem
 from app.modules.billing.models.licensing import EntitlementGrant, GrantConsumption
@@ -42,7 +47,7 @@ from app.modules.registration.models.payment_transaction import PaymentTransacti
 from app.modules.billing.capability_registry import CATALOG_LIMIT_KEYS, FEATURE_DEFINITIONS
 from app.modules.billing.services.capability_service import CapabilityService
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
-from app.core.dependencies.feature_gate import enforce_org_operation
+from app.core.dependencies.feature_gate import enforce_platform_org_operation as enforce_org_operation
 from app.core.tenant_context import TenantContextGuard
 from app.modules.presentations.services import upload_service as presentation_upload_service
 from app.modules.platform.application.governed_mutation_commands import commit_transaction
@@ -78,40 +83,12 @@ def _governed_commercial_workflow_required(workflow: str) -> None:
 
 # ── Response Models ──────────────────────────────────────────
 
-class SubscriptionItem(BaseModel):
-    id: str
-    organization_id: str
-    org_name: str
-    org_slug: str
-    plan_id: str
-    plan_name: str
-    plan_color_hex: str
-    status: str
-    trial_ends_at: Optional[str] = None
-    current_period_end: Optional[str] = None
-    stripe_customer_id: Optional[str] = None
-    stripe_subscription_id: Optional[str] = None
-    mrr_inr: float
-    days_until_trial_end: Optional[int] = None
-
-class SubscriptionSummary(BaseModel):
-    total_mrr_inr: float
-    total_arr_inr: float
-    active_count: int
-    trial_count: int
-    at_risk_count: int
-
-class SubscriptionListResponse(BaseModel):
-    items: List[SubscriptionItem]
-    total: int
-    summary: SubscriptionSummary
-
-class InvoiceItem(BaseModel):
+class CommercialInvoiceItem(BaseModel):
     id: str
     invoice_number: str
     organization_id: str
     org_name: str
-    plan_name: str
+    offer_name: str
     amount_inr: float
     gst_amount: float
     total_amount_inr: float
@@ -133,7 +110,7 @@ class InvoiceSummary(BaseModel):
     avg_collection_days: float
 
 class InvoiceListResponse(BaseModel):
-    items: List[InvoiceItem]
+    items: List[CommercialInvoiceItem]
     total: int
     summary: InvoiceSummary
 
@@ -144,17 +121,17 @@ class ActivityItem(BaseModel):
     amount: Optional[float] = None
     occurred_at: str
 
-class TrialExpiring(BaseModel):
+class ContractExpiring(BaseModel):
     org_id: str
     org_name: str
-    plan_name: str
-    trial_ends_at: str
+    offer_name: str
+    contract_ends_at: str
     days_remaining: int
 
 class DashboardMetrics(BaseModel):
     total_organizations: int
     active_organizations: int
-    trial_organizations: int
+    pending_payment_organizations: int
     total_users: int
     total_events: int
     total_active_events: int
@@ -176,49 +153,24 @@ class DashboardMetrics(BaseModel):
     mrr_trend: List[float]
     events_trend: List[int]
     revenue_trend: List[float]      # daily revenue INR, last 7 days
-    subscriptions_active: int
-    subscriptions_trial: int
-    subscriptions_grace: int
-    subscriptions_suspended: int
-    subscriptions_expired: int
-    subscriptions_cancelled: int
+    contracts_active: int
+    contracts_pending_payment: int
+    contracts_grace: int
+    contracts_suspended: int
+    contracts_expired: int
+    contracts_cancelled: int
     recent_activity: List[ActivityItem]
-    trials_expiring: List[TrialExpiring]
-    top_orgs_by_mrr: List[Dict[str, Any]]  # {org_id, org_name, mrr, plan_name}
+    contracts_expiring: List[ContractExpiring]
+    top_orgs_by_mrr: List[Dict[str, Any]]  # {org_id, org_name, mrr, offer_name}
     platform_status: str
     services_degraded: int
     checked_at: str
 
 # ── Dependencies ─────────────────────────────────────────
 
-async def require_platform_admin(current_user: User = Depends(get_current_user)):
-    is_admin = (
-        (current_user.platform_role and current_user.platform_role in ["SUPER_ADMIN", "SUPPORT_ADMIN", "FINANCE_ADMIN"]) or
-        current_user.role == "super_admin" or
-        getattr(current_user, "is_platform_admin", False) or
-        (current_user.organization and current_user.organization.slug == "Eventos")
-    )
-    if not is_admin:
-        raise HTTPException(status_code=403, detail="Platform Admin access required")
-    return current_user
+require_platform_admin = require_platform_permission("platform:staff:view")
 
 
-async def _get_current_subscription(
-    db: AsyncSession,
-    org_id: uuid.UUID,
-    *,
-    with_plan: bool = False,
-) -> Optional[OrganizationSubscription]:
-    stmt = select(OrganizationSubscription).where(
-        OrganizationSubscription.organization_id == org_id
-    )
-    if with_plan:
-        stmt = stmt.options(selectinload(OrganizationSubscription.plan))
-    stmt = stmt.order_by(
-        OrganizationSubscription.status.in_(["ACTIVE", "TRIAL"]).desc(),
-        OrganizationSubscription.created_at.desc(),
-    ).limit(1)
-    return await db.scalar(stmt)
 
 # ── Endpoints ────────────────────────────────────────────
 
@@ -236,7 +188,7 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
     )
     total_orgs = core.total_orgs
     active_orgs = core.active_orgs
-    trial_orgs = core.trial_orgs
+    pending_payment_orgs = core.trial_orgs
     total_users = core.total_users
     total_events = core.total_events
     total_active_events_usage = core.total_active_events_usage
@@ -283,18 +235,17 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
         limit=5,
     )
 
-    # subscription health matrix
-    sub_map = await dashboard_queries.subscription_status_counts()
-    subscriptions_active = sub_map.get("ACTIVE", 0)
-    subscriptions_trial = sub_map.get("TRIAL", 0)
-    subscriptions_grace = sub_map.get("GRACE_PERIOD", 0)
-    subscriptions_suspended = sub_map.get("SUSPENDED", 0)
-    subscriptions_expired = sub_map.get("EXPIRED", 0)
-    subscriptions_cancelled = sub_map.get("CANCELLED", 0)
+    contract_status_map = await dashboard_queries.contract_status_counts()
+    contracts_active = contract_status_map.get("ACTIVE", 0)
+    contracts_pending_payment = contract_status_map.get("PENDING_PAYMENT", 0)
+    contracts_grace = contract_status_map.get("GRACE_PERIOD", 0)
+    contracts_suspended = contract_status_map.get("SUSPENDED", 0)
+    contracts_expired = contract_status_map.get("EXPIRED", 0)
+    contracts_cancelled = contract_status_map.get("CANCELLED", 0)
 
     recent_activity = await dashboard_queries.recent_billing_activity(limit=10)
 
-    trials_expiring = await dashboard_queries.trials_expiring(
+    contracts_expiring = await dashboard_queries.contracts_expiring(
         before=now_dt + timedelta(days=14),
         limit=100,
     )
@@ -330,7 +281,7 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
     return {
         "total_organizations": total_orgs,
         "active_organizations": active_orgs,
-        "trial_organizations": trial_orgs,
+        "pending_payment_organizations": pending_payment_orgs,
         "total_users": total_users,
         "total_events": total_events,
         "total_active_events": total_active_events_usage,
@@ -351,14 +302,14 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
         "mrr_trend": mrr_trend,
         "events_trend": events_trend,
         "revenue_trend": revenue_trend,
-        "subscriptions_active": subscriptions_active,
-        "subscriptions_trial": subscriptions_trial,
-        "subscriptions_grace": subscriptions_grace,
-        "subscriptions_suspended": subscriptions_suspended,
-        "subscriptions_expired": subscriptions_expired,
-        "subscriptions_cancelled": subscriptions_cancelled,
+        "contracts_active": contracts_active,
+        "contracts_pending_payment": contracts_pending_payment,
+        "contracts_grace": contracts_grace,
+        "contracts_suspended": contracts_suspended,
+        "contracts_expired": contracts_expired,
+        "contracts_cancelled": contracts_cancelled,
         "recent_activity": recent_activity,
-        "trials_expiring": trials_expiring,
+        "contracts_expiring": contracts_expiring,
         "top_orgs_by_mrr": top_orgs_by_mrr,
         "platform_status": platform_status,
         "services_degraded": services_degraded,
@@ -443,14 +394,6 @@ async def delete_organization_feature_override(
     return {"message": "Override removed successfully"}
 
 
-@router.get("/organizations/{org_id}/addons")
-async def list_organization_addons(org_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin)):
-    """List active addons for the tenant."""
-    del current_user
-    return await OrganizationConsoleQueryService(db).organization_addons(
-        organization_id=org_id
-    )
-
 @router.get("/organizations/{org_id}/usage")
 async def get_organization_usage(org_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin)):
     """Fetch usage metrics for quota tracking."""
@@ -519,32 +462,6 @@ async def get_organization_timeline_cursor(
 
 # ── Pydantic Schemas ──────────────────────────────────────────
 
-class SubscriptionPlanIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    tagline: Optional[str] = None
-    description: Optional[str] = None
-    max_events: int = 3
-    max_users: int = 10
-    # None represents an unlimited plan capacity (used by Enterprise plans).
-    max_registrations: Optional[int] = 1000
-    max_speakers: Optional[int] = None
-    max_sessions: Optional[int] = None
-    max_rooms: Optional[int] = 10
-    max_ticket_categories: Optional[int] = None
-    max_badge_templates: Optional[int] = None
-    max_certificate_templates: Optional[int] = None
-    max_emails_per_event: Optional[int] = None
-    storage_quota_mb: int = 10240
-    currency: str = "INR"
-    price_per_event: Optional[float] = None
-    billing_model: str = "PER_EVENT"
-    display_order: int = 0
-    is_popular: bool = False
-    color_hex: Optional[str] = None
-    is_active: bool = True
-    lifecycle_status: Literal["DRAFT", "REVIEW", "PUBLISHED", "RETIRED"] = "DRAFT"
 
 class OrgStatusUpdate(BaseModel):
     is_active: bool
@@ -554,359 +471,12 @@ class ReasonRequiredRequest(BaseModel):
     reason: str = Field(..., min_length=8, max_length=1000)
 
 
-# ── Subscription Plans CRUD ────────────────────────────────────
-
-def _commercial_request_hash(resource_type: str, resource_id: uuid.UUID | None, payload: dict) -> str:
-    material = {"resource_type": resource_type, "resource_id": str(resource_id) if resource_id else None, "payload": payload}
-    return hashlib.sha256(json.dumps(material, sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()
 
 
-async def _commercial_version_replay(db: AsyncSession, resource_type: str, idempotency_key: str, request_hash: str) -> CommercialTemplateVersion | None:
-    existing = await db.scalar(select(CommercialTemplateVersion).where(
-        CommercialTemplateVersion.resource_type == resource_type,
-        CommercialTemplateVersion.idempotency_key == idempotency_key,
-    ))
-    if existing and existing.request_hash != request_hash:
-        raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-    return existing
 
 
-async def _plan_template_snapshot(db: AsyncSession, plan: SubscriptionPlan) -> dict:
-    assignments = (await db.execute(
-        select(PlanFeature, FeatureCatalog)
-        .join(FeatureCatalog, FeatureCatalog.id == PlanFeature.feature_id)
-        .where(PlanFeature.plan_id == plan.id)
-        .order_by(FeatureCatalog.key)
-    )).all()
-    return {
-        "template": {
-            "id": str(plan.id), "name": plan.name, "tagline": plan.tagline,
-            "description": plan.description, "billing_model": plan.billing_model,
-            "currency": plan.currency,
-            "price_per_event": float(plan.price_per_event) if plan.price_per_event is not None else None,
-            "max_events": plan.max_events, "max_users": plan.max_users,
-            "max_event_team_members": plan.max_event_team_members,
-            "max_registrations": plan.max_registrations, "max_speakers": plan.max_speakers,
-            "max_sessions": plan.max_sessions, "max_rooms": plan.max_rooms,
-            "max_ticket_categories": plan.max_ticket_categories,
-            "max_badge_templates": plan.max_badge_templates,
-            "max_certificate_templates": plan.max_certificate_templates,
-            "max_emails_per_event": plan.max_emails_per_event,
-            "storage_quota_mb": plan.storage_quota_mb, "display_order": plan.display_order,
-            "is_popular": plan.is_popular, "color_hex": plan.color_hex,
-            "is_active": plan.is_active, "version": plan.version,
-            "lifecycle_status": plan.lifecycle_status,
-            "effective_at": plan.effective_at.isoformat() if plan.effective_at else None,
-            "retired_at": plan.retired_at.isoformat() if plan.retired_at else None,
-        },
-        "assignments": [{
-            "feature_key": feature.key, "enabled": mapping.enabled,
-            "value_type": mapping.value_type, "value": mapping.entitlement_value,
-            "scope_type": mapping.scope_type, "enforcement_mode": mapping.enforcement_mode,
-            "hard_ceiling": mapping.hard_ceiling,
-        } for mapping, feature in assignments],
-    }
 
 
-async def _record_plan_template_version(
-    db: AsyncSession, plan: SubscriptionPlan, *, actor: User,
-    idempotency_key: str, request_hash: str, reason: str, change_type: str,
-) -> CommercialTemplateVersion:
-    row = CommercialTemplateVersion(
-        resource_type="PLAN", resource_id=plan.id, version=plan.version,
-        lifecycle_status=plan.lifecycle_status, change_type=change_type,
-        snapshot_json=await _plan_template_snapshot(db, plan), request_hash=request_hash,
-        reason=reason, idempotency_key=idempotency_key, actor_user_id=actor.id,
-    )
-    db.add(row)
-    db.add(AuditLog(
-        organization_id=None, actor_user_id=actor.id, actor_role=actor.platform_role or actor.role,
-        resource_type="subscription_plan", resource_id=plan.id,
-        action_type=f"PLAN_TEMPLATE_{change_type}",
-        new_state={"version": plan.version, "lifecycle_status": plan.lifecycle_status, "reason": reason},
-        is_sensitive=True,
-    ))
-    await db.flush()
-    return row
-
-
-async def _addon_template_snapshot(db: AsyncSession, addon: Addon) -> dict:
-    assignments = (await db.execute(
-        select(AddonFeature, FeatureCatalog)
-        .join(FeatureCatalog, FeatureCatalog.id == AddonFeature.feature_id)
-        .where(AddonFeature.addon_id == addon.id)
-        .order_by(FeatureCatalog.key)
-    )).all()
-    return {
-        "template": {
-            "id": str(addon.id), "key": addon.key, "name": addon.name,
-            "description": addon.description, "short_description": addon.short_description,
-            "addon_type": addon.addon_type, "scope_type": addon.scope_type,
-            "consumption_model": addon.consumption_model, "unit_type": addon.unit_type,
-            "price_inr": float(addon.price_inr) if addon.price_inr is not None else None,
-            "min_price_inr": float(addon.min_price_inr) if addon.min_price_inr is not None else None,
-            "max_price_inr": float(addon.max_price_inr) if addon.max_price_inr is not None else None,
-            "billing_unit": addon.billing_unit, "price_unit": addon.price_unit,
-            "available_for_plans": addon.available_for_plans or [],
-            "is_active": addon.is_active, "version": addon.version,
-            "lifecycle_status": addon.lifecycle_status,
-            "effective_at": addon.effective_at.isoformat() if addon.effective_at else None,
-            "retired_at": addon.retired_at.isoformat() if addon.retired_at else None,
-            "features_spec": addon.features_spec or [], "hardware_spec": addon.hardware_spec or [],
-            "staff_spec": addon.staff_spec or [], "inclusions": addon.inclusions or [],
-            "exclusions": addon.exclusions or [], "template_types": addon.template_types or [],
-        },
-        "assignments": [{
-            "feature_key": feature.key, "value_type": mapping.value_type,
-            "value": mapping.entitlement_value, "operation": mapping.operation,
-            "scope_type": mapping.scope_type, "validity_days": mapping.validity_days,
-            "stackable": mapping.stackable, "max_quantity": mapping.max_quantity,
-        } for mapping, feature in assignments],
-    }
-
-
-async def _record_addon_template_version(
-    db: AsyncSession, addon: Addon, *, actor: User,
-    idempotency_key: str, request_hash: str, reason: str, change_type: str,
-) -> CommercialTemplateVersion:
-    row = CommercialTemplateVersion(
-        resource_type="ADDON", resource_id=addon.id, version=addon.version,
-        lifecycle_status=addon.lifecycle_status, change_type=change_type,
-        snapshot_json=await _addon_template_snapshot(db, addon), request_hash=request_hash,
-        reason=reason, idempotency_key=idempotency_key, actor_user_id=actor.id,
-    )
-    db.add(row)
-    db.add(AuditLog(
-        organization_id=None, actor_user_id=actor.id, actor_role=actor.platform_role or actor.role,
-        resource_type="commercial_addon", resource_id=addon.id,
-        action_type=f"ADDON_TEMPLATE_{change_type}",
-        new_state={"version": addon.version, "lifecycle_status": addon.lifecycle_status, "reason": reason},
-        is_sensitive=True,
-    ))
-    await db.flush()
-    return row
-
-@router.get("/subscription-plans")
-async def list_subscription_plans(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """List all subscription plans with full details, subscriber counts, and MRR (Super Admin)."""
-    mrr_period = datetime.now(timezone.utc).strftime("%Y-%m")
-    return await PlatformCommercialCatalogQueryService(db).list_subscription_plans(
-        mrr_period=mrr_period
-    )
-
-
-@router.get("/plans")
-async def list_plans_alias(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Alias for /subscription-plans."""
-    return await list_subscription_plans(db, current_user)
-
-
-@router.get("/features/matrix")
-async def get_features_matrix(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Return the canonical catalogue grouped for typed plan assignment."""
-    del current_user
-    return await PlatformCommercialCatalogQueryService(db).features_matrix()
-
-
-async def calculate_addon_final_price(
-    db: AsyncSession,
-    addon_type: str,
-    min_price_inr: Optional[float],
-    price_inr: Optional[float],
-    hardware_spec: List[Dict[str, Any]],
-    staff_spec: List[Dict[str, Any]]
-) -> float:
-    import math
-    base_price = float(min_price_inr if min_price_inr is not None else (price_inr if price_inr is not None else 0.0))
-    if addon_type.upper() != "VENUE":
-        # Round base price to nearest 500
-        return float(math.floor(base_price / 500.0 + 0.5) * 500)
-
-    hardware_cost = 0.0
-    if hardware_spec:
-        from app.modules.inventory.models import HardwareItem
-        item_ids = []
-        for row in hardware_spec:
-            if "item_id" in row and row["item_id"]:
-                try:
-                    item_ids.append(uuid.UUID(str(row["item_id"])))
-                except ValueError:
-                    pass
-        if item_ids:
-            stmt = select(HardwareItem).where(HardwareItem.id.in_(item_ids))
-            items = (await db.execute(stmt)).scalars().all()
-            price_map = {item.id: float(item.renting_price or 0.0) for item in items}
-            for row in hardware_spec:
-                try:
-                    item_uuid = uuid.UUID(str(row["item_id"]))
-                    qty = int(row.get("quantity", 1))
-                    days = int(row.get("days", 1))
-                    unit_price = price_map.get(item_uuid, 0.0)
-                    hardware_cost += qty * days * unit_price
-                except Exception:
-                    pass
-
-    staff_cost = 0.0
-    if staff_spec:
-        from app.modules.commercial.models import StaffRole
-        role_ids = []
-        for row in staff_spec:
-            if "role_id" in row and row["role_id"]:
-                try:
-                    role_ids.append(uuid.UUID(str(row["role_id"])))
-                except ValueError:
-                    pass
-        if role_ids:
-            stmt = select(StaffRole).where(StaffRole.id.in_(role_ids))
-            roles = (await db.execute(stmt)).scalars().all()
-            price_map = {role.id: float(role.selling_per_day or 0.0) for role in roles}
-            for row in staff_spec:
-                try:
-                    role_uuid = uuid.UUID(str(row["role_id"]))
-                    qty = int(row.get("quantity", 1))
-                    days = int(row.get("days", 1))
-                    unit_price = price_map.get(role_uuid, 0.0)
-                    staff_cost += qty * days * unit_price
-                except Exception:
-                    pass
-
-    total_cost = base_price + hardware_cost + staff_cost
-    # Round final price to nearest 500
-    return float(math.floor(total_cost / 500.0 + 0.5) * 500)
-
-
-@router.get("/addons")
-async def list_platform_addons(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """List all platform add-ons."""
-    del current_user
-    return await PlatformCommercialCatalogQueryService(db).list_addons()
-
-
-@router.post("/subscription-plans", status_code=201)
-async def create_subscription_plan(
-    payload: SubscriptionPlanIn,
-    step_up: StepUpAuth,
-    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
-    reason: str = Header(..., alias="X-Admin-Reason", min_length=12, max_length=1000),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Create a new subscription plan (SUPER_ADMIN only)."""
-    is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
-    if not is_super:
-        raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
-    del step_up
-    if payload.lifecycle_status in {"PUBLISHED", "RETIRED"}:
-        raise HTTPException(status_code=422, detail={"code": "PLAN_MUST_START_AS_DRAFT_OR_REVIEW"})
-    request_payload = payload.model_dump(mode="json")
-    request_hash = _commercial_request_hash("PLAN", None, request_payload)
-    replay = await _commercial_version_replay(db, "PLAN", idempotency_key, request_hash)
-    if replay:
-        existing_plan = await db.get(SubscriptionPlan, replay.resource_id)
-        return {"id": replay.resource_id, "name": existing_plan.name if existing_plan else None, "message": "Plan already created", "replayed": True}
-    plan = SubscriptionPlan(
-        name=payload.name,
-        tagline=payload.tagline,
-        description=payload.description,
-        max_events=payload.max_events,
-        max_users=payload.max_users,
-        max_registrations=payload.max_registrations,
-        max_speakers=payload.max_speakers,
-        max_sessions=payload.max_sessions,
-        max_rooms=payload.max_rooms,
-        max_ticket_categories=payload.max_ticket_categories,
-        max_badge_templates=payload.max_badge_templates,
-        max_certificate_templates=payload.max_certificate_templates,
-        max_emails_per_event=payload.max_emails_per_event,
-        storage_quota_mb=payload.storage_quota_mb,
-        currency=payload.currency,
-        price_per_event=payload.price_per_event,
-        billing_model=payload.billing_model,
-        display_order=payload.display_order,
-        is_popular=payload.is_popular,
-        color_hex=payload.color_hex,
-        is_active=False,
-        lifecycle_status=payload.lifecycle_status,
-        version=1,
-    )
-    db.add(plan)
-    await db.flush()
-    await _record_plan_template_version(
-        db, plan, actor=current_user, idempotency_key=idempotency_key,
-        request_hash=request_hash, reason=reason, change_type="CREATED",
-    )
-    await commit_transaction(db)
-    await db.refresh(plan)
-    return {"id": plan.id, "name": plan.name, "message": "Plan created", "version": plan.version, "replayed": False}
-
-
-@router.patch("/subscription-plans/{plan_id}")
-async def update_subscription_plan(
-    plan_id: uuid.UUID,
-    payload: SubscriptionPlanIn,
-    step_up: StepUpAuth,
-    expected_version: int = Header(..., alias="If-Match", ge=1),
-    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
-    reason: str = Header(..., alias="X-Admin-Reason", min_length=12, max_length=1000),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Update a subscription plan (SUPER_ADMIN only)."""
-    is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
-    if not is_super:
-        raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
-    del step_up
-    request_payload = payload.model_dump(mode="json", exclude_unset=True)
-    request_hash = _commercial_request_hash("PLAN", plan_id, request_payload)
-    replay = await _commercial_version_replay(db, "PLAN", idempotency_key, request_hash)
-    if replay:
-        return {"message": "Plan update already applied", "version": replay.version, "replayed": True}
-    plan = await db.get(SubscriptionPlan, plan_id)
-    if not plan:
-        raise HTTPException(status_code=404, detail="Plan not found")
-    if plan.version != expected_version:
-        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "expected": expected_version, "actual": plan.version})
-    previous_lifecycle = plan.lifecycle_status
-    target_lifecycle = request_payload.get("lifecycle_status", plan.lifecycle_status)
-    if plan.lifecycle_status == "RETIRED" and target_lifecycle != "RETIRED":
-        raise HTTPException(status_code=409, detail={"code": "RETIRED_PLAN_IMMUTABLE", "message": "Clone a retired plan to create a new draft."})
-    if target_lifecycle == "PUBLISHED":
-        assignment_count = int(await db.scalar(select(func.count(PlanFeature.feature_id)).where(PlanFeature.plan_id == plan_id)) or 0)
-        if assignment_count == 0:
-            raise HTTPException(status_code=422, detail={"code": "PLAN_ASSIGNMENTS_REQUIRED"})
-    for field, val in request_payload.items():
-        setattr(plan, field, val)
-    now = datetime.now(timezone.utc)
-    if target_lifecycle == "PUBLISHED" and previous_lifecycle != "PUBLISHED":
-        plan.effective_at = now
-    if target_lifecycle == "RETIRED":
-        plan.retired_at = now
-    plan.lifecycle_status = target_lifecycle
-    plan.is_active = bool(request_payload.get("is_active", plan.is_active)) and target_lifecycle == "PUBLISHED"
-    plan.version = expected_version + 1
-    await db.flush()
-    await _record_plan_template_version(
-        db, plan, actor=current_user, idempotency_key=idempotency_key,
-        request_hash=request_hash, reason=reason, change_type="UPDATED",
-    )
-    await commit_transaction(db)
-    return {"message": "Plan updated", "version": plan.version, "replayed": False}
-
-
-class PlanFeaturesUpdate(BaseModel):
-    feature_keys: List[str]
 
 
 @router.get("/features")
@@ -1051,9 +621,7 @@ async def create_feature_catalog_item(
     current_user: User = Depends(require_platform_admin)
 ):
     """Create a new feature catalog item (SUPER_ADMIN only)."""
-    is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
-    if not is_super:
-        raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
+    await platform_permission_authority(db, current_user.id, "platform:administration:manage")
 
     key = _normalize_feature_key(payload.key)
     category = _normalize_feature_category(payload.category)
@@ -1094,9 +662,7 @@ async def update_feature_catalog_item(
     current_user: User = Depends(require_platform_admin)
 ):
     """Update a feature catalog item (SUPER_ADMIN only)."""
-    is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
-    if not is_super:
-        raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
+    await platform_permission_authority(db, current_user.id, "platform:administration:manage")
 
     feature = await db.get(FeatureCatalog, feature_id)
     if not feature:
@@ -1138,9 +704,7 @@ async def reorder_feature_categories(
     current_user: User = Depends(require_platform_admin)
 ):
     """Persist category ordering for the feature catalog."""
-    is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
-    if not is_super:
-        raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
+    await platform_permission_authority(db, current_user.id, "platform:administration:manage")
 
     categories = [_normalize_feature_category(category) for category in payload.categories if category.strip()]
     seen: set[str] = set()
@@ -1171,9 +735,7 @@ async def reorder_features_within_category(
     current_user: User = Depends(require_platform_admin)
 ):
     """Persist feature ordering inside a category."""
-    is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
-    if not is_super:
-        raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
+    await platform_permission_authority(db, current_user.id, "platform:administration:manage")
 
     category = _normalize_feature_category(payload.category)
     if not payload.feature_ids:
@@ -1210,9 +772,7 @@ async def delete_feature_catalog_item(
     current_user: User = Depends(require_platform_admin)
 ):
     """Deprecate a feature key without breaking active contracts."""
-    is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
-    if not is_super:
-        raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
+    await platform_permission_authority(db, current_user.id, "platform:administration:manage")
 
     feature = await db.get(FeatureCatalog, feature_id)
     if not feature:
@@ -1225,53 +785,8 @@ async def delete_feature_catalog_item(
     return {"message": "Feature deprecated successfully", "feature_key": feature.key}
 
 
-@router.get("/subscription-plans/{plan_id}/features")
-async def get_plan_features(
-    plan_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Get the features enabled for a subscription plan."""
-    return await PlatformCommercialCatalogQueryService(db).plan_feature_keys(plan_id=plan_id)
-
-    stmt = select(FeatureCatalog.key).join(PlanFeature).where(
-        and_(PlanFeature.plan_id == plan_id, PlanFeature.enabled == True)
-    )
-    result = await db.execute(stmt)
-    return result.scalars().all()
 
 
-async def update_plan_features(
-    plan_id: uuid.UUID,
-    payload: PlanFeaturesUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Update (replace) the features enabled for a subscription plan."""
-    is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
-    if not is_super:
-        raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
-        
-    plan = await db.get(SubscriptionPlan, plan_id)
-    if not plan:
-        raise HTTPException(status_code=404, detail="Plan not found")
-        
-    # Delete existing mappings
-    await db.execute(
-        delete(PlanFeature).where(PlanFeature.plan_id == plan_id)
-    )
-    
-    # Resolve keys to IDs
-    if payload.feature_keys:
-        feat_stmt = select(FeatureCatalog).where(FeatureCatalog.key.in_(payload.feature_keys))
-        features_res = await db.execute(feat_stmt)
-        features = features_res.scalars().all()
-        
-        for f in features:
-            db.add(PlanFeature(plan_id=plan_id, feature_id=f.id, enabled=True))
-        
-    await commit_transaction(db)
-    return {"message": "Plan features updated successfully"}
 
 
 
@@ -1291,27 +806,6 @@ async def _get_org_mrr(db: AsyncSession, org_id: uuid.UUID) -> float:
     return float(result) if result else 0.0
 
 
-@router.get("/subscriptions", response_model=SubscriptionListResponse)
-async def list_all_subscriptions(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin),
-    status: Optional[str] = Query(None),
-    plan_id: Optional[uuid.UUID] = Query(None),
-    search: Optional[str] = Query(None),
-    expiring_days: Optional[int] = Query(None),
-    skip: int = Query(0),
-    limit: int = Query(20),
-):
-    """List all organization subscriptions across platform (Super Admin)."""
-    del current_user
-    return await PlatformCommercialCatalogQueryService(db).list_subscriptions(
-        status=status,
-        plan_id=plan_id,
-        search=search,
-        expiring_days=expiring_days,
-        skip=skip,
-        limit=limit,
-    )
 
 
 @router.get("/invoices", response_model=InvoiceListResponse)
@@ -1400,41 +894,61 @@ async def get_platform_users_cursor(
 
 # C2: Force logout (revoke all sessions)
 class UserAdminActionRequest(BaseModel):
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
     reason: str = Field(..., min_length=12, max_length=1000)
 
-@router.delete("/users/{user_id}/sessions")
+
+class UserSecurityActionResult(BaseModel):
+    success: bool
+    revoked: int = Field(ge=0)
+    version: int = Field(ge=1)
+    policy_revision: int = Field(ge=1)
+    correlation_id: uuid.UUID
+
+
+@router.delete("/users/{user_id}/sessions", response_model=UserSecurityActionResult)
 async def force_logout_user(
     user_id: uuid.UUID,
     payload: UserAdminActionRequest,
     step_up: StepUpAuth,
+    expected: int | None = Header(None, alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
     del step_up
-    revoked = await IdentityAdminCommandService(db).force_logout(
+    if expected is None:
+        raise HTTPException(428, detail={"code": "VERSION_REQUIRED"})
+    return await IdentityAdminCommandService(db).force_logout(
         user_id=user_id,
         actor=current_user,
         reason=payload.reason,
+        expected=expected,
+        idempotency_key=idempotency_key,
     )
-    return {"revoked": revoked}
 
 
 # C3: Reset 2FA
-@router.delete("/users/{user_id}/2fa")
+@router.delete("/users/{user_id}/2fa", response_model=UserSecurityActionResult)
 async def reset_user_2fa(
     user_id: uuid.UUID,
     step_up: StepUpAuth,
     payload: UserAdminActionRequest,
+    expected: int | None = Header(None, alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
     del step_up
-    await IdentityAdminCommandService(db).reset_2fa(
+    if expected is None:
+        raise HTTPException(428, detail={"code": "VERSION_REQUIRED"})
+    return await IdentityAdminCommandService(db).reset_2fa(
         user_id=user_id,
         actor=current_user,
         reason=payload.reason,
+        expected=expected,
+        idempotency_key=idempotency_key,
     )
-    return {"success": True}
 
 
 # C4: Audit logs with real diff viewer support
@@ -1551,9 +1065,7 @@ async def update_organization_status(
     """Suspend or activate an organization (SUPER_ADMIN only)."""
     _governed_commercial_workflow_required("capability-restriction-request")
     del step_up
-    is_auth = (current_user.platform_role in ["SUPER_ADMIN", "SUPPORT_ADMIN"]) or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
-    if not is_auth:
-        raise HTTPException(status_code=403, detail="SUPER_ADMIN or SUPPORT_ADMIN required")
+    await platform_permission_authority(db, current_user.id, "platform:organizations:manage")
     await OrganizationCommandService(db).update_status(
         organization_id=org_id,
         actor=current_user,
@@ -1585,9 +1097,7 @@ async def delete_organization(
     current_user: User = Depends(require_platform_admin)
 ):
     """Refuse destructive tenant deletion until the retention workflow exists."""
-    is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
-    if not is_super:
-        raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
+    await platform_permission_authority(db, current_user.id, "platform:administration:manage")
         
     org = await db.get(Organization, org_id)
     if not org:
@@ -1675,7 +1185,6 @@ async def start_impersonation(
     }
 
 
-@router.get("/impersonation-logs")
 async def list_impersonation_logs(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin),
@@ -1709,7 +1218,6 @@ async def end_impersonation(
     return {"message": "Impersonation session ended successfully"}
 
 
-@router.get("/audit")
 async def get_platform_audit(
     action_type: Optional[str] = Query(None),
     resource_type: Optional[str] = Query(None),
@@ -2260,7 +1768,7 @@ class FeatureOverrideBulkRequest(BaseModel):
     reason: str = Field(..., min_length=8, max_length=1000)
 
 
-# E1: Get org feature overrides (3-state: null=plan_default, true=force_enable, false=force_disable)
+# E1: Get org feature overrides (3-state: null=offer_default, true=force_enable, false=force_disable)
 @router.get("/organizations/{org_id}/feature-overrides")
 async def get_org_feature_overrides(
     org_id: UUID,
@@ -2343,196 +1851,18 @@ async def save_org_feature_overrides(
     return {"success": True, "updated": len(payload.overrides)}
 
 
-# ── Subscription Health Summary ───────────────────────────────
+# ── Canonical commercial contract health ───────────────────────
 
-@router.get("/subscriptions/health-summary")
-async def get_subscriptions_health_summary(
+@router.get("/commercial/contracts/health-summary")
+async def get_contract_health_summary(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
+    current_user: User = Depends(require_platform_admin),
 ):
-    """Get count metrics per subscription status."""
     del current_user
-    return await PlatformCommercialCatalogQueryService(db).subscription_health_summary()
+    return await PlatformCommercialCatalogQueryService(db).contract_health_summary()
 
 
-# ── Change Organization Plan ──────────────────────────────────
 
-class ChangePlanRequest(BaseModel):
-    plan_id: uuid.UUID
-    reason: str = Field(..., min_length=8, max_length=1000)
-@router.patch("/organizations/{org_id}/subscription/plan")
-async def change_organization_plan(
-    org_id: uuid.UUID,
-    payload: ChangePlanRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Change the plan tier for an organization."""
-    _governed_commercial_workflow_required("commercial-access-request")
-    sub = await _get_current_subscription(db, org_id, with_plan=True)
-    if not sub:
-        raise HTTPException(status_code=404, detail="Subscription not found")
-        
-    plan = await db.get(SubscriptionPlan, payload.plan_id)
-    if not plan:
-        raise HTTPException(status_code=404, detail="Selected plan not found")
-        
-    old_plan_name = sub.plan.name if sub.plan else "None"
-    old_state = {
-        "subscription_id": str(sub.id),
-        "plan_id": str(sub.plan_id) if sub.plan_id else None,
-        "plan_name": old_plan_name,
-        "status": sub.status,
-    }
-    sub.plan_id = payload.plan_id
-    
-    # 3. INSERT commerce.financial_audit_trail (activity_type='PLAN_CHANGED')
-    audit_trail = FinancialAuditTrail(
-        activity_type='PLAN_CHANGED',
-        entity_type='SUBSCRIPTION',
-        entity_id=sub.id,
-        organization_id=org_id,
-        performed_by=current_user.id,
-        details={
-            "from_plan": old_plan_name,
-            "to_plan": plan.name,
-            "reason": payload.reason,
-            "actor": str(current_user.id)
-        }
-    )
-    db.add(audit_trail)
-    
-    # 4. INSERT commerce.payment_events (event_type='PLAN_CHANGE', metadata={'from_plan': old_plan_name, 'to_plan': new_plan_name})
-    log = ActivityTimeline(
-        organization_id=org_id,
-        actor_id=current_user.id,
-        action_type="PLAN_CHANGE",
-        metadata_data={
-            "from_plan": old_plan_name,
-            "to_plan": plan.name,
-            "reason": payload.reason,
-            "actor": str(current_user.id)
-        }
-    )
-    db.add(log)
-    db.add(AuditLog(
-        actor_user_id=current_user.id,
-        organization_id=org_id,
-        action_type="PLAN_CHANGED",
-        resource_type="subscription",
-        resource_id=sub.id,
-        old_state=old_state,
-        new_state={
-            "subscription_id": str(sub.id),
-            "plan_id": str(sub.plan_id),
-            "plan_name": plan.name,
-            "status": sub.status,
-        },
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-        occurred_at=datetime.now(timezone.utc),
-    ))
-    
-    await commit_transaction(db)
-    return {
-        "success": True,
-        "new_plan_name": plan.name
-    }
-
-
-# ── Remove Organization Subscription ──────────────────────────
-
-@router.delete("/organizations/{org_id}/subscription")
-async def delete_organization_subscription(
-    org_id: uuid.UUID,
-    payload: ReasonRequiredRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Delete the active subscription, addons, and limits override for an organization (Super Admin)."""
-    _governed_commercial_workflow_required("commercial-access-request")
-
-
-# ── Extend Organization Trial ─────────────────────────────────
-
-class ExtendTrialRequest(BaseModel):
-    days: int = Field(ge=1, le=90)
-    reason: str = Field(..., min_length=8, max_length=1000)
-@router.patch("/organizations/{org_id}/trial/extend")
-async def extend_organization_trial(
-    org_id: uuid.UUID,
-    payload: ExtendTrialRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Extend the trial period for an organization's subscription."""
-    _governed_commercial_workflow_required("entitlement-override-request")
-    sub = await _get_current_subscription(db, org_id)
-    if not sub:
-        raise HTTPException(status_code=404, detail="Subscription not found")
-
-    old_state = {
-        "subscription_id": str(sub.id),
-        "status": sub.status,
-        "trial_ends_at": sub.trial_ends_at.isoformat() if sub.trial_ends_at else None,
-    }
-    current_trial = sub.trial_ends_at or datetime.now(timezone.utc)
-    if current_trial.tzinfo is None:
-        current_trial = current_trial.replace(tzinfo=timezone.utc)
-        
-    new_trial = current_trial + timedelta(days=payload.days)
-    sub.trial_ends_at = new_trial
-    sub.status = 'TRIAL'
-    
-    # 4. INSERT into commerce.financial_audit_trail:
-    audit_trail = FinancialAuditTrail(
-        activity_type='TRIAL_EXTENDED',
-        entity_type='SUBSCRIPTION',
-        entity_id=sub.id,
-        organization_id=org_id,
-        performed_by=current_user.id,
-        details={
-            "days": payload.days,
-            "reason": payload.reason,
-            "new_end": new_trial.isoformat()
-        }
-    )
-    db.add(audit_trail)
-    
-    # 5. INSERT into commerce.payment_events:
-    log = ActivityTimeline(
-        organization_id=org_id,
-        actor_id=current_user.id,
-        action_type="TRIAL_EXTENDED",
-        metadata_data={
-            "days": payload.days,
-            "reason": payload.reason,
-            "actor": str(current_user.id)
-        }
-    )
-    db.add(log)
-    db.add(AuditLog(
-        actor_user_id=current_user.id,
-        organization_id=org_id,
-        action_type="TRIAL_EXTENDED",
-        resource_type="subscription",
-        resource_id=sub.id,
-        old_state=old_state,
-        new_state={
-            "subscription_id": str(sub.id),
-            "status": sub.status,
-            "trial_ends_at": sub.trial_ends_at.isoformat() if sub.trial_ends_at else None,
-        },
-        change_diff={"days": payload.days, "reason": payload.reason},
-        is_sensitive=True,
-        occurred_at=datetime.now(timezone.utc),
-    ))
-    
-    await commit_transaction(db)
-    return {
-        "success": True,
-        "new_trial_ends_at": new_trial.isoformat()
-    }
 
 
 # ── Apply Billing Credit ──────────────────────────────────────
@@ -2901,90 +2231,89 @@ async def list_payment_events(
 # ── Update User Status ────────────────────────────────────────
 
 class UserStatusUpdateRequest(BaseModel):
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
     is_active: bool
     reason: str = Field(..., min_length=12, max_length=1000)
 
 
+class UserStatusResult(BaseModel):
+    message: str
+    is_active: bool
+    version: int = Field(ge=1)
+    policy_revision: int = Field(ge=1)
+    sessions_revoked: int = Field(ge=0)
+    correlation_id: uuid.UUID
+
+
 class UserPlatformRoleUpdateRequest(BaseModel):
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
     platform_role: Literal["SUPER_ADMIN", "SUPPORT_ADMIN", "FINANCE_ADMIN", "NONE"]
     reason: str = Field(..., min_length=12, max_length=1000)
 
 
-@router.patch("/users/{user_id}/platform-role")
+class UserPlatformRoleResult(BaseModel):
+    message: str
+    platform_role: Literal["SUPER_ADMIN", "SUPPORT_ADMIN", "FINANCE_ADMIN"] | None
+    version: int = Field(ge=1)
+    policy_revision: int = Field(ge=1)
+    sessions_revoked: int = Field(ge=0)
+    correlation_id: uuid.UUID
+
+
+@router.patch("/users/{user_id}/platform-role", response_model=UserPlatformRoleResult)
 async def update_user_platform_role(
     user_id: uuid.UUID,
     payload: UserPlatformRoleUpdateRequest,
     step_up: StepUpAuth,
+    expected: int | None = Header(None, alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin),
 ):
     del step_up
-    if current_user.role != "super_admin" and current_user.platform_role != "SUPER_ADMIN":
-        raise HTTPException(status_code=403, detail="Super Admin required")
-    next_role, _ = await IdentityAdminCommandService(db).update_platform_role(
+    await platform_permission_authority(db, current_user.id, "platform:administration:manage")
+    if expected is None:
+        raise HTTPException(428, detail={"code": "VERSION_REQUIRED"})
+    result = await IdentityAdminCommandService(db).update_platform_role(
         user_id=user_id,
         actor=current_user,
         platform_role=payload.platform_role,
         reason=payload.reason,
+        expected=expected,
+        idempotency_key=idempotency_key,
     )
-    return {"message": "Platform role updated", "platform_role": next_role}
+    return {"message": "Platform role updated", **result}
 
-@router.patch("/users/{user_id}/status")
+@router.patch("/users/{user_id}/status", response_model=UserStatusResult)
 async def update_user_status(
     user_id: uuid.UUID,
     payload: UserStatusUpdateRequest,
     step_up: StepUpAuth,
+    expected: int | None = Header(None, alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
     """Enable or disable a user account globally."""
     del step_up
-    revoked_sessions = await IdentityAdminCommandService(db).update_status(
+    if expected is None:
+        raise HTTPException(428, detail={"code": "VERSION_REQUIRED"})
+    result = await IdentityAdminCommandService(db).update_status(
         user_id=user_id,
         actor=current_user,
         is_active=payload.is_active,
         reason=payload.reason,
+        expected=expected,
+        idempotency_key=idempotency_key,
     )
-    return {"message": f"User account {'activated' if payload.is_active else 'deactivated'} successfully"}
+    return {"message": f"User account {'activated' if result['is_active'] else 'deactivated'} successfully", **result}
 
 
 # ── Database Migration Helpers ───────────────────────────────
 
 # ── Plans Extensions ──────────────────────────────────────────
 
-class PlanPatchRequest(BaseModel):
-    name: Optional[str] = None
-    tagline: Optional[str] = None
-    description: Optional[str] = None
-    max_events: Optional[int] = None
-    max_users: Optional[int] = None
-    max_registrations: Optional[int] = None
-    max_rooms: Optional[int] = None
-    storage_quota_mb: Optional[int] = None
-    is_active: Optional[bool] = None
-    max_speakers: Optional[int] = None
-    max_sessions: Optional[int] = None
-    max_ticket_categories: Optional[int] = None
-    max_badge_templates: Optional[int] = None
-    max_certificate_templates: Optional[int] = None
-    max_emails_per_event: Optional[int] = None
-    price_per_event: Optional[float] = None
-    currency: Optional[str] = None
-    billing_model: Optional[str] = None
-    display_order: Optional[int] = None
-    is_popular: Optional[bool] = None
-    color_hex: Optional[str] = None
 
-@router.patch("/plans/{plan_id}")
-async def patch_plan(
-    plan_id: uuid.UUID,
-    payload: PlanPatchRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Retired Boolean/legacy-limit mutation route."""
-    del plan_id, payload, db, current_user
-    _governed_commercial_workflow_required("versioned-subscription-plan-update")
 
 
 class TypedFeatureAssignmentPayload(BaseModel):
@@ -2997,813 +2326,10 @@ class TypedFeatureAssignmentPayload(BaseModel):
     hard_ceiling: Optional[int] = None
     allowed_values: Optional[List[str]] = None
     unit: Optional[str] = None
-class PlanFeaturesBulkUpdate(BaseModel):
-    feature_keys: Optional[List[str]] = Field(default=None)
-    assignments: Optional[List[TypedFeatureAssignmentPayload]] = Field(default=None)
-
-@router.get("/plans/{plan_id}/feature-assignments")
-@router.get("/subscription-plans/{plan_id}/feature-assignments")
-async def get_typed_plan_feature_assignments(plan_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin)):
-    assignments = await PlatformCommercialCatalogQueryService(db).plan_feature_assignments(
-        plan_id=plan_id
-    )
-    if assignments is None:
-        raise HTTPException(status_code=404, detail="Plan not found")
-    return assignments
 
 
-@router.get("/subscription-plans/{plan_id}/versions")
-async def list_plan_template_versions(
-    plan_id: uuid.UUID,
-    cursor: Optional[str] = Query(default=None),
-    limit: int = Query(default=25, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin),
-):
-    del current_user
-    try:
-        versions = await PlatformCommercialCatalogQueryService(db).plan_template_versions(
-            plan_id=plan_id,
-            cursor=cursor,
-            limit=limit,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail={"code": str(exc)}) from exc
-    if versions is None:
-        raise HTTPException(status_code=404, detail="Plan not found")
-    return versions
-
-@router.put("/plans/{plan_id}/features")
-@router.put("/subscription-plans/{plan_id}/features")
-async def bulk_update_plan_features(
-    plan_id: uuid.UUID,
-    payload: PlanFeaturesBulkUpdate,
-    step_up: StepUpAuth,
-    expected_version: int = Header(..., alias="If-Match", ge=1),
-    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
-    reason: str = Header(..., alias="X-Admin-Reason", min_length=12, max_length=1000),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Replace all features configured for a plan, returning count of affected tenants (Super Admin)."""
-    is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
-    if not is_super:
-        raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
-    del step_up
-    request_payload = payload.model_dump(mode="json")
-    request_hash = _commercial_request_hash("PLAN", plan_id, {"assignments": request_payload})
-    replay = await _commercial_version_replay(db, "PLAN", idempotency_key, request_hash)
-    if replay:
-        return {"message": "Plan features already updated", "organizations_affected": 0, "version": replay.version, "replayed": True}
-        
-    plan = await db.get(SubscriptionPlan, plan_id)
-    if not plan:
-        raise HTTPException(status_code=404, detail="Plan not found")
-    if plan.version != expected_version:
-        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "expected": expected_version, "actual": plan.version})
-    if plan.lifecycle_status == "RETIRED":
-        raise HTTPException(status_code=409, detail={"code": "RETIRED_PLAN_IMMUTABLE"})
-    requested_keys = payload.feature_keys or [assignment.feature_key for assignment in (payload.assignments or [])]
-    if plan.lifecycle_status == "PUBLISHED" and not requested_keys:
-        raise HTTPException(status_code=422, detail={"code": "PUBLISHED_PLAN_ASSIGNMENTS_REQUIRED"})
-        
-    # Delete current mappings
-    await db.execute(delete(PlanFeature).where(PlanFeature.plan_id == plan_id))
-    
-    # Insert new mappings
-    assignments = payload.assignments or []
-    feature_keys = payload.feature_keys or [a.feature_key for a in assignments]
-    if feature_keys:
-        feat_stmt = select(FeatureCatalog).where(FeatureCatalog.key.in_(feature_keys))
-        features = (await db.execute(feat_stmt)).scalars().all()
-        by_key = {f.key: f for f in features}
-        missing = sorted(set(feature_keys) - set(by_key))
-        if missing:
-            raise HTTPException(status_code=422, detail={"code": "UNKNOWN_FEATURE_KEYS", "keys": missing})
-        inactive = sorted(feature.key for feature in features if not feature.is_active)
-        if inactive:
-            raise HTTPException(status_code=422, detail={"code": "INACTIVE_FEATURE_KEYS", "keys": inactive})
-        valid_keys = set(FEATURE_DEFINITIONS) | set(CATALOG_LIMIT_KEYS) | set(by_key.keys())
-        unenforced = sorted(set(feature_keys) - valid_keys)
-        if unenforced:
-            raise HTTPException(status_code=422, detail={"code": "UNENFORCED_FEATURE_KEYS", "keys": unenforced})
-
-        requested_assignments = {
-            assignment.feature_key: assignment
-            for assignment in (payload.assignments or [])
-        }
-        def assignment_is_enabled(key: str) -> bool:
-            assignment = requested_assignments.get(key)
-            if assignment is None:
-                return True
-            value = assignment.value
-            if value is None or value is False or value == 0:
-                return False
-            if isinstance(value, str):
-                return value.upper() not in {
-                    "",
-                    "NONE",
-                    "DISABLED",
-                    "NOT_INCLUDED",
-                }
-            return True
-
-        enabled_keys = {key for key in feature_keys if assignment_is_enabled(key)}
-        dependency_errors = {
-            key: sorted(set(by_key[key].dependencies or []) - enabled_keys)
-            for key in enabled_keys
-            if set(by_key[key].dependencies or []) - enabled_keys
-        }
-        if dependency_errors:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "FEATURE_DEPENDENCIES_REQUIRED",
-                    "features": dependency_errors,
-                },
-            )
-        conflict_pairs = sorted({
-            tuple(sorted((key, conflict)))
-            for key in enabled_keys
-            for conflict in (by_key[key].conflicts or [])
-            if conflict in enabled_keys
-        })
-        if conflict_pairs:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "FEATURE_CONFLICT",
-                    "conflicts": [list(pair) for pair in conflict_pairs],
-                },
-            )
-        
-        plan_defaults = {
-            "LIMIT_ORGANIZER_USERS": plan.max_users,
-            "LIMIT_REGISTRATIONS": plan.max_registrations,
-            "LIMIT_SPEAKERS": plan.max_speakers,
-            "LIMIT_SESSIONS": plan.max_sessions,
-            "LIMIT_ROOMS": plan.max_rooms,
-            "LIMIT_STORAGE": plan.storage_quota_mb,
-            "FEAT_TICKET_CATEGORIES": plan.max_ticket_categories,
-            "FEAT_BADGE_TEMPLATES": plan.max_badge_templates,
-            "FEAT_CERTIFICATE_TEMPLATES": plan.max_certificate_templates,
-            "FEAT_EMAIL_NOTIFICATIONS": plan.max_emails_per_event,
-        }
-
-        if payload.assignments:
-            for assignment in payload.assignments:
-                if assignment.feature_key in by_key:
-                    f = by_key[assignment.feature_key]
-                    val_type = (f.value_type or "BOOLEAN").upper()
-                    if assignment.value_type.upper() != val_type:
-                        raise HTTPException(status_code=422, detail={
-                            "code": "FEATURE_TYPE_MISMATCH",
-                            "feature_key": f.key,
-                            "expected": val_type,
-                            "received": assignment.value_type,
-                        })
-                    val = assignment.value
-                    # Honor explicit enabled from payload (supports toggle off).
-                    # For LIMIT features — always enabled=True (the limit itself is what controls access).
-                    # For BOOLEAN features — enabled mirrors the boolean value.
-                    if val_type == "LIMIT":
-                        if val is None:
-                            val = plan_defaults.get(f.key) if plan_defaults.get(f.key) is not None else 0
-                        if isinstance(val, bool) or not isinstance(val, (int, float)) or val < 0:
-                            raise HTTPException(status_code=422, detail={"code": "INVALID_LIMIT_VALUE", "feature_key": f.key})
-                        val = int(val)
-                        # For LIMIT features: enabled reflects whether the feature is available at all.
-                        # A limit of 0 means blocked; otherwise always enabled=True.
-                        enabled = val > 0 if isinstance(val, int) else True
-                    elif val_type == "BOOLEAN":
-                        if not isinstance(val, bool):
-                            raise HTTPException(status_code=422, detail={"code": "INVALID_BOOLEAN_VALUE", "feature_key": f.key})
-                        enabled = val
-                    else:
-                        if val not in (f.allowed_values or []):
-                            raise HTTPException(status_code=422, detail={
-                                "code": "INVALID_ENUM_VALUE",
-                                "feature_key": f.key,
-                                "allowed_values": f.allowed_values or [],
-                            })
-                        enabled = True
-                    if assignment.hard_ceiling is not None:
-                        if assignment.hard_ceiling < 0:
-                            raise HTTPException(status_code=422, detail={"code": "INVALID_HARD_CEILING", "feature_key": f.key})
-                        if val_type == "LIMIT" and assignment.hard_ceiling < val:
-                            raise HTTPException(status_code=422, detail={"code": "CEILING_BELOW_ALLOWANCE", "feature_key": f.key})
-
-                    db.add(PlanFeature(
-                        plan_id=plan_id,
-                        feature_id=f.id,
-                        enabled=enabled,
-                        value_type=val_type,
-                        entitlement_value={"value": val} if val is not None else None,
-                        scope_type=assignment.scope_type or f.scope_type,
-                        enforcement_mode=assignment.enforcement_mode or "HARD",
-                        hard_ceiling={"value": assignment.hard_ceiling} if assignment.hard_ceiling is not None else None,
-                        version=plan.version + 1 if hasattr(plan, "version") else 1
-                    ))
-        else:
-            for f in features:
-                db.add(PlanFeature(plan_id=plan_id, feature_id=f.id, enabled=True, value_type=f.value_type, scope_type=f.scope_type))
-            
-    plan.version = expected_version + 1
-    await db.flush()
-    await _record_plan_template_version(
-        db, plan, actor=current_user, idempotency_key=idempotency_key,
-        request_hash=request_hash, reason=reason, change_type="ENTITLEMENTS_UPDATED",
-    )
-    await commit_transaction(db)
-    
-    # Calculate affected organizations count
-    org_count = await db.scalar(
-        select(func.count(OrganizationSubscription.id))
-        .where(OrganizationSubscription.plan_id == plan_id)
-    ) or 0
-    
-    return {"message": "Plan features updated successfully", "organizations_affected": org_count, "version": plan.version, "replayed": False}
 
 
-# ── Add-ons Extensions ──────────────────────────────────────────
-
-class AddonFeatureAssignmentPayload(BaseModel):
-    feature_key: str
-    value_type: Literal["BOOLEAN", "LIMIT", "TIER", "ENUM"] = "BOOLEAN"
-    value: Any = True
-    scope_type: str = "EVENT"
-    operation: Literal["REPLACE", "INCREMENT", "DECREMENT", "UNLOCK"] = "UNLOCK"
-    validity_days: Optional[int] = Field(default=None, ge=1, le=3650)
-    stackable: bool = False
-    max_quantity: Optional[int] = Field(default=None, ge=1)
-
-
-async def _replace_addon_feature_assignments(
-    db: AsyncSession,
-    addon_id: uuid.UUID,
-    assignments: Optional[List[AddonFeatureAssignmentPayload]],
-    compatibility_feature_ids: Optional[List[uuid.UUID]],
-) -> None:
-    """Validate and replace the typed add-on mapping as one atomic unit."""
-    if assignments is None and compatibility_feature_ids is None:
-        return
-
-    requested = assignments or []
-    feature_keys = [item.feature_key.strip().upper() for item in requested]
-    if len(feature_keys) != len(set(feature_keys)):
-        raise HTTPException(status_code=422, detail="Duplicate feature keys are not allowed in an add-on")
-
-    by_key: Dict[str, FeatureCatalog] = {}
-    if feature_keys:
-        features = (await db.execute(
-            select(FeatureCatalog).where(FeatureCatalog.key.in_(feature_keys))
-        )).scalars().all()
-        by_key = {feature.key: feature for feature in features}
-        missing = sorted(set(feature_keys) - set(by_key))
-        if missing:
-            raise HTTPException(status_code=422, detail={"code": "UNKNOWN_FEATURE_KEYS", "keys": missing})
-    elif compatibility_feature_ids:
-        features = (await db.execute(
-            select(FeatureCatalog).where(FeatureCatalog.id.in_(compatibility_feature_ids))
-        )).scalars().all()
-        if len(features) != len(set(compatibility_feature_ids)):
-            raise HTTPException(status_code=422, detail="One or more feature IDs are unknown")
-        requested = [
-            AddonFeatureAssignmentPayload(
-                feature_key=feature.key,
-                value_type=feature.value_type or "BOOLEAN",
-                value=True,
-                scope_type=feature.scope_type or "EVENT",
-                operation="UNLOCK",
-            )
-            for feature in features
-        ]
-        by_key = {feature.key: feature for feature in features}
-
-    normalized: list[tuple[FeatureCatalog, AddonFeatureAssignmentPayload, Any]] = []
-    for item in requested:
-        key = item.feature_key.strip().upper()
-        feature = by_key[key]
-        if not feature.is_active:
-            raise HTTPException(status_code=422, detail={"code": "INACTIVE_FEATURE", "feature_key": key})
-        canonical_type = (feature.value_type or "BOOLEAN").upper()
-        if item.value_type != canonical_type:
-            raise HTTPException(status_code=422, detail={
-                "code": "FEATURE_TYPE_MISMATCH",
-                "feature_key": key,
-                "expected": canonical_type,
-                "received": item.value_type,
-            })
-        value = item.value
-        if canonical_type == "BOOLEAN" and not isinstance(value, bool):
-            raise HTTPException(status_code=422, detail={"code": "INVALID_BOOLEAN_VALUE", "feature_key": key})
-        if canonical_type == "LIMIT" and (isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0):
-            raise HTTPException(status_code=422, detail={"code": "INVALID_LIMIT_VALUE", "feature_key": key})
-        if canonical_type in {"TIER", "ENUM"} and value not in (feature.allowed_values or []):
-            raise HTTPException(status_code=422, detail={
-                "code": "INVALID_ENUM_VALUE",
-                "feature_key": key,
-                "allowed_values": feature.allowed_values or [],
-            })
-        if item.operation in {"INCREMENT", "DECREMENT"} and canonical_type != "LIMIT":
-            raise HTTPException(status_code=422, detail={"code": "INVALID_ADDON_OPERATION", "feature_key": key})
-        normalized.append((feature, item, value))
-
-    await db.execute(delete(AddonFeature).where(AddonFeature.addon_id == addon_id))
-    for feature, item, value in normalized:
-        db.add(AddonFeature(
-            addon_id=addon_id,
-            feature_id=feature.id,
-            value_type=feature.value_type,
-            entitlement_value={"value": value},
-            operation=item.operation,
-            scope_type=item.scope_type or feature.scope_type,
-            validity_days=item.validity_days,
-            stackable=item.stackable,
-            max_quantity=item.max_quantity,
-        ))
-
-
-class AddonPostRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    key: str
-    description: Optional[str] = None
-    addon_type: str = "PLAN"
-    scope_type: Literal["ORGANIZATION", "EVENT"] = "EVENT"
-    consumption_model: Literal["NON_CONSUMABLE", "QUOTA", "METERED"] = "NON_CONSUMABLE"
-    unit_type: Optional[str] = None
-    short_description: Optional[str] = None
-    image_url: Optional[str] = None
-    price_inr: Optional[float] = None
-    min_price_inr: Optional[float] = None
-    max_price_inr: Optional[float] = None
-    billing_unit: str  # 'PER_EVENT' | 'PER_MONTH' | 'CUSTOM'
-    price_unit: Optional[str] = None
-    available_for_plans: List[str] = Field(default_factory=list)
-    is_optional_for_plan: Optional[str] = None
-    included_in_plan: Optional[str] = None
-    is_active: bool = True
-    lifecycle_status: Literal["DRAFT", "REVIEW", "PUBLISHED", "RETIRED"] = "DRAFT"
-    feature_ids: List[uuid.UUID] = Field(default_factory=list)
-    feature_assignments: List[AddonFeatureAssignmentPayload] = Field(default_factory=list)
-    features_spec: List[Dict[str, Any]] = Field(default_factory=list)
-    hardware_spec: List[Dict[str, Any]] = Field(default_factory=list)
-    staff_spec: List[Dict[str, Any]] = Field(default_factory=list)
-    inclusions: List[str] = Field(default_factory=list)
-    exclusions: List[str] = Field(default_factory=list)
-    consumables_cost: float = 0
-    template_types: List[str] = Field(default_factory=list)
-
-class AddonPatchRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: Optional[str] = None
-    key: Optional[str] = None
-    description: Optional[str] = None
-    addon_type: Optional[str] = None
-    scope_type: Optional[Literal["ORGANIZATION", "EVENT"]] = None
-    consumption_model: Optional[Literal["NON_CONSUMABLE", "QUOTA", "METERED"]] = None
-    unit_type: Optional[str] = None
-    short_description: Optional[str] = None
-    image_url: Optional[str] = None
-    price_inr: Optional[float] = None
-    min_price_inr: Optional[float] = None
-    max_price_inr: Optional[float] = None
-    billing_unit: Optional[str] = None
-    price_unit: Optional[str] = None
-    available_for_plans: Optional[List[str]] = None
-    is_optional_for_plan: Optional[str] = None
-    included_in_plan: Optional[str] = None
-    is_active: Optional[bool] = None
-    lifecycle_status: Optional[Literal["DRAFT", "REVIEW", "PUBLISHED", "RETIRED"]] = None
-    feature_ids: Optional[List[uuid.UUID]] = None
-    feature_assignments: Optional[List[AddonFeatureAssignmentPayload]] = None
-    features_spec: Optional[List[Dict[str, Any]]] = None
-    hardware_spec: Optional[List[Dict[str, Any]]] = None
-    staff_spec: Optional[List[Dict[str, Any]]] = None
-    inclusions: Optional[List[str]] = None
-    exclusions: Optional[List[str]] = None
-    consumables_cost: Optional[float] = None
-    template_types: Optional[List[str]] = None
-
-
-@router.get("/addons/{addon_id}/versions")
-async def list_addon_template_versions(
-    addon_id: uuid.UUID,
-    cursor: Optional[str] = Query(default=None),
-    limit: int = Query(default=25, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin),
-):
-    del current_user
-    try:
-        versions = await PlatformCommercialCatalogQueryService(db).addon_template_versions(
-            addon_id=addon_id,
-            cursor=cursor,
-            limit=limit,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail={"code": str(exc)}) from exc
-    if versions is None:
-        raise HTTPException(status_code=404, detail="Add-on not found")
-    return versions
-
-@router.post("/addons", status_code=201)
-async def create_platform_addon(
-    payload: AddonPostRequest,
-    step_up: StepUpAuth,
-    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
-    reason: str = Header(..., alias="X-Admin-Reason", min_length=12, max_length=1000),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Create a new platform add-on (Super Admin)."""
-    is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
-    if not is_super:
-        raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
-    del step_up
-    if payload.lifecycle_status in {"PUBLISHED", "RETIRED"}:
-        raise HTTPException(status_code=422, detail={"code": "ADDON_MUST_START_AS_DRAFT_OR_REVIEW"})
-    request_payload = payload.model_dump(mode="json")
-    request_hash = _commercial_request_hash("ADDON", None, request_payload)
-    replay = await _commercial_version_replay(db, "ADDON", idempotency_key, request_hash)
-    if replay:
-        existing_addon = await db.get(Addon, replay.resource_id)
-        return {
-            "message": "Add-on already created",
-            "addon_id": replay.resource_id,
-            "addon": existing_addon.name if existing_addon else None,
-            "version": replay.version,
-            "replayed": True,
-        }
-
-    # Check duplicate key
-    stmt = select(Addon).where(Addon.key == payload.key)
-    existing = (await db.execute(stmt)).scalar_one_or_none()
-    if existing:
-        raise HTTPException(status_code=400, detail="Add-on key already exists")
-
-    addon_type = payload.addon_type.upper()
-    hardware_spec = payload.hardware_spec if addon_type == "VENUE" else []
-    staff_spec = payload.staff_spec if addon_type == "VENUE" else []
-    final_price = await calculate_addon_final_price(
-        db,
-        addon_type=addon_type,
-        min_price_inr=payload.min_price_inr,
-        price_inr=payload.price_inr,
-        hardware_spec=hardware_spec,
-        staff_spec=staff_spec
-    )
-        
-    addon = Addon(
-        name=payload.name,
-        key=payload.key,
-        description=payload.description,
-        addon_type=addon_type,
-        short_description=payload.short_description,
-        image_url=payload.image_url,
-        price_inr=payload.price_inr,
-        min_price_inr=payload.min_price_inr,
-        max_price_inr=payload.max_price_inr,
-        billing_unit=payload.billing_unit,
-        price_unit=getattr(payload, "price_unit", None),
-        scope_type=payload.scope_type,
-        consumption_model=payload.consumption_model,
-        unit_type=payload.unit_type,
-        available_for_plans=payload.available_for_plans,
-        is_optional_for_plan=payload.is_optional_for_plan,
-        included_in_plan=payload.included_in_plan,
-        is_active=False,
-        lifecycle_status=payload.lifecycle_status,
-        version=1,
-        features_spec=payload.features_spec,
-        hardware_spec=hardware_spec,
-        staff_spec=staff_spec,
-        final_price=final_price,
-        inclusions=payload.inclusions,
-        exclusions=payload.exclusions,
-        consumables_cost=payload.consumables_cost
-        ,template_types=[value.lower() for value in payload.template_types]
-    )
-    db.add(addon)
-    await db.flush()  # To get addon.id
-    
-    await _replace_addon_feature_assignments(
-        db,
-        addon.id,
-        payload.feature_assignments if payload.feature_assignments else None,
-        payload.feature_ids if payload.feature_ids else None,
-    )
-    await db.flush()
-    await _record_addon_template_version(
-        db, addon, actor=current_user, idempotency_key=idempotency_key,
-        request_hash=request_hash, reason=reason, change_type="CREATED",
-    )
-    await commit_transaction(db)
-    return {"message": "Add-on created successfully", "addon_id": addon.id, "version": addon.version, "replayed": False}
-
-@router.patch("/addons/{addon_id}")
-async def patch_platform_addon(
-    addon_id: uuid.UUID,
-    payload: AddonPatchRequest,
-    step_up: StepUpAuth,
-    expected_version: int = Header(..., alias="If-Match", ge=1),
-    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
-    reason: str = Header(..., alias="X-Admin-Reason", min_length=12, max_length=1000),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Update details or feature associations for a platform add-on (Super Admin)."""
-    is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
-    if not is_super:
-        raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
-    del step_up
-    request_payload = payload.model_dump(mode="json", exclude_unset=True)
-    request_hash = _commercial_request_hash("ADDON", addon_id, request_payload)
-    replay = await _commercial_version_replay(db, "ADDON", idempotency_key, request_hash)
-    if replay:
-        return {"message": "Add-on update already applied", "version": replay.version, "replayed": True}
-
-    addon = await db.get(Addon, addon_id)
-    if not addon:
-        raise HTTPException(status_code=404, detail="Add-on not found")
-    if addon.version != expected_version:
-        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "expected": expected_version, "actual": addon.version})
-    if addon.lifecycle_status == "RETIRED":
-        raise HTTPException(status_code=409, detail={"code": "RETIRED_ADDON_IMMUTABLE", "message": "Clone a retired add-on to create a new draft."})
-
-    update_data = payload.model_dump(exclude_unset=True, exclude={"feature_ids", "feature_assignments"})
-    previous_lifecycle = addon.lifecycle_status
-    addon_type = update_data.get("addon_type", addon.addon_type).upper() if update_data.get("addon_type") else addon.addon_type
-    if addon_type != "VENUE":
-        update_data["hardware_spec"] = []
-        update_data["staff_spec"] = []
-    for field, val in update_data.items():
-        if field == "addon_type" and isinstance(val, str):
-            val = val.upper()
-        setattr(addon, field, val)
-    target_lifecycle = payload.lifecycle_status or addon.lifecycle_status
-    if target_lifecycle == "PUBLISHED" and addon.addon_type == "PLAN":
-        proposed_assignments = payload.feature_assignments
-        if proposed_assignments is not None:
-            has_assignments = bool(proposed_assignments)
-        else:
-            has_assignments = bool(await db.scalar(select(func.count(AddonFeature.feature_id)).where(AddonFeature.addon_id == addon_id)))
-        if not has_assignments:
-            raise HTTPException(status_code=422, detail={"code": "ADDON_ASSIGNMENTS_REQUIRED"})
-    if target_lifecycle == "PUBLISHED" and previous_lifecycle != "PUBLISHED":
-        addon.effective_at = datetime.now(timezone.utc)
-        addon.is_active = True
-    if target_lifecycle == "RETIRED":
-        addon.retired_at = datetime.now(timezone.utc)
-        addon.is_active = False
-    addon.lifecycle_status = target_lifecycle
-    addon.is_active = bool(update_data.get("is_active", addon.is_active)) and target_lifecycle == "PUBLISHED"
-    addon.version = expected_version + 1
-        
-    # Recalculate final_price
-    addon.final_price = await calculate_addon_final_price(
-        db,
-        addon_type=addon.addon_type,
-        min_price_inr=addon.min_price_inr,
-        price_inr=addon.price_inr,
-        hardware_spec=addon.hardware_spec or [],
-        staff_spec=addon.staff_spec or []
-    )
-        
-    await _replace_addon_feature_assignments(
-        db,
-        addon_id,
-        payload.feature_assignments,
-        payload.feature_ids,
-    )
-    await db.flush()
-    await _record_addon_template_version(
-        db, addon, actor=current_user, idempotency_key=idempotency_key,
-        request_hash=request_hash, reason=reason, change_type="UPDATED",
-    )
-    await commit_transaction(db)
-    return {"message": "Add-on updated successfully", "addon": addon.name, "version": addon.version, "replayed": False}
-
-@router.delete("/addons/{addon_id}")
-async def delete_platform_addon(
-    addon_id: uuid.UUID,
-    step_up: StepUpAuth,
-    expected_version: int = Header(..., alias="If-Match", ge=1),
-    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
-    reason: str = Header(..., alias="X-Admin-Reason", min_length=12, max_length=1000),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Retire an add-on while preserving contracts, lineage, and history."""
-    del step_up
-    request_hash = _commercial_request_hash("ADDON", addon_id, {"lifecycle_status": "RETIRED"})
-    replay = await _commercial_version_replay(db, "ADDON", idempotency_key, request_hash)
-    if replay:
-        return {"message": "Add-on retirement already applied", "version": replay.version, "replayed": True}
-    addon = await db.get(Addon, addon_id)
-    if not addon:
-        raise HTTPException(status_code=404, detail="Add-on not found")
-    if addon.version != expected_version:
-        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "expected": expected_version, "actual": addon.version})
-    if addon.lifecycle_status == "RETIRED":
-        raise HTTPException(status_code=409, detail={"code": "ADDON_ALREADY_RETIRED"})
-    addon.lifecycle_status = "RETIRED"
-    addon.is_active = False
-    addon.retired_at = datetime.now(timezone.utc)
-    addon.version = expected_version + 1
-    await db.flush()
-    await _record_addon_template_version(
-        db, addon, actor=current_user, idempotency_key=idempotency_key,
-        request_hash=request_hash, reason=reason, change_type="RETIRED",
-    )
-    await commit_transaction(db)
-    return {"message": "Add-on retired", "version": addon.version, "replayed": False}
-
-
-# ── Subscriptions Extensions ───────────────────────────────────
-
-class BulkExtendTrialRequest(BaseModel):
-    org_ids: List[uuid.UUID]
-    days: int = Field(ge=1, le=90)
-    reason: str = Field(..., min_length=8, max_length=1000)
-
-@router.post("/subscriptions/bulk-extend")
-async def bulk_extend_trial(
-    payload: BulkExtendTrialRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Extend trial period for multiple organization subscriptions (Super Admin)."""
-    _governed_commercial_workflow_required("entitlement-override-request")
-    for org_id in payload.org_ids:
-        sub = await _get_current_subscription(db, org_id)
-        if sub:
-            old_state = {
-                "subscription_id": str(sub.id),
-                "status": sub.status,
-                "trial_ends_at": sub.trial_ends_at.isoformat() if sub.trial_ends_at else None,
-            }
-            current_trial = sub.trial_ends_at or datetime.now(timezone.utc)
-            sub.trial_ends_at = current_trial + timedelta(days=payload.days)
-            db.add(ActivityTimeline(
-                organization_id=org_id,
-                actor_id=current_user.id,
-                action_type="TRIAL_EXTENDED",
-                metadata_data={"days_extended": payload.days, "reason": payload.reason, "bulk": True}
-            ))
-            db.add(AuditLog(
-                actor_user_id=current_user.id,
-                organization_id=org_id,
-                action_type="TRIAL_EXTENDED",
-                resource_type="subscription",
-                resource_id=sub.id,
-                old_state=old_state,
-                new_state={
-                    "subscription_id": str(sub.id),
-                    "status": sub.status,
-                    "trial_ends_at": sub.trial_ends_at.isoformat() if sub.trial_ends_at else None,
-                },
-                change_diff={"days": payload.days, "reason": payload.reason, "bulk": True},
-                is_sensitive=True,
-                occurred_at=datetime.now(timezone.utc),
-            ))
-    await commit_transaction(db)
-    return {"message": f"Successfully extended trial for {len(payload.org_ids)} tenants"}
-
-
-class BulkChangePlanRequest(BaseModel):
-    org_ids: List[uuid.UUID]
-    plan_id: uuid.UUID
-    reason: str = Field(..., min_length=8, max_length=1000)
-
-@router.post("/subscriptions/bulk-change-plan")
-async def bulk_change_plan(
-    payload: BulkChangePlanRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Migrate multiple organizations to a new subscription plan (Super Admin)."""
-    _governed_commercial_workflow_required("commercial-access-request")
-    plan = await db.get(SubscriptionPlan, payload.plan_id)
-    if not plan:
-        raise HTTPException(status_code=404, detail="Selected plan not found")
-        
-    for org_id in payload.org_ids:
-        sub = await _get_current_subscription(db, org_id)
-        if sub:
-            old_plan_id = sub.plan_id
-            old_state = {
-                "subscription_id": str(sub.id),
-                "plan_id": str(old_plan_id) if old_plan_id else None,
-                "status": sub.status,
-            }
-            sub.plan_id = payload.plan_id
-            db.add(ActivityTimeline(
-                organization_id=org_id,
-                actor_id=current_user.id,
-                action_type="PLAN_CHANGED",
-                metadata_data={
-                    "old_plan_id": str(old_plan_id),
-                    "new_plan_id": str(payload.plan_id),
-                    "new_plan_name": plan.name,
-                    "reason": payload.reason,
-                    "bulk": True
-                }
-            ))
-            db.add(AuditLog(
-                actor_user_id=current_user.id,
-                organization_id=org_id,
-                action_type="PLAN_CHANGED",
-                resource_type="subscription",
-                resource_id=sub.id,
-                old_state=old_state,
-                new_state={
-                    "subscription_id": str(sub.id),
-                    "plan_id": str(sub.plan_id),
-                    "plan_name": plan.name,
-                    "status": sub.status,
-                },
-                change_diff={"reason": payload.reason, "bulk": True},
-                is_sensitive=True,
-                occurred_at=datetime.now(timezone.utc),
-            ))
-    await commit_transaction(db)
-    return {"message": f"Successfully migrated plan to {plan.name} for {len(payload.org_ids)} tenants"}
-
-
-@router.post("/subscriptions/{subscription_id}/cancel")
-async def cancel_subscription(
-    subscription_id: uuid.UUID,
-    payload: ReasonRequiredRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Flag an active subscription as CANCELLED (Super Admin)."""
-    _governed_commercial_workflow_required("commercial-access-request")
-    sub = await db.get(OrganizationSubscription, subscription_id)
-    if not sub:
-        raise HTTPException(status_code=404, detail="Subscription not found")
-    old_state = {"subscription_id": str(sub.id), "status": sub.status}
-    sub.status = "CANCELLED"
-    db.add(ActivityTimeline(
-        organization_id=sub.organization_id,
-        actor_id=current_user.id,
-        action_type="SUBSCRIPTION_CANCELLED",
-        metadata_data={"reason": payload.reason, "by": str(current_user.id)}
-    ))
-    db.add(AuditLog(
-        actor_user_id=current_user.id,
-        organization_id=sub.organization_id,
-        action_type="SUBSCRIPTION_CANCELLED",
-        resource_type="subscription",
-        resource_id=sub.id,
-        old_state=old_state,
-        new_state={"subscription_id": str(sub.id), "status": sub.status},
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-        occurred_at=datetime.now(timezone.utc),
-    ))
-    await commit_transaction(db)
-    return {"message": "Subscription cancelled successfully"}
-
-
-@router.post("/subscriptions/{subscription_id}/reactivate")
-async def reactivate_subscription(
-    subscription_id: uuid.UUID,
-    payload: ReasonRequiredRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Reactivate a cancelled/expired subscription back to ACTIVE (Super Admin)."""
-    _governed_commercial_workflow_required("commercial-access-request")
-    sub = await db.get(OrganizationSubscription, subscription_id)
-    if not sub:
-        raise HTTPException(status_code=404, detail="Subscription not found")
-    old_state = {"subscription_id": str(sub.id), "status": sub.status}
-    sub.status = "ACTIVE"
-    db.add(ActivityTimeline(
-        organization_id=sub.organization_id,
-        actor_id=current_user.id,
-        action_type="SUBSCRIPTION_REACTIVATED",
-        metadata_data={"reason": payload.reason, "by": str(current_user.id)}
-    ))
-    db.add(AuditLog(
-        actor_user_id=current_user.id,
-        organization_id=sub.organization_id,
-        action_type="SUBSCRIPTION_REACTIVATED",
-        resource_type="subscription",
-        resource_id=sub.id,
-        old_state=old_state,
-        new_state={"subscription_id": str(sub.id), "status": sub.status},
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-        occurred_at=datetime.now(timezone.utc),
-    ))
-    await commit_transaction(db)
-    return {"message": "Subscription reactivated successfully"}
 
 
 # ── Invoices Extensions ────────────────────────────────────────
@@ -3840,6 +2366,8 @@ async def mark_invoice_paid(
     }
     inv.status = "PAID"
     inv.paid_at = datetime.now(timezone.utc)
+    from app.modules.billing.services.commercial_contract_service import CommercialContractService
+    await CommercialContractService(db).activate_paid_contract(inv.id)
     
     db.add(ActivityTimeline(
         organization_id=inv.organization_id,
@@ -3984,254 +2512,6 @@ async def get_revenue_analytics(
     return await PlatformCoreDashboardQueryService(db).revenue_analytics(period=period)
 
 
-async def _legacy_revenue_analytics(
-    breakdown: str = Query("plan"),
-    period: str = Query("12m"),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
-):
-    """Fetch aggregated MRR metrics, country breakdown, plan flows, and cohort tables (Super Admin)."""
-    # 1. Total active metrics
-    current_period = datetime.now(timezone.utc).strftime("%Y-%m")
-    total_mrr = await db.scalar(select(func.sum(RevenueMetric.mrr)).where(RevenueMetric.period == current_period)) or 0.0
-    active_count = await db.scalar(select(func.count(Organization.id)).where(Organization.is_active == True)) or 0
-    
-    # ARPU
-    arpu = float(total_mrr) / active_count if active_count > 0 else 0.0
-    
-    # 2. 12-Month stacked area history
-    periods = []
-    for i in range(12):
-        d = datetime.now(timezone.utc) - timedelta(days=30*i)
-        periods.append(d.strftime("%Y-%m"))
-    periods.reverse()
-    
-    mrr_breakdown = []
-    for p in periods:
-        basic_mrr = await db.scalar(
-            select(func.sum(RevenueMetric.mrr))
-            .join(Organization, RevenueMetric.organization_id == Organization.id)
-            .where(and_(RevenueMetric.period == p, Organization.plan.ilike("%basic%")))
-        ) or 0.0
-        pro_mrr = await db.scalar(
-            select(func.sum(RevenueMetric.mrr))
-            .join(Organization, RevenueMetric.organization_id == Organization.id)
-            .where(and_(RevenueMetric.period == p, or_(Organization.plan.ilike("%pro%"), Organization.plan.ilike("%professional%"))))
-        ) or 0.0
-        ent_mrr = await db.scalar(
-            select(func.sum(RevenueMetric.mrr))
-            .join(Organization, RevenueMetric.organization_id == Organization.id)
-            .where(and_(RevenueMetric.period == p, Organization.plan.ilike("%enterprise%")))
-        ) or 0.0
-        addon_mrr = await db.scalar(
-            select(func.sum(RevenueMetric.add_on_revenue))
-            .where(RevenueMetric.period == p)
-        ) or 0.0
-        
-        total_p = basic_mrr + pro_mrr + ent_mrr + addon_mrr
-        mrr_breakdown.append({
-            "period": p,
-            "Basic": float(basic_mrr),
-            "Pro": float(pro_mrr),
-            "Enterprise": float(ent_mrr),
-            "Addons": float(addon_mrr),
-            "total_mrr": float(total_p),
-            "total_arr": float(total_p * 12),
-        })
-        
-    # Deltas
-    curr_total = mrr_breakdown[-1]["total_mrr"]
-    prev_total = mrr_breakdown[-2]["total_mrr"] if len(mrr_breakdown) > 1 else curr_total
-    
-    net_new = curr_total - prev_total if curr_total > prev_total else 0.0
-    churn = 0.0 if curr_total >= prev_total else (prev_total - curr_total)
-    expansion = curr_total - prev_total - net_new if curr_total > prev_total else 0.0
-    
-    # 3. Country Revenue
-    country_rows = await db.execute(
-        select(Organization.country, func.count(Organization.id))
-        .group_by(Organization.country)
-        .order_by(desc(func.count(Organization.id)))
-        .limit(10)
-    )
-    country_data = []
-    for code, count in country_rows.all():
-        country_data.append({
-            "country": code,
-            "organizations": count,
-            "revenue": count * 240.0
-        })
-            
-    # Dynamic upgrades/downgrades counts by plan tier
-    upgrades_downgrades = []
-    try:
-        res = await db.execute(text("""
-            SELECT sp.name, 
-                   COUNT(*) FILTER (WHERE os.status = 'ACTIVE') as upgrades,
-                   0 as downgrades
-            FROM commerce.organization_subscriptions os
-            JOIN commerce.subscription_plans sp ON sp.id = os.plan_id
-            GROUP BY sp.name
-        """))
-        upgrades_downgrades = [{"tier": r[0], "upgrades": int(r[1] or 0), "downgrades": int(r[2] or 0)} for r in res.fetchall()]
-    except Exception:
-        pass
-    
-    # Dynamic cohort retention calculation
-    cohort_retention = []
-    try:
-        cohort_res = await db.execute(text("""
-            SELECT
-                TO_CHAR(created_at, 'YYYY-MM') as cohort,
-                COUNT(*) as size,
-                COUNT(*) FILTER (WHERE is_active = True) as active_now
-            FROM platform.organizations
-            GROUP BY TO_CHAR(created_at, 'YYYY-MM')
-            ORDER BY cohort DESC
-            LIMIT 6
-        """))
-        for r in cohort_res.fetchall():
-            size = int(r.size or 0)
-            active = int(r.active_now or 0)
-            pct = round((active / size) * 100.0, 1) if size > 0 else 0.0
-            cohort_retention.append({
-                "cohort": r.cohort,
-                "size": size,
-                "m1": 100.0,
-                "m2": pct,
-                "m3": pct,
-                "m4": None,
-                "m5": None,
-                "m6": None
-            })
-    except Exception:
-        pass
-
-    # B4 integrations
-    months_count = 12 if period == "12m" else int(period.replace("m", ""))
-    
-    # MRR by month across all orgs
-    mrr_by_month_res = await db.execute(
-        text("""
-        SELECT period, SUM(mrr) as total_mrr, SUM(arr) as total_arr
-        FROM commerce.revenue_metrics
-        WHERE period >= TO_CHAR(NOW() - (CAST(:months AS INTEGER) * INTERVAL '1 month'), 'YYYY-MM')
-        GROUP BY period
-        ORDER BY period
-        """),
-        {"months": months_count}
-    )
-    mrr_by_month_rows = mrr_by_month_res.all()
-    
-    # MRR by plan tier
-    mrr_by_plan_res = await db.execute(
-        text("""
-        SELECT sp.name as plan_name, SUM(rm.mrr) as mrr, COUNT(DISTINCT rm.organization_id) as org_count
-        FROM commerce.revenue_metrics rm
-        JOIN commerce.organization_subscriptions os ON os.organization_id = rm.organization_id
-        JOIN commerce.subscription_plans sp ON sp.id = os.plan_id
-        WHERE rm.period = TO_CHAR(NOW(), 'YYYY-MM')
-        GROUP BY sp.name
-        ORDER BY mrr DESC
-        """)
-    )
-    mrr_by_plan_rows = mrr_by_plan_res.all()
-    
-    # Plan upgrades/downgrades this month from commerce.payment_events / commerce.financial_audit_trail
-    plans_res = await db.execute(select(SubscriptionPlan.id, SubscriptionPlan.display_order, SubscriptionPlan.name))
-    plan_info = {str(p.id): p.display_order for p in plans_res.all()}
-    plan_name_info = {p.name.upper(): p.display_order for p in plans_res.all()}
-
-    upgrades_this_month = 0
-    downgrades_this_month = 0
-    try:
-        events_res = await db.execute(text("""
-            SELECT metadata_data 
-            FROM commerce.payment_events
-            WHERE action_type IN ('PLAN_CHANGED', 'PLAN_CHANGE')
-              AND timestamp >= DATE_TRUNC('month', NOW())
-        """))
-        for row in events_res.all():
-            meta = row.metadata_data
-            if not isinstance(meta, dict):
-                continue
-            old_order = None
-            new_order = None
-            
-            old_pid = meta.get("old_plan_id")
-            new_pid = meta.get("new_plan_id")
-            if old_pid and new_pid:
-                old_order = plan_info.get(str(old_pid))
-                new_order = plan_info.get(str(new_pid))
-            
-            if old_order is None or new_order is None:
-                from_p = meta.get("from_plan")
-                to_p = meta.get("to_plan")
-                if from_p and to_p:
-                    old_order = plan_name_info.get(from_p.upper())
-                    new_order = plan_name_info.get(to_p.upper())
-                    
-            if old_order is not None and new_order is not None:
-                if new_order > old_order:
-                    upgrades_this_month += 1
-                elif new_order < old_order:
-                    downgrades_this_month += 1
-            else:
-                upgrades_this_month += 1
-    except Exception:
-        upgrades_this_month = 0
-        downgrades_this_month = 0
-
-    mrr_by_month = []
-    for r in mrr_by_month_rows:
-        mrr_by_month.append({
-            "period": r.period,
-            "mrr": float(r.total_mrr or 0.0),
-            "arr": float(r.total_arr or 0.0)
-        })
-        
-    if not mrr_by_month:
-        mrr_by_month = []
-        
-    mrr_by_plan = []
-    for r in mrr_by_plan_rows:
-        mrr_by_plan.append({
-            "plan": r.plan_name,
-            "mrr": float(r.mrr or 0.0),
-            "orgs": r.org_count,
-            "pct": round((float(r.mrr or 0.0) / total_mrr) * 100.0, 2) if total_mrr > 0 else 0.0
-        })
-        
-    if not mrr_by_plan:
-        mrr_by_plan = []
-    
-    return {
-        "metrics": {
-            "mrr": float(total_mrr) if total_mrr > 0 else float(curr_total),
-            "arr": float(total_mrr * 12) if total_mrr > 0 else float(mrr_breakdown[-1]["total_arr"]),
-            "net_new_mrr": float(net_new),
-            "churn_mrr": float(churn),
-            "expansion_mrr": float(expansion),
-            "arpu": float(arpu) if arpu > 0 else 235.0,
-        },
-        "mrr_breakdown": mrr_breakdown,
-        "country_revenue": country_data,
-        "upgrades_downgrades": upgrades_downgrades,
-        "cohort_retention": cohort_retention,
-        
-        "mrr_by_month": mrr_by_month,
-        "mrr_by_plan": mrr_by_plan,
-        "upgrades_this_month": upgrades_this_month,
-        "downgrades_this_month": downgrades_this_month,
-        "arpu_inr": float(arpu) if arpu > 0 else 235.0,
-        "summary": {
-            "mrr": float(total_mrr) if total_mrr > 0 else float(curr_total),
-            "arr": float(total_mrr * 12) if total_mrr > 0 else float(mrr_breakdown[-1]["total_arr"]),
-            "net_new_mrr": float(net_new),
-            "churned_mrr": float(churn),
-            "expansion_mrr": float(expansion)
-        }
-    }
 
 
 # ── Phase 4 Financial, Security, Impersonation and AI routes ──
@@ -4282,7 +2562,6 @@ async def get_financial_audit_trail(
         activity_type=activity_type,
     )
 
-@router.get("/impersonation-logs")
 async def get_impersonation_logs_route(
     skip: int = 0,
     limit: int = 50,

@@ -3,6 +3,7 @@ import { apiGet, apiPost, apiPatch, apiDelete, apiDownload, saveDownloadedFile }
 import { EventSummary, EventResponse } from "@/types/backend";
 import { useAuthStore } from "@/store/use-auth-store";
 import { queryKeys } from "@/lib/query-keys";
+import { useRef } from "react";
 
 function useEventScope(eventId?: string) {
   const organizationId = useAuthStore((state) => state.user?.organization_id);
@@ -48,12 +49,25 @@ export function useCreateEvent() {
   });
 }
 
-export function useUpdateEvent(eventId: string) {
+export function useUpdateEvent(eventId: string, expectedVersion: number | null) {
   const queryClient = useQueryClient();
   const organizationId = useAuthStore((state) => state.user?.organization_id);
+  const userId = useAuthStore((state) => state.user?.id);
+  const receipt = useRef<{ fingerprint: string; key: string } | null>(null);
   return useMutation({
-    mutationFn: (data: any) => apiPatch<EventResponse>(`/events/${eventId}`, data),
+    mutationFn: (data: Record<string, unknown>) => {
+      if (!Number.isInteger(expectedVersion) || Number(expectedVersion) < 1) {
+        throw new Error("Reload current event details before saving.");
+      }
+      const fingerprint = JSON.stringify([userId, organizationId, eventId, expectedVersion, data]);
+      if (receipt.current?.fingerprint !== fingerprint) receipt.current = { fingerprint, key: crypto.randomUUID() };
+      return apiPatch<EventResponse>(`/events/${eventId}`, data, { headers: {
+        "If-Match": String(expectedVersion), "Idempotency-Key": receipt.current.key,
+      } });
+    },
+    retry: false,
     onSuccess: () => {
+      receipt.current = null;
       queryClient.invalidateQueries({ queryKey: queryKeys.events.all(organizationId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.events.detail(organizationId, eventId) });
     },

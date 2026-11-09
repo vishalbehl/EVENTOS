@@ -2,12 +2,12 @@
 
 import { useParams } from "next/navigation";
 import { useState } from "react";
-import { Settings2, AlertTriangle, ShieldAlert, RefreshCw, Globe } from "lucide-react";
+import { toast } from "sonner";
+import { Settings2, ShieldAlert, Globe } from "lucide-react";
 import { 
   useOrganizationDomain,
-  useCreateLifecycleJob 
+  destructiveLifecycleUnavailableReason,
 } from "@/features/organizations/api/organization-console-api";
-import { toast } from "sonner";
 import {
   OrgPageHeader, OrgCard, OrgTabBar, OrgSectionTitle, 
   UnavailableDomain, LoadingPage, OrgDataTable, OrgStatusBadge
@@ -16,11 +16,7 @@ import {
 export default function AdvancedPageScreen() {
   const params = useParams<{ orgId: string }>();
   const [activeTab, setActiveTab] = useState("general");
-  const { data, isLoading, refetch } = useOrganizationDomain(params.orgId, "advanced");
-  const createJob = useCreateLifecycleJob(params.orgId);
-  
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deleteReason, setDeleteReason] = useState("");
+  const { data, isLoading } = useOrganizationDomain(params.orgId, "advanced");
 
   if (isLoading) return <LoadingPage />;
   if (!data?.availability?.available) return <UnavailableDomain reason={data?.availability?.reason} />;
@@ -37,27 +33,6 @@ export default function AdvancedPageScreen() {
     { key: "danger", label: "Danger Zone" },
   ];
 
-  const handleDelete = async () => {
-    if (deleteReason.length < 12) {
-      toast.error("Please provide a detailed reason (min 12 characters)");
-      return;
-    }
-    
-    try {
-      await createJob.mutateAsync({
-        idempotencyKey: crypto.randomUUID(),
-        payload: {
-          job_type: "PURGE",
-          reason: deleteReason
-        }
-      });
-      toast.success("Organization purge request created for independent approval");
-      setShowDeleteModal(false);
-      refetch();
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to schedule deletion");
-    }
-  };
 
   return (
     <div className="p-6 space-y-6">
@@ -229,71 +204,20 @@ export default function AdvancedPageScreen() {
               <div>
                 <p className="text-sm font-bold text-[var(--text-primary)] mb-1">Request Organization Purge</p>
                 <p className="text-xs text-[var(--text-tertiary)] leading-relaxed max-w-2xl">
-                  Generate a retention-aware dry-run manifest for permanent purge. Active legal holds block the request and an independent super admin must approve it before execution.
+                  {destructiveLifecycleUnavailableReason}
                 </p>
               </div>
               <button 
-                onClick={() => setShowDeleteModal(true)}
-                className="shrink-0 px-4 py-2.5 rounded-xl bg-[var(--status-danger)] text-white text-xs font-bold shadow-lg hover:bg-red-600 transition-colors"
+                disabled
+                className="shrink-0 px-4 py-2.5 rounded-xl bg-[var(--status-danger)] text-white text-xs font-bold opacity-40"
               >
-                Request Purge
+                Purge unavailable
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
-      {showDeleteModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-2xl p-6 w-full max-w-md shadow-2xl relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-[var(--status-danger)]" />
-            
-            <div className="flex items-center gap-3 mb-4">
-               <AlertTriangle className="w-6 h-6 text-[var(--status-danger)]" />
-               <h3 className="text-lg font-black text-[var(--text-primary)]">Confirm Deletion</h3>
-            </div>
-            
-            <p className="text-xs text-[var(--text-secondary)] mb-4 leading-relaxed">
-              You are about to schedule the deletion of organization <span className="font-mono text-[var(--text-primary)] font-bold">{params.orgId}</span>. 
-              This is a permanent, destructive action.
-            </p>
-            
-            <div className="space-y-3 mb-6">
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
-                Reason for deletion (Required)
-              </label>
-              <input
-                autoFocus
-                placeholder="Must be at least 12 characters..."
-                value={deleteReason}
-                onChange={(e) => setDeleteReason(e.target.value)}
-                className="w-full rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface-3)] px-3 py-2.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--status-danger)]"
-              />
-            </div>
-            
-            <div className="flex justify-end gap-3 pt-4 border-t border-[var(--border-subtle)]">
-               <button 
-                onClick={() => {
-                  setShowDeleteModal(false);
-                  setDeleteReason("");
-                }}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-[var(--text-secondary)] hover:bg-[var(--bg-surface-3)] transition-colors"
-              >
-                Cancel
-              </button>
-               <button 
-                onClick={handleDelete}
-                disabled={deleteReason.length < 12 || createJob.isPending}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[var(--status-danger)] text-white text-xs font-bold shadow-lg hover:bg-red-600 transition-colors disabled:opacity-50"
-              >
-                {createJob.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ShieldAlert className="w-3.5 h-3.5" />}
-                Request Purge
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

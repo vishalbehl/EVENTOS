@@ -1,0 +1,30 @@
+{
+  "status": "PASSED",
+  "checks": [
+    "requested_relationship_has_no_access",
+    "client_approved_form_action_admitted",
+    "registration_active_save_replay_audit",
+    "survey_active_save_replay_audit",
+    "speaker_intake_active_save_replay_audit",
+    "billing_not_inherited",
+    "foreign_event_concealed",
+    "organisation_catalogue_administration_denied",
+    "old_selector_denied_after_committed_suspension",
+    "registration_suspended_write_denied",
+    "survey_suspended_write_denied",
+    "speaker_intake_suspended_write_denied",
+    "old_selector_denied_after_committed_detachment",
+    "registration_detached_write_denied",
+    "survey_detached_write_denied",
+    "speaker_intake_detached_write_denied"
+  ],
+  "temporary_relationship_id": "6f6d512f-3f94-4fad-877b-5cfd68fa89fd",
+  "temporary_session_id": "08320130-d48b-4c91-9d54-650e288fc786",
+  "business_mutation_acceptance": "PASSED_SCOPED_REGISTRATION_SURVEY_SPEAKER_WRITES",
+  "independent_rollback_verified": true,
+  "independent_original_state_and_receipts_restored": true,
+  "database": "category_a_restore_20261020_4a51db21c164",
+  "organization_id": "0c4263d2-300e-4eb8-9a19-bf63911e8784",
+  "scope": "WORKSPACE",
+  "probe_sha256": "257338d1129d98a0c26d9fd85beef69582d7706ca84dbdfbed5e31781a2e4fb7"
+}

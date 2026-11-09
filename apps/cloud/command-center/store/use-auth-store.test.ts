@@ -56,4 +56,39 @@ describe("privileged auth persistence", () => {
       impersonatedUserName: null,
     });
   });
+
+  it("keeps session ordering memory-only and ignores credentials in legacy persisted state", async () => {
+    useAuthStore.getState().setAuth(administrator, "current-access", undefined, true);
+    const revision = useAuthStore.getState().sessionRevision;
+    expect(persistedState().sessionRevision).toBeUndefined();
+    localStorage.setItem("obsidian-auth-storage", JSON.stringify({ state: {
+      user: { ...administrator, id: "legacy-user" }, accessToken: "legacy-access", refreshToken: "legacy-refresh",
+      isAuthenticated: true, originalAccessToken: "legacy-impersonation", sessionRevision: -100, rememberMe: true,
+    }, version: 0 }));
+    await useAuthStore.persist.rehydrate();
+    expect(useAuthStore.getState().user?.id).toBe(administrator.id);
+    expect(useAuthStore.getState().accessToken).toBe("current-access");
+    expect(useAuthStore.getState().sessionRevision).toBe(revision);
+    expect(useAuthStore.getState().originalAccessToken).toBeNull();
+  });
+
+  it("advances ordering on every identity transition but not activity updates", () => {
+    const initial = useAuthStore.getState().sessionRevision;
+    useAuthStore.getState().setAuth(administrator, "current-access");
+    useAuthStore.getState().updateActivity();
+    expect(useAuthStore.getState().sessionRevision).toBe(initial + 1);
+    useAuthStore.getState().startImpersonation({ ...administrator, id: "member" }, "scoped-access", "Tenant", "Member");
+    useAuthStore.getState().stopImpersonation();
+    useAuthStore.getState().logout();
+    expect(useAuthStore.getState().sessionRevision).toBe(initial + 4);
+  });
+
+  it("does not retain another identity's impersonation return tokens after new authentication", () => {
+    useAuthStore.getState().setAuth(administrator, "old-admin-access");
+    useAuthStore.getState().startImpersonation({ ...administrator, id: "member" }, "scoped-access", "Tenant", "Member");
+    useAuthStore.getState().setAuth({ ...administrator, id: "new-admin" }, "new-admin-access");
+    expect(useAuthStore.getState().originalAccessToken).toBeNull();
+    expect(useAuthStore.getState().originalUser).toBeNull();
+    expect(useAuthStore.getState().impersonatedOrgName).toBeNull();
+  });
 });

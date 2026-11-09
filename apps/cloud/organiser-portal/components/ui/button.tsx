@@ -16,7 +16,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       default: "btn-primary bg-[var(--pri)] text-[var(--primary-contrast)] border border-[var(--pri)] hover:bg-[var(--brand-primary-hover)] hover:text-[var(--primary-contrast)] font-semibold shadow-xs",
       primary: "btn-primary bg-[var(--pri)] text-[var(--primary-contrast)] border border-[var(--pri)] hover:bg-[var(--brand-primary-hover)] hover:text-[var(--primary-contrast)] font-semibold shadow-xs",
       secondary: "btn-secondary bg-[var(--bg-surface-2)] text-[var(--text-primary)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] font-medium shadow-xs",
-      outline: "bg-transparent text-[var(--text-primary)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] font-medium shadow-xs",
+      outline: "btn-outline bg-transparent text-[var(--text-primary)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] font-medium shadow-xs",
       ghost: "btn-ghost bg-transparent text-[var(--text-primary)] border border-transparent hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] font-medium",
       destructive: "btn-danger bg-[var(--status-danger)] text-white border border-transparent hover:opacity-90 hover:text-white font-semibold shadow-xs",
       danger: "btn-danger bg-[var(--status-danger)] text-white border border-transparent hover:opacity-90 hover:text-white font-semibold shadow-xs",

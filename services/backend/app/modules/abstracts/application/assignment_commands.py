@@ -7,9 +7,10 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from .write_authority import authorize_abstract_write, write_abstract_audit
 
 from app.modules.abstracts.models import AbstractAssignment, AbstractReviewer, AbstractSubmission
-from app.modules.audit.services.audit_service import AuditContext, AuditService
+from app.modules.audit.services.audit_service import AuditContext
 
 
 class AbstractAssignmentCommandService:
@@ -19,7 +20,7 @@ class AbstractAssignmentCommandService:
         self.db = db
 
     async def _audit(self, *, event, user, action: str, resource_id, old=None, new=None):
-        await AuditService.write_log_sync(
+        await write_abstract_audit(
             AuditContext(
                 action_type=action,
                 resource_type="abstract",
@@ -31,10 +32,12 @@ class AbstractAssignmentCommandService:
                 new_state={**(new or {}), "event_id": str(event.id)},
             ),
             self.db,
+            commit=False,
         )
 
     async def assign(self, *, submission_id, reviewer_id, due_at, event, user) -> AbstractSubmission:
         try:
+            await authorize_abstract_write(self.db, event, user, "abstracts.assign_reviewers")
             submission = await self.db.scalar(
                 select(AbstractSubmission).where(
                     AbstractSubmission.id == submission_id,
@@ -82,6 +85,9 @@ class AbstractAssignmentCommandService:
 
     async def update(self, *, assignment_id, payload: dict[str, Any], event, user) -> dict[str, Any]:
         try:
+            await authorize_abstract_write(self.db, event, user, "abstracts.assign_reviewers")
+            if set(payload) - {"status", "conflict_declared", "conflict_reason", "due_at"}:
+                raise HTTPException(422, detail={"code": "UNEXPECTED_ASSIGNMENT_FIELDS"})
             assignment = await self.db.scalar(
                 select(AbstractAssignment).where(
                     AbstractAssignment.id == assignment_id,

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
-UPLOAD_STATES = frozenset({"created", "uploading", "uploaded", "verifying", "scanning", "processing", "ready", "failed", "quarantined", "deleted"})
+UPLOAD_STATES = frozenset({"created", "uploading", "uploaded", "verifying", "scanning", "processing", "cleanup_pending", "ready", "failed", "quarantined", "deleted"})
 TERMINAL_UPLOAD_STATES = frozenset({"ready", "failed", "quarantined", "deleted"})
 UPLOAD_TRANSITIONS = {
-    "created": {"uploading", "deleted"},
+    # Session creation can succeed before presigning/storage negotiation fails;
+    # recovery therefore needs an explicit terminal failure from ``created``.
+    "created": {"uploading", "failed", "deleted"},
     "uploading": {"uploaded", "failed", "deleted"},
     # Integrity failures are terminal and can be established before the
     # verification state is entered (for example, object size/checksum).
@@ -17,7 +19,12 @@ UPLOAD_TRANSITIONS = {
     "failed": {"verifying", "deleted"},
     "quarantined": {"deleted"},
     "deleted": set(),
+    # Irreversible cleanup intent: never revive this same object key after an
+    # external DELETE has been authorised. Quota remains held until recovery.
+    "cleanup_pending": {"failed"},
 }
+for _state in ("created", "uploading", "uploaded", "verifying", "scanning", "processing"):
+    UPLOAD_TRANSITIONS[_state].add("cleanup_pending")
 
 
 def transition_upload(current: str, target: str) -> str:

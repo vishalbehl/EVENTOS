@@ -71,11 +71,11 @@ export function OnboardingWizard() {
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
 
-  // DB API Plans & Addons
-  const [currentBillingPlan, setCurrentBillingPlan] = useState<any>(null);
-  const [dbPlans, setDbPlans] = useState<any[]>([]);
+  // Canonical commercial offers and capacity catalogue
+  const [currentCommercialContract, setCurrentCommercialContract] = useState<any>(null);
+  const [eventOffers, setEventOffers] = useState<any[]>([]);
   const [billingCatalogueUnavailable, setBillingCatalogueUnavailable] = useState(false);
-  const [dbAddons, setDbAddons] = useState<any[]>([]);
+  const [capacityOffers, setCapacityOffers] = useState<any[]>([]);
   const [loadingDbBilling, setLoadingDbBilling] = useState(true);
 
   // Feature Detail Inspection Pop-Up Window State
@@ -116,6 +116,11 @@ export function OnboardingWizard() {
   // Step 5: Team Members State
   const [teamMembers, setTeamMembers] = useState<Array<{ name: string; email: string; role: OrgRole; access: string }>>([]);
   const [newMember, setNewMember] = useState({ name: "", email: "", role: "member" as OrgRole });
+  const [teamInvitationLink, setTeamInvitationLink] = useState<string | null>(null);
+  const [invitingMember, setInvitingMember] = useState(false);
+  const inviteCommand = useRef<{ signature: string; key: string } | null>(null);
+  const inviteUser = useAuthStore(state => state.user);
+  useEffect(() => { setTeamInvitationLink(null); setInvitingMember(false); inviteCommand.current = null; }, [inviteUser?.id, inviteUser?.organization_id]);
 
   // Step 6: First Event State - Full Event Fields Matching DB Model
   const [eventData, setEventData] = useState({
@@ -154,12 +159,12 @@ export function OnboardingWizard() {
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [processingState, setProcessingState] = useState<number | null>(null);
 
-  // Normalizing dbPlans for Official CommercialPlanCard
+  // Normalize event offers for the commercial offer cards
   const commercialPlans = useMemo(() => {
-    const rawList = asArray(dbPlans);
+    const rawList = asArray(eventOffers);
 
     return rawList.map((plan, i) => {
-      const price = plan.price ?? plan.price_monthly ?? plan.amount ?? plan.price_per_event;
+      const price = plan.price ?? plan.prices?.[0]?.amount ?? plan.price_monthly ?? plan.amount;
       return {
         id: String(plan.id ?? plan.code ?? plan.key ?? `plan-${i}`),
         name: String(plan.name ?? "Standard Tier"),
@@ -182,11 +187,11 @@ export function OnboardingWizard() {
         raw: plan,
       };
     });
-  }, [dbPlans]);
+  }, [eventOffers]);
 
-  // Normalizing dbAddons for Official CommercialAddonCard
+  // Normalize capacity offers for the commercial capacity cards
   const commercialAddons = useMemo(() => {
-    const rawList = asArray(dbAddons);
+    const rawList = asArray(capacityOffers);
 
     return rawList.map((addon) => {
       const price = addon.final_price ?? addon.price_monthly ?? addon.price ?? addon.price_inr;
@@ -208,7 +213,7 @@ export function OnboardingWizard() {
         raw: addon,
       };
     });
-  }, [dbAddons]);
+  }, [capacityOffers]);
 
   const currentSelectedPlanObj = useMemo(() => {
     if (commercialPlans.length === 0) return null;
@@ -217,7 +222,7 @@ export function OnboardingWizard() {
 
   const hasActivePlan = Boolean(
     data?.organization?.is_active &&
-    (["ACTIVE", "TRIAL"].includes(String(currentBillingPlan?.status ?? "").toUpperCase()) || Boolean(currentBillingPlan?.subscription_id))
+    (["ACTIVE", "PENDING_PAYMENT"].includes(String(currentCommercialContract?.status ?? "").toUpperCase()) || Boolean(currentCommercialContract?.contract_id))
   );
 
   const maxStepIndex = hasActivePlan ? 6 : 8;
@@ -327,21 +332,21 @@ export function OnboardingWizard() {
       });
 
     setLoadingDbBilling(true);
-    Promise.all([orgApi.plans(), orgApi.addons(), orgApi.currentBillingPlan().catch(() => null)])
+    Promise.all([orgApi.eventOffers(), orgApi.capacityOffers(), orgApi.currentCommercialContract().catch(() => null)])
       .then(([plansRes, addonsRes, billingRes]) => {
         const rawP = plansRes ?? [];
         const rawA = addonsRes ?? [];
         setBillingCatalogueUnavailable(false);
-        setDbPlans(rawP);
-        setDbAddons(rawA);
-        setCurrentBillingPlan(billingRes);
+        setEventOffers(rawP);
+        setCapacityOffers(rawA);
+        setCurrentCommercialContract(billingRes);
         setSelectedPlanId(rawP[0] ? String(rawP[0].id || rawP[0].code) : null);
       })
       .catch(() => {
         setBillingCatalogueUnavailable(true);
-        setDbPlans([]);
-        setDbAddons([]);
-        setCurrentBillingPlan(null);
+        setEventOffers([]);
+        setCapacityOffers([]);
+        setCurrentCommercialContract(null);
       })
       .finally(() => setLoadingDbBilling(false));
   }, [router, searchParams]);
@@ -428,22 +433,36 @@ export function OnboardingWizard() {
   };
 
   const handleAddTeamMember = async () => {
-    if (!newMember.email) return;
+    if (!newMember.email || invitingMember) return;
+    const signature = JSON.stringify([newMember.email.trim().toLowerCase(), newMember.role]);
+    if (inviteCommand.current?.signature !== signature) inviteCommand.current = { signature, key: crypto.randomUUID() };
+    setInvitingMember(true);
+    const actingIdentity = useAuthStore.getState().user;
+    const stillInContext = () => {
+      const current = useAuthStore.getState().user;
+      return current?.id === actingIdentity?.id && current?.organization_id === actingIdentity?.organization_id;
+    };
     try {
-      await orgApi.invite(newMember.email, newMember.role);
-      setTeamMembers([
-        ...teamMembers,
+      const result = await orgApi.invite(newMember.email, newMember.role, inviteCommand.current.key);
+      if (!stillInContext()) return;
+      setTeamInvitationLink(result.invite_token ? `${window.location.origin}/accept-invite#token=${encodeURIComponent(result.invite_token)}` : null);
+      inviteCommand.current = null;
+      setTeamMembers(previous => [
+        ...previous,
         {
           name: newMember.name || newMember.email.split("@")[0],
           email: newMember.email,
           role: newMember.role,
-          access: newMember.role === "admin" || newMember.role === "owner" ? "Full Access" : "Edit Access",
+          access: "Pending acceptance",
         },
       ]);
       setNewMember({ name: "", email: "", role: "member" });
-      toast.success(`Invitation sent to ${newMember.email}`);
+      toast.success(result.invite_token ? "Invitation created. Share the one-time link below." : "Invitation already created. Replace its link from People if you did not save it.");
     } catch (error: any) {
-      toast.error(error.message || "Could not send invite.");
+      if (!stillInContext()) return;
+      toast.error(error.message || "Could not create invitation.");
+    } finally {
+      if (stillInContext()) setInvitingMember(false);
     }
   };
 
@@ -494,7 +513,7 @@ export function OnboardingWizard() {
 
   const handleOpenPlanDetails = async (planId: string) => {
     try {
-      const res = await orgApi.plan(planId).catch(() => commercialPlans.find((p) => p.id === planId)?.raw);
+      const res = await orgApi.eventOffer(planId).catch(() => commercialPlans.find((p) => p.id === planId)?.raw);
       setDetailType("plan");
       setDetailData(res);
       setDetailOpen(true);
@@ -505,7 +524,7 @@ export function OnboardingWizard() {
 
   const handleOpenAddonDetails = async (addonId: string) => {
     try {
-      const res = await orgApi.addon(addonId).catch(() => commercialAddons.find((a) => a.id === addonId)?.raw);
+      const res = await orgApi.capacityOffer(addonId).catch(() => commercialAddons.find((a) => a.id === addonId)?.raw);
       setDetailType("addon");
       setDetailData(res);
       setDetailOpen(true);
@@ -1193,7 +1212,7 @@ export function OnboardingWizard() {
                       </Select>
                       <Button
                         onClick={handleAddTeamMember}
-                        disabled={userLimitAccess.loading || !userLimitAccess.enabled}
+                        disabled={invitingMember || userLimitAccess.loading || !userLimitAccess.enabled}
                         title={
                           userLimitAccess.enabled
                             ? undefined
@@ -1204,6 +1223,10 @@ export function OnboardingWizard() {
                         <Plus className="h-4 w-4" /> Add
                       </Button>
                     </div>
+                    {teamInvitationLink ? <label className="block text-sm">One-time invitation link — share privately; no email has been sent.
+                      <Input readOnly value={teamInvitationLink} autoComplete="off" />
+                      <Button variant="outline" onClick={() => setTeamInvitationLink(null)}>Hide link</Button>
+                    </label> : null}
                   </div>
 
                   <div className="flex justify-between items-center pt-4">
@@ -1574,7 +1597,7 @@ export function OnboardingWizard() {
                       <div className="flex justify-between">
                         <span>Subscription Status:</span>
                         <span className="text-emerald-400 font-bold">
-                          {hasActivePlan ? `Active Subscription (${currentBillingPlan?.plan?.name || "Plan unavailable"})` : (skippedPlan ? "Free Trial" : (currentSelectedPlanObj?.name || "Selected Plan"))}
+                          {hasActivePlan ? `Active Contract (${currentCommercialContract?.offer?.name || "Offer unavailable"})` : (skippedPlan ? "No offer selected" : (currentSelectedPlanObj?.name || "Selected Offer"))}
                         </span>
                       </div>
                       {!hasActivePlan && (

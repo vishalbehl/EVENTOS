@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -195,14 +195,16 @@ export function SettingsSecurityTab() {
                 ["Require number", "require_number"],
                 ["Require symbol", "require_symbol"],
               ] as const
-            ).map(([l, k]) =>
-              check(l, form.password_policy[k], (v) =>
-                setForm((f) => ({
-                  ...f,
-                  password_policy: { ...f.password_policy, [k]: v },
-                })),
-              ),
-            )}
+            ).map(([l, k]) => (
+              <Fragment key={k}>
+                {check(l, form.password_policy[k], (v) =>
+                  setForm((f) => ({
+                    ...f,
+                    password_policy: { ...f.password_policy, [k]: v },
+                  })),
+                )}
+              </Fragment>
+            ))}
           </div>
         </Panel>
         <Panel title="Sessions and trusted devices">

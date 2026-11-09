@@ -38,3 +38,26 @@ async def test_builder_snapshot_reaches_fixed_route_and_returns_existing_program
     snapshot = response.json()
     assert [session["id"] for session in snapshot["sessions"]] == [str(session_obj.id)]
     assert [snapshot_room["id"] for snapshot_room in snapshot["rooms"]] == [str(room.id)]
+
+
+@pytest.mark.asyncio
+async def test_patch_session_partial_update(
+    client,
+    db,
+    organizer,
+    event,
+    session_obj,
+):
+    await activate_event_for_test(db, event)
+
+    response = await client.patch(
+        f"/api/v1/events/{event.id}/sessions/{session_obj.id}",
+        json={"name": "Updated Keynote Title", "description": "Updated description without dates"},
+        headers=auth_headers(organizer),
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["name"] == "Updated Keynote Title"
+    assert data["description"] == "Updated description without dates"
+

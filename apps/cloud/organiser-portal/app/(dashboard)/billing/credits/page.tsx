@@ -1,5 +1,2 @@
-import { BillingCreditsTab } from "@/components/organizer/workspace/billing/BillingCreditsTab";
-
-export default function Page() {
-  return <BillingCreditsTab />;
-}
+import { redirect } from "next/navigation";
+export default function Page() { redirect("/commercial/credits"); }

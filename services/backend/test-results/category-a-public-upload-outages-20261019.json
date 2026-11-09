@@ -1,0 +1,32 @@
+{
+  "status": "PASSED",
+  "scope": "isolated_actual_restricted_login_real_http",
+  "storage_connection_failure_retained_and_same_attempt_retried": true,
+  "post_commit_broker_failure_recovered_by_real_worker": true,
+  "fixture": {
+    "event_id": "4ea794b8-cd0a-4843-9835-2af8a7e4140a",
+    "contract_id": "02e6bf60-3d23-447b-a4bf-6578cec562a3",
+    "offer_id": "3efb8193-5d31-435b-8959-a04d97926449"
+  },
+  "upload_id": "7fa55562-ea84-4456-b0ae-a3ac32861225",
+  "durable_commit_before_storage": true,
+  "unscanned_delivery_denied": true,
+  "private_bucket_verified": true,
+  "same_key_replayed": true,
+  "changed_payload_conflict": true,
+  "real_broker_and_dedicated_worker": true,
+  "real_antivirus": true,
+  "infected_upload_quarantined_and_delivery_denied": true,
+  "scan_ready_bytes_delivered": true,
+  "expired_and_foreign_capabilities_denied": true,
+  "field_revocation_denies_status_and_download": true,
+  "storage_to_finalisation_revocation_denied": true,
+  "abandoned_exact_object_deleted_before_quota_release": true,
+  "released_attempt_has_one_mandatory_audit": true,
+  "finalized_clean_and_quarantined_usage_retained": true,
+  "accounting_excludes_capabilities_and_personal_filenames": true,
+  "signed_download_exposure_bound_seconds": 300,
+  "context_restored": true,
+  "disposable_storage_removed": true,
+  "database": "category_a_rehearsal_20261015"
+}

@@ -37,7 +37,9 @@ from app.models.srr_activity_log import SRRActivityLog
 from app.models.presentation_queue import PresentationQueue
 from app.models.playback_event import PlaybackEvent
 from app.models.poster import Poster
-from app.models.attendance_log import AttendanceLog
+from app.models.ticket_type import TicketType
+from app.models.promo_code import PromoCode
+from app.models.payment_transaction import PaymentTransaction
 from app.models.venue_operational_policy import VenueOperationalPolicy
 from app.models.venue_sync_job import VenueSyncJob
 
@@ -72,6 +74,9 @@ __all__ = [
     "NetworkConfig",
     "RegistrationSourceApiKey",
     "VenueOperationalPolicy",
+    "TicketType",
+    "PromoCode",
+    "PaymentTransaction",
     "SRRStation",
     "SRRCheckin",
     "SRRActivityLog",

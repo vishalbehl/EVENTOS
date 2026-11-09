@@ -1,0 +1,21 @@
+{
+  "status": "PASSED",
+  "environment": "local_isolated_rehearsal",
+  "run_id": "78371310d1d246a493d64d79b0ba07ad",
+  "scenario": "delegated-race",
+  "scope": "EVENT",
+  "database": "category_a_restore_20261020_78371310d1d2",
+  "backup_database": "category_a_restore_20261020_4eeff58ce5f1",
+  "backup_evidence_sha256": "68ddc0cff7625306cb388b92b85d7c2ed0e3ad54bfc6b3a3aa8e8936f1b78042",
+  "started_at": "2026-10-20T11:17:30.962813+00:00",
+  "application_workers_providers": "NOT_STARTED",
+  "production_acceptance": "NOT_RUN",
+  "fixture_artifact": "category-a-abstract-fixture-78371310d1d246a493d64d79b0ba07ad.json",
+  "runtime_artifact": "category-a-delegated-revocation-runtime-a211041053a04cecb32e1b06f60cc337.json",
+  "runtime_artifact_sha256": "5925b196a4cd8d8af4fed073e657b0262a05f86ddb30e56d985a7595fcf5a260",
+  "runtime_status": "PASSED",
+  "checks_verified": 6,
+  "final_clone_quarantined": true,
+  "completed_at": "2026-10-20T11:17:58.145180+00:00",
+  "probe_sha256": "682d59207b84662065a193068c563942a3d852fa34cdcc8c1581abd8d9785cc0"
+}

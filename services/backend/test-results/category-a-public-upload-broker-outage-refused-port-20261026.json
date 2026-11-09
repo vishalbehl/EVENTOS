@@ -1,0 +1,29 @@
+{
+  "status": "FAILED",
+  "stage": "dedicated real worker and antivirus",
+  "error_type": "OperationalError",
+  "database_error_metadata": {
+    "sqlstate": null,
+    "constraint_name": null,
+    "table_name": null,
+    "column_name": null
+  },
+  "last_http": {
+    "status": 404,
+    "code": "PUBLIC_FORM_NOT_FOUND"
+  },
+  "error_location": [
+    {
+      "file": "connection.py",
+      "line": 460
+    },
+    {
+      "file": "contextlib.py",
+      "line": 162
+    },
+    {
+      "file": "connection.py",
+      "line": 478
+    }
+  ]
+}

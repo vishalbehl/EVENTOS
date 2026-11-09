@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.operations_planning.models import Milestone, Project, ProjectTask
 from app.modules.events.models.event import Event
+from app.modules.rbac.services.event_scope import owned_event_scope
 from app.modules.operations_planning.infrastructure.repositories import (
     MilestoneRepository,
     ProjectRepository,
@@ -33,8 +34,10 @@ class ProjectQueryService:
             Event.id == event_id,
             Event.deleted_at.is_(None),
         )
-        if not is_super_admin:
-            statement = statement.where(Event.organization_id == organization_id)
+        statement = statement.where(
+            Event.organization_id == organization_id,
+            owned_event_scope(self.db, Event.id, organization_id),
+        )
         return await self.db.scalar(statement)
 
     async def list_projects(

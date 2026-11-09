@@ -18,6 +18,8 @@ import { toast } from "sonner";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { compileTemplateToPdf } from "@/lib/pdf-compiler";
 import { useOperationAccess } from "@/lib/capabilities";
+import { TablePagination } from "@/components/organizer/common/TablePagination";
+import { useTablePagination } from "@/hooks/useTablePagination";
 import { cn } from "@/lib/utils";
 
 interface Participant {
@@ -58,6 +60,14 @@ export default function CertificatePrinter() {
   const [selectedParticipantIds, setSelectedParticipantIds] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
+
+  const {
+    currentPage,
+    setCurrentPage,
+    pageSize,
+    setPageSize,
+    paginatedItems: paginatedParticipants,
+  } = useTablePagination(participants, 10);
 
   const [certTitle, setCertTitle] = useState("Certificate of Appreciation");
   const [certBody, setCertBody] = useState(
@@ -133,11 +143,17 @@ export default function CertificatePrinter() {
   }, [eventIdStr, roleFilter]);
 
   const toggleSelectAll = () => {
-    if (selectedParticipantIds.size === participants.length) {
-      setSelectedParticipantIds(new Set());
-    } else {
-      setSelectedParticipantIds(new Set(participants.map((p) => p.id)));
-    }
+    const pageIds = paginatedParticipants.map((p) => p.id);
+    const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedParticipantIds.has(id));
+    setSelectedParticipantIds((prev) => {
+      const next = new Set(prev);
+      if (allPageSelected) {
+        pageIds.forEach((id) => next.delete(id));
+      } else {
+        pageIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
   };
 
   const toggleSelectParticipant = (id: string) => {
@@ -348,8 +364,8 @@ export default function CertificatePrinter() {
                       <input
                         type="checkbox"
                         checked={
-                          participants.length > 0 &&
-                          selectedParticipantIds.size === participants.length
+                          paginatedParticipants.length > 0 &&
+                          paginatedParticipants.every((p) => selectedParticipantIds.has(p.id))
                         }
                         onChange={toggleSelectAll}
                         className="rounded accent-[var(--pri)] cursor-pointer"
@@ -368,7 +384,7 @@ export default function CertificatePrinter() {
                       </td>
                     </tr>
                   ) : (
-                    participants.map((p) => (
+                    paginatedParticipants.map((p) => (
                       <tr key={p.id} className="hover:bg-[var(--bg-surface-hover)]">
                         <td className="py-2.5 px-3 text-center">
                           <input
@@ -409,6 +425,14 @@ export default function CertificatePrinter() {
                 </tbody>
               </table>
             </div>
+            <TablePagination
+              currentPage={currentPage}
+              totalItems={participants.length}
+              pageSize={pageSize}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={setPageSize}
+              itemLabel="candidates"
+            />
           </div>
         </div>
       </div>

@@ -17,8 +17,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, update, delete, or_, func, nullslast
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_db, get_current_user, get_current_event, CurrentEvent
+from app.dependencies import get_db, get_current_user, get_current_event, CurrentEvent, require_step_up
 from app.modules.communications.models.email_campaign import EmailCampaign
+from app.modules.notifications.services.campaign_authority import bind_dispatch, authorize_dispatch
+from app.modules.notifications.services.campaign_action_contract import begin_campaign_action, check_campaign_version, audit_campaign_action
 from app.modules.communications.models.email_template import EmailTemplate
 from app.modules.communications.models.email_log import EmailLog
 from app.modules.events.models.speaker import Speaker
@@ -27,8 +29,8 @@ from app.modules.notifications.schemas.notification import (
     EmailTemplateCreate, EmailTemplateUpdate, EmailTemplateResponse,
     EmailComponentCreate, EmailComponentUpdate, EmailComponentResponse,
     CampaignCreate, CampaignUpdate, CampaignResponse, InviteSpeakersRequest,
-    SendToSpeakersRequest,
-    PaginatedEmailLogResponse, TestTemplateRequest, EmailLogResponse
+    SendToSpeakersRequest, CampaignActionInput, CampaignActionResult,
+    PaginatedEmailLogResponse, TestTemplateRequest, EmailLogResponse, CampaignDeliverySummary
 )
 from app.modules.communications.models.email_component import EmailComponent
 from app.schemas.common import MessageResponse
@@ -559,6 +561,17 @@ async def get_analytics(
     )
 
 
+@router.get("/campaigns/{campaign_id}/summary", response_model=CampaignDeliverySummary,
+    dependencies=[require_event_operation("communications.email.read")])
+async def get_campaign_delivery_summary(
+    event: CurrentEvent, campaign_id: uuid.UUID, response: Response,
+    actor: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+):
+    response.headers["Cache-Control"] = "private, no-store"
+    return await EmailLogQueryService(db).campaign_summary(
+        event_id=event.id, user_id=actor.id, campaign_id=campaign_id)
+
+
 @router.get("/logs", response_model=PaginatedEmailLogResponse, dependencies=[require_event_operation("communications.email.read")])
 async def get_email_logs(
     event: CurrentEvent,
@@ -568,10 +581,11 @@ async def get_email_logs(
     page: int = 1,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
+    actor: User = Depends(get_current_user),
 ):
     """Fetch email delivery logs with pagination and filtering."""
     return await EmailLogQueryService(db).list_legacy(
-        event_id=event.id, target_type=target_type,
+        event_id=event.id, user_id=actor.id, target_type=target_type,
         campaign_id=campaign_id, status=status, page=page, limit=limit,
     )
 
@@ -589,10 +603,12 @@ async def get_email_logs_cursor(
     status: Optional[str] = None,
     target_type: str = "speaker",
     db: AsyncSession = Depends(get_db),
+    actor: User = Depends(get_current_user),
 ):
     """Bounded cursor path for large delivery-log histories."""
     return await EmailLogQueryService(db).list_for_event(
         event_id=event.id,
+        user_id=actor.id,
         target_type=target_type,
         campaign_id=campaign_id,
         status=status,
@@ -626,22 +642,11 @@ async def download_logs(
         idempotency_key=f"email-log-export:{idempotency_key}",
         metadata={"target_type": target_type, "domain": "communications"},
     )
-    if target_type == "participant":
-        from app.modules.registration.models.participant import Participant
-        query = (
-            select(EmailLog)
-            .join(Participant, EmailLog.participant_id == Participant.id)
-            .where(Participant.event_id == event.id, Participant.deleted_at.is_(None))
-            .order_by(EmailLog.sent_at.desc())
-        )
-    else:
-        query = (
-            select(EmailLog)
-            .join(Speaker, EmailLog.speaker_id == Speaker.id)
-            .where(Speaker.event_id == event.id, Speaker.deleted_at.is_(None))
-            .order_by(EmailLog.sent_at.desc())
-        )
-    result = await db.execute(query)
+    logs = await EmailLogQueryService(db).list_for_export(
+        event_id=event.id,
+        user_id=actor.id,
+        target_type=target_type,
+    )
     await AuditService.write_log_sync(
         AuditContext(
             action_type="EMAIL_LOG_EXPORT_ACCESSED",
@@ -663,33 +668,37 @@ async def download_logs(
     )
     await db.commit()
 
-    def generate_csv():
-        output = io.StringIO()
-        writer = csv.writer(output)
-        
-        # Write Header
-        writer.writerow(["Email", "Subject", "Status", "Opened At", "Sent At"])
-        yield output.getvalue()
-        output.seek(0)
-        output.truncate(0)
+    async def generate_csv():
+        from app.database import AsyncSessionLocal
+        from app.core.tenant_context import TenantContextGuard
+        from app.modules.notifications.services.read_scope import communication_read_scope
 
-        # Write Rows
-        for log in result.scalars():
-            writer.writerow([
-                log.to_email,
-                log.subject,
-                log.status,
-                log.opened_at.isoformat() if log.opened_at else "N/A",
-                log.sent_at.isoformat() if log.sent_at else "N/A",
-            ])
+        def safe_cell(value):
+            text = str(value)
+            risky = text[:1] in {chr(9), chr(10), chr(13)} or text.lstrip().startswith(("=", "+", "-", "@"))
+            return "'" + text if risky else text
+
+        # One bounded chunk is admitted at a time. No DB connection or lock is
+        # retained while the client receives it; later chunks recheck authority.
+        for offset in range(0, max(1, len(logs)), 50):
+            async with AsyncSessionLocal() as stream_db:
+                async with TenantContextGuard.scoped(stream_db, event.organization_id):
+                    await communication_read_scope(stream_db, actor.id, event.id)
+                    await communication_read_scope(stream_db, actor.id, event.id, action="ANALYTICS:EXPORT")
+                    await stream_db.commit()
+            output = io.StringIO()
+            writer = csv.writer(output)
+            if offset == 0:
+                writer.writerow(["Email", "Subject", "Status", "Opened At", "Sent At"])
+            for log in logs[offset:offset + 50]:
+                writer.writerow([safe_cell(log.to_email), safe_cell(log.subject), safe_cell(log.status),
+                    log.opened_at.isoformat() if log.opened_at else "N/A", log.sent_at.isoformat() if log.sent_at else "N/A"])
             yield output.getvalue()
-            output.seek(0)
-            output.truncate(0)
 
     return StreamingResponse(
         generate_csv(),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=email_logs_{event.id}.csv"},
+        headers={"Content-Disposition": f"attachment; filename=email_logs_{event.id}.csv", "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
     )
 
 
@@ -805,77 +814,8 @@ async def restore_template(
 
 
 async def get_campaign_recipient_count(db: AsyncSession, campaign: EmailCampaign) -> int:
-    from sqlalchemy import select, func, or_
-    
-    if campaign.target_type == "participant":
-        from app.modules.registration.models.participant import Participant
-        query = select(func.count(Participant.id)).where(
-            Participant.event_id == campaign.event_id,
-            Participant.deleted_at.is_(None),
-        )
-        if campaign.recipient_filter == "paid":
-            query = query.where(Participant.paid_status == "Paid")
-        elif campaign.recipient_filter == "unpaid":
-            query = query.where(Participant.paid_status == "Unpaid")
-        elif campaign.recipient_filter == "pending":
-            query = query.where(Participant.paid_status == "Pending")
-        elif campaign.recipient_filter in ("specific_speakers", "specific_participants", "custom_list", "custom") and campaign.speaker_id_list:
-            import uuid as _uuid
-            try:
-                ids = [_uuid.UUID(s.strip()) for s in campaign.speaker_id_list.split(",") if s.strip()]
-                query = query.where(Participant.id.in_(ids))
-            except Exception:
-                pass
-        res = await db.execute(query)
-        return res.scalar_one()
-
-    from app.modules.events.models.speaker import Speaker
-    from app.modules.presentations.models.poster import Poster
-    from app.modules.agenda.models import SessionPerson as SessionSpeaker
-    
-    query = select(func.count(Speaker.id)).where(
-        Speaker.event_id == campaign.event_id,
-        Speaker.deleted_at.is_(None),
-    )
-    
-    if campaign.recipient_filter == "pending_upload" or campaign.recipient_filter == "pending":
-        query = query.where(Speaker.upload_status == "pending")
-    elif campaign.recipient_filter == "uploaded":
-        query = query.where(Speaker.upload_status == "uploaded")
-    elif campaign.recipient_filter == "approved":
-        query = query.where(Speaker.upload_status == "approved")
-    elif campaign.recipient_filter == "rejected":
-        query = query.where(Speaker.upload_status == "rejected")
-    elif campaign.recipient_filter == "posters":
-        query = query.where(
-            Speaker.id.in_(select(Poster.speaker_id).where(Poster.event_id == campaign.event_id))
-        )
-    elif campaign.recipient_filter in ("specific_speakers", "custom_list", "custom") and campaign.speaker_id_list:
-        import uuid as _uuid
-        try:
-            ids = [_uuid.UUID(s.strip()) for s in campaign.speaker_id_list.split(",") if s.strip()]
-            query = query.where(Speaker.id.in_(ids))
-        except Exception:
-            pass
-    elif campaign.recipient_filter == "specific_session" and campaign.session_id_filter:
-        query = query.where(
-            or_(
-                Speaker.id.in_(select(SessionSpeaker.speaker_id).where(SessionSpeaker.session_id == campaign.session_id_filter)),
-                Speaker.id.in_(select(Poster.speaker_id).where(Poster.session_id == campaign.session_id_filter))
-            )
-        )
-    elif campaign.recipient_filter == "specific_room" and campaign.room_id_filter:
-        from app.modules.agenda.models import Session
-        room_sessions = select(Session.id).where(Session.room_id == campaign.room_id_filter)
-        query = query.where(
-            or_(
-                Speaker.id.in_(select(SessionSpeaker.speaker_id).where(SessionSpeaker.session_id.in_(room_sessions))),
-                Speaker.id.in_(select(Poster.speaker_id).where(Poster.session_id.in_(room_sessions)))
-            )
-        )
-    
-    res = await db.execute(query)
-    return res.scalar_one()
+    from app.modules.notifications.services.campaign_recipient_counts import recipient_count_statement
+    return int(await db.scalar(recipient_count_statement(campaign)))
 
 
 @router.get("/campaigns", response_model=List[CampaignResponse], dependencies=[require_event_operation("communications.email.read")])
@@ -889,19 +829,8 @@ async def list_campaigns(
         event_id=event.id,
         target_type=target_type,
         user_id=current_user.id,
-        unrestricted=current_user.role in ["super_admin", "admin", "organiser"],
     )
-    responses = []
-    for campaign in campaigns:
-        response = CampaignResponse.model_validate(campaign)
-        if campaign.status == "draft":
-            response = response.model_copy(
-                update={
-                    "total_recipients": await get_campaign_recipient_count(db, campaign),
-                }
-            )
-        responses.append(response)
-    return responses
+    return [CampaignResponse.model_validate(campaign) for campaign in campaigns]
 
 
 @router.get("/campaigns/page", response_model=CursorPage[dict], dependencies=[require_event_operation("communications.email.read")])
@@ -917,7 +846,6 @@ async def list_campaigns_cursor(
         event_id=event.id,
         target_type=target_type,
         user_id=current_user.id,
-        unrestricted=current_user.role in ["super_admin", "admin", "organiser"],
         cursor=cursor,
         limit=limit,
     )
@@ -1001,103 +929,75 @@ async def update_campaign(
 
 
 @router.post(
-    "/campaigns/{campaign_id}/send",
-    response_model=MessageResponse,
-    dependencies=[
-        require_event_operation("communications.campaign.manage"),
-        require_event_operation("communications.bulk_email.send"),
-    ],
+    "/campaigns/{campaign_id}/send", response_model=CampaignActionResult,
+    dependencies=[Depends(require_step_up), require_event_operation("communications.campaign.manage"),
+        require_event_operation("communications.bulk_email.send")],
 )
 async def send_campaign_trigger(
-    campaign_id: uuid.UUID,
-    event: CurrentEvent,
+    campaign_id: uuid.UUID, event: CurrentEvent, data: CampaignActionInput,
     db: AsyncSession = Depends(get_db),
     if_match: str | None = Header(None, alias="If-Match"),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=8, max_length=200),
     actor: User = Depends(get_current_user),
 ):
-    """Trigger the celery task for an email campaign."""
+    await authorize_dispatch(db, actor.id, event.organization_id, event.id, "CUSTOMER")
     await enforce_event_feature(db, event.organization_id, event.id, "FEAT_BULK_EMAIL")
-    from app.modules.notifications.tasks.email_tasks import process_email_campaign
-    
-    expected_version = require_if_match(if_match) if if_match is not None else None
-    idem = await begin_idempotent(
-        db, organization_id=event.organization_id, actor_id=actor.id,
-        operation="email_campaign.send", key=idempotency_key or f"legacy-{uuid.uuid4()}",
-        payload={"campaign_id": str(campaign_id), "version": expected_version},
-    )
-    replay = replay_response(idem)
+    version, receipt = await begin_campaign_action(db, event=event, actor=actor,
+        campaign_id=campaign_id, operation="send", data=data, if_match=if_match, key=idempotency_key)
+    replay = replay_response(receipt)
     if replay is not None:
         await db.commit()
-        return MessageResponse.model_validate(replay[1])
-    result = await db.execute(
-        select(EmailCampaign).where(
-            EmailCampaign.id == campaign_id,
-            EmailCampaign.event_id == event.id,
-            EmailCampaign.deleted_at.is_(None),
-        ).with_for_update()
-    )
-    campaign = result.scalar_one_or_none()
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    
+        return CampaignActionResult.model_validate(replay[1])
+    campaign = await db.scalar(select(EmailCampaign).where(EmailCampaign.id == campaign_id,
+        EmailCampaign.event_id == event.id, EmailCampaign.deleted_at.is_(None)).with_for_update())
+    if campaign is None:
+        raise HTTPException(404, detail={"code": "RESOURCE_NOT_FOUND"})
+    check_campaign_version(campaign, version)
     if campaign.status != "draft":
-        raise HTTPException(status_code=400, detail="Only draft campaigns can be sent.")
-    if expected_version is not None and campaign.version != expected_version:
-        raise HTTPException(status_code=409, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": campaign.version})
-
+        raise HTTPException(409, detail={"code": "CAMPAIGN_NOT_SENDABLE"})
+    await bind_dispatch(db, campaign, actor.id, event.organization_id)
     campaign.status = "sending"
     campaign.version += 1
-    response = MessageResponse(message="Campaign dispatch initiated.")
-    await complete_idempotent(db, idem, response_status=200, response_body=response.model_dump(mode="json"), resource_id=campaign.id)
+    audit_campaign_action(db, event=event, actor=actor, campaign=campaign,
+        reason=data.reason, operation="send", previous_version=version)
+    response = CampaignActionResult(campaign_id=campaign.id, version=campaign.version,
+        status=campaign.status, message="Campaign accepted for queued delivery.")
+    await complete_idempotent(db, receipt, response_status=200,
+        response_body=response.model_dump(mode="json"), resource_id=campaign.id)
+    dispatch_id = campaign.send_dispatch_id
     await db.commit()
-
-    # Dispatch to Celery
-    process_email_campaign.delay(str(campaign_id), str(event.organization_id))
-    
+    from app.modules.notifications.tasks.email_tasks import process_email_campaign
+    from app.modules.notifications.services.campaign_queue import queue_campaign_delivery
+    import asyncio
+    await asyncio.to_thread(queue_campaign_delivery, campaign_id, event.organization_id, dispatch_id)
     return response
 
 
 @router.delete(
-    "/campaigns/{campaign_id}",
-    response_model=MessageResponse,
-    dependencies=[require_event_operation("communications.campaign.manage")],
+    "/campaigns/{campaign_id}", response_model=CampaignActionResult,
+    dependencies=[Depends(require_step_up), require_event_operation("communications.campaign.manage")],
 )
 async def delete_campaign(
-    campaign_id: uuid.UUID,
-    event: CurrentEvent,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    campaign_id: uuid.UUID, event: CurrentEvent, data: CampaignActionInput,
+    current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
     if_match: str | None = Header(None, alias="If-Match"),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=8, max_length=200),
 ):
-    """Delete an email campaign."""
-    expected_version = require_if_match(if_match) if if_match is not None else None
-    idem = await begin_idempotent(
-        db, organization_id=event.organization_id, actor_id=current_user.id,
-        operation="email_campaign.archive", key=idempotency_key or f"legacy-{uuid.uuid4()}",
-        payload={"campaign_id": str(campaign_id), "version": expected_version},
-    )
-    replay = replay_response(idem)
+    version, receipt = await begin_campaign_action(db, event=event, actor=current_user,
+        campaign_id=campaign_id, operation="archive", data=data, if_match=if_match, key=idempotency_key)
+    replay = replay_response(receipt)
     if replay is not None:
         await db.commit()
-        return MessageResponse.model_validate(replay[1])
-    _, outcome = await EventCampaignMutationService.archive(
-        db,
-        event=event,
-        campaign_id=campaign_id,
-        actor=current_user,
-        expected_version=expected_version,
-    )
-    await db.commit()
-    response = MessageResponse(
-        message=(
-            "Campaign is already archived."
-            if outcome == "ALREADY_ARCHIVED"
-            else "Campaign archived and remains recoverable."
-        )
-    )
-    await complete_idempotent(db, idem, response_status=200, response_body=response.model_dump(mode="json"), resource_id=campaign_id)
+        return CampaignActionResult.model_validate(replay[1])
+    campaign, outcome = await EventCampaignMutationService.archive(db, event=event,
+        campaign_id=campaign_id, actor=current_user, expected_version=version)
+    audit_campaign_action(db, event=event, actor=current_user, campaign=campaign,
+        reason=data.reason, operation="archive", previous_version=version)
+    response = CampaignActionResult(campaign_id=campaign.id, version=campaign.version,
+        status=campaign.status, message="Campaign is already archived." if outcome == "ALREADY_ARCHIVED"
+            else "Campaign archived and remains recoverable.")
+    await complete_idempotent(db, receipt, response_status=200,
+        response_body=response.model_dump(mode="json"), resource_id=campaign.id)
     await db.commit()
     return response
 
@@ -1239,6 +1139,7 @@ async def send_to_speakers(
     event: CurrentEvent,
     data: SendToSpeakersRequest,
     current_user: User = Depends(get_current_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1247,6 +1148,34 @@ async def send_to_speakers(
     """
     from app.modules.notifications.tasks.email_tasks import process_email_campaign
     await enforce_event_feature(db, event.organization_id, event.id, "FEAT_BULK_EMAIL", user_id=current_user.id)
+
+    unique_recipient_ids = list(dict.fromkeys(data.recipient_ids))
+    key = idempotency_key or f"programme-speaker-campaign:{event.id}:{uuid.uuid4()}"
+    idem = await begin_idempotent(
+        db,
+        organization_id=event.organization_id,
+        actor_id=current_user.id,
+        operation="programme.speaker_campaign.send",
+        key=key,
+        payload={
+            "event_id": str(event.id),
+            "template_id": str(data.template_id),
+            "recipient_ids": [str(item) for item in unique_recipient_ids],
+            "send_immediately": data.send_immediately,
+        },
+    )
+    replay = replay_response(idem)
+    if replay:
+        existing = await db.scalar(
+            select(EmailCampaign).where(
+                EmailCampaign.id == idem.resource_id,
+                EmailCampaign.event_id == event.id,
+            )
+        )
+        if existing is None:
+            raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_RESOURCE_MISSING"})
+        await db.commit()
+        return CampaignResponse.model_validate(existing)
 
     # Validate template exists
     tpl_result = await db.execute(
@@ -1268,34 +1197,44 @@ async def send_to_speakers(
         select(func.count(Speaker.id)).where(
             Speaker.event_id == event.id,
             Speaker.deleted_at.is_(None),
-            Speaker.id.in_(data.recipient_ids)
+            Speaker.id.in_(unique_recipient_ids)
         )
     )
     valid_count: int = speaker_count_result.scalar_one()
-    if valid_count == 0:
-        raise HTTPException(status_code=400, detail="No valid speakers found for this event.")
+    if valid_count != len(unique_recipient_ids):
+        raise HTTPException(status_code=404, detail="One or more selected speakers do not belong to this event.")
 
     # Build campaign
-    id_csv = ",".join(str(sid) for sid in data.recipient_ids)
+    id_csv = ",".join(str(sid) for sid in unique_recipient_ids)
     campaign = EmailCampaign(
         event_id=event.id,
         created_by=current_user.id,
         template_id=data.template_id,
         template_version_id=template.current_published_version_id,
-        name=f"Direct Send — {len(data.recipient_ids)} speaker(s)",
+        name=f"Direct Send — {len(unique_recipient_ids)} speaker(s)",
         recipient_filter="specific_speakers",
         speaker_id_list=id_csv,
-        status="draft",
+        status="sending" if data.send_immediately else "draft",
         total_recipients=valid_count,
     )
     db.add(campaign)
+    await db.flush()
+    if data.send_immediately:
+        await bind_dispatch(db, campaign, current_user.id, event.organization_id)
+    await complete_idempotent(
+        db,
+        idem,
+        response_status=201,
+        response_body={"resource_id": str(campaign.id)},
+        resource_id=campaign.id,
+    )
     await db.commit()
     await db.refresh(campaign)
 
     if data.send_immediately:
-        campaign.status = "sending"
-        await db.commit()
-        process_email_campaign.delay(str(campaign.id), str(event.organization_id))
+        from app.modules.notifications.services.campaign_queue import queue_campaign_delivery
+        import asyncio
+        await asyncio.to_thread(queue_campaign_delivery, campaign.id, event.organization_id, campaign.send_dispatch_id)
 
     return CampaignResponse.model_validate(campaign)
 
@@ -1320,6 +1259,7 @@ class AutoInviteResponse(BaseModel):
 async def auto_invite_speakers(
     event: CurrentEvent,
     current_user: User = Depends(get_current_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1331,6 +1271,28 @@ async def auto_invite_speakers(
     """
     from app.modules.notifications.tasks.email_tasks import process_email_campaign
     await enforce_event_feature(db, event.organization_id, event.id, "FEAT_BULK_EMAIL", user_id=current_user.id)
+
+    key = idempotency_key or f"programme-auto-invite:{event.id}:{uuid.uuid4()}"
+    idem = await begin_idempotent(
+        db,
+        organization_id=event.organization_id,
+        actor_id=current_user.id,
+        operation="programme.speaker_auto_invite.send",
+        key=key,
+        payload={"event_id": str(event.id)},
+    )
+    replay = replay_response(idem)
+    if replay:
+        existing = await db.scalar(
+            select(EmailCampaign).where(
+                EmailCampaign.id == idem.resource_id,
+                EmailCampaign.event_id == event.id,
+            )
+        )
+        if existing is None:
+            raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_RESOURCE_MISSING"})
+        await db.commit()
+        return AutoInviteResponse(**replay[1])
 
     # ── 1. Count speakers ────────────────────────────────
     total_result = await db.execute(
@@ -1385,19 +1347,13 @@ async def auto_invite_speakers(
         template_id=template.id,
         name=f"Auto-Invite — {event.name}",
         recipient_filter="pending_upload",
-        status="draft",
+        status="sending",
         total_recipients=pending_speakers,
     )
     db.add(campaign)
-    await db.commit()
-    await db.refresh(campaign)
-
-    # ── 4. Dispatch Celery task ──────────────────────────
-    campaign.status = "sending"
-    await db.commit()
-    process_email_campaign.delay(str(campaign.id), str(event.organization_id))
-
-    return AutoInviteResponse(
+    await db.flush()
+    await bind_dispatch(db, campaign, current_user.id, event.organization_id)
+    response = AutoInviteResponse(
         campaign_id=campaign.id,
         total_speakers=total_speakers,
         pending_speakers=pending_speakers,
@@ -1407,34 +1363,76 @@ async def auto_invite_speakers(
             + (f" {already_uploaded} speaker{'s' if already_uploaded != 1 else ''} skipped (already uploaded)." if already_uploaded > 0 else "")
         )
     )
+    await complete_idempotent(
+        db,
+        idem,
+        response_status=201,
+        response_body=response.model_dump(mode="json"),
+        resource_id=campaign.id,
+    )
+    await db.commit()
+    await db.refresh(campaign)
+
+    # ── 4. Dispatch Celery task ──────────────────────────
+    from app.modules.notifications.services.campaign_queue import queue_campaign_delivery
+    import asyncio
+    await asyncio.to_thread(queue_campaign_delivery, campaign.id, event.organization_id, campaign.send_dispatch_id)
+    return response
 
 
 @router.post(
-    "/campaigns/{campaign_id}/resend-failed",
-    response_model=MessageResponse,
-    dependencies=[
-        require_event_operation("communications.campaign.manage"),
-        require_event_operation("communications.bulk_email.send"),
-    ],
+    "/campaigns/{campaign_id}/resend-failed", response_model=CampaignActionResult,
+    dependencies=[Depends(require_step_up), require_event_operation("communications.campaign.manage"),
+        require_event_operation("communications.bulk_email.send")],
 )
 async def resend_failed_emails(
-    campaign_id: uuid.UUID,
-    event: CurrentEvent,
-    db: AsyncSession = Depends(get_db),
-) -> MessageResponse:
-    """Reset 'failed' logs for a campaign and re-trigger the background task."""
-    from app.modules.notifications.tasks.email_tasks import process_email_campaign
+    campaign_id: uuid.UUID, event: CurrentEvent, data: CampaignActionInput,
+    db: AsyncSession = Depends(get_db), actor: User = Depends(get_current_user),
+    if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=8, max_length=200),
+) -> CampaignActionResult:
+    await authorize_dispatch(db, actor.id, event.organization_id, event.id, "CUSTOMER")
     await enforce_event_feature(db, event.organization_id, event.id, "FEAT_BULK_EMAIL")
-    
-    await db.execute(
-        update(EmailLog)
-        .where(EmailLog.campaign_id == campaign_id, EmailLog.status.in_(["failed", "bounced"]))
-        .values(status="queued", error_message=None)
-    )
-    
-    process_email_campaign.delay(str(campaign_id), str(event.organization_id))
+    version, receipt = await begin_campaign_action(db, event=event, actor=actor,
+        campaign_id=campaign_id, operation="retry", data=data, if_match=if_match, key=idempotency_key)
+    replay = replay_response(receipt)
+    if replay is not None:
+        await db.commit()
+        return CampaignActionResult.model_validate(replay[1])
+    campaign = await db.scalar(select(EmailCampaign).where(EmailCampaign.id == campaign_id,
+        EmailCampaign.event_id == event.id, EmailCampaign.deleted_at.is_(None)).with_for_update())
+    if campaign is None:
+        raise HTTPException(404, detail={"code": "RESOURCE_NOT_FOUND"})
+    check_campaign_version(campaign, version)
+    if campaign.status not in {"sent", "failed"}:
+        raise HTTPException(409, detail={"code": "CAMPAIGN_NOT_RETRYABLE"})
+    uncertain = await db.scalar(select(EmailLog.id).where(EmailLog.campaign_id == campaign_id,
+        EmailLog.event_id == event.id, EmailLog.status.in_(("sending", "delivery_unknown"))).limit(1))
+    if uncertain is not None:
+        raise HTTPException(409, detail={"code": "CAMPAIGN_DELIVERY_RECONCILIATION_REQUIRED"})
+    failed = await db.scalar(select(EmailLog.id).where(EmailLog.campaign_id == campaign_id,
+        EmailLog.event_id == event.id, EmailLog.status.in_(("failed", "bounced"))).limit(1))
+    if failed is None:
+        raise HTTPException(409, detail={"code": "CAMPAIGN_HAS_NO_FAILED_DELIVERIES"})
+    await bind_dispatch(db, campaign, actor.id, event.organization_id)
+    campaign.status = "sending"
+    campaign.version += 1
+    await db.execute(update(EmailLog).where(EmailLog.campaign_id == campaign_id,
+        EmailLog.event_id == event.id, EmailLog.status.in_(("failed", "bounced")))
+        .values(status="queued", error_message=None))
+    audit_campaign_action(db, event=event, actor=actor, campaign=campaign,
+        reason=data.reason, operation="retry", previous_version=version)
+    response = CampaignActionResult(campaign_id=campaign.id, version=campaign.version,
+        status=campaign.status, message="Retry accepted for queued delivery.")
+    await complete_idempotent(db, receipt, response_status=200,
+        response_body=response.model_dump(mode="json"), resource_id=campaign.id)
+    dispatch_id = campaign.send_dispatch_id
     await db.commit()
-    return MessageResponse(message="Retry task dispatched for failed emails.")
+    from app.modules.notifications.tasks.email_tasks import process_email_campaign
+    from app.modules.notifications.services.campaign_queue import queue_campaign_delivery
+    import asyncio
+    await asyncio.to_thread(queue_campaign_delivery, campaign_id, event.organization_id, dispatch_id)
+    return response
 
 
 from pydantic import EmailStr
@@ -1527,6 +1525,7 @@ async def send_single_email(
             speaker_id=speaker.id,
             event_id=event_id,
             db=db,
+            meter_usage=False,
         )
         await UsageReservationService.consume(db, reservation.id, source="communications.single_email")
         await db.commit()

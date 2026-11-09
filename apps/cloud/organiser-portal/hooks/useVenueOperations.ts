@@ -183,15 +183,15 @@ export function useVenueOpsRealtime(eventId: string, refresh: () => void) {
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
+    setConnected(false);
     if (!hasHydrated || !isAuthenticated || !accessToken || !eventId) return;
     socketService.connect(accessToken);
     const socket = socketService.socket;
     if (!socket) return;
-    const join = () => socketService.joinVenueOps(eventId);
+    const release = socketService.joinVenueOps(eventId);
     const onRefresh = () => refresh();
     const onConnect = () => {
       setConnected(true);
-      join();
       refresh();
     };
     const onDisconnect = () => setConnected(false);
@@ -203,6 +203,7 @@ export function useVenueOpsRealtime(eventId: string, refresh: () => void) {
     VENUE_OPS_EVENTS.forEach((name) => socket.on(name, onRefresh));
     if (socket.connected) onConnect();
     return () => {
+      release();
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
       socket.off("connect_error", onConnectError);

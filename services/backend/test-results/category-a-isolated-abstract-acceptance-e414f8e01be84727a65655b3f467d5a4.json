@@ -1,0 +1,19 @@
+{
+  "status": "FAILED",
+  "environment": "local_isolated_rehearsal",
+  "run_id": "e414f8e01be84727a65655b3f467d5a4",
+  "scenario": "delegated",
+  "scope": "EVENT",
+  "database": "category_a_restore_20261020_e414f8e01be8",
+  "backup_database": "category_a_restore_20261020_4eeff58ce5f1",
+  "backup_evidence_sha256": "68ddc0cff7625306cb388b92b85d7c2ed0e3ad54bfc6b3a3aa8e8936f1b78042",
+  "started_at": "2026-10-20T11:08:14.847246+00:00",
+  "application_workers_providers": "NOT_STARTED",
+  "production_acceptance": "NOT_RUN",
+  "fixture_artifact": "category-a-abstract-fixture-e414f8e01be84727a65655b3f467d5a4.json",
+  "failed_stage": "restricted_business_commands",
+  "error_type": "RuntimeError",
+  "final_clone_quarantined": true,
+  "completed_at": "2026-10-20T11:08:36.189423+00:00",
+  "probe_sha256": "73139cd3332031d78fc6ee1adf09cde252a57229327420024d30c4e0ff8eaf95"
+}

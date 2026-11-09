@@ -202,6 +202,8 @@ class VenueCheckIn(Base):
     station_name = synonym("gate_name")
     station_type = synonym("gate_type")
     station_capacity = synonym("gate_capacity")
+    check_in_time = synonym("checkin_time")
+    updated_at = synonym("created_at")
 
 
 class VenueNodeAssignment(Base):

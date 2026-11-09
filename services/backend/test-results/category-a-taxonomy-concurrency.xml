@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="6" time="29.950" timestamp="2026-10-17T13:21:49.430850+05:30" hostname="Vishal"><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_taxonomy_repair_before_waiting_writer_rejects_cached_key" time="15.480"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.DeadlockDetectedError'&gt;: deadlock detected&#10;DETAIL:  Process 442 waits for ShareLock on advisory lock [237403,1128353876,21,2]; blocked by process 441.&#10;Process 441 waits for ShareLock on transaction 555757; blocked by process 442.&#10;HINT:  See server log for query details.&#10;[SQL: SELECT pg_advisory_xact_lock_shared($1, $2)]&#10;[parameters: (1128353876, 21)]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.DeadlockDetectedError: deadlock detected
+E   DETAIL:  Process 442 waits for ShareLock on advisory lock [237403,1128353876,21,2]; blocked by process 441.
+E   Process 441 waits for ShareLock on transaction 555757; blocked by process 442.
+E   HINT:  See server log for query details.
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.DeadlockDetectedError'&gt;: deadlock detected
+E   DETAIL:  Process 442 waits for ShareLock on advisory lock [237403,1128353876,21,2]; blocked by process 441.
+E   Process 441 waits for ShareLock on transaction 555757; blocked by process 442.
+E   HINT:  See server log for query details.
+
+The above exception was the direct cause of the following exception:
+tests\test_catalogue_retirement_concurrency.py:136: in test_taxonomy_repair_before_waiting_writer_rejects_cached_key
+    assert await asyncio.wait_for(task, 10) == 422
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\visha\AppData\Local\Programs\Python\Python313\Lib\asyncio\tasks.py:507: in wait_for
+    return await fut
+           ^^^^^^^^^
+tests\test_catalogue_retirement_concurrency.py:130: in writer
+    await write(writing, writer_actor, data, "category")
+tests\test_catalogue_retirement_concurrency.py:81: in write
+    return await TemplateCommands.execute(db, operation="duplicate" if kind == "template" else "create",
+app\modules\registration\application\template_commands.py:480: in execute
+    await lock_catalogue_reference_writes(db)
+app\modules\registration\application\catalogue_lifecycle_locks.py:14: in lock_catalogue_reference_writes
+    await db.execute(text("SELECT pg_advisory_xact_lock_shared(:ns, :key)"),
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:448: in execute
+    result = await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2372: in execute
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2279: in _execute_internal
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.DeadlockDetectedError'&gt;: deadlock detected
+E   DETAIL:  Process 442 waits for ShareLock on advisory lock [237403,1128353876,21,2]; blocked by process 441.
+E   Process 441 waits for ShareLock on transaction 555757; blocked by process 442.
+E   HINT:  See server log for query details.
+E   [SQL: SELECT pg_advisory_xact_lock_shared($1, $2)]
+E   [parameters: (1128353876, 21)]
+E   (Background on this error at: https://sqlalche.me/e/20/dbapi)</failure></testcase><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_waiting_taxonomy_repair_preserves_preceding_writer_and_lineage" time="1.818" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_retirement_before_waiting_writer_rejects_stale_reference[template]" time="1.952" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_retirement_before_waiting_writer_rejects_stale_reference[category]" time="2.001" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_writer_before_retirement_is_preserved_and_reassigned[template]" time="1.895" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_writer_before_retirement_is_preserved_and_reassigned[category]" time="4.903" /></testsuite></testsuites>

@@ -1,5 +1,5 @@
-import { OrganisationOverviewTab } from "@/components/organizer/workspace/organisation/OrganisationOverviewTab";
+import { redirect } from "next/navigation";
 
 export default function Page() {
-  return <OrganisationOverviewTab />;
+  redirect("/dashboard");
 }

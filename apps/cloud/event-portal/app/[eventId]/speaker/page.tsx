@@ -10,7 +10,7 @@ import {
   Clock, ShieldCheck, AlertCircle, RefreshCw, X, Folder,
   FolderOpen, File, Link as LinkIcon, Layers, Eye, AlertTriangle
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { ThemedIllustration } from "@/components/ui/themed-illustration";
 

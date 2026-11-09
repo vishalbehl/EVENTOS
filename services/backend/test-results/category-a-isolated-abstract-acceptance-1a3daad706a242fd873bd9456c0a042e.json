@@ -1,0 +1,22 @@
+{
+  "status": "FAILED",
+  "environment": "local_isolated_rehearsal",
+  "run_id": "1a3daad706a242fd873bd9456c0a042e",
+  "scenario": "delegated",
+  "scope": "EVENT",
+  "database": "category_a_restore_20261020_1a3daad706a2",
+  "backup_database": "category_a_restore_20261020_4eeff58ce5f1",
+  "backup_evidence_sha256": "68ddc0cff7625306cb388b92b85d7c2ed0e3ad54bfc6b3a3aa8e8936f1b78042",
+  "started_at": "2026-10-20T11:09:31.011639+00:00",
+  "application_workers_providers": "NOT_STARTED",
+  "production_acceptance": "NOT_RUN",
+  "fixture_artifact": "category-a-abstract-fixture-1a3daad706a242fd873bd9456c0a042e.json",
+  "runtime_artifact": "category-a-delegated-form-runtime-1e131394e04348a2ba71276474986787.json",
+  "runtime_artifact_sha256": "3822e831013f481506214df5474c8e6739fba57283aebf4040951ae97e03d2fe",
+  "runtime_status": "FAILED",
+  "failed_stage": "restricted_business_commands",
+  "error_type": "AssertionError",
+  "final_clone_quarantined": true,
+  "completed_at": "2026-10-20T11:09:51.812526+00:00",
+  "probe_sha256": "73139cd3332031d78fc6ee1adf09cde252a57229327420024d30c4e0ff8eaf95"
+}

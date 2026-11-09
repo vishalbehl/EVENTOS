@@ -26,11 +26,13 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
+    model_config = ConfigDict(extra="forbid")
     organization_id: uuid.UUID
-    password: str
+    password: str | None = Field(default=None, repr=False)
 
 
 class UserUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -45,6 +47,7 @@ class UserUpdate(BaseModel):
 
 
 class UserProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     email: Optional[EmailStr] = None

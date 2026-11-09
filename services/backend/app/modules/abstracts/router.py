@@ -4,12 +4,13 @@ import io
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Union
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response, status
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
-from sqlalchemy import func, or_, select
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictBool, StrictStr, field_validator, model_validator
+from sqlalchemy import func, or_, select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import raiseload
 
 from app.core.dependencies.feature_gate import require_event_operation
 from app.dependencies import CurrentEvent, get_current_user, get_db
@@ -18,13 +19,20 @@ from app.modules.abstracts.models import (
     AbstractAttachment,
     AbstractAuthor,
     AbstractCall,
+    AbstractCategory,
     AbstractDecision,
     AbstractForm,
+    AbstractFormat,
+    AbstractPortalSettings,
     AbstractReview,
     AbstractReviewer,
     AbstractSubmission,
+    AbstractTopic,
 )
 from app.modules.abstracts.application.commands import AbstractConfigurationCommandService
+from app.modules.abstracts.form_contracts import AbstractFormPayload, AbstractFormResponse
+from app.modules.abstracts.call_contracts import AbstractCallPayload, AbstractCallResponse
+from app.modules.abstracts.application.call_projection import call_response as _call_response
 from app.modules.abstracts.application.submission_commands import AbstractSubmissionCommandService
 from app.modules.abstracts.application.reviewer_commands import AbstractReviewerCommandService
 from app.modules.abstracts.application.queries import AbstractQueryService
@@ -32,51 +40,16 @@ from app.modules.abstracts.application.assignment_commands import AbstractAssign
 from app.modules.abstracts.application.decision_commands import AbstractDecisionCommandService
 from app.modules.abstracts.application.publication_commands import AbstractPublicationCommandService
 from app.modules.abstracts.application.review_commands import AbstractReviewCommandService
+from app.modules.registration.schemas.event_form_contracts import ReviewScores
 from app.modules.abstracts.application.attachment_commands import AbstractAttachmentCommandService
 from app.modules.agenda.models import Session
 from app.modules.events.models.speaker import Speaker
 from app.modules.identity.models.user import User
+from app.modules.events.models.event import Event
+from app.modules.registration.models.form_template import FormTemplate
+from app.modules.registration.application.commands import FormTemplateCommandService
 
 router = APIRouter(prefix="/events/{event_id}/abstracts", tags=["abstracts"])
-
-
-class AbstractCallPayload(BaseModel):
-    status: Literal["DRAFT", "OPEN", "CLOSED", "PUBLISHED"] = "DRAFT"
-    opens_at: Optional[datetime] = None
-    closes_at: Optional[datetime] = None
-    revision_deadline: Optional[datetime] = None
-    min_words: int = Field(default=50, ge=1, le=2000)
-    max_words: int = Field(default=300, ge=1, le=5000)
-    abstract_types: list[str] = Field(default_factory=lambda: ["ORAL", "POSTER"])
-    topics: list[str] = Field(default_factory=list)
-    author_rules: dict[str, Any] = Field(default_factory=dict)
-    attachment_rules: dict[str, Any] = Field(default_factory=dict)
-    disclosure_rules: dict[str, Any] = Field(default_factory=dict)
-    email_triggers: dict[str, Any] = Field(default_factory=dict)
-    blind_review_enabled: bool = False
-
-
-class AbstractCallResponse(AbstractCallPayload):
-    id: uuid.UUID
-    event_id: uuid.UUID
-    version: int
-    published_at: Optional[datetime]
-
-
-class AbstractFormPayload(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    title: str = Field(default="Abstract submission form", min_length=3, max_length=180)
-    form_schema: dict[str, Any] = Field(default_factory=dict, alias="schema")
-    is_active: bool = True
-    publish: bool = False
-
-
-class AbstractFormResponse(AbstractFormPayload):
-    id: uuid.UUID
-    event_id: uuid.UUID
-    version: int
-    published_at: Optional[datetime]
 
 
 class AbstractSubmissionPayload(BaseModel):
@@ -173,14 +146,15 @@ class AssignmentUpdatePayload(BaseModel):
 
 
 class ReviewPayload(BaseModel):
-    scores: dict[str, int] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid")
+    scores: ReviewScores = Field(default_factory=dict)
     recommendation: Literal["ACCEPT", "REJECT", "REVISION", "DISCUSS"] = "DISCUSS"
     comments_to_committee: Optional[str] = Field(None, max_length=4000)
     comments_to_author: Optional[str] = Field(None, max_length=4000)
 
 
 class DecisionPayload(BaseModel):
-    decision: Literal["ACCEPTED", "REJECTED", "REVISION_REQUESTED"]
+    decision: Literal["NOMINATED", "ACCEPTED", "WAITLISTED", "REJECTED", "REVISION_REQUESTED", "WITHDRAWN"]
     presentation_type: Optional[Literal["ORAL", "POSTER", "EPOSTER"]] = None
     reason: str = Field(min_length=5, max_length=1000)
     notes_to_author: Optional[str] = Field(None, max_length=4000)
@@ -188,6 +162,15 @@ class DecisionPayload(BaseModel):
 
 class PublicationPayload(BaseModel):
     publication_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class BulkDecisionItem(BaseModel):
+    submission_id: uuid.UUID
+    expected_version: int = Field(ge=1)
+
+
+class BulkDecisionPayload(DecisionPayload):
+    items: list[BulkDecisionItem] = Field(min_length=1, max_length=100)
 
 
 class AttachmentPayload(BaseModel):
@@ -198,21 +181,48 @@ class AttachmentPayload(BaseModel):
     file_size_bytes: Optional[int] = Field(None, ge=0)
 
 
-def _call_response(row: AbstractCall) -> AbstractCallResponse:
-    return AbstractCallResponse(**{field: getattr(row, field) for field in AbstractCallResponse.model_fields})
+def _normalize_form_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(schema, dict):
+        raise ValueError("Invalid abstract form schema.")
+    fields = schema.get("fields")
+    if not isinstance(fields, list) or len(fields) > 100:
+        raise ValueError("Invalid abstract form fields.")
+    if isinstance(fields, list) and fields and isinstance(fields[0], str):
+        if any(not isinstance(name, str) or len(name) > 100 for name in fields):
+            raise ValueError("Invalid legacy abstract fields.")
+        return {
+            **schema,
+            "fields": [
+                {
+                    "id": f"field_{name}",
+                    "type": "textarea" if name == "body" else ("select" if name in ("topic", "abstract_type") else "text"),
+                    "name": name,
+                    "label": name.replace("_", " ").title(),
+                    "is_required": name in ("title", "body"),
+                    "is_active": True,
+                    "grid_width": "full" if name in ("title", "body") else "half",
+                    "sort_order": idx,
+                }
+                for idx, name in enumerate(fields)
+            ],
+        }
+    return schema
 
 
 def _form_response(row: AbstractForm) -> AbstractFormResponse:
-    return AbstractFormResponse(
-        id=row.id,
-        event_id=row.event_id,
-        title=row.title,
-        schema=row.schema or {},
-        is_active=row.is_active,
-        publish=bool(row.published_at),
-        version=row.version,
-        published_at=row.published_at,
-    )
+    try:
+        return AbstractFormResponse(
+            id=row.id,
+            event_id=row.event_id,
+            title=row.title,
+            schema=_normalize_form_schema(row.schema or {}),
+            is_active=row.is_active,
+            publish=bool(row.published_at),
+            version=row.version,
+            published_at=row.published_at,
+        )
+    except ValueError:
+        raise HTTPException(409, detail={"code": "ABSTRACT_FORM_RECONCILIATION_REQUIRED"})
 
 
 async def _submission_response(db: AsyncSession, row: AbstractSubmission) -> AbstractSubmissionResponse:
@@ -400,7 +410,7 @@ async def abstract_dashboard(event: CurrentEvent, db: AsyncSession = Depends(get
     if accepted > published:
         needs_attention.append({"severity": "warning", "label": "Accepted abstracts are not fully published", "destination": f"/events/{event.id}/abstracts/accepted"})
     return AbstractDashboardResponse(
-        call=_call_response(call) if call else None,
+        call=await _call_response(db, call) if call else None,
         counts=counts,
         reviewer_load={"reviewers": total_reviewers, "assigned": assigned, "completed": completed},
         publication={"accepted": accepted, "published": published, "ready": max(accepted - published, 0)},
@@ -410,8 +420,17 @@ async def abstract_dashboard(event: CurrentEvent, db: AsyncSession = Depends(get
 
 
 @router.get("/setup", response_model=AbstractCallResponse, dependencies=[require_event_operation("abstracts.configure")])
-async def get_setup(event: CurrentEvent, db: AsyncSession = Depends(get_db)) -> AbstractCallResponse:
-    call = await AbstractQueryService(db).get_call(event_id=event.id)
+async def get_setup(event: CurrentEvent, response: Response, db: AsyncSession = Depends(get_db)) -> AbstractCallResponse:
+    response.headers["Cache-Control"] = "no-store"
+    owned = await db.scalar(select(Event).where(Event.id == event.id,
+        Event.organization_id == event.organization_id, Event.deleted_at.is_(None))
+        .options(raiseload(Event.portal_theme_setting)).with_for_update(read=True, of=Event)
+        .execution_options(populate_existing=True))
+    if owned is None:
+        raise HTTPException(404, detail={"code": "EVENT_NOT_FOUND"})
+    call = await db.scalar(select(AbstractCall).where(AbstractCall.event_id == event.id,
+        AbstractCall.organization_id == event.organization_id)
+        .with_for_update(read=True).execution_options(populate_existing=True))
     if call is None:
         # GET must remain read-only. The first explicit PUT creates the durable
         # setup record; this projection keeps the existing response contract.
@@ -432,18 +451,35 @@ async def get_setup(event: CurrentEvent, db: AsyncSession = Depends(get_db)) -> 
             blind_review_enabled=False,
             published_at=None,
         )
-    return _call_response(call)
+    return await _call_response(db, call)
 
 
 @router.put("/setup", response_model=AbstractCallResponse, dependencies=[require_event_operation("abstracts.configure")])
-async def update_setup(payload: AbstractCallPayload, event: CurrentEvent, expected_version: Optional[int] = Header(None, alias="If-Match"), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> AbstractCallResponse:
-    call = await AbstractConfigurationCommandService(db).update_call(payload=payload.model_dump(), event=event, user=current_user, expected_version=expected_version)
-    return _call_response(call)
+async def update_setup(payload: AbstractCallPayload, event: CurrentEvent, response: Response,
+                       expected_version: Optional[str] = Header(None, alias="If-Match"),
+                       idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+                       current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> AbstractCallResponse:
+    response.headers["Cache-Control"] = "no-store"
+    return await AbstractConfigurationCommandService(db).update_call(payload=payload.model_dump(),
+        event=event, user=current_user, expected_version=expected_version, idempotency_key=idempotency_key)
 
 
 @router.get("/form", response_model=AbstractFormResponse, dependencies=[require_event_operation("abstracts.configure")])
-async def get_form(event: CurrentEvent, db: AsyncSession = Depends(get_db)) -> AbstractFormResponse:
-    form = await AbstractQueryService(db).get_active_form(event_id=event.id)
+async def get_form(event: CurrentEvent, response: Response, db: AsyncSession = Depends(get_db)) -> AbstractFormResponse:
+    response.headers["Cache-Control"] = "no-store"
+    owned = await db.scalar(select(Event).where(Event.id == event.id,
+        Event.organization_id == event.organization_id, Event.deleted_at.is_(None))
+        .options(raiseload(Event.portal_theme_setting)).with_for_update(read=True, of=Event)
+        .execution_options(populate_existing=True))
+    if owned is None:
+        raise HTTPException(404, detail="Event not found.")
+    forms = list((await db.scalars(select(AbstractForm).where(
+        AbstractForm.event_id == event.id, AbstractForm.organization_id == event.organization_id,
+        AbstractForm.is_active.is_(True)).order_by(AbstractForm.id).limit(2)
+        .with_for_update(read=True).execution_options(populate_existing=True))).all())
+    if len(forms) > 1:
+        raise HTTPException(409, detail={"code": "ABSTRACT_FORM_RECONCILIATION_REQUIRED"})
+    form = forms[0] if forms else None
     if form is None:
         # Return the same default form without seeding it from a read request.
         form = AbstractForm(
@@ -451,27 +487,75 @@ async def get_form(event: CurrentEvent, db: AsyncSession = Depends(get_db)) -> A
             organization_id=event.organization_id,
             event_id=event.id,
             title="Abstract submission form",
-            schema={"fields": ["title", "body", "keywords", "topic", "authors"]},
+            schema={
+                "template_id": "tpl_abstract_submission",
+                "fields": [
+                    {"id": "field_title", "type": "text", "name": "title", "label": "Abstract Title", "placeholder": "Enter abstract title...", "is_required": True, "is_active": True, "grid_width": "full", "sort_order": 0},
+                    {"id": "field_body", "type": "textarea", "name": "body", "label": "Abstract Body", "placeholder": "Provide background, methods, results, and conclusion...", "help_text": "Must adhere to configured word limits.", "is_required": True, "is_active": True, "grid_width": "full", "sort_order": 1},
+                    {"id": "field_topic", "type": "select", "name": "topic", "label": "Topic / Track", "is_required": True, "is_active": True, "grid_width": "half", "sort_order": 2},
+                    {"id": "field_keywords", "type": "text", "name": "keywords", "label": "Keywords", "placeholder": "Comma-separated keywords...", "is_required": False, "is_active": True, "grid_width": "half", "sort_order": 3},
+                ],
+                "settings": {"allow_drafts": True, "show_word_count": True},
+            },
             version=1,
             is_active=True,
             published_at=None,
         )
-    return _form_response(form)
+    from app.modules.registration.application.aggregate_reference_validation import aggregate_reference_issues
+    issues = (await aggregate_reference_issues(db, rows=[form], organization_id=event.organization_id,
+        resource_type="ABSTRACT_FORM"))[form.id]
+    if issues:
+        raise HTTPException(409, detail={"code": "ABSTRACT_TEMPLATE_RECONCILIATION_REQUIRED"})
+    result = _form_response(form)
+    linked = (form.schema or {}).get("template_id")
+    try:
+        linked_id = uuid.UUID(str(linked)) if linked else None
+    except ValueError:
+        linked_id = None
+    if linked_id is not None:
+        template = await db.scalar(select(FormTemplate).where(
+            FormTemplate.id == linked_id, FormTemplate.category_key == "abstract",
+            FormTemplate.deleted_at.is_(None),
+            or_(and_(FormTemplate.scope_type == "GLOBAL", FormTemplate.organization_id.is_(None)),
+                and_(FormTemplate.scope_type == "ORGANIZATION", FormTemplate.organization_id == event.organization_id),
+                and_(FormTemplate.scope_type == "EVENT", FormTemplate.organization_id == event.organization_id,
+                    FormTemplate.settings["_event_id"].astext == str(event.id))))
+            .with_for_update(read=True, of=FormTemplate)
+            .execution_options(populate_existing=True, shared_form_catalogue=True))
+        if template is None:
+            raise HTTPException(409, detail={"code": "ABSTRACT_TEMPLATE_RECONCILIATION_REQUIRED"})
+        try:
+            result = AbstractFormResponse.model_validate({
+                **result.model_dump(by_alias=True),
+                "saved_template": FormTemplateCommandService._response(template),
+            })
+        except ValueError:
+            raise HTTPException(409, detail={"code": "ABSTRACT_TEMPLATE_RECONCILIATION_REQUIRED"})
+    await db.commit()
+    return result
 
 
 @router.put("/form", response_model=AbstractFormResponse, dependencies=[require_event_operation("abstracts.configure")])
-async def update_form(payload: AbstractFormPayload, event: CurrentEvent, expected_version: Optional[int] = Header(None, alias="If-Match"), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> AbstractFormResponse:
-    form = await AbstractConfigurationCommandService(db).update_form(payload=payload.model_dump(), event=event, user=current_user, expected_version=expected_version)
-    return _form_response(form)
+async def update_form(payload: AbstractFormPayload, event: CurrentEvent,
+                      expected_version: Optional[str] = Header(None, alias="If-Match"),
+                      idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+                      current_user: User = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)) -> AbstractFormResponse:
+    return await AbstractConfigurationCommandService(db).update_form(
+        payload=payload.model_dump(), event=event, user=current_user,
+        expected_version=expected_version, idempotency_key=idempotency_key)
 
 
 @router.get("/submissions", response_model=AbstractSubmissionPage, dependencies=[require_event_operation("abstracts.review")])
-async def list_submissions(event: CurrentEvent, status_filter: Optional[str] = Query(None, alias="status"), search: Optional[str] = Query(None, max_length=120), topic: Optional[str] = None, cursor: Optional[uuid.UUID] = None, limit: int = Query(100, ge=1, le=200), db: AsyncSession = Depends(get_db)) -> AbstractSubmissionPage:
+async def list_submissions(event: CurrentEvent, status_filter: Optional[str] = Query(None, alias="status"), search: Optional[str] = Query(None, max_length=120), topic: Optional[str] = None, track: Optional[str] = None, abstract_type: Optional[str] = Query(None, alias="format"), cursor: Optional[uuid.UUID] = None, limit: int = Query(100, ge=1, le=200), db: AsyncSession = Depends(get_db)) -> AbstractSubmissionPage:
     page_rows, has_more = await AbstractQueryService(db).list_submissions(
         event_id=event.id,
+        organization_id=event.organization_id,
         status_filter=status_filter,
         search=search,
         topic=topic,
+        track=track,
+        abstract_type=abstract_type,
         cursor=cursor,
         limit=limit,
     )
@@ -608,12 +692,13 @@ async def update_assignment(assignment_id: uuid.UUID, payload: AssignmentUpdateP
 
 
 @router.post("/assignments/{assignment_id}/reviews", response_model=AbstractSubmissionResponse, dependencies=[require_event_operation("abstracts.review")])
-async def submit_review(assignment_id: uuid.UUID, payload: ReviewPayload, event: CurrentEvent, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> AbstractSubmissionResponse:
+async def submit_review(assignment_id: uuid.UUID, payload: ReviewPayload, event: CurrentEvent, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> AbstractSubmissionResponse:
     submission = await AbstractReviewCommandService(db).submit(
         assignment_id=assignment_id,
         payload=payload.model_dump(),
         event=event,
         user=current_user,
+        idempotency_key=idempotency_key,
     )
     return await _submission_response(db, submission)
 
@@ -632,6 +717,23 @@ async def decide_submission(submission_id: uuid.UUID, payload: DecisionPayload, 
         user=current_user,
     )
     return await _submission_response(db, submission)
+
+
+@router.post("/decisions/bulk", response_model=list[AbstractSubmissionResponse], dependencies=[require_event_operation("abstracts.decide")])
+async def decide_submissions_bulk(
+    payload: BulkDecisionPayload,
+    event: CurrentEvent,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[AbstractSubmissionResponse]:
+    rows = await AbstractDecisionCommandService(db).decide_many(
+        items=[item.model_dump() for item in payload.items], decision=payload.decision,
+        presentation_type=payload.presentation_type, reason=payload.reason,
+        notes_to_author=payload.notes_to_author, event=event, user=current_user,
+        idempotency_key=idempotency_key,
+    )
+    return await _submission_responses(db, rows, event.id)
 
 
 @router.post("/submissions/{submission_id}/publish", response_model=AbstractSubmissionResponse, dependencies=[require_event_operation("abstracts.publish")])

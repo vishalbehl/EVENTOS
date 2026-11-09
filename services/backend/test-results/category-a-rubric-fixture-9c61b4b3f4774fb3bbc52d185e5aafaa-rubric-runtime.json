@@ -1,0 +1,14 @@
+{
+  "status": "PASSED",
+  "stage": "post_correction_plan_preservation",
+  "actual_restricted_login": true,
+  "migration_revision": "20261022_3670",
+  "production_acceptance": "NOT_RUN",
+  "http_admission": "NOT_RUN",
+  "forced_rls": true,
+  "missing_and_foreign_context_concealed": true,
+  "old_coverage_not_upgraded": true,
+  "reviewed_correction_and_replay": true,
+  "raw_historical_document_not_projected": true,
+  "unrelated_plan_data_preserved": true
+}

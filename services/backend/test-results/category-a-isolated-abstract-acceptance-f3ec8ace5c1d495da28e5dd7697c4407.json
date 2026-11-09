@@ -1,0 +1,19 @@
+{
+  "status": "PASSED",
+  "environment": "local_isolated_rehearsal",
+  "run_id": "f3ec8ace5c1d495da28e5dd7697c4407",
+  "database": "category_a_restore_20261020_f3ec8ace5c1d",
+  "backup_database": "category_a_restore_20261020_4eeff58ce5f1",
+  "backup_evidence_sha256": "68ddc0cff7625306cb388b92b85d7c2ed0e3ad54bfc6b3a3aa8e8936f1b78042",
+  "started_at": "2026-10-20T11:03:41.996243+00:00",
+  "application_workers_providers": "NOT_STARTED",
+  "production_acceptance": "NOT_RUN",
+  "fixture_artifact": "category-a-abstract-fixture-f3ec8ace5c1d495da28e5dd7697c4407.json",
+  "runtime_artifact": "category-a-abstract-writer-runtime-da8be7e129b0472c9d1acb90bc16ac02.json",
+  "runtime_artifact_sha256": "22d69be83c4cba6f8d32ca7e5c3331380ef9beeb7a3af350d5c6a229d3065297",
+  "runtime_status": "PASSED",
+  "checks_verified": 10,
+  "final_clone_quarantined": true,
+  "completed_at": "2026-10-20T11:04:25.837120+00:00",
+  "probe_sha256": "aff145390c58b1fd34acb6adf7fa75550e6457f5132895274919e9fb63bde92a"
+}

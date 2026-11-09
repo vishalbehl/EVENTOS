@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class EventActivationCreate(BaseModel):
-    subscription_id: Optional[uuid.UUID] = Field(default=None, description="Subscription to consume for this event")
+    commercial_contract_id: uuid.UUID = Field(description="Commercial contract to consume for this event")
     grant_id: Optional[uuid.UUID] = Field(default=None, description="Explicit grant to consume for this event")
     activation_policy: str = Field(default="SNAPSHOT_LOCKED")
 
@@ -45,7 +45,7 @@ class EventActivationResponse(BaseModel):
     id: uuid.UUID
     organization_id: uuid.UUID
     event_id: uuid.UUID
-    subscription_id: uuid.UUID
+    commercial_contract_id: uuid.UUID
     grant_id: Optional[uuid.UUID] = None
     grant_consumption_id: Optional[uuid.UUID] = None
     status: str

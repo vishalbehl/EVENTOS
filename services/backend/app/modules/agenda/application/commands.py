@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_service
@@ -20,6 +20,7 @@ from app.modules.agenda.schemas.agenda_schemas import AgendaCreate, AgendaDayCre
 from app.core.concurrency import raise_version_conflict
 from app.modules.speakers.schemas.session_builder import TrackResponse, TrackUpsertRequest
 from app.modules.venue.schemas.room import RoomCreate, RoomUpdate
+from app.modules.agenda.models.room_type import RoomType
 from app.modules.analytics.services.projection_dispatch import (
     enqueue_event_speaker_projection_refresh,
 )
@@ -313,6 +314,55 @@ class RoomCommandService:
     """Own room configuration transactions."""
 
     @staticmethod
+    async def _resolve_catalog_room_type(
+        db: AsyncSession,
+        *,
+        event: Event,
+        payload: RoomCreate | RoomUpdate,
+    ) -> None:
+        """Resolve a room's human/API code through the active tenant catalogue."""
+        submitted_code = payload.room_type.strip().upper() if payload.room_type else None
+        submitted_id = payload.room_type_id
+        if submitted_code is None and submitted_id is None:
+            return
+
+        statement = select(RoomType).where(
+            RoomType.is_active.is_(True),
+            or_(
+                RoomType.organization_id.is_(None),
+                RoomType.organization_id == event.organization_id,
+            ),
+        ).execution_options(skip_tenant_filter=True)
+        if submitted_id is not None:
+            statement = statement.where(RoomType.id == submitted_id)
+        else:
+            statement = statement.where(RoomType.code == submitted_code)
+        statement = statement.order_by(
+            RoomType.organization_id.is_not(None).desc(),
+            RoomType.id,
+        )
+        room_type = await db.scalar(statement)
+        if room_type is None:
+            reference = str(submitted_id) if submitted_id else submitted_code
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "ROOM_TYPE_NOT_AVAILABLE",
+                    "message": f"Room type is not active for this organization: {reference}",
+                },
+            )
+        if submitted_code is not None and submitted_id is not None and submitted_code != room_type.code:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "ROOM_TYPE_MISMATCH",
+                    "message": "room_type and room_type_id refer to different catalog entries.",
+                },
+            )
+        payload.room_type = room_type.code
+        payload.room_type_id = room_type.id
+
+    @staticmethod
     async def create_room(
         db: AsyncSession,
         *,
@@ -323,6 +373,9 @@ class RoomCommandService:
     ) -> uuid.UUID:
         """Create a room with durable replay protection and cache invalidation."""
         try:
+            await RoomCommandService._resolve_catalog_room_type(
+                db, event=event, payload=payload
+            )
             idem = await begin_idempotent(
                 db,
                 organization_id=event.organization_id,
@@ -371,6 +424,9 @@ class RoomCommandService:
     ) -> uuid.UUID:
         """Update room configuration with a durable command boundary."""
         try:
+            await RoomCommandService._resolve_catalog_room_type(
+                db, event=event, payload=payload
+            )
             idem = None
             if idempotency_key:
                 idem = await begin_idempotent(

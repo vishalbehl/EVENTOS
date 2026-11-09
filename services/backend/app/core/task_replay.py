@@ -9,6 +9,7 @@ import uuid
 # Request bodies, credentials, and arbitrary task arguments are deliberately
 # excluded from durable failure records.
 REPLAYABLE_TASKS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "app.tasks.recover_abandoned_uploads_for_tenant": ("reconciliation", ("organization_id_str",)),
     "app.tasks.process_durable_upload": ("files", ("upload_id_str", "organization_id_str")),
     "app.tasks.process_import_upload": ("imports", ("upload_id_str", "organization_id_str", "job_id_str")),
     "app.tasks.run_excel_import": ("imports", ("job_id_str", "organization_id_str")),
@@ -26,7 +27,7 @@ REPLAYABLE_TASKS: dict[str, tuple[str, tuple[str, ...]]] = {
     "app.tasks.workflow_jobs.check_escalations": ("notifications", ("organization_id_str",)),
     "app.tasks.workflow_jobs.send_reminders": ("notifications", ("organization_id_str",)),
     "app.tasks.dispatch_communication_batch": ("notifications", ("batch_id", "organization_id")),
-    "app.tasks.process_email_campaign": ("notifications", ("campaign_id_str", "organization_id_str")),
+    "app.tasks.process_email_campaign": ("notifications", ("campaign_id_str", "organization_id_str", "reservation_id_str", "dispatch_id_str")),
     "app.tasks.platform_commercial.calculate_forecasts": ("reports", ("organization_id_str",)),
     "app.tasks.organization_console_tasks.reconcile_organization_usage": ("reconciliation", ("organization_id_str",)),
     "app.tasks.organization_console_tasks.execute_lifecycle_job": ("reconciliation", ("organization_id_str", "job_id_str")),
@@ -46,6 +47,22 @@ def replay_payload_for(
     if spec is None:
         return None
     queue, parameter_names = spec
+    if task_name == "app.tasks.process_email_campaign":
+        positional = list(args or [])
+        named = dict(kwargs or {})
+        if len(positional) > 4 or set(named) - set(parameter_names):
+            return None
+        supplied = dict(zip(parameter_names, positional))
+        if set(supplied) & set(named):
+            return None
+        supplied.update(named)
+        values = [supplied.get(name) for name in parameter_names]
+        # Old two-argument jobs lack dispatch proof and cannot be replayed.
+        if any(values[index] is None or _not_uuid(str(values[index])) for index in (0, 1, 3)):
+            return None
+        if values[2] is not None and _not_uuid(str(values[2])):
+            return None
+        return {"queue": queue, "args": [str(value) if value is not None else None for value in values]}
     positional = list(args or [])
     named = kwargs or {}
     if positional and named:

@@ -1,0 +1,15 @@
+{
+  "status": "PASSED",
+  "database": "category_a_restore_20261021_96e0b5993ef1",
+  "run_id": "96e0b5993ef143218aaae0a93a3f3bdc",
+  "environment": "local_backup_derived_rehearsal",
+  "applied_history_rewritten": false,
+  "production_acceptance": "NOT_RUN",
+  "runtime_artifact": "category-a-durable-fixture-96e0b5993ef143218aaae0a93a3f3bdc-runtime.json",
+  "runtime_status": "PASSED",
+  "runtime_stage": "completed",
+  "migration_revision": "20261021_3650",
+  "actual_restricted_login": true,
+  "database_quarantined": true,
+  "temporary_login_removed": true
+}

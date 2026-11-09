@@ -1,0 +1,17 @@
+{
+  "status": "PASSED",
+  "checks": [
+    "requested_relationship_has_no_access",
+    "client_approved_form_action_admitted",
+    "billing_not_inherited",
+    "foreign_event_concealed",
+    "organisation_catalogue_administration_denied",
+    "old_selector_denied_after_committed_suspension",
+    "old_selector_denied_after_committed_detachment"
+  ],
+  "temporary_relationship_id": "52915ee8-3b51-467f-bdc5-228dba94d074",
+  "temporary_session_id": "4671ae44-4786-4702-a67e-fbde2c46b640",
+  "business_mutation_acceptance": "NOT_PROVEN_CLIENT_EVENT_HAS_NO_ACTIVE_CONTRACT",
+  "independent_rollback_verified": true,
+  "probe_sha256": "7a9e229632bbe7b20af062196e7d6906a51ef0d5cc02ae96bc7e8ad827d64a46"
+}

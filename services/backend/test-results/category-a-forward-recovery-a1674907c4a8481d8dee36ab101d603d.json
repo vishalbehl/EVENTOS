@@ -1,0 +1,31 @@
+{
+  "status": "PASSED",
+  "environment": "local_isolated_rehearsal",
+  "run_id": "a1674907c4a8481d8dee36ab101d603d",
+  "restored_database": "category_a_restore_20261020_4eeff58ce5f1",
+  "backup_evidence_sha256": "68ddc0cff7625306cb388b92b85d7c2ed0e3ad54bfc6b3a3aa8e8936f1b78042",
+  "recovery_strategy": "fail_closed_forward_only",
+  "application_binary_rollback": "UNAVAILABLE",
+  "application_deployment": "NOT_RUN",
+  "edge_worker_storage_containment": "NOT_RUN",
+  "staging_or_production_acceptance": "NOT_RUN",
+  "started_at": "2026-10-20T10:50:50.834474+00:00",
+  "runtime_connections_denied_during_containment": true,
+  "runtime_security": {
+    "role_name": "category_a_rehearsal_runtime_20261015",
+    "is_superuser": false,
+    "bypasses_rls": false,
+    "missing_canary_policies": [],
+    "owns_application_objects": false,
+    "can_assume_privileged_role": false,
+    "can_create_roles": false
+  },
+  "data_schema_security_unchanged": true,
+  "scoped_runtime_read_and_transaction_reset_verified": true,
+  "migration_revision": "20261019_3640",
+  "tables_verified": 434,
+  "rows_verified": 851,
+  "final_database_containment_verified": true,
+  "completed_at": "2026-10-20T10:50:55.346833+00:00",
+  "probe_sha256": "74ed99e4c011d61993dec7ca21fe125cc9a469c3ea092198c4c0a15feadbdbb8"
+}

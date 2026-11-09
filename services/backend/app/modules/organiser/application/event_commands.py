@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import invalidate_organization
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.events.models.event import Event
 from app.modules.events.services.event_mutation_service import EventMutationService
@@ -40,6 +41,7 @@ class OrganizerEventCommandService:
                     return self._view(row)
             code = short_code or f"{source.short_code[:13]}-{uuid.uuid4().hex[:6].upper()}"
             payload = EventCreate(
+                operational_workspace_id=source.operational_workspace_id,
                 name=name or f"{source.name} Copy", short_code=code, status="draft",
                 location=source.location, venue_name=source.venue_name, country=source.country,
                 state=source.state, organizer_name=source.organizer_name,
@@ -74,7 +76,7 @@ class OrganizerEventCommandService:
             raise
 
     async def restore(self, *, organization_id, event_id: uuid.UUID, actor, reason: str,
-                      idempotency_key: str) -> dict:
+                      expected_version: int, idempotency_key: str) -> dict:
         try:
             event = await self.db.scalar(select(Event).where(
                 Event.id == event_id,
@@ -82,15 +84,24 @@ class OrganizerEventCommandService:
             ).execution_options(include_deleted=True).with_for_update(of=Event))
             if event is None:
                 raise HTTPException(status_code=404, detail="Event not found")
-            replay = await self.db.scalar(select(AuditLog).where(
-                AuditLog.organization_id == organization_id,
-                AuditLog.resource_type == "event",
-                AuditLog.resource_id == event.id,
-                AuditLog.action_type == "EVENT_RESTORED",
-                AuditLog.new_state["idempotency_key"].astext == idempotency_key,
-            ))
-            if replay:
-                return {"id": str(event.id), "status": event.status, "restored": event.deleted_at is None}
+            idem = await begin_idempotent(
+                self.db,
+                organization_id=organization_id,
+                actor_id=actor.id,
+                operation="organiser.events.restore",
+                key=idempotency_key,
+                payload={"event_id": str(event.id), "reason": reason,
+                         "expected_version": expected_version},
+            )
+            replay = replay_response(idem)
+            if replay is not None:
+                await self.db.commit()
+                return replay
+            if event.version != expected_version:
+                raise HTTPException(status_code=412, detail={
+                    "code": "STALE_VERSION", "current_version": event.version,
+                    "message": "This event changed. Reload before restoring it.",
+                })
             if event.deleted_at is None and event.status != "archived":
                 raise HTTPException(status_code=409, detail={
                     "code": "EVENT_NOT_ARCHIVED",
@@ -100,6 +111,7 @@ class OrganizerEventCommandService:
             event.deleted_at = None
             event.deleted_by = None
             event.status = "draft"
+            event.version = int(event.version or 1) + 1
             self.db.add(AuditLog(
                 organization_id=organization_id, actor_user_id=actor.id, actor_role=actor.role,
                 resource_type="event", resource_id=event.id, action_type="EVENT_RESTORED",
@@ -108,9 +120,15 @@ class OrganizerEventCommandService:
                            "idempotency_key": idempotency_key},
                 is_sensitive=True,
             ))
+            response = {"id": str(event.id), "status": event.status,
+                        "version": event.version, "restored": True}
+            await complete_idempotent(
+                self.db, idem, response_status=200, response_body=response,
+                resource_id=event.id,
+            )
             await self.db.commit()
             await invalidate_organization(organization_id)
-            return {"id": str(event.id), "status": event.status, "restored": True}
+            return response
         except Exception:
             await self.db.rollback()
             raise

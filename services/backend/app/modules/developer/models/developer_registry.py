@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
-from sqlalchemy import String, Boolean, DateTime, ForeignKey, Text, Integer, UniqueConstraint
+from sqlalchemy import String, Boolean, DateTime, ForeignKey, Text, Integer, UniqueConstraint, CheckConstraint, Index, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -50,7 +50,12 @@ class OAuthClient(Base):
 
 class RateLimit(Base):
     __tablename__ = "rate_limits"
-    __table_args__ = {"schema": "developer"}
+    __table_args__ = (
+        CheckConstraint("requests_per_minute IS NOT NULL AND requests_per_day IS NOT NULL AND requests_per_minute BETWEEN 1 AND 10000000 AND requests_per_day BETWEEN 1 AND 10000000", name="ck_rate_limits_bounds"),
+        Index("uq_rate_limits_tenant", "organization_id", unique=True, postgresql_where=text("organization_id IS NOT NULL")),
+        Index("uq_rate_limits_global_tier", text("lower(plan_tier)"), unique=True, postgresql_where=text("organization_id IS NULL")),
+        {"schema": "developer"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     plan_tier: Mapped[str] = mapped_column(String(50), nullable=False)

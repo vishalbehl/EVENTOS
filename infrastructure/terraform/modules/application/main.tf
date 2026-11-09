@@ -370,7 +370,8 @@ resource "aws_lb_listener" "https" {
 
 locals {
   common_environment = concat([
-    { name = "environment", value = "production" },
+    { name = "environment", value = var.deployment_profile },
+    { name = "DEPLOYMENT_PROFILE", value = var.deployment_profile },
     { name = "API_BASE_URL", value = local.api_url },
     { name = "CORS_ORIGINS", value = join(",", var.cors_origins) },
     { name = "STORAGE_MODE", value = "s3" },
@@ -551,6 +552,8 @@ resource "aws_ecs_task_definition" "database_bootstrap" {
     command   = ["python", "ops/bootstrap_cloud_database.py"]
     environment = [
       { name = "DATABASE_ADMIN_SECRET_ARN", value = aws_db_instance.postgres.master_user_secret[0].secret_arn },
+      { name = "DEPLOYMENT_PROFILE", value = var.deployment_profile },
+      { name = "DATABASE_CLUSTER_ISOLATED", value = "true" },
       { name = "DATABASE_HOST", value = aws_db_instance.postgres.address },
       { name = "DATABASE_PORT", value = tostring(aws_db_instance.postgres.port) },
       { name = "DATABASE_NAME", value = aws_db_instance.postgres.db_name },
@@ -588,14 +591,15 @@ resource "aws_ecs_task_definition" "migration" {
     name      = "migration"
     image     = var.backend_image
     essential = true
-    command   = ["alembic", "upgrade", "head"]
-    environment = [
-      { name = "environment", value = "migration" }
+    command = [
+      "/bin/sh",
+      "-c",
+      "alembic upgrade head && python ops/verify_commercial_bootstrap.py"
     ]
-    secrets = [
-      { name = "DATABASE_URL_SYNC", valueFrom = "${aws_secretsmanager_secret.deployment.arn}:DATABASE_URL_SYNC::" },
-      { name = "DATABASE_URL_ASYNC", valueFrom = "${aws_secretsmanager_secret.deployment.arn}:DATABASE_URL_ASYNC::" }
-    ]
+    environment = local.common_environment
+    secrets = concat(local.runtime_secrets, [
+      { name = "MIGRATION_DATABASE_URL_SYNC", valueFrom = "${aws_secretsmanager_secret.deployment.arn}:DATABASE_URL_SYNC::" }
+    ])
     logConfiguration = {
       logDriver = "awslogs"
       options = {

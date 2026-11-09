@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="4" time="17.635" timestamp="2026-10-20T16:54:41.285416+05:30" hostname="Vishal"><testcase classname="tests.test_reviewed_template_retirement_races" name="test_retirement_precedes_reviewed_global_template_repair[template]" time="12.129" /><testcase classname="tests.test_reviewed_template_retirement_races" name="test_retirement_precedes_reviewed_global_template_repair[category]" time="1.124" /><testcase classname="tests.test_reviewed_template_retirement_races" name="test_reviewed_global_template_repair_precedes_retirement[template]" time="0.929"><failure message="sqlalchemy.exc.ResourceClosedError: This Connection is closed">committed_session_factory = async_sessionmaker(class_='AsyncSession', autocommit=False, bind=&lt;sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x00000145B4506550&gt;, autoflush=False, expire_on_commit=False)
+race_fixture = {'actor_id': UUID('56508f99-7ab8-4407-a07a-44fa77d69569'), 'category_key': 'race-0-69f960f4', 'platform_id': UUID('13d33f74-0e7e-465d-868b-74eefa9b181c'), 'repair_key': 'reviewed-template-race-d9a87259-3d61-454f-bd73-1c3ebaafc9d5', ...}
+kind = 'template'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["template", "category"])
+    async def test_reviewed_global_template_repair_precedes_retirement(committed_session_factory, race_fixture, kind):
+        data, task = race_fixture, None
+        await prepare(committed_session_factory, data)
+        try:
+            async with committed_session_factory() as retiring, committed_session_factory() as outer:
+                connection = await outer.connection()
+                async with AsyncSession(bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint") as writing:
+&gt;                   async with TenantContextGuard.scoped(writing, data["platform_id"]):
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_reviewed_template_retirement_races.py:103: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\visha\AppData\Local\Programs\Python\Python313\Lib\contextlib.py:221: in __aexit__
+    await anext(self.gen)
+app\core\tenant_context.py:55: in scoped
+    await TenantContextGuard.apply(session, previous)
+app\core\tenant_context.py:24: in apply
+    await session.execute(text("SELECT set_config('app.current_organization_id', '', true)"))
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:448: in execute
+    result = await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:190: in greenlet_spawn
+    result = context.switch(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2372: in execute
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2260: in _execute_internal
+    conn = self._connection_for_bind(bind)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2112: in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+&lt;string&gt;:2: in _connection_for_bind
+    ???
+.venv\Lib\site-packages\sqlalchemy\orm\state_changes.py:137: in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:1244: in _connection_for_bind
+    transaction = conn.begin()
+                  ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:857: in begin
+    self._transaction = RootTransaction(self)
+                        ^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2694: in __init__
+    self._connection_begin_impl()
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2712: in _connection_begin_impl
+    self.connection._begin_impl(self)
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1106: in _begin_impl
+    self._handle_dbapi_exception(e, None, None, None, None)
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2368: in _handle_dbapi_exception
+    raise exc_info[1].with_traceback(exc_info[2])
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1104: in _begin_impl
+    self.engine.dialect.do_begin(self.connection)
+                                 ^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:582: in connection
+    return self._revalidate_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;sqlalchemy.engine.base.Connection object at 0x00000145B701B7D0&gt;
+
+    def _revalidate_connection(self) -&gt; PoolProxiedConnection:
+        if self.__can_reconnect and self.invalidated:
+            if self._transaction is not None:
+                self._invalid_transaction()
+            self._dbapi_connection = self.engine.raw_connection()
+            return self._dbapi_connection
+&gt;       raise exc.ResourceClosedError("This Connection is closed")
+E       sqlalchemy.exc.ResourceClosedError: This Connection is closed
+
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:677: ResourceClosedError</failure></testcase><testcase classname="tests.test_reviewed_template_retirement_races" name="test_reviewed_global_template_repair_precedes_retirement[category]" time="2.397"><failure message="sqlalchemy.exc.ResourceClosedError: This Connection is closed">committed_session_factory = async_sessionmaker(class_='AsyncSession', autocommit=False, bind=&lt;sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x00000145B4506550&gt;, autoflush=False, expire_on_commit=False)
+race_fixture = {'actor_id': UUID('4ca8c56b-a9f0-40ca-a01d-9857eee81d1c'), 'category_key': 'race-0-454196bc', 'platform_id': UUID('dab62d25-92e4-418c-8d87-af667d84185f'), 'repair_key': 'reviewed-template-race-546b34e7-b2db-4749-a6f7-7a5bc6f1fcfb', ...}
+kind = 'category'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["template", "category"])
+    async def test_reviewed_global_template_repair_precedes_retirement(committed_session_factory, race_fixture, kind):
+        data, task = race_fixture, None
+        await prepare(committed_session_factory, data)
+        try:
+            async with committed_session_factory() as retiring, committed_session_factory() as outer:
+                connection = await outer.connection()
+                async with AsyncSession(bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint") as writing:
+&gt;                   async with TenantContextGuard.scoped(writing, data["platform_id"]):
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_reviewed_template_retirement_races.py:103: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\visha\AppData\Local\Programs\Python\Python313\Lib\contextlib.py:221: in __aexit__
+    await anext(self.gen)
+app\core\tenant_context.py:55: in scoped
+    await TenantContextGuard.apply(session, previous)
+app\core\tenant_context.py:24: in apply
+    await session.execute(text("SELECT set_config('app.current_organization_id', '', true)"))
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:448: in execute
+    result = await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:190: in greenlet_spawn
+    result = context.switch(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2372: in execute
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2260: in _execute_internal
+    conn = self._connection_for_bind(bind)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2112: in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+&lt;string&gt;:2: in _connection_for_bind
+    ???
+.venv\Lib\site-packages\sqlalchemy\orm\state_changes.py:137: in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:1244: in _connection_for_bind
+    transaction = conn.begin()
+                  ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:857: in begin
+    self._transaction = RootTransaction(self)
+                        ^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2694: in __init__
+    self._connection_begin_impl()
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2712: in _connection_begin_impl
+    self.connection._begin_impl(self)
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1106: in _begin_impl
+    self._handle_dbapi_exception(e, None, None, None, None)
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2368: in _handle_dbapi_exception
+    raise exc_info[1].with_traceback(exc_info[2])
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1104: in _begin_impl
+    self.engine.dialect.do_begin(self.connection)
+                                 ^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:582: in connection
+    return self._revalidate_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;sqlalchemy.engine.base.Connection object at 0x00000145B7885A90&gt;
+
+    def _revalidate_connection(self) -&gt; PoolProxiedConnection:
+        if self.__can_reconnect and self.invalidated:
+            if self._transaction is not None:
+                self._invalid_transaction()
+            self._dbapi_connection = self.engine.raw_connection()
+            return self._dbapi_connection
+&gt;       raise exc.ResourceClosedError("This Connection is closed")
+E       sqlalchemy.exc.ResourceClosedError: This Connection is closed
+
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:677: ResourceClosedError</failure></testcase></testsuite></testsuites>

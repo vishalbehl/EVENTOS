@@ -34,6 +34,7 @@ import { useParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { COUNTRY_DIAL_CODES, getDialCodeForCountry } from "@/lib/country-dial-codes";
 import { fetchCountryStates, CountryStateEntry, getStatesForCountry, fallbackCountryStates } from "@/lib/country-states";
+import { Portal } from "@/components/ui/portal";
 
 interface RegisterSpeakerDialogProps {
   isOpen: boolean;
@@ -411,16 +412,17 @@ export function RegisterSpeakerDialog({
   };
 
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-          <motion.div
-            initial={{ scale: 0.96, opacity: 0, y: 8 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.96, opacity: 0, y: 8 }}
-            transition={{ duration: 0.15 }}
-            className="w-full max-w-3xl rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-6 shadow-md flex flex-col max-h-[92vh] overflow-hidden space-y-4"
-          >
+    <Portal>
+      <AnimatePresence>
+        {isOpen && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs overflow-y-auto">
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0, y: 8 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.96, opacity: 0, y: 8 }}
+              transition={{ duration: 0.15 }}
+              className="w-full max-w-3xl rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-6 shadow-2xl flex flex-col max-h-[92vh] overflow-hidden space-y-4 relative z-10 my-auto"
+            >
             {/* Header */}
             <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3">
               <div className="flex items-center gap-2.5">
@@ -1010,5 +1012,6 @@ export function RegisterSpeakerDialog({
         </div>
       )}
     </AnimatePresence>
+    </Portal>
   );
 }

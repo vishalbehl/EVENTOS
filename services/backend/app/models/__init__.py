@@ -48,7 +48,6 @@ from app.modules.platform.models.organization_console import (
     UsageReservation,
     CapabilityRestriction,
     OrganizationFinancialAdjustment,
-    CommercialAccessRequest,
     OrganizationBrandProfile,
     OrganizationInsightSnapshot,
     OrganizationLifecycleJob,
@@ -65,9 +64,8 @@ from app.modules.platform.models.organization_console import (
     OrganizationAttentionState,
 )
 
-from app.modules.billing.models.subscription import (
-    SubscriptionPlan, OrganizationSubscription, PlanFeature,
-    OrganizationFeature, Addon, AddonFeature, CommercialTemplateVersion, OrganizationAddon,
+from app.modules.billing.models.commercial_support import (
+    OrganizationFeature,
     ActivityTimeline, RevenueMetric
 )
 from app.modules.billing.models.event_activation import EventActivation
@@ -80,12 +78,27 @@ from app.modules.billing.models.billing_domain_tables import (
     Invoice, InvoiceItem, PaymentMethod
 )
 # Phase 1 — Super Admin Console billing models
-from app.modules.billing.models.subscription_analytics import SubscriptionAnalytics
 from app.modules.billing.models.org_credits import OrgCredit
 from app.modules.billing.models.payment_gateway import PaymentGateway
 from app.modules.billing.models.provider_webhook_event import ProviderWebhookEvent
 from app.modules.billing.models.financial_audit_trail import FinancialAuditTrail
 from app.modules.billing.models.credit_notes import CreditNote
+from app.modules.billing.models.cloud_commercial import (
+    CommercialAccount,
+    CommercialAccountWorkspace,
+    CommercialOffer,
+    CommercialOfferVersion,
+    CommercialOfferPrice,
+    CommercialOfferEntitlement,
+    CommercialPricingConfiguration,
+    CommercialRequest,
+    CommercialContract,
+    CommercialContractAmendment,
+    CommercialContractItem,
+    CommercialAllocation,
+    CommercialAllocationTransfer,
+    CommercialUsageLedger,
+)
 
 from app.modules.support.models.ticket import SupportTicket, TicketComment
 from app.modules.support.models.support_domain_tables import (
@@ -122,6 +135,13 @@ from app.modules.abstracts.models import (
     AbstractReviewer,
     AbstractSubmission,
 )
+from app.modules.programme.models import (
+    ProgrammeAccessGrant,
+    ProgrammeEvaluationPlan,
+    ProgrammeMembership,
+    ProgrammeSchedulePublication,
+    ProgrammeScheduleRevision,
+)
 
 from app.modules.agenda.models import (
     MasterAgenda, AgendaDay, AgendaRoomType, AgendaRoom,
@@ -148,8 +168,15 @@ from app.modules.registration.models.participant_registration import Participant
 from app.modules.registration.models.ticket_type import TicketType
 from app.modules.registration.models.promo_code import PromoCode
 from app.modules.registration.models.payment_transaction import PaymentTransaction
-from app.modules.registration.models.form_category import FormCategory
-from app.modules.registration.models.form_template import FormTemplate
+from app.modules.registration.models.form_category import FormCategory, FormCategoryReconciliation
+from app.modules.registration.models.catalogue_reconciliation import (
+    CatalogueDocumentReconciliation, CatalogueReconciliationRun, CatalogueReconciliationWork,
+)
+from app.modules.registration.models.form_template import (
+    EventFormTemplateBinding,
+    FormTemplate,
+    FormTemplateReconciliation,
+)
 from app.modules.registration.models.registration_form_config import RegistrationFormConfig
 from app.modules.registration.models.badge_models import Badge, BadgeHistory
 from app.modules.registration.models.confirmation_qr import RegistrationConfirmationQR
@@ -188,6 +215,8 @@ from app.modules.venue.models.registration_execution import (
 
 from app.modules.communications.models.email_template import EmailTemplate
 from app.modules.communications.models.email_campaign import EmailCampaign
+from app.modules.communications.models.campaign_recipient_snapshot import CampaignRecipientSnapshot
+from app.modules.communications.models.campaign_attempt import CampaignAttempt, CampaignAttemptOutcome
 from app.modules.communications.models.email_log import EmailLog
 from app.modules.communications.models.announcement import Announcement
 from app.modules.communications.models.notification_event import NotificationEvent
@@ -208,7 +237,7 @@ from app.modules.integrations.models.integrations_domain_tables import (
 from app.modules.analytics.models.attendance_log import AttendanceLog
 from app.modules.analytics.models.usage import OrganizationUsage, UsageEvent, UsageSnapshot
 from app.modules.analytics.models.analytics_domain_tables import (
-    DashboardMetric, FeatureUsage, ApplicationUsage, ApiUsageMetric, EventMetric, AdoptionMetric
+    DashboardMetric, FeatureUsage, ApplicationUsage, ApiUsageMetric, ApiUsageWatermark, EventMetric, AdoptionMetric
 )
 from app.modules.analytics.models.event_registration_summary import EventRegistrationSummary
 from app.modules.analytics.models.event_attendance_summary import EventAttendanceSummary
@@ -233,8 +262,8 @@ from app.modules.developer.models.developer_domain_tables import (
 
 from app.modules.crm.models.core import Account, Contact, Lead
 from app.modules.crm.models.crm_domain_tables import (
-    PipelineStage, Opportunity, Task, Activity, Note, Contract, Proposal, ProposalVersion,
-    ProposalShare, ProposalShareAccess, CustomerHealth, Renewal, CrmOperationRequest
+    PipelineStage, Opportunity, Task, Activity, Note, Proposal, ProposalVersion,
+    ProposalShare, ProposalShareAccess, CrmOperationRequest
 )
 
 from app.modules.workflow.models.workflow import (
@@ -301,6 +330,12 @@ from app.modules.operations_control.models import (
 )
 from app.modules.search.models import (
     SearchIndex, SearchDocument, SearchJob,
+)
+
+from app.modules.events.models.event_user import EventUser
+from app.modules.rbac.models.access_foundation import (
+    OperationalWorkspace, WorkspaceRoleBinding, ClientRelationship,
+    OrganizationAccessRevision, AccessMutation, ClientDelegation, ClientProvisioning,
 )
 
 # Register after every mapped class is loaded so capability revisions can be

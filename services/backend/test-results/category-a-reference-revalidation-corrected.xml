@@ -1,0 +1,313 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="51" time="149.408" timestamp="2026-10-17T13:35:20.559803+05:30" hostname="Vishal"><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[foreign-owned_worker]" time="21.531" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[foreign-global_worker]" time="2.447" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[foreign-manual]" time="1.679"><failure message="sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) &lt;class 'asyncpg.exceptions.NotNullViolationError'&gt;: null value in column &quot;resource_id&quot; of relation &quot;logs&quot; violates not-null constraint&#10;DETAIL:  Failing row contains (59e5fa15-cdef-4a31-b263-40367e04899b, null, null, 40623cfb-e9c2-490b-bed6-b3760c1f8a35, c608ef53-5be4-4b1e-a3e0-75ad8389e312, null, form_template_catalogue, null, FORM_TEMPLATE_RECONCILE_PAGE, null, null, {&quot;blocked&quot;: 1, &quot;checked&quot;: 1, &quot;normalized&quot;: 0, &quot;next_cursor&quot;: nul..., null, null, null, null, f47aa19feafa74a5b5a89e536b690af3c16cced88c76edcf362b801a8d45c52e, 2, t, 2026-10-17 08:05:48.272302+00, null).&#10;[SQL: INSERT INTO command_center_audit.logs (id, request_id, correlation_id, organization_id, actor_user_id, impersonated_by, resource_type, resource_id, action_type, actor_role, new_state, actor_ip, actor_user_agent, row_hash, hash_version, is_sensitive, occurred_at, retention_until) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::UUID, $6::UUID, $7::VARCHAR, $8::UUID, $9::VARCHAR, $10::VARCHAR, $11::JSONB, $12::VARCHAR, $13::VARCHAR, $14::VARCHAR, $15::INTEGER, $16::BOOLEAN, $17::TIMESTAMP WITH TIME ZONE, $18::TIMESTAMP WITH TIME ZONE)]&#10;[parameters: (UUID('59e5fa15-cdef-4a31-b263-40367e04899b'), None, None, UUID('40623cfb-e9c2-490b-bed6-b3760c1f8a35'), UUID('c608ef53-5be4-4b1e-a3e0-75ad8389e312'), None, 'form_template_catalogue', None, 'FORM_TEMPLATE_RECONCILE_PAGE', None, '{&quot;checked&quot;: 1, &quot;normalized&quot;: 0, &quot;blocked&quot;: 1, &quot;next_cursor&quot;: null}', None, None, 'f47aa19feafa74a5b5a89e536b690af3c16cced88c76edcf362b801a8d45c52e', 2, True, datetime.datetime(2026, 10, 17, 8, 5, 48, 272302, tzinfo=datetime.timezone.utc), None)]&#10;(Background on this error at: https://sqlalche.me/e/20/gkpj)">.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.NotNullViolationError: null value in column "resource_id" of relation "logs" violates not-null constraint
+E   DETAIL:  Failing row contains (59e5fa15-cdef-4a31-b263-40367e04899b, null, null, 40623cfb-e9c2-490b-bed6-b3760c1f8a35, c608ef53-5be4-4b1e-a3e0-75ad8389e312, null, form_template_catalogue, null, FORM_TEMPLATE_RECONCILE_PAGE, null, null, {"blocked": 1, "checked": 1, "normalized": 0, "next_cursor": nul..., null, null, null, null, f47aa19feafa74a5b5a89e536b690af3c16cced88c76edcf362b801a8d45c52e, 2, t, 2026-10-17 08:05:48.272302+00, null).
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: &lt;class 'asyncpg.exceptions.NotNullViolationError'&gt;: null value in column "resource_id" of relation "logs" violates not-null constraint
+E   DETAIL:  Failing row contains (59e5fa15-cdef-4a31-b263-40367e04899b, null, null, 40623cfb-e9c2-490b-bed6-b3760c1f8a35, c608ef53-5be4-4b1e-a3e0-75ad8389e312, null, form_template_catalogue, null, FORM_TEMPLATE_RECONCILE_PAGE, null, null, {"blocked": 1, "checked": 1, "normalized": 0, "next_cursor": nul..., null, null, null, null, f47aa19feafa74a5b5a89e536b690af3c16cced88c76edcf362b801a8d45c52e, 2, t, 2026-10-17 08:05:48.272302+00, null).
+
+The above exception was the direct cause of the following exception:
+tests\test_template_reference_revalidation.py:56: in test_old_valid_evidence_is_superseded_not_rewritten
+    first, second = await run(), await run()
+                    ^^^^^^^^^^^
+tests\test_template_reference_revalidation.py:52: in run
+    return await reconcile_catalogue_documents(db, actor=super_admin, cursor=None, page_size=100,
+app\modules\registration\application\template_commands.py:295: in reconcile_catalogue_documents
+    await complete_idempotent(db, receipt, response_status=200,
+app\core\idempotency_service.py:96: in complete_idempotent
+    await db.flush()
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:786: in flush
+    await greenlet_spawn(self.sync_session.flush, objects=objects)
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:203: in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:4352: in flush
+    self._flush(objects)
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:4487: in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\langhelpers.py:122: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:4448: in _flush
+    flush_context.execute()
+.venv\Lib\site-packages\sqlalchemy\orm\unitofwork.py:465: in execute
+    rec.execute(self)
+.venv\Lib\site-packages\sqlalchemy\orm\unitofwork.py:641: in execute
+    util.preloaded.orm_persistence.save_obj(
+.venv\Lib\site-packages\sqlalchemy\orm\persistence.py:94: in save_obj
+    _emit_insert_statements(
+.venv\Lib\site-packages\sqlalchemy\orm\persistence.py:1234: in _emit_insert_statements
+    result = connection.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) &lt;class 'asyncpg.exceptions.NotNullViolationError'&gt;: null value in column "resource_id" of relation "logs" violates not-null constraint
+E   DETAIL:  Failing row contains (59e5fa15-cdef-4a31-b263-40367e04899b, null, null, 40623cfb-e9c2-490b-bed6-b3760c1f8a35, c608ef53-5be4-4b1e-a3e0-75ad8389e312, null, form_template_catalogue, null, FORM_TEMPLATE_RECONCILE_PAGE, null, null, {"blocked": 1, "checked": 1, "normalized": 0, "next_cursor": nul..., null, null, null, null, f47aa19feafa74a5b5a89e536b690af3c16cced88c76edcf362b801a8d45c52e, 2, t, 2026-10-17 08:05:48.272302+00, null).
+E   [SQL: INSERT INTO command_center_audit.logs (id, request_id, correlation_id, organization_id, actor_user_id, impersonated_by, resource_type, resource_id, action_type, actor_role, new_state, actor_ip, actor_user_agent, row_hash, hash_version, is_sensitive, occurred_at, retention_until) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::UUID, $6::UUID, $7::VARCHAR, $8::UUID, $9::VARCHAR, $10::VARCHAR, $11::JSONB, $12::VARCHAR, $13::VARCHAR, $14::VARCHAR, $15::INTEGER, $16::BOOLEAN, $17::TIMESTAMP WITH TIME ZONE, $18::TIMESTAMP WITH TIME ZONE)]
+E   [parameters: (UUID('59e5fa15-cdef-4a31-b263-40367e04899b'), None, None, UUID('40623cfb-e9c2-490b-bed6-b3760c1f8a35'), UUID('c608ef53-5be4-4b1e-a3e0-75ad8389e312'), None, 'form_template_catalogue', None, 'FORM_TEMPLATE_RECONCILE_PAGE', None, '{"checked": 1, "normalized": 0, "blocked": 1, "next_cursor": null}', None, None, 'f47aa19feafa74a5b5a89e536b690af3c16cced88c76edcf362b801a8d45c52e', 2, True, datetime.datetime(2026, 10, 17, 8, 5, 48, 272302, tzinfo=datetime.timezone.utc), None)]
+E   (Background on this error at: https://sqlalche.me/e/20/gkpj)</failure></testcase><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[retired-owned_worker]" time="2.161" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[retired-global_worker]" time="2.143" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[retired-manual]" time="1.556"><failure message="sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) &lt;class 'asyncpg.exceptions.NotNullViolationError'&gt;: null value in column &quot;resource_id&quot; of relation &quot;logs&quot; violates not-null constraint&#10;DETAIL:  Failing row contains (089ac6a8-02a9-4b58-ae85-f98d787af0ad, null, null, a8658581-605d-4394-8f5e-6ac8ed69cbcc, e701b777-0f3c-4187-9d29-a678145d81c7, null, form_template_catalogue, null, FORM_TEMPLATE_RECONCILE_PAGE, null, null, {&quot;blocked&quot;: 1, &quot;checked&quot;: 1, &quot;normalized&quot;: 0, &quot;next_cursor&quot;: nul..., null, null, null, null, 1544adfc51a3380675f107149116001add2e639d063628c054de6aa7102926e1, 2, t, 2026-10-17 08:05:58.037104+00, null).&#10;[SQL: INSERT INTO command_center_audit.logs (id, request_id, correlation_id, organization_id, actor_user_id, impersonated_by, resource_type, resource_id, action_type, actor_role, new_state, actor_ip, actor_user_agent, row_hash, hash_version, is_sensitive, occurred_at, retention_until) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::UUID, $6::UUID, $7::VARCHAR, $8::UUID, $9::VARCHAR, $10::VARCHAR, $11::JSONB, $12::VARCHAR, $13::VARCHAR, $14::VARCHAR, $15::INTEGER, $16::BOOLEAN, $17::TIMESTAMP WITH TIME ZONE, $18::TIMESTAMP WITH TIME ZONE)]&#10;[parameters: (UUID('089ac6a8-02a9-4b58-ae85-f98d787af0ad'), None, None, UUID('a8658581-605d-4394-8f5e-6ac8ed69cbcc'), UUID('e701b777-0f3c-4187-9d29-a678145d81c7'), None, 'form_template_catalogue', None, 'FORM_TEMPLATE_RECONCILE_PAGE', None, '{&quot;checked&quot;: 1, &quot;normalized&quot;: 0, &quot;blocked&quot;: 1, &quot;next_cursor&quot;: null}', None, None, '1544adfc51a3380675f107149116001add2e639d063628c054de6aa7102926e1', 2, True, datetime.datetime(2026, 10, 17, 8, 5, 58, 37104, tzinfo=datetime.timezone.utc), None)]&#10;(Background on this error at: https://sqlalche.me/e/20/gkpj)">.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.NotNullViolationError: null value in column "resource_id" of relation "logs" violates not-null constraint
+E   DETAIL:  Failing row contains (089ac6a8-02a9-4b58-ae85-f98d787af0ad, null, null, a8658581-605d-4394-8f5e-6ac8ed69cbcc, e701b777-0f3c-4187-9d29-a678145d81c7, null, form_template_catalogue, null, FORM_TEMPLATE_RECONCILE_PAGE, null, null, {"blocked": 1, "checked": 1, "normalized": 0, "next_cursor": nul..., null, null, null, null, 1544adfc51a3380675f107149116001add2e639d063628c054de6aa7102926e1, 2, t, 2026-10-17 08:05:58.037104+00, null).
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: &lt;class 'asyncpg.exceptions.NotNullViolationError'&gt;: null value in column "resource_id" of relation "logs" violates not-null constraint
+E   DETAIL:  Failing row contains (089ac6a8-02a9-4b58-ae85-f98d787af0ad, null, null, a8658581-605d-4394-8f5e-6ac8ed69cbcc, e701b777-0f3c-4187-9d29-a678145d81c7, null, form_template_catalogue, null, FORM_TEMPLATE_RECONCILE_PAGE, null, null, {"blocked": 1, "checked": 1, "normalized": 0, "next_cursor": nul..., null, null, null, null, 1544adfc51a3380675f107149116001add2e639d063628c054de6aa7102926e1, 2, t, 2026-10-17 08:05:58.037104+00, null).
+
+The above exception was the direct cause of the following exception:
+tests\test_template_reference_revalidation.py:56: in test_old_valid_evidence_is_superseded_not_rewritten
+    first, second = await run(), await run()
+                    ^^^^^^^^^^^
+tests\test_template_reference_revalidation.py:52: in run
+    return await reconcile_catalogue_documents(db, actor=super_admin, cursor=None, page_size=100,
+app\modules\registration\application\template_commands.py:295: in reconcile_catalogue_documents
+    await complete_idempotent(db, receipt, response_status=200,
+app\core\idempotency_service.py:96: in complete_idempotent
+    await db.flush()
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:786: in flush
+    await greenlet_spawn(self.sync_session.flush, objects=objects)
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:203: in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:4352: in flush
+    self._flush(objects)
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:4487: in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\langhelpers.py:122: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:4448: in _flush
+    flush_context.execute()
+.venv\Lib\site-packages\sqlalchemy\orm\unitofwork.py:465: in execute
+    rec.execute(self)
+.venv\Lib\site-packages\sqlalchemy\orm\unitofwork.py:641: in execute
+    util.preloaded.orm_persistence.save_obj(
+.venv\Lib\site-packages\sqlalchemy\orm\persistence.py:94: in save_obj
+    _emit_insert_statements(
+.venv\Lib\site-packages\sqlalchemy\orm\persistence.py:1234: in _emit_insert_statements
+    result = connection.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) &lt;class 'asyncpg.exceptions.NotNullViolationError'&gt;: null value in column "resource_id" of relation "logs" violates not-null constraint
+E   DETAIL:  Failing row contains (089ac6a8-02a9-4b58-ae85-f98d787af0ad, null, null, a8658581-605d-4394-8f5e-6ac8ed69cbcc, e701b777-0f3c-4187-9d29-a678145d81c7, null, form_template_catalogue, null, FORM_TEMPLATE_RECONCILE_PAGE, null, null, {"blocked": 1, "checked": 1, "normalized": 0, "next_cursor": nul..., null, null, null, null, 1544adfc51a3380675f107149116001add2e639d063628c054de6aa7102926e1, 2, t, 2026-10-17 08:05:58.037104+00, null).
+E   [SQL: INSERT INTO command_center_audit.logs (id, request_id, correlation_id, organization_id, actor_user_id, impersonated_by, resource_type, resource_id, action_type, actor_role, new_state, actor_ip, actor_user_agent, row_hash, hash_version, is_sensitive, occurred_at, retention_until) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::UUID, $6::UUID, $7::VARCHAR, $8::UUID, $9::VARCHAR, $10::VARCHAR, $11::JSONB, $12::VARCHAR, $13::VARCHAR, $14::VARCHAR, $15::INTEGER, $16::BOOLEAN, $17::TIMESTAMP WITH TIME ZONE, $18::TIMESTAMP WITH TIME ZONE)]
+E   [parameters: (UUID('089ac6a8-02a9-4b58-ae85-f98d787af0ad'), None, None, UUID('a8658581-605d-4394-8f5e-6ac8ed69cbcc'), UUID('e701b777-0f3c-4187-9d29-a678145d81c7'), None, 'form_template_catalogue', None, 'FORM_TEMPLATE_RECONCILE_PAGE', None, '{"checked": 1, "normalized": 0, "blocked": 1, "next_cursor": null}', None, None, '1544adfc51a3380675f107149116001add2e639d063628c054de6aa7102926e1', 2, True, datetime.datetime(2026, 10, 17, 8, 5, 58, 37104, tzinfo=datetime.timezone.utc), None)]
+E   (Background on this error at: https://sqlalche.me/e/20/gkpj)</failure></testcase><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[key_mismatch-owned_worker]" time="3.403" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[key_mismatch-global_worker]" time="2.786" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[key_mismatch-manual]" time="1.674"><failure message="sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) &lt;class 'asyncpg.exceptions.NotNullViolationError'&gt;: null value in column &quot;resource_id&quot; of relation &quot;logs&quot; violates not-null constraint&#10;DETAIL:  Failing row contains (20f53c05-0887-4866-8eec-725dac5726d7, null, null, 292a3202-98f7-48f6-89eb-1ebf65598aea, 7dcf3297-e3cb-42e0-a46a-f8c44d185242, null, form_template_catalogue, null, FORM_TEMPLATE_RECONCILE_PAGE, null, null, {&quot;blocked&quot;: 1, &quot;checked&quot;: 1, &quot;normalized&quot;: 0, &quot;next_cursor&quot;: nul..., null, null, null, null, 4a1cf4b76af3e528b28a5b5902e0690b0b33e8ed00fa1d11e98b32ec88f67e03, 2, t, 2026-10-17 08:06:07.775353+00, null).&#10;[SQL: INSERT INTO command_center_audit.logs (id, request_id, correlation_id, organization_id, actor_user_id, impersonated_by, resource_type, resource_id, action_type, actor_role, new_state, actor_ip, actor_user_agent, row_hash, hash_version, is_sensitive, occurred_at, retention_until) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::UUID, $6::UUID, $7::VARCHAR, $8::UUID, $9::VARCHAR, $10::VARCHAR, $11::JSONB, $12::VARCHAR, $13::VARCHAR, $14::VARCHAR, $15::INTEGER, $16::BOOLEAN, $17::TIMESTAMP WITH TIME ZONE, $18::TIMESTAMP WITH TIME ZONE)]&#10;[parameters: (UUID('20f53c05-0887-4866-8eec-725dac5726d7'), None, None, UUID('292a3202-98f7-48f6-89eb-1ebf65598aea'), UUID('7dcf3297-e3cb-42e0-a46a-f8c44d185242'), None, 'form_template_catalogue', None, 'FORM_TEMPLATE_RECONCILE_PAGE', None, '{&quot;checked&quot;: 1, &quot;normalized&quot;: 0, &quot;blocked&quot;: 1, &quot;next_cursor&quot;: null}', None, None, '4a1cf4b76af3e528b28a5b5902e0690b0b33e8ed00fa1d11e98b32ec88f67e03', 2, True, datetime.datetime(2026, 10, 17, 8, 6, 7, 775353, tzinfo=datetime.timezone.utc), None)]&#10;(Background on this error at: https://sqlalche.me/e/20/gkpj)">.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.NotNullViolationError: null value in column "resource_id" of relation "logs" violates not-null constraint
+E   DETAIL:  Failing row contains (20f53c05-0887-4866-8eec-725dac5726d7, null, null, 292a3202-98f7-48f6-89eb-1ebf65598aea, 7dcf3297-e3cb-42e0-a46a-f8c44d185242, null, form_template_catalogue, null, FORM_TEMPLATE_RECONCILE_PAGE, null, null, {"blocked": 1, "checked": 1, "normalized": 0, "next_cursor": nul..., null, null, null, null, 4a1cf4b76af3e528b28a5b5902e0690b0b33e8ed00fa1d11e98b32ec88f67e03, 2, t, 2026-10-17 08:06:07.775353+00, null).
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: &lt;class 'asyncpg.exceptions.NotNullViolationError'&gt;: null value in column "resource_id" of relation "logs" violates not-null constraint
+E   DETAIL:  Failing row contains (20f53c05-0887-4866-8eec-725dac5726d7, null, null, 292a3202-98f7-48f6-89eb-1ebf65598aea, 7dcf3297-e3cb-42e0-a46a-f8c44d185242, null, form_template_catalogue, null, FORM_TEMPLATE_RECONCILE_PAGE, null, null, {"blocked": 1, "checked": 1, "normalized": 0, "next_cursor": nul..., null, null, null, null, 4a1cf4b76af3e528b28a5b5902e0690b0b33e8ed00fa1d11e98b32ec88f67e03, 2, t, 2026-10-17 08:06:07.775353+00, null).
+
+The above exception was the direct cause of the following exception:
+tests\test_template_reference_revalidation.py:56: in test_old_valid_evidence_is_superseded_not_rewritten
+    first, second = await run(), await run()
+                    ^^^^^^^^^^^
+tests\test_template_reference_revalidation.py:52: in run
+    return await reconcile_catalogue_documents(db, actor=super_admin, cursor=None, page_size=100,
+app\modules\registration\application\template_commands.py:295: in reconcile_catalogue_documents
+    await complete_idempotent(db, receipt, response_status=200,
+app\core\idempotency_service.py:96: in complete_idempotent
+    await db.flush()
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:786: in flush
+    await greenlet_spawn(self.sync_session.flush, objects=objects)
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:203: in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:4352: in flush
+    self._flush(objects)
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:4487: in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\langhelpers.py:122: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:4448: in _flush
+    flush_context.execute()
+.venv\Lib\site-packages\sqlalchemy\orm\unitofwork.py:465: in execute
+    rec.execute(self)
+.venv\Lib\site-packages\sqlalchemy\orm\unitofwork.py:641: in execute
+    util.preloaded.orm_persistence.save_obj(
+.venv\Lib\site-packages\sqlalchemy\orm\persistence.py:94: in save_obj
+    _emit_insert_statements(
+.venv\Lib\site-packages\sqlalchemy\orm\persistence.py:1234: in _emit_insert_statements
+    result = connection.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) &lt;class 'asyncpg.exceptions.NotNullViolationError'&gt;: null value in column "resource_id" of relation "logs" violates not-null constraint
+E   DETAIL:  Failing row contains (20f53c05-0887-4866-8eec-725dac5726d7, null, null, 292a3202-98f7-48f6-89eb-1ebf65598aea, 7dcf3297-e3cb-42e0-a46a-f8c44d185242, null, form_template_catalogue, null, FORM_TEMPLATE_RECONCILE_PAGE, null, null, {"blocked": 1, "checked": 1, "normalized": 0, "next_cursor": nul..., null, null, null, null, 4a1cf4b76af3e528b28a5b5902e0690b0b33e8ed00fa1d11e98b32ec88f67e03, 2, t, 2026-10-17 08:06:07.775353+00, null).
+E   [SQL: INSERT INTO command_center_audit.logs (id, request_id, correlation_id, organization_id, actor_user_id, impersonated_by, resource_type, resource_id, action_type, actor_role, new_state, actor_ip, actor_user_agent, row_hash, hash_version, is_sensitive, occurred_at, retention_until) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::UUID, $6::UUID, $7::VARCHAR, $8::UUID, $9::VARCHAR, $10::VARCHAR, $11::JSONB, $12::VARCHAR, $13::VARCHAR, $14::VARCHAR, $15::INTEGER, $16::BOOLEAN, $17::TIMESTAMP WITH TIME ZONE, $18::TIMESTAMP WITH TIME ZONE)]
+E   [parameters: (UUID('20f53c05-0887-4866-8eec-725dac5726d7'), None, None, UUID('292a3202-98f7-48f6-89eb-1ebf65598aea'), UUID('7dcf3297-e3cb-42e0-a46a-f8c44d185242'), None, 'form_template_catalogue', None, 'FORM_TEMPLATE_RECONCILE_PAGE', None, '{"checked": 1, "normalized": 0, "blocked": 1, "next_cursor": null}', None, None, '4a1cf4b76af3e528b28a5b5902e0690b0b33e8ed00fa1d11e98b32ec88f67e03', 2, True, datetime.datetime(2026, 10, 17, 8, 6, 7, 775353, tzinfo=datetime.timezone.utc), None)]
+E   (Background on this error at: https://sqlalche.me/e/20/gkpj)</failure></testcase><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_event_reference_is_rechecked" time="1.662" /><testcase classname="tests.test_template_reference_revalidation" name="test_valid_reference_batch_is_constant_query_and_preserves_approval" time="1.791" /><testcase classname="tests.test_category_key_scope" name="test_category_key_updates_are_owned_and_preserve_blocked_lineage[False-worker]" time="2.061" /><testcase classname="tests.test_category_key_scope" name="test_category_key_updates_are_owned_and_preserve_blocked_lineage[False-reviewed_repair]" time="2.964" /><testcase classname="tests.test_category_key_scope" name="test_category_key_updates_are_owned_and_preserve_blocked_lineage[True-worker]" time="2.379" /><testcase classname="tests.test_category_key_scope" name="test_category_key_updates_are_owned_and_preserve_blocked_lineage[True-reviewed_repair]" time="2.668" /><testcase classname="tests.test_category_key_scope" name="test_owned_category_projection_requires_current_owner_context" time="1.014" /><testcase classname="tests.test_category_key_scope" name="test_category_repair_does_not_bypass_lifecycle[retired_global_category]" time="1.502" /><testcase classname="tests.test_category_key_scope" name="test_category_repair_does_not_bypass_lifecycle[inactive_owner]" time="1.777" /><testcase classname="tests.test_category_key_scope" name="test_existing_current_blockers_remain_counted_on_reconciliation_retry[FORM_CATEGORY]" time="2.859" /><testcase classname="tests.test_category_key_scope" name="test_existing_current_blockers_remain_counted_on_reconciliation_retry[FORM_TEMPLATE]" time="2.730" /><testcase classname="tests.test_category_key_scope" name="test_existing_current_blockers_remain_counted_on_reconciliation_retry[REGISTRATION_FORM]" time="2.765" /><testcase classname="tests.test_category_key_scope" name="test_existing_current_blockers_remain_counted_on_reconciliation_retry[ABSTRACT_FORM]" time="2.770" /><testcase classname="tests.test_category_key_scope" name="test_existing_current_blockers_remain_counted_on_reconciliation_retry[GLOBAL_CATEGORY]" time="2.690" /><testcase classname="tests.test_category_key_scope" name="test_existing_current_blockers_remain_counted_on_reconciliation_retry[GLOBAL_TEMPLATE]" time="2.523" /><testcase classname="tests.test_catalogue_worker_context" name="test_reconciliation_pages_over_one_hundred_without_loss_or_duplicate_evidence" time="10.521" /><testcase classname="tests.test_catalogue_worker_context" name="test_committed_dispatch_recovers_after_lease_and_preserves_context" time="2.542" /><testcase classname="tests.test_catalogue_worker_context" name="test_reconciliation_uses_target_and_restores_inherited_context[platform]" time="2.034" /><testcase classname="tests.test_catalogue_worker_context" name="test_reconciliation_uses_target_and_restores_inherited_context[customer]" time="1.894" /><testcase classname="tests.test_catalogue_worker_context" name="test_global_taxonomy_duplicate_count_includes_global_rows" time="1.922" /><testcase classname="tests.test_source_template_review" name="test_source_template_review_cursor_and_safe_projection" time="3.083" /><testcase classname="tests.test_source_template_review" name="test_reviewed_source_repair_is_scoped_versioned_audited_and_repeatable[GLOBAL]" time="3.266" /><testcase classname="tests.test_source_template_review" name="test_reviewed_source_repair_is_scoped_versioned_audited_and_repeatable[ORGANIZATION]" time="3.456" /><testcase classname="tests.test_source_template_review" name="test_reviewed_source_repair_is_scoped_versioned_audited_and_repeatable[EVENT]" time="3.552" /><testcase classname="tests.test_source_template_review" name="test_source_review_preflight_rejects_unsafe_projection[changes0]" time="0.022" /><testcase classname="tests.test_source_template_review" name="test_source_review_preflight_rejects_unsafe_projection[changes1]" time="0.009" /><testcase classname="tests.test_source_template_review" name="test_source_review_preflight_rejects_unsafe_projection[changes2]" time="0.008" /><testcase classname="tests.test_source_template_review" name="test_source_review_preflight_rejects_unsafe_projection[changes3]" time="0.008" /><testcase classname="tests.test_source_template_review" name="test_source_review_preflight_rejects_unsafe_projection[changes4]" time="0.008" /><testcase classname="tests.test_source_template_review" name="test_source_review_preflight_rejects_unsafe_projection[changes5]" time="0.009" /><testcase classname="tests.test_source_template_review" name="test_source_review_preflight_rejects_unsafe_projection[changes6]" time="0.009" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_parallel_catalogue_receipts_do_not_deadlock_owner_serialization" time="2.877" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_owner_serialization_still_blocks_lifecycle_changes" time="1.624" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_taxonomy_repair_before_waiting_writer_rejects_cached_key" time="4.044" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_waiting_taxonomy_repair_preserves_preceding_writer_and_lineage" time="3.290" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_retirement_before_waiting_writer_rejects_stale_reference[template]" time="3.045" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_retirement_before_waiting_writer_rejects_stale_reference[category]" time="3.044" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_writer_before_retirement_is_preserved_and_reassigned[template]" time="2.355" /><testcase classname="tests.test_catalogue_retirement_concurrency" name="test_writer_before_retirement_is_preserved_and_reassigned[category]" time="2.369" /><testcase classname="tests.test_catalogue_retirement_registration" name="test_global_retirement_reassigns_registration_and_carries_blocked_evidence[category]" time="3.000" /><testcase classname="tests.test_catalogue_retirement_registration" name="test_global_retirement_reassigns_registration_and_carries_blocked_evidence[template]" time="2.828" /><testcase classname="tests.test_catalogue_retirement_registration" name="test_reviewed_global_category_repair_preserves_history_and_replay" time="5.179" /></testsuite></testsuites>

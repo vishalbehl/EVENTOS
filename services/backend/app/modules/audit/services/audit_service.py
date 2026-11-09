@@ -79,7 +79,7 @@ class AuditService:
             write_audit_log.delay(ctx.to_dict())
 
     @staticmethod
-    async def write_log_sync(ctx: AuditContext, db: Optional[AsyncSession] = None) -> None:
+    async def write_log_sync(ctx: AuditContext, db: Optional[AsyncSession] = None, *, commit: bool = True) -> None:
         """
         Writes the log directly to the DB within the active session (synchronously).
         """
@@ -105,7 +105,10 @@ class AuditService:
         )
         if db is not None:
             db.add(log_entry)
-            await db.commit()
+            if commit:
+                await db.commit()
+            # Otherwise the caller's final flush/commit persists this mandatory
+            # row; do not create one extra database flush per audit in bulk work.
         else:
             from app.database import AsyncSessionLocal
             async with AsyncSessionLocal() as session:

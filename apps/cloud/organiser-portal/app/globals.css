@@ -1,6 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap');
 @import "../src/styles/themes.css";
 @import "../src/styles/global.css";
+@import "../src/styles/organisation-portal.css";
 @import "tailwindcss";
 @config "../tailwind.config.ts";
 

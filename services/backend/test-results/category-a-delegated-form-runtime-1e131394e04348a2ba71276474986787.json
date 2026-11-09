@@ -1,0 +1,55 @@
+{
+  "status": "FAILED",
+  "error_type": "MissingGreenlet",
+  "failure_sites": [
+    {
+      "file": "category_a_delegated_form_runtime_probe.py",
+      "line": 246,
+      "function": "main"
+    },
+    {
+      "file": "runners.py",
+      "line": 196,
+      "function": "run"
+    },
+    {
+      "file": "runners.py",
+      "line": 119,
+      "function": "run"
+    },
+    {
+      "file": "base_events.py",
+      "line": 726,
+      "function": "run_until_complete"
+    },
+    {
+      "file": "category_a_delegated_form_runtime_probe.py",
+      "line": 167,
+      "function": "probe"
+    },
+    {
+      "file": "category_a_delegated_form_runtime_probe.py",
+      "line": 152,
+      "function": "bindings"
+    },
+    {
+      "file": "category_a_delegated_form_runtime_probe.py",
+      "line": 55,
+      "function": "denied"
+    },
+    {
+      "file": "category_a_delegated_form_runtime_probe.py",
+      "line": 133,
+      "function": "write"
+    },
+    {
+      "file": "operational_binding_commands.py",
+      "line": 124,
+      "function": "update_operational_binding"
+    }
+  ],
+  "database": "category_a_restore_20261020_1a3daad706a2",
+  "organization_id": "b088ac03-63e3-495f-8ac2-5d5ac4b0d669",
+  "scope": "EVENT",
+  "probe_sha256": "d66a9d34342adecc5ab64c7cb2c8e7306e9052272e1d6ae924ec792dcc4f1236"
+}

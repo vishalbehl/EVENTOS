@@ -160,6 +160,10 @@ class AgendaSession(Base, SoftDeleteMixin):
         """Compatibility field; detailed moderator projection is query-service owned."""
         return None
 
+    @property
+    def posters(self) -> list:
+        return []
+
     def __init__(self, **kwargs):
         if "name" in kwargs and "title" not in kwargs:
             kwargs["title"] = kwargs.pop("name")

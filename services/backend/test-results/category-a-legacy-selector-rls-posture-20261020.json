@@ -1,0 +1,17 @@
+{
+  "status": "PASSED",
+  "tables": [
+    {
+      "relname": "form_categories",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "form_templates",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    }
+  ],
+  "inspection_role": "operator",
+  "behavior_proof": "category-a-legacy-selector-restricted-role-20261020.json"
+}

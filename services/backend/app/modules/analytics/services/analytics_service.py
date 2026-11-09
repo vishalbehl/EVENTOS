@@ -413,10 +413,10 @@ async def export_event_data_csv(db: AsyncSession, event_id: uuid.UUID) -> str:
 
     # Sheet 1 — Speakers
     writer.writerow(["--- SPEAKERS ---"])
-    writer.writerow(["First Name", "Last Name", "Email", "Phone", "Affiliation", "Upload Status", "Speaker Code"])
+    writer.writerow(["First Name", "Last Name", "Email", "Phone", "Affiliation", "Upload Status"])
     spk_q = await db.execute(select(Speaker).where(Speaker.event_id == event_id).order_by(Speaker.last_name))
     for s in spk_q.scalars().all():
-        writer.writerow([s.first_name, s.last_name, s.email, s.phone or "", s.affiliation or "", s.upload_status or "pending", s.speaker_code or ""])
+        writer.writerow([s.first_name, s.last_name, s.email, s.phone or "", s.affiliation or "", s.upload_status or "pending"])
 
     writer.writerow([])
     # Sheet 2 — Sessions
@@ -490,8 +490,8 @@ async def export_event_data_xlsx(db: AsyncSession, event_id: uuid.UUID) -> bytes
     ws_speakers = wb.active
     ws_speakers.title = "Speakers"
     spk_q = await db.execute(select(Speaker).where(Speaker.event_id == event_id).order_by(Speaker.last_name))
-    speakers_data = [[s.first_name, s.last_name, s.email, s.phone or "", s.affiliation or "", s.upload_status or "pending", s.speaker_code or ""] for s in spk_q.scalars().all()]
-    write_sheet(ws_speakers, ["First Name", "Last Name", "Email", "Phone", "Affiliation", "Upload Status", "Speaker Code"], speakers_data)
+    speakers_data = [[s.first_name, s.last_name, s.email, s.phone or "", s.affiliation or "", s.upload_status or "pending"] for s in spk_q.scalars().all()]
+    write_sheet(ws_speakers, ["First Name", "Last Name", "Email", "Phone", "Affiliation", "Upload Status"], speakers_data)
 
     # Sessions sheet
     ws_sessions = wb.create_sheet("Sessions")
@@ -901,11 +901,11 @@ async def build_main_event_dashboard_data(
     ]
 
     # F. Daily activity heatmap (DOW vs Hour check-ins)
-    checkins_q = await db.execute(
-        select(CheckIn.check_in_time)
+    checkins_q = await db.scalars(
+        select(CheckIn.checkin_time)
         .where(CheckIn.event_id == event_id)
     )
-    checkin_times = [row.check_in_time for row in checkins_q.all() if row.check_in_time]
+    checkin_times = [t for t in checkins_q.all() if t]
 
     heatmap_counts = {}  # (dow, hour) -> count
     for ci_time in checkin_times:
@@ -983,7 +983,7 @@ async def build_main_event_dashboard_data(
         .join(Participant, Participant.id == CheckIn.participant_id)
         .join(Session, Session.id == CheckIn.session_id)
         .where(CheckIn.event_id == event_id)
-        .order_by(CheckIn.check_in_time.desc())
+        .order_by(CheckIn.checkin_time.desc())
         .limit(10)
     )
     for row in recent_checkins_q.all():
@@ -996,7 +996,7 @@ async def build_main_event_dashboard_data(
             speaker_name=p_name,
             session_name=s_name,
             description=f"Attendee {p_name} checked in for session '{s_name}'.",
-            occurred_at=ci.check_in_time
+            occurred_at=ci.checkin_time
         ))
 
     recent_activities.sort(key=lambda x: x.occurred_at, reverse=True)

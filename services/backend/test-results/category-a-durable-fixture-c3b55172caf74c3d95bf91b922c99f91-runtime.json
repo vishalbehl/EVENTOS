@@ -1,0 +1,13 @@
+{
+  "status": "FAILED",
+  "stage": "create_revocation_first",
+  "database": "category_a_restore_20261021_c3b55172caf7",
+  "actual_restricted_login": true,
+  "actual_identity_command": true,
+  "cases": [],
+  "staging_acceptance": "NOT_RUN",
+  "production_acceptance": "NOT_RUN",
+  "runtime_role_is_safe": true,
+  "missing_canary_policies": [],
+  "error_type": "InvalidRequestError"
+}

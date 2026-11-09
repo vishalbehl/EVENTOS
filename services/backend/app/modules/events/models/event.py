@@ -3,8 +3,8 @@ from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import (
-    ARRAY, Boolean, Date, DateTime, ForeignKey,
-    Integer, String, Text,
+    ARRAY, Boolean, Date, DateTime, ForeignKey, ForeignKeyConstraint,
+    Integer, String, Text, UniqueConstraint, CheckConstraint, Index, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -40,6 +40,18 @@ class Event(Base, SoftDeleteMixin):
     belongs to an event. An organization can run many events.
     """
     __tablename__ = "events"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_event_owner"),
+        CheckConstraint("operational_workspace_id IS NOT NULL", name="ck_event_workspace_required"),
+        Index("ix_event_workspace_page", "organization_id", "operational_workspace_id", "id",
+              postgresql_where=text("deleted_at IS NULL")),
+        ForeignKeyConstraint(
+            ["organization_id", "operational_workspace_id"],
+            ["organizer_access.operational_workspaces.organization_id", "organizer_access.operational_workspaces.id"],
+            name="fk_event_workspace_owner",
+        ),
+        {"schema": "events"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -57,6 +69,9 @@ class Event(Base, SoftDeleteMixin):
         ForeignKey("platform.organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
+    )
+    operational_workspace_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizer_access.operational_workspaces.id"), nullable=True, index=True
     )
     organization_location_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
@@ -155,19 +170,6 @@ class Event(Base, SoftDeleteMixin):
             "map_coords": "",
         }
     )
-    licensing_details: Mapped[dict] = mapped_column(
-        JSONB,
-        nullable=False,
-        default=lambda: {
-            "plan_name": "",
-            "price": 0,
-            "addons": [],
-            "activated_at": None,
-            "expires_at": None,
-            "status": "inactive",
-        }
-    )
-
     # ── Unified Portal Theme Settings Relationship ───────────────
     portal_theme_setting: Mapped[Optional["PortalThemeSetting"]] = relationship(
         "PortalThemeSetting", back_populates="event", uselist=False, lazy="joined", cascade="all, delete-orphan"

@@ -150,9 +150,12 @@ class AbstractQueryService:
         self,
         *,
         event_id: uuid.UUID,
+        organization_id: uuid.UUID | None = None,
         status_filter: str | None = None,
         search: str | None = None,
         topic: str | None = None,
+        track: str | None = None,
+        abstract_type: str | None = None,
         cursor: uuid.UUID | None = None,
         limit: int = 100,
     ) -> tuple[list[AbstractSubmission], bool]:
@@ -166,8 +169,14 @@ class AbstractQueryService:
         )
         if status_filter:
             query = query.where(AbstractSubmission.status == status_filter.upper())
+        if organization_id:
+            query = query.where(AbstractSubmission.organization_id == organization_id)
         if topic:
             query = query.where(AbstractSubmission.topic == topic)
+        if track:
+            query = query.where(AbstractSubmission.track == track)
+        if abstract_type:
+            query = query.where(AbstractSubmission.abstract_type == abstract_type.upper())
         if search:
             needle = f"%{search.strip()}%"
             query = query.where(

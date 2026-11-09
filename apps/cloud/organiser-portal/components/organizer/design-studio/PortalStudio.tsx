@@ -44,7 +44,8 @@ import {
   LifeBuoy,
   Lock,
 } from "lucide-react";
-import { useEvent, useUpdateEvent } from "@/hooks/useEvents";
+import { useUpdateEvent } from "@/hooks/useEvents";
+import { useEventEditSession } from "@/hooks/useEventEditSession";
 import { toast } from "sonner";
 import { useOperationAccess } from "@/lib/capabilities";
 import { RichTextEditor } from "@/components/ui/rich-text-editor";
@@ -241,12 +242,18 @@ interface PortalStudioProps {
 }
 
 export default function PortalStudio({ eventId }: PortalStudioProps) {
-  const { data: event, isLoading: eventLoading } = useEvent(eventId);
-  const updateEvent = useUpdateEvent(eventId);
+  const edit = useEventEditSession(eventId);
+  const { event } = edit;
+  const [loadedEvent, setLoadedEvent] = useState<typeof event>();
+  const updateEvent = useUpdateEvent(eventId, edit.version);
   const planningAccess = useOperationAccess("events.planning.manage");
+  const formAccess = useOperationAccess("registration.forms.manage");
+  const themeAccess = useOperationAccess("branding.theme.manage");
+  const colorAccess = useOperationAccess("branding.colors.manage");
+  const canSave = planningAccess.enabled && formAccess.enabled && themeAccess.enabled && colorAccess.enabled;
 
   const [activeTab, setActiveTab] = useState<StudioTabId>("branding");
-  const [saving, setSaving] = useState(false);
+  const saving = updateEvent.isPending;
   const [copied, setCopied] = useState(false);
 
   // ── Form State ──
@@ -311,6 +318,7 @@ export default function PortalStudio({ eventId }: PortalStudioProps) {
     setAdditionalContacts(rs.additional_contacts || []);
     setProgramUrl(rs.program_url || "");
     setSpeakerGuidelinesUrl(rs.speaker_guidelines_url || "");
+    setTermsAndConditions(rs.terms_and_conditions || "");
     const loadedFaqs = (rs.faqs && Array.isArray(rs.faqs) && rs.faqs.length > 0) ? rs.faqs : DEFAULT_PORTAL_FAQS;
     setFaqs(loadedFaqs);
 
@@ -334,10 +342,12 @@ export default function PortalStudio({ eventId }: PortalStudioProps) {
     } else {
       setUseDynamicStats(true);
     }
+    setLoadedEvent(event);
   }, [event]);
 
   // Handle Preset Select
   const handleApplyPreset = (preset: (typeof PRESET_THEMES)[0]) => {
+    edit.markDirty();
     setSelectedPreset(preset.id);
     setPrimaryColor(preset.primary);
     setSecondaryColor(preset.secondary);
@@ -346,13 +356,12 @@ export default function PortalStudio({ eventId }: PortalStudioProps) {
 
   // Handle Save
   const handleSaveAll = async () => {
-    if (!planningAccess.enabled) {
+    if (!edit.ready || updateEvent.isPending || edit.reloading) return;
+    if (!canSave) {
       toast.error("You do not have permission to modify event portal settings.");
       return;
     }
-    setSaving(true);
     try {
-      const currentRS = (event?.registration_settings || {}) as Record<string, any>;
       const updatedThemeConfig = {
         preset: selectedPreset,
         primary_color: primaryColor,
@@ -367,7 +376,6 @@ export default function PortalStudio({ eventId }: PortalStudioProps) {
       };
 
       const updatedRS = {
-        ...currentRS,
         tagline,
         support_email: supportEmail,
         support_phone: supportPhone,
@@ -390,18 +398,19 @@ export default function PortalStudio({ eventId }: PortalStudioProps) {
         stats: useDynamicStats ? [] : customStats,
       };
 
-      await updateEvent.mutateAsync({
+      const saved = await updateEvent.mutateAsync({
         name: eventName,
         description,
         theme_color: primaryColor,
         registration_settings: updatedRS as any,
       });
-
+      if (!edit.complete(saved)) return;
       toast.success("Portal settings saved successfully!");
     } catch (err: any) {
-      toast.error(err?.message || "Failed to save portal settings.");
-    } finally {
-      setSaving(false);
+      if (!edit.isCurrent()) return;
+      toast.error([409, 412].includes(err?.status)
+        ? "The portal settings changed. Your edits are preserved; discard and reload before saving again."
+        : err?.message || "Failed to save portal settings. Your edits are preserved.");
     }
   };
 
@@ -413,40 +422,43 @@ export default function PortalStudio({ eventId }: PortalStudioProps) {
   };
 
   const addFaqItem = () => {
-    setFaqs([...faqs, { q: "", a: "" }]);
+    edit.markDirty();
+    setFaqs(current => [...current, { q: "", a: "" }]);
   };
 
   const updateFaqItem = (index: number, field: "q" | "a", value: string) => {
-    const next = [...faqs];
-    next[index][field] = value;
-    setFaqs(next);
+    edit.markDirty();
+    setFaqs(current => current.map((item, position) => position === index ? { ...item, [field]: value } : item));
   };
 
   const removeFaqItem = (index: number) => {
-    setFaqs(faqs.filter((_, i) => i !== index));
+    edit.markDirty();
+    setFaqs(current => current.filter((_, i) => i !== index));
   };
 
   const addContactItem = () => {
-    setAdditionalContacts([
-      ...additionalContacts,
-      { id: Math.random().toString(36).substring(2, 9), type: "email", value: "", label: "Support Desk" },
-    ]);
+    edit.markDirty();
+    setAdditionalContacts(current => [...current,
+      { id: crypto.randomUUID(), type: "email", value: "", label: "Support Desk" }]);
   };
 
   const removeContactItem = (id: string) => {
-    setAdditionalContacts(additionalContacts.filter((c) => c.id !== id));
+    edit.markDirty();
+    setAdditionalContacts(current => current.filter((c) => c.id !== id));
   };
 
-  if (eventLoading) {
+  if (!edit.ready || loadedEvent !== event) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="size-6 animate-spin text-[var(--pri)]" />
+        {edit.error ? <p role="alert">{edit.error}</p> : <Loader2 aria-label="Loading current portal settings" className="size-6 animate-spin text-[var(--pri)]" />}
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <fieldset disabled={updateEvent.isPending || edit.reloading} onChangeCapture={edit.markDirty} className="space-y-6 min-w-0">
+      <button type="button" onClick={edit.reload} className="text-xs underline">Discard edits and reload</button>
+      {edit.error && <p role="alert">{edit.error}</p>}
       {/* ── TOP ACTION HEADER ─────────────────────────────────────────────── */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl bg-[var(--card)] border border-[var(--border-default)] shadow-sm">
         <div className="space-y-1">
@@ -488,7 +500,7 @@ export default function PortalStudio({ eventId }: PortalStudioProps) {
           <button
             type="button"
             onClick={handleSaveAll}
-            disabled={saving || !planningAccess.enabled}
+            disabled={updateEvent.isPending || edit.reloading || !canSave}
             className="px-5 py-2 rounded-xl text-xs font-bold bg-[var(--pri)] hover:opacity-95 text-white transition-all flex items-center gap-2 shadow-md shadow-[var(--pri)]/20 cursor-pointer disabled:opacity-50"
           >
             {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
@@ -527,7 +539,7 @@ export default function PortalStudio({ eventId }: PortalStudioProps) {
       </div>
 
       {/* ── TAB PANELS ────────────────────────────────────────────────────── */}
-      <div className="p-6 md:p-8 rounded-2xl bg-[var(--card)] border border-[var(--border-default)] shadow-sm min-h-[500px]">
+      <div onClickCapture={edit.markDirty} className="p-6 md:p-8 rounded-2xl bg-[var(--card)] border border-[var(--border-default)] shadow-sm min-h-[500px]">
         <AnimatePresence mode="wait">
           {/* ════ TAB 1: BRANDING & IDENTITY ════ */}
           {activeTab === "branding" && (
@@ -1978,6 +1990,6 @@ export default function PortalStudio({ eventId }: PortalStudioProps) {
           )}
         </AnimatePresence>
       </div>
-    </div>
+    </fieldset>
   );
 }

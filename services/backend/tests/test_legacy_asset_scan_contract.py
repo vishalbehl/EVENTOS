@@ -5,16 +5,23 @@ import inspect
 
 def test_legacy_asset_upload_uses_registered_shared_scan_task():
     from app.modules.files.services.file_service import FileService
+    from app.modules.files.routers.files import upload_file
     from app.modules.platform.application.support_commands import SupportTicketCommandService
     from app.tasks.upload_jobs import scan_asset_for_viruses
 
     file_source = inspect.getsource(FileService.upload_asset)
+    adapter_source = inspect.getsource(upload_file)
     support_source = inspect.getsource(SupportTicketCommandService.complete_attachment)
 
     assert "from workers" not in file_source
     assert "from workers" not in support_source
-    assert "scan_asset_for_viruses.delay" in file_source
+    # Service writes the durable pending scan; only the committing adapter may
+    # publish it. Reintroducing pre-commit dispatch must fail this contract.
+    assert "scan_asset_for_viruses.delay" not in file_source
+    assert "VirusScan(" in file_source and 'status="pending"' in file_source
+    assert adapter_source.index("await db.commit()") < adapter_source.index("scan_asset_for_viruses.delay")
     assert "scan_asset_for_viruses.delay" in support_source
+    assert support_source.index("await self.db.commit()") < support_source.index("scan_asset_for_viruses.delay")
     assert scan_asset_for_viruses.name == "app.tasks.scan_asset_for_viruses"
     assert scan_asset_for_viruses.queue == "files"
 

@@ -29,6 +29,11 @@ class PrintTemplate(Base):
     template_type: Mapped[str] = mapped_column(String(30), nullable=False, default="custom")
     template_data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

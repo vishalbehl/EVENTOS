@@ -14,7 +14,7 @@ if TYPE_CHECKING:
         EventEntitlementSnapshotSet,
         GrantConsumption,
     )
-    from app.modules.billing.models.subscription import OrganizationSubscription
+    from app.modules.billing.models.cloud_commercial import CommercialContract
     from app.modules.events.models.event import Event
     from app.modules.platform.models.organization import Organization
 
@@ -24,7 +24,7 @@ class EventActivation(Base):
     __table_args__ = (
         Index("ix_event_activations_org_id", "organization_id"),
         Index("ix_event_activations_event_id", "event_id"),
-        Index("ix_event_activations_subscription_id", "subscription_id"),
+        Index("ix_event_activations_commercial_contract_id", "commercial_contract_id"),
         Index("ix_event_activations_grant_id", "grant_id"),
         Index("ix_event_activations_grant_consumption_id", "grant_consumption_id"),
         Index("ix_event_activations_status", "activation_status"),
@@ -46,8 +46,8 @@ class EventActivation(Base):
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=False
     )
-    subscription_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("commerce.organization_subscriptions.id", ondelete="RESTRICT"), nullable=False
+    commercial_contract_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("commerce.plan_contracts.id", ondelete="RESTRICT"), nullable=False
     )
     grant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("commerce.entitlement_grants.id", ondelete="RESTRICT"), nullable=True
@@ -89,8 +89,8 @@ class EventActivation(Base):
 
     organization: Mapped["Organization"] = relationship("Organization", backref="event_activations")
     event: Mapped["Event"] = relationship("Event", backref="activation", foreign_keys=[event_id])
-    subscription: Mapped["OrganizationSubscription"] = relationship(
-        "OrganizationSubscription", backref="event_activations"
+    commercial_contract: Mapped["CommercialContract"] = relationship(
+        "CommercialContract", backref="event_activations"
     )
     grant: Mapped[Optional["EntitlementGrant"]] = relationship("EntitlementGrant")
     grant_consumption: Mapped[Optional["GrantConsumption"]] = relationship("GrantConsumption")

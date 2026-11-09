@@ -1,0 +1,9 @@
+{
+  "status": "FAILED",
+  "stage": "rubric_runtime",
+  "actual_restricted_login": true,
+  "migration_revision": "20261022_3670",
+  "production_acceptance": "NOT_RUN",
+  "http_admission": "NOT_RUN",
+  "error_type": "AssertionError"
+}

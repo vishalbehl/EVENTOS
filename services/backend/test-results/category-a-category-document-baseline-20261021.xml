@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="6" skipped="0" tests="6" time="15.730" timestamp="2026-10-21T19:12:44.195806+05:30" hostname="Vishal"><testcase classname="tests.test_category_historical_document_validation" name="test_invalid_current_category_is_quarantined_without_repairing_its_fields[NEGATIVE_SORT-False-False]" time="10.130"><failure message="assert (0 == 1)">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000002A20A739BE0&gt;
+organization = &lt;Organization id=bfd9312b-302f-4f23-a8e4-6cb023588501 slug=test-org-b13037c8&gt;
+super_admin = &lt;User id=3b07cded-e937-4cba-84fe-fc0b0add97d0 email=admin-7cd560@test.com role=super_admin&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002A20D1B1650&gt;
+global_category = False, historical = False, invalid = 'NEGATIVE_SORT'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("global_category", [False, True])
+    @pytest.mark.parametrize("historical", [False, True])
+    @pytest.mark.parametrize("invalid", ["SHORT_NAME", "EMPTY_NAME", "UPPER_SLUG", "SPACE_SLUG",
+        "NEGATIVE_SORT", "HIGH_SORT", "TRIM_NAME", "TRIM_DESCRIPTION", "TRIM_ICON"])
+    async def test_invalid_current_category_is_quarantined_without_repairing_its_fields(
+            db, organization, super_admin, monkeypatch, global_category, historical, invalid):
+        values = dict(name="Historical category", slug=f"historical-{uuid.uuid4().hex}",
+            description="Description", icon="ClipboardList", sort_order=1)
+        values.update({
+            "SHORT_NAME": {"name": "X"}, "EMPTY_NAME": {"name": "  "},
+            "UPPER_SLUG": {"slug": f"Upper-{uuid.uuid4().hex}"},
+            "SPACE_SLUG": {"slug": f"space slug-{uuid.uuid4().hex}"},
+            "NEGATIVE_SORT": {"sort_order": -1}, "HIGH_SORT": {"sort_order": 100001},
+            "TRIM_NAME": {"name": " Historical category "},
+            "TRIM_DESCRIPTION": {"description": " Description "},
+            "TRIM_ICON": {"icon": " ClipboardList "},
+        }[invalid])
+        row = FormCategory(organization_id=None if global_category else organization.id,
+            version=1, **values)
+        db.add(row)
+        await db.flush()
+        old = marker(row, global_category=global_category, status="VALID", actor=super_admin.id) if historical else None
+        if old is not None:
+            db.add(old)
+        await db.commit()
+        identity, before = row.id, document(row)
+        old_identity = old.id if old else None
+        result = await category_page(db, row, super_admin, global_category, monkeypatch)
+&gt;       assert result["blocked"] == 1 and result["normalized"] == 0
+E       assert (0 == 1)
+
+tests\test_category_historical_document_validation.py:73: AssertionError</failure></testcase><testcase classname="tests.test_category_historical_document_validation" name="test_invalid_current_category_is_quarantined_without_repairing_its_fields[NEGATIVE_SORT-False-True]" time="0.658"><failure message="assert (0 == 1)">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000002A20B1774D0&gt;
+organization = &lt;Organization id=31aec89b-10a5-402d-913c-91d11dec1231 slug=test-org-906e200a&gt;
+super_admin = &lt;User id=f2d9c8b4-a61a-4184-af14-008923c7d129 email=admin-5a2408@test.com role=super_admin&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002A20D4A4940&gt;
+global_category = True, historical = False, invalid = 'NEGATIVE_SORT'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("global_category", [False, True])
+    @pytest.mark.parametrize("historical", [False, True])
+    @pytest.mark.parametrize("invalid", ["SHORT_NAME", "EMPTY_NAME", "UPPER_SLUG", "SPACE_SLUG",
+        "NEGATIVE_SORT", "HIGH_SORT", "TRIM_NAME", "TRIM_DESCRIPTION", "TRIM_ICON"])
+    async def test_invalid_current_category_is_quarantined_without_repairing_its_fields(
+            db, organization, super_admin, monkeypatch, global_category, historical, invalid):
+        values = dict(name="Historical category", slug=f"historical-{uuid.uuid4().hex}",
+            description="Description", icon="ClipboardList", sort_order=1)
+        values.update({
+            "SHORT_NAME": {"name": "X"}, "EMPTY_NAME": {"name": "  "},
+            "UPPER_SLUG": {"slug": f"Upper-{uuid.uuid4().hex}"},
+            "SPACE_SLUG": {"slug": f"space slug-{uuid.uuid4().hex}"},
+            "NEGATIVE_SORT": {"sort_order": -1}, "HIGH_SORT": {"sort_order": 100001},
+            "TRIM_NAME": {"name": " Historical category "},
+            "TRIM_DESCRIPTION": {"description": " Description "},
+            "TRIM_ICON": {"icon": " ClipboardList "},
+        }[invalid])
+        row = FormCategory(organization_id=None if global_category else organization.id,
+            version=1, **values)
+        db.add(row)
+        await db.flush()
+        old = marker(row, global_category=global_category, status="VALID", actor=super_admin.id) if historical else None
+        if old is not None:
+            db.add(old)
+        await db.commit()
+        identity, before = row.id, document(row)
+        old_identity = old.id if old else None
+        result = await category_page(db, row, super_admin, global_category, monkeypatch)
+&gt;       assert result["blocked"] == 1 and result["normalized"] == 0
+E       assert (0 == 1)
+
+tests\test_category_historical_document_validation.py:73: AssertionError</failure></testcase><testcase classname="tests.test_category_historical_document_validation" name="test_invalid_current_category_is_quarantined_without_repairing_its_fields[NEGATIVE_SORT-True-False]" time="0.775"><failure message="assert (0 == 1)">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000002A20B177890&gt;
+organization = &lt;Organization id=3ee5bc35-6f97-43ff-aeed-158f261126ff slug=test-org-22909760&gt;
+super_admin = &lt;User id=c08d7b5c-ac6f-4bae-a351-8631d1d18156 email=admin-9c384f@test.com role=super_admin&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002A20D68C370&gt;
+global_category = False, historical = True, invalid = 'NEGATIVE_SORT'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("global_category", [False, True])
+    @pytest.mark.parametrize("historical", [False, True])
+    @pytest.mark.parametrize("invalid", ["SHORT_NAME", "EMPTY_NAME", "UPPER_SLUG", "SPACE_SLUG",
+        "NEGATIVE_SORT", "HIGH_SORT", "TRIM_NAME", "TRIM_DESCRIPTION", "TRIM_ICON"])
+    async def test_invalid_current_category_is_quarantined_without_repairing_its_fields(
+            db, organization, super_admin, monkeypatch, global_category, historical, invalid):
+        values = dict(name="Historical category", slug=f"historical-{uuid.uuid4().hex}",
+            description="Description", icon="ClipboardList", sort_order=1)
+        values.update({
+            "SHORT_NAME": {"name": "X"}, "EMPTY_NAME": {"name": "  "},
+            "UPPER_SLUG": {"slug": f"Upper-{uuid.uuid4().hex}"},
+            "SPACE_SLUG": {"slug": f"space slug-{uuid.uuid4().hex}"},
+            "NEGATIVE_SORT": {"sort_order": -1}, "HIGH_SORT": {"sort_order": 100001},
+            "TRIM_NAME": {"name": " Historical category "},
+            "TRIM_DESCRIPTION": {"description": " Description "},
+            "TRIM_ICON": {"icon": " ClipboardList "},
+        }[invalid])
+        row = FormCategory(organization_id=None if global_category else organization.id,
+            version=1, **values)
+        db.add(row)
+        await db.flush()
+        old = marker(row, global_category=global_category, status="VALID", actor=super_admin.id) if historical else None
+        if old is not None:
+            db.add(old)
+        await db.commit()
+        identity, before = row.id, document(row)
+        old_identity = old.id if old else None
+        result = await category_page(db, row, super_admin, global_category, monkeypatch)
+&gt;       assert result["blocked"] == 1 and result["normalized"] == 0
+E       assert (0 == 1)
+
+tests\test_category_historical_document_validation.py:73: AssertionError</failure></testcase><testcase classname="tests.test_category_historical_document_validation" name="test_invalid_current_category_is_quarantined_without_repairing_its_fields[NEGATIVE_SORT-True-True]" time="0.651"><failure message="assert (0 == 1)">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000002A20D4656E0&gt;
+organization = &lt;Organization id=ef4e52a0-8aa8-4b66-8c77-33cefe94e6db slug=test-org-97181824&gt;
+super_admin = &lt;User id=4f6ccded-d7a3-4a64-bd4a-55d4bf83b8be email=admin-890170@test.com role=super_admin&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002A20B1E1010&gt;
+global_category = True, historical = True, invalid = 'NEGATIVE_SORT'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("global_category", [False, True])
+    @pytest.mark.parametrize("historical", [False, True])
+    @pytest.mark.parametrize("invalid", ["SHORT_NAME", "EMPTY_NAME", "UPPER_SLUG", "SPACE_SLUG",
+        "NEGATIVE_SORT", "HIGH_SORT", "TRIM_NAME", "TRIM_DESCRIPTION", "TRIM_ICON"])
+    async def test_invalid_current_category_is_quarantined_without_repairing_its_fields(
+            db, organization, super_admin, monkeypatch, global_category, historical, invalid):
+        values = dict(name="Historical category", slug=f"historical-{uuid.uuid4().hex}",
+            description="Description", icon="ClipboardList", sort_order=1)
+        values.update({
+            "SHORT_NAME": {"name": "X"}, "EMPTY_NAME": {"name": "  "},
+            "UPPER_SLUG": {"slug": f"Upper-{uuid.uuid4().hex}"},
+            "SPACE_SLUG": {"slug": f"space slug-{uuid.uuid4().hex}"},
+            "NEGATIVE_SORT": {"sort_order": -1}, "HIGH_SORT": {"sort_order": 100001},
+            "TRIM_NAME": {"name": " Historical category "},
+            "TRIM_DESCRIPTION": {"description": " Description "},
+            "TRIM_ICON": {"icon": " ClipboardList "},
+        }[invalid])
+        row = FormCategory(organization_id=None if global_category else organization.id,
+            version=1, **values)
+        db.add(row)
+        await db.flush()
+        old = marker(row, global_category=global_category, status="VALID", actor=super_admin.id) if historical else None
+        if old is not None:
+            db.add(old)
+        await db.commit()
+        identity, before = row.id, document(row)
+        old_identity = old.id if old else None
+        result = await category_page(db, row, super_admin, global_category, monkeypatch)
+&gt;       assert result["blocked"] == 1 and result["normalized"] == 0
+E       assert (0 == 1)
+
+tests\test_category_historical_document_validation.py:73: AssertionError</failure></testcase><testcase classname="tests.test_category_historical_document_validation" name="test_old_valid_category_marker_cannot_project_a_malformed_current_document[False]" time="0.741"><failure message="assert (1 == 0)">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000002A20D467490&gt;
+organization = &lt;Organization id=3d765564-9e02-4fd2-8212-73487331f9ea slug=test-org-fd037789&gt;
+super_admin = &lt;User id=14a8bede-0dd2-4fd0-85a0-f454b4491f1f email=admin-efeaf1@test.com role=super_admin&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002A20D76E7B0&gt;
+global_category = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("global_category", [False, True])
+    async def test_old_valid_category_marker_cannot_project_a_malformed_current_document(
+            db, organization, super_admin, monkeypatch, global_category):
+        category = FormCategory(organization_id=None if global_category else organization.id,
+            name="Invalid retained taxonomy", slug=f"retained-{uuid.uuid4().hex}", sort_order=-1)
+        db.add(category)
+        await db.flush()
+        db.add(marker(category, global_category=global_category, status="VALID", actor=super_admin.id))
+        template = FormTemplate(organization_id=organization.id, scope_type="ORGANIZATION",
+            category_id=category.id, category_key="legacy-unresolved", fields=[], settings={},
+            name="Retained taxonomy consumer", slug=f"retained-template-{uuid.uuid4().hex}")
+        db.add(template)
+        await db.flush()
+        db.add(FormTemplateReconciliation(template_id=template.id, template_version=1,
+            operation="DOCUMENT_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id))
+        await db.commit()
+        identity = template.id
+    
+        @asynccontextmanager
+        async def sessions():
+            yield db
+        monkeypatch.setattr(worker, "AsyncSessionLocal", sessions)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            result = await worker._process_page(organization.id, super_admin.id, "FORM_TEMPLATE", None)
+&gt;       assert result["normalized"] == 0 and result["blocked"] == 1
+E       assert (1 == 0)
+
+tests\test_category_historical_document_validation.py:123: AssertionError</failure></testcase><testcase classname="tests.test_category_historical_document_validation" name="test_old_valid_category_marker_cannot_project_a_malformed_current_document[True]" time="2.101"><failure message="assert (1 == 0)">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000002A20D82E450&gt;
+organization = &lt;Organization id=171dee05-ac0f-4a94-afd3-581df7100b17 slug=test-org-2da776c3&gt;
+super_admin = &lt;User id=83fac164-df31-4d5a-a686-f1187c442816 email=admin-fa97f3@test.com role=super_admin&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002A20A557770&gt;
+global_category = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("global_category", [False, True])
+    async def test_old_valid_category_marker_cannot_project_a_malformed_current_document(
+            db, organization, super_admin, monkeypatch, global_category):
+        category = FormCategory(organization_id=None if global_category else organization.id,
+            name="Invalid retained taxonomy", slug=f"retained-{uuid.uuid4().hex}", sort_order=-1)
+        db.add(category)
+        await db.flush()
+        db.add(marker(category, global_category=global_category, status="VALID", actor=super_admin.id))
+        template = FormTemplate(organization_id=organization.id, scope_type="ORGANIZATION",
+            category_id=category.id, category_key="legacy-unresolved", fields=[], settings={},
+            name="Retained taxonomy consumer", slug=f"retained-template-{uuid.uuid4().hex}")
+        db.add(template)
+        await db.flush()
+        db.add(FormTemplateReconciliation(template_id=template.id, template_version=1,
+            operation="DOCUMENT_VALIDATION", status="BLOCKED", actor_user_id=super_admin.id))
+        await db.commit()
+        identity = template.id
+    
+        @asynccontextmanager
+        async def sessions():
+            yield db
+        monkeypatch.setattr(worker, "AsyncSessionLocal", sessions)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            result = await worker._process_page(organization.id, super_admin.id, "FORM_TEMPLATE", None)
+&gt;       assert result["normalized"] == 0 and result["blocked"] == 1
+E       assert (1 == 0)
+
+tests\test_category_historical_document_validation.py:123: AssertionError</failure></testcase></testsuite></testsuites>

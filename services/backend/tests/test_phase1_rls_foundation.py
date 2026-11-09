@@ -4,7 +4,7 @@ import uuid
 from urllib.parse import urlparse, urlunparse
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import PrimaryKeyConstraint, UniqueConstraint, select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 import app.models  # noqa: F401
@@ -29,10 +29,15 @@ def test_rls_registry_references_direct_non_nullable_tenant_owners() -> None:
         table = Base.metadata.tables[tenant_table.fullname]
         ownership_column = table.columns[tenant_table.ownership_column]
         assert ownership_column.nullable is False
-        assert any(
+        indexed = any(
             tenant_table.ownership_column in index.columns
             for index in table.indexes
-        ) or tenant_table.fullname == "billing.operation_requests"
+        ) or any(
+            isinstance(constraint, (PrimaryKeyConstraint, UniqueConstraint))
+            and list(constraint.columns)[0].name == tenant_table.ownership_column
+            for constraint in table.constraints if len(constraint.columns)
+        )
+        assert indexed, tenant_table.fullname
 
 
 def test_canary_migration_is_snapshot_frozen_and_not_forced() -> None:
@@ -143,8 +148,8 @@ async def test_verified_tenant_override_restores_transaction_context(db) -> None
 
 @pytest.mark.asyncio
 async def test_orm_tenant_filter_does_not_reuse_previous_organization(db) -> None:
-    org_a = Organization(name="ORM Tenant A", slug=f"orm-a-{uuid.uuid4().hex[:8]}", plan="pro")
-    org_b = Organization(name="ORM Tenant B", slug=f"orm-b-{uuid.uuid4().hex[:8]}", plan="pro")
+    org_a = Organization(name="ORM Tenant A", slug=f"orm-a-{uuid.uuid4().hex[:8]}")
+    org_b = Organization(name="ORM Tenant B", slug=f"orm-b-{uuid.uuid4().hex[:8]}")
     db.add_all([org_a, org_b])
     await db.flush()
     user_a = User(

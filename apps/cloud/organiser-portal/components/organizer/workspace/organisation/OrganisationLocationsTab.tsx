@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { apiClient, apiGet } from "@/lib/api-client";
+import { usePortalQueryScope } from "@/hooks/useAccessBootstrap";
 import { DataTable, Panel, StatusBadge } from "../OrganiserPrimitives";
 import { OrganisationPage } from "./shared";
 
@@ -19,17 +20,24 @@ const emptyLocation = (timezone = "UTC"): LocationRecord => ({ name: "", locatio
 
 export function OrganisationLocationsTab() {
   const client = useQueryClient();
-  const organisation = useQuery({ queryKey: ["organisation", "me"], queryFn: orgApi.me });
-  const query = useQuery({ queryKey: ["organisation", "locations"], queryFn: () => apiGet<any>("/organiser/locations") });
-  const members = useQuery({ queryKey: ["organisation", "branch-owner-options"], queryFn: () => apiGet<{ items: Member[] }>("/organiser/members?page=1&page_size=100&status=active") });
-  const teams = useQuery({ queryKey: ["organisation", "branch-team-options"], queryFn: () => apiGet<{ items: Team[] }>("/organiser/teams?page=1&page_size=100") });
+  const scope = usePortalQueryScope();
+  const receipt = useRef<{ signature: string; key: string } | null>(null);
+  const organisation = useQuery({ queryKey: ["organisation", ...scope, "me"], queryFn: orgApi.me });
+  const query = useQuery({ queryKey: ["organisation", ...scope, "locations"], queryFn: () => apiGet<any>("/organiser/locations") });
+  const members = useQuery({ queryKey: ["organisation", ...scope, "branch-owner-options"], queryFn: () => apiGet<{ items: Member[] }>("/organiser/members?page=1&page_size=100&status=active") });
+  const teams = useQuery({ queryKey: ["organisation", ...scope, "branch-team-options"], queryFn: () => apiGet<{ items: Team[] }>("/organiser/teams?page=1&page_size=100") });
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<LocationRecord>(emptyLocation());
   const mutation = useMutation({
-    mutationFn: () => form.id
-      ? apiClient.put(`/organiser/locations/${form.id}`, form, { headers: { "If-Match": String(form.version) } })
-      : apiClient.post("/organiser/locations", form),
-    onSuccess: async () => { setOpen(false); await client.invalidateQueries({ queryKey: ["organisation", "locations"] }); toast.success(form.id ? "Location updated." : "Location created."); },
+    mutationFn: () => {
+      const signature = JSON.stringify([scope, form]);
+      if (receipt.current?.signature !== signature) receipt.current = { signature, key: crypto.randomUUID() };
+      const headers = { "Idempotency-Key": receipt.current.key, ...(form.id ? { "If-Match": String(form.version) } : {}) };
+      return form.id
+        ? apiClient.put(`/organiser/locations/${form.id}`, form, { headers })
+        : apiClient.post("/organiser/locations", form, { headers });
+    },
+    onSuccess: async () => { receipt.current = null; setOpen(false); await client.invalidateQueries({ queryKey: ["organisation", ...scope, "locations"] }); toast.success(form.id ? "Location updated." : "Location created."); },
     onError: (error: any) => toast.error(error?.message || "Location could not be saved."),
   });
   const beginCreate = () => { setForm(emptyLocation(organisation.data?.organization.timezone || "UTC")); setOpen(true); };

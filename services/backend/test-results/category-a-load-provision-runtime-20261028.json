@@ -1,0 +1,53 @@
+{
+  "schema": "category-a-load-provision-v1",
+  "environment": "local-isolated",
+  "database": "category_a_load_provision_20261028",
+  "slug_prefix": "category-a-load-rehearsal-20261028-",
+  "approval_reference": "isolated-provisioner-runtime-rehearsal-20261028",
+  "rehearsal": true,
+  "identity": {
+    "database_name": "category_a_load_provision_20261028",
+    "database_role": "postgres",
+    "rolsuper": true,
+    "rolbypassrls": true,
+    "rolcreatedb": true,
+    "rolcreaterole": true,
+    "migration_revisions": [
+      "20261022_3670"
+    ]
+  },
+  "counts": {
+    "tenants": 10,
+    "workspaces": 10,
+    "revisions": 10,
+    "memberships": 1000,
+    "events": 1000
+  },
+  "stages": {
+    "organizations": {
+      "batches": 1,
+      "seconds": 0.008
+    },
+    "workspaces": {
+      "batches": 1,
+      "seconds": 0.006
+    },
+    "access_revisions": {
+      "batches": 1,
+      "seconds": 0.004
+    },
+    "users": {
+      "batches": 10,
+      "seconds": 0.095
+    },
+    "memberships": {
+      "batches": 10,
+      "seconds": 0.125
+    },
+    "events": {
+      "batches": 10,
+      "seconds": 0.184
+    }
+  },
+  "completed_at": "2026-10-28T04:38:22.313696+00:00"
+}

@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Boxes, History, Percent, Receipt, Users } from "lucide-react";
+import { Boxes, History, Layers3, Percent, Receipt, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const CATALOGUE_ROUTES = [
+  { label: "Cloud plans", href: "/business/pricing/cloud-plans", icon: Layers3 },
+  { label: "EMC administration", href: "/business/pricing/emc", icon: Users },
   { label: "Hardware", href: "/business/pricing/hardware-catalog", icon: Boxes },
   { label: "Staff", href: "/business/pricing/staff-catalog", icon: Users },
   { label: "Vendor pricing", href: "/business/pricing/vendor-pricing", icon: Receipt },

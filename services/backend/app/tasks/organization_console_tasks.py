@@ -91,7 +91,12 @@ async def expire_tenant_capability_controls_in_session(
     if include_non_entitlement:
         restriction_rows = (await db.scalars(select(CapabilityRestriction).where(CapabilityRestriction.organization_id == organization_id, CapabilityRestriction.status == "APPROVED", CapabilityRestriction.expires_at.is_not(None), CapabilityRestriction.expires_at <= now).with_for_update())).all()
         flag_rows = (await db.scalars(select(PlatformFlagOverride).where(PlatformFlagOverride.organization_id == organization_id, PlatformFlagOverride.status == "APPROVED", PlatformFlagOverride.expires_at.is_not(None), PlatformFlagOverride.expires_at <= now).with_for_update())).all()
-        reservation_rows = (await db.scalars(select(UsageReservation).where(UsageReservation.organization_id == organization_id, UsageReservation.status == "RESERVED", UsageReservation.expires_at <= now).with_for_update())).all()
+        reservation_rows = (await db.scalars(select(UsageReservation).where(
+            UsageReservation.organization_id == organization_id, UsageReservation.status == "RESERVED",
+            UsageReservation.expires_at <= now,
+            UsageReservation.metadata_json["delivery_hold"].as_boolean().is_not(True),
+            UsageReservation.metadata_json["reconciliation_required"].as_boolean().is_not(True),
+        ).with_for_update())).all()
     for row in entitlement_rows:
         row.status = "EXPIRED"
         row.version += 1
@@ -169,31 +174,46 @@ def fanout_capability_control_expiry_task(self) -> int:
 
 
 async def execute_organization_lifecycle_job(organization_id_str: str, job_id_str: str) -> dict:
+    from fastapi import HTTPException
+    from app.modules.platform.services.lifecycle_authority import lock_lifecycle_authority
+
     organization_id = parse_required_organization_id(organization_id_str)
     job_id = uuid.UUID(job_id_str)
-    now = datetime.now(timezone.utc)
-    async with tenant_job_session(organization_id) as db:
-        job = await db.scalar(select(OrganizationLifecycleJob).where(
-            OrganizationLifecycleJob.id == job_id,
-            OrganizationLifecycleJob.organization_id == organization_id,
-        ).with_for_update())
-        if not job:
-            return {"status": "NOT_FOUND"}
-        if job.status not in {"PENDING", "RETRY_PENDING"}:
-            return {"status": job.status}
-        job.status = "RUNNING"
-        job.started_at = now
-        job.attempt_count += 1
-        job.version += 1
-        await db.commit()
+    expected_version = None
+    expected_status = None
     try:
         async with tenant_job_session(organization_id) as db:
-            job = await db.scalar(select(OrganizationLifecycleJob).where(
+            statement = select(OrganizationLifecycleJob).where(
                 OrganizationLifecycleJob.id == job_id,
                 OrganizationLifecycleJob.organization_id == organization_id,
-            ).with_for_update())
-            if not job or job.status != "RUNNING":
+            )
+            observed = await db.scalar(statement)
+            if not observed:
+                return {"status": "NOT_FOUND"}
+            if observed.status not in {"PENDING", "RETRY_PENDING"}:
+                return {"status": observed.status}
+            requester, target = observed.requested_by, observed.target_organization_id
+            expected_version, expected_status = observed.version, observed.status
+            OrganizationLifecycleService.require_available_operation(observed.job_type)
+            acting_organization_id, _ = await lock_lifecycle_authority(
+                db, organization_id, requester, target)
+            # Policy locks always precede job/resource row locks. Another worker
+            # or a revocation cannot interleave the following transaction.
+            job = await db.scalar(statement.with_for_update().execution_options(populate_existing=True))
+            if not job or job.status not in {"PENDING", "RETRY_PENDING"}:
                 return {"status": job.status if job else "NOT_FOUND"}
+            if job.requested_by != requester or job.target_organization_id != target:
+                raise HTTPException(409, detail={"code": "LIFECYCLE_SCOPE_CHANGED"})
+            if job.version != expected_version or job.status != expected_status:
+                return {"status": job.status, "dispatch": "STALE"}
+            now = datetime.now(timezone.utc)
+            job.status = "RUNNING"
+            job.started_at = now
+            job.attempt_count += 1
+            job.version += 1
+            # Flush in the source tenant before the service temporarily enters
+            # actor/target scopes; never commit admission separately.
+            await db.flush()
             result = await OrganizationLifecycleService.execute(db, job)
             completed_at = datetime.now(timezone.utc)
             job.status = "COMPLETED"
@@ -201,38 +221,57 @@ async def execute_organization_lifecycle_job(organization_id_str: str, job_id_st
             job.failure_reason = None
             job.completed_at = completed_at
             job.version += 1
+            correlation_id = uuid.uuid4()
             db.add(AuditLog(
-                organization_id=organization_id, actor_user_id=None, actor_role="SYSTEM",
+                organization_id=organization_id, actor_user_id=job.requested_by, actor_role="SUPER_ADMIN",
                 resource_type="organization_lifecycle_job", resource_id=job.id,
                 action_type="ORGANIZATION_LIFECYCLE_COMPLETED",
-                old_state={"status": "RUNNING"}, new_state={"status": "COMPLETED"},
-                change_diff={"job_type": job.job_type, "attempt": job.attempt_count},
-                is_sensitive=True, occurred_at=completed_at,
+                old_state={"status": expected_status},
+                new_state={"status": "COMPLETED", "result": result,
+                           "acting_organization_id": str(acting_organization_id),
+                           "target_organization_id": str(organization_id)},
+                change_diff={"job_type": job.job_type, "attempt": job.attempt_count, "reason": job.reason},
+                correlation_id=correlation_id, is_sensitive=True, occurred_at=completed_at,
             ))
             await db.commit()
-            return {"status": "COMPLETED", "result": result}
+            return {"status": "COMPLETED", "result": result, "correlation_id": str(correlation_id)}
     except Exception as exc:
-        async with tenant_job_session(organization_id) as db:
-            job = await db.scalar(select(OrganizationLifecycleJob).where(
-                OrganizationLifecycleJob.id == job_id,
-                OrganizationLifecycleJob.organization_id == organization_id,
-            ).with_for_update())
-            if job:
-                failed_at = datetime.now(timezone.utc)
-                job.status = "FAILED"
-                job.failure_reason = str(exc)[:2000]
-                job.version += 1
-                db.add(AuditLog(
-                    organization_id=organization_id, actor_user_id=None, actor_role="SYSTEM",
-                    resource_type="organization_lifecycle_job", resource_id=job.id,
-                    action_type="ORGANIZATION_LIFECYCLE_FAILED",
-                    old_state={"status": "RUNNING"}, new_state={"status": "FAILED"},
-                    change_diff={"job_type": job.job_type, "attempt": job.attempt_count, "error_type": type(exc).__name__},
-                    is_sensitive=True, occurred_at=failed_at,
-                ))
-                await db.commit()
+        if expected_version is not None:
+            async with tenant_job_session(organization_id) as db:
+                job = await db.scalar(select(OrganizationLifecycleJob).where(
+                    OrganizationLifecycleJob.id == job_id,
+                    OrganizationLifecycleJob.organization_id == organization_id,
+                ).with_for_update())
+                # The failed transaction rolled back. Do not overwrite a newer
+                # retry, rejection or another worker's committed result.
+                if job and job.version == expected_version and job.status == expected_status:
+                    failed_at = datetime.now(timezone.utc)
+                    job.status = "FAILED"
+                    unavailable = job.job_type in OrganizationLifecycleService.UNAVAILABLE_DESTRUCTIVE_OPERATIONS
+                    code = exc.detail.get("code") if isinstance(exc, HTTPException) and isinstance(exc.detail, dict) else None
+                    safe_codes = {"PLATFORM_PERMISSION_DENIED", "SESSION_REVOKED",
+                                  "LEGACY_LIFECYCLE_REAPPROVAL_REQUIRED", "STALE_VERSION",
+                                  "ARCHIVED_ORGANIZATION_REQUIRED", "ORGANIZATION_NOT_ACTIVE",
+                                  "ACCESS_RECONCILIATION_REQUIRED"}
+                    job.failure_reason = (
+                        "DESTRUCTIVE_LIFECYCLE_UNAVAILABLE: Existing data and history are preserved."
+                        if unavailable else code if code in safe_codes
+                        else f"Lifecycle operation failed ({type(exc).__name__}); contact the deployment owner with the job ID."
+                    )
+                    job.attempt_count += 1
+                    job.version += 1
+                    job.completed_at = failed_at
+                    db.add(AuditLog(
+                        organization_id=organization_id, actor_user_id=None, actor_role="SYSTEM",
+                        resource_type="organization_lifecycle_job", resource_id=job.id,
+                        action_type="ORGANIZATION_LIFECYCLE_FAILED",
+                        old_state={"status": expected_status}, new_state={"status": "FAILED"},
+                        change_diff={"job_type": job.job_type, "attempt": job.attempt_count,
+                                     "requester_id": str(job.requested_by), "error_type": type(exc).__name__},
+                        correlation_id=uuid.uuid4(), is_sensitive=True, occurred_at=failed_at,
+                    ))
+                    await db.commit()
         raise
-
 
 @celery_app.task(
     name="app.tasks.organization_console_tasks.execute_lifecycle_job",

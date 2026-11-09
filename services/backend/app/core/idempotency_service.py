@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -27,6 +28,7 @@ def default_ttl_seconds(operation: str) -> int:
 
 
 async def begin_idempotent(db: AsyncSession, *, organization_id, actor_id, operation: str, key: str, payload: Any, ttl_seconds: int | None = None) -> IdempotencyRecord:
+    actor_id = uuid.UUID(str(actor_id)) if actor_id is not None else None
     operation = str(operation or "").strip()
     key = str(key or "").strip()
     if not operation or len(operation) > 120:
@@ -45,7 +47,7 @@ async def begin_idempotent(db: AsyncSession, *, organization_id, actor_id, opera
             await db.flush()
             row = None
     if row:
-        if row.request_hash != digest:
+        if row.actor_id != actor_id or row.request_hash != digest:
             raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT", "message": "The idempotency key was used with a different request."})
         if row.status == "COMPLETED":
             return row
@@ -58,7 +60,7 @@ async def begin_idempotent(db: AsyncSession, *, organization_id, actor_id, opera
     except IntegrityError:
         # Another request won the unique-key race; inspect its authoritative row.
         row = await db.scalar(select(IdempotencyRecord).where(IdempotencyRecord.organization_id == organization_id, IdempotencyRecord.operation == operation, IdempotencyRecord.idempotency_key == key))
-        if row is None or row.request_hash != digest:
+        if row is None or row.actor_id != actor_id or row.request_hash != digest:
             raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT", "message": "The idempotency key was used with a different request."})
         raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_IN_PROGRESS", "message": "This operation is already being processed."})
     return row

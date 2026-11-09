@@ -132,13 +132,8 @@ class FileService:
         db.add(scan)
         await db.flush()
 
-        # Trigger virus scan Celery task. The asset remains quarantined if queuing fails.
-        try:
-            from app.tasks.upload_jobs import scan_asset_for_viruses
-            scan_asset_for_viruses.delay(str(asset_id), str(org_id))
-        except Exception as exc:
-            logger.error("Failed to queue virus scan for asset {}: {}", asset_id, type(exc).__name__)
-            
+        # Dispatch happens only after the caller commits this asset. A periodic
+        # recovery task republishes any pending scan whose first publish fails.
         return asset
 
     @staticmethod
@@ -188,6 +183,7 @@ class FileService:
                     delete_object,
                     settings.S3_BUCKET_ASSETS,
                     ver.file_path,
+                    verified_organization_id=org_id,
                 )
             except Exception as exc:
                 logger.warning(f"Failed to delete object {ver.file_path}: {exc}")

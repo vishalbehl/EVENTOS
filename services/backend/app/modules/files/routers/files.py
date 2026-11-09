@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from pathlib import Path
 from typing import Optional, List
-from fastapi import APIRouter, Query, HTTPException, status, File, UploadFile, Depends, Header
+from fastapi import APIRouter, Query, HTTPException, status, File, UploadFile, Depends, Header, Request, Response
 from pydantic import BaseModel, Field
 from fastapi.responses import RedirectResponse
+from lxml import etree
 
-from app.dependencies import DB, ActiveUser
+from app.dependencies import DB, ActiveUser, TokenDep
 from app.modules.files.services.file_service import FileService
 from app.modules.files.schemas.file_schemas import AssetOut, AddTagsRequest, AssetVersionOut
 from app.modules.presentations.services.upload_service import create_presigned_download
@@ -24,7 +26,64 @@ from app.core.idempotency_service import begin_idempotent, complete_idempotent, 
 from app.modules.files.infrastructure.repositories import DurableUploadRepository
 from app.core.concurrency import require_if_match, raise_version_conflict
 
-router = APIRouter(prefix="/files", tags=["files"])
+async def organization_file_access(request: Request, response: Response,
+                                   token: TokenDep, user: ActiveUser, db: DB):
+    from app.modules.rbac.services.access_contexts import direct_request_context
+    from app.modules.rbac.routers.access_foundation import browser_context_audience
+    await browser_context_audience(token)
+    if token.access_mode != "DIRECT":
+        raise HTTPException(403, detail={"code": "ORGANIZATION_FILE_MEMBERSHIP_REQUIRED"})
+    # The vault is organisation-owned. A workspace/event delegation or grant
+    # cannot turn into access to the organisation's complete asset library.
+    name = getattr(request.scope.get("endpoint"), "__name__", "")
+    action = ("FILES:DOWNLOAD" if name == "download_file" else
+              "FILES:DELETE" if name == "delete_file" else
+              "FILES:VIEW" if request.method in {"GET", "HEAD"} else
+              "FILES:CREATE" if name in {"upload_file", "create_upload_session"} else
+              "FILES:EDIT")
+    response.headers["Cache-Control"] = "no-store"
+    async with direct_request_context(db, user, token.active_organization_id) as context:
+        if action not in context.actions:
+            raise HTTPException(403, detail={"code": "PERMISSION_DENIED"})
+        yield
+
+
+router = APIRouter(prefix="/files", tags=["files"], dependencies=[Depends(organization_file_access)])
+_SYSTEM_TAG_PREFIX = "system:"
+_SANITIZED_SVG_TAG = "system:sanitized-svg-v1"
+
+
+def _sanitize_svg_upload(content: bytes) -> bytes:
+    try:
+        parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=False, huge_tree=False)
+        root = etree.fromstring(content, parser=parser)
+    except (etree.XMLSyntaxError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail={"code": "SVG_INVALID"}) from exc
+    if etree.QName(root).localname.lower() != "svg":
+        raise HTTPException(status_code=400, detail={"code": "SVG_INVALID_ROOT"})
+    nodes = list(root.iter())
+    if len(nodes) > 10_000:
+        raise HTTPException(status_code=400, detail={"code": "SVG_TOO_COMPLEX"})
+    prohibited = {"script", "style", "foreignobject", "iframe", "object", "embed", "audio", "video"}
+    for node in nodes:
+        if etree.QName(node).localname.lower() in prohibited:
+            parent = node.getparent()
+            if parent is not None:
+                parent.remove(node)
+            continue
+        for attribute_name in list(node.attrib):
+            local_name = etree.QName(attribute_name).localname.lower()
+            value = str(node.attrib.get(attribute_name) or "").strip()
+            lowered = value.lower()
+            if local_name.startswith("on") or local_name in {"src", "srcdoc"}:
+                del node.attrib[attribute_name]
+            elif local_name == "href" and value and not value.startswith("#"):
+                del node.attrib[attribute_name]
+            elif local_name == "style" and re.search(
+                r"url\s*\(|@import|expression\s*\(|javascript\s*:|vbscript\s*:", lowered
+            ):
+                del node.attrib[attribute_name]
+    return etree.tostring(root, encoding="utf-8", xml_declaration=False)
 
 
 class UploadSessionRequest(BaseModel):
@@ -65,7 +124,7 @@ async def create_upload_session(
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict:
     """Create a tenant-bound direct-to-storage upload session."""
-    organization_id = current_user.organization_id
+    organization_id = current_user.request_organization_id
     if not organization_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found.")
     try:
@@ -84,14 +143,8 @@ async def create_upload_session(
                 await db.commit()
                 return replay[1]
         if payload.event_id is not None:
-            event = await db.scalar(
-                select(Event).where(
-                    Event.id == payload.event_id,
-                    Event.organization_id == organization_id,
-                )
-            )
-            if event is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
+            from app.modules.rbac.services.event_scope import customer_event
+            await customer_event(db, current_user, payload.event_id)
         filename = Path(payload.filename).name
         if filename != payload.filename:
             raise HTTPException(status_code=400, detail={"code": "INVALID_FILENAME", "message": "Filename must be a simple file name."})
@@ -124,9 +177,9 @@ async def create_upload_session(
 @router.get("/uploads/{upload_id}/status", response_model=JobStatus)
 async def upload_status(upload_id: uuid.UUID, current_user: ActiveUser, db: DB) -> JobStatus:
     """Durable, tenant-scoped status for storage-backed upload processing."""
-    if not current_user.organization_id:
+    if not current_user.request_organization_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found.")
-    return await JobStatusService.upload(db, upload_id, current_user.organization_id)
+    return await JobStatusService.upload(db, upload_id, current_user.request_organization_id)
 
 
 @router.post("/uploads/{upload_id}/complete", response_model=JobStatus)
@@ -138,7 +191,7 @@ async def complete_upload(
     if_match: str | None = Header(None, alias="If-Match"),
 ) -> JobStatus:
     """Confirm storage upload and enqueue one tenant-bound verification task."""
-    organization_id = current_user.organization_id
+    organization_id = current_user.request_organization_id
     if not organization_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found.")
     idem = None
@@ -194,14 +247,16 @@ async def upload_file(
     file: UploadFile = File(...),
     tags: Optional[str] = Query(None, description="Comma-separated list of tags")
 ) -> AssetOut:
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     if not org_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User must belong to an organization to upload assets."
         )
         
-    tag_list = [t.strip() for t in tags.split(",")] if tags else []
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+    if any(tag.lower().startswith(_SYSTEM_TAG_PREFIX) for tag in tag_list):
+        raise HTTPException(status_code=422, detail={"code": "RESERVED_ASSET_TAG"})
     
     inline_limit = min(
         settings.MAX_FILE_SIZE_MB,
@@ -214,24 +269,37 @@ async def upload_file(
         "exe", "msi", "bat", "cmd", "ps1", "vbs", "sh", "bin", 
         "com", "scr", "pif", "js", "jar", "app", "dmg", "pkg"
     }
-    ext = file.filename.split(".")[-1].lower() if "." in file.filename else ""
+    filename = file.filename or "asset"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext in restricted:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"File extension '.{ext}' is restricted for security reasons."
         )
+    content_type = (file.content_type or "application/octet-stream").lower()
+    if content_type == "image/svg+xml" or ext == "svg":
+        file_bytes = _sanitize_svg_upload(file_bytes)
+        content_type = "image/svg+xml"
+        tag_list.append(_SANITIZED_SVG_TAG)
 
     asset = await FileService.upload_asset(
         db=db,
         org_id=org_id,
         user_id=current_user.id,
-        filename=file.filename,
-        content_type=file.content_type or "application/octet-stream",
+        filename=filename,
+        content_type=content_type,
         file_data=file_bytes,
         tags=tag_list
     )
     
     await db.commit()
+    try:
+        from app.tasks.upload_jobs import scan_asset_for_viruses
+        scan_asset_for_viruses.delay(str(asset.id), str(org_id))
+    except Exception:
+        # The committed pending VirusScan is recovered by the scheduled
+        # abandoned-upload reconciliation task.
+        pass
     
     # Reload asset to populate relationships
     updated_asset = await FileService.get_asset(db, org_id, asset.id)
@@ -254,7 +322,7 @@ async def list_files(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100)
 ) -> List[AssetOut]:
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     if not org_id:
         return []
         
@@ -280,9 +348,11 @@ async def get_file_details(
     current_user: ActiveUser,
     db: DB
 ) -> AssetOut:
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     if not org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found.")
+    if any(tag.lower().startswith(_SYSTEM_TAG_PREFIX) for tag in body.tags):
+        raise HTTPException(status_code=422, detail={"code": "RESERVED_ASSET_TAG"})
         
     asset = await FileService.get_asset(db, org_id, asset_id)
     if not asset:
@@ -300,9 +370,11 @@ async def download_file(
     db: DB,
     version: Optional[int] = Query(None, description="Specific version number")
 ):
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     if not org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found.")
+    if tag.lower().startswith(_SYSTEM_TAG_PREFIX):
+        raise HTTPException(status_code=422, detail={"code": "RESERVED_ASSET_TAG"})
         
     asset = await FileService.get_asset(db, org_id, asset_id)
     if not asset:
@@ -345,7 +417,7 @@ async def add_tags(
     current_user: ActiveUser,
     db: DB
 ) -> List[str]:
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     if not org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found.")
         
@@ -363,7 +435,7 @@ async def remove_tag(
     current_user: ActiveUser,
     db: DB
 ):
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     if not org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found.")
         
@@ -382,7 +454,7 @@ async def delete_file(
     current_user: ActiveUser,
     db: DB
 ):
-    org_id = current_user.organization_id
+    org_id = current_user.request_organization_id
     if not org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found.")
         

@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { apiGet, apiPost, apiDelete, apiPatch } from "@/lib/api-client";
-import { cn, toDateTimeLocalString, fromDateTimeLocalString, formatTimeInTZ, formatDateInTZ } from "@/lib/utils";
+import { cn, toDateTimeLocalString, fromDateTimeLocalString, formatTimeInTZ, formatDateInTZ, getFallbackTimezone } from "@/lib/utils";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEvent } from "@/hooks/useEvents";
@@ -29,7 +29,7 @@ export function SessionDetailDialog({ isOpen, onClose, sessionId, eventId }: Ses
   const [session, setSession] = useState<any>(null);
   const { data: event } = useEvent(eventId);
   const { data: rooms } = useRooms(eventId);
-  const eventTZ = session?.event_timezone || event?.timezone || 'UTC';
+  const eventTZ = session?.event_timezone || event?.timezone || getFallbackTimezone();
 // ...
 
   const [loading, setLoading] = useState(false);
@@ -51,7 +51,7 @@ export function SessionDetailDialog({ isOpen, onClose, sessionId, eventId }: Ses
     try {
       const data = await apiGet<any>(`/events/${eventId}/sessions/${sessionId}`);
       setSession(data);
-      const tz = data.event_timezone || 'UTC';
+      const tz = data.event_timezone || event?.timezone || getFallbackTimezone();
       setEditData({
         session_code: data.session_code || "",
         name: data.name,
@@ -100,7 +100,7 @@ export function SessionDetailDialog({ isOpen, onClose, sessionId, eventId }: Ses
   const handleSaveAll = async () => {
     setSaving(true);
     try {
-      const tz = session?.event_timezone || 'UTC';
+      const tz = session?.event_timezone || event?.timezone || getFallbackTimezone();
       // 1. Update session metadata
       await apiPatch(`/events/${eventId}/sessions/${sessionId}`, {
         session_code: editData.session_code.trim().toUpperCase(),

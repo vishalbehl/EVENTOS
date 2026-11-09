@@ -37,7 +37,8 @@ export function useSendToSpeakers(eventId: string) {
     }) =>
       apiPost<{ id: string; total_recipients: number; sent_count: number }>(
         `/events/${eventId}/notifications/campaigns/send-to-speakers`,
-        { ...data, send_immediately: data.send_immediately ?? true }
+        { ...data, send_immediately: data.send_immediately ?? true },
+        { headers: { "Idempotency-Key": `programme-speaker-campaign:${eventId}:${data.template_id}:${[...data.recipient_ids].sort().join(",")}:${data.send_immediately ?? true}` } } as any,
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["speakers", eventId] });
@@ -62,7 +63,8 @@ export function useAutoInvite(eventId: string) {
     mutationFn: () =>
       apiPost<AutoInviteResult>(
         `/events/${eventId}/notifications/campaigns/auto-invite`,
-        {}
+        {},
+        { headers: { "Idempotency-Key": `programme-auto-invite:${eventId}` } } as any,
       ),
     onSuccess: () => {
       // Refresh speaker list to reflect any status changes

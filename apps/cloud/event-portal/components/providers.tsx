@@ -21,6 +21,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
         position="top-right"
         richColors
         closeButton
+        visibleToasts={3}
+        duration={3500}
+        gap={8}
         toastOptions={{
           className: "text-sm font-semibold shadow-xl border rounded-xl",
           classNames: {

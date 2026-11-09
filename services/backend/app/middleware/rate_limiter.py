@@ -1,26 +1,28 @@
 import json
-import re
-import time
 import uuid
 from typing import Any, Tuple
 
 from loguru import logger
 from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
-from starlette.responses import JSONResponse
 from starlette.types import ASGIApp
 
 from app.redis import coordination_client as redis_client
 from app.database import AsyncSessionLocal
 from app.core.cache_keys import TenantCacheKey
 from app.modules.developer.models.developer_registry import RateLimit
-from app.modules.billing.models.subscription import OrganizationSubscription, SubscriptionPlan
-from app.middleware.rate_limit import _find_rule, _ip_limiter
-from sqlalchemy import select
-
-_UUID_PATTERN = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
+from app.modules.billing.models.cloud_commercial import (
+    CommercialAccount,
+    CommercialContract,
+    CommercialContractItem,
+    CommercialOffer,
 )
+from sqlalchemy import select, and_, or_, func, text
+from app.core.distributed_rate_limit import Budget, admit, identity_key
+from app.middleware.access_rate_limit import limiter_error
+from app.core.rate_policy import request_operation, POLICIES
+from app.core.tenant_context import TenantContextGuard
+from app.core.api_usage_buffer import record_completed
 
 async def fetch_db_rate_limits(org_id: uuid.UUID) -> Tuple[int, int]:
     """
@@ -28,71 +30,98 @@ async def fetch_db_rate_limits(org_id: uuid.UUID) -> Tuple[int, int]:
     Checks developer.rate_limits for an override first, falling back to subscription plan limits.
     """
     async with AsyncSessionLocal() as db:
+      async with TenantContextGuard.scoped(db, org_id):
         # 1. Check for organization-specific override first
-        stmt = select(RateLimit).where(RateLimit.organization_id == org_id).execution_options(skip_tenant_filter=True)
+        limits = RateLimit.__table__.c
+        stmt = select(limits.requests_per_minute, limits.requests_per_day).where(limits.organization_id == org_id).limit(2)
         res = await db.execute(stmt)
-        limit_row = res.scalar_one_or_none()
-        if limit_row:
-            return limit_row.requests_per_minute, limit_row.requests_per_day
+        overrides = res.all()
+        if len(overrides) > 1:
+            raise ValueError("Conflicting tenant rate policy")
+        if overrides:
+            return validate_limits(*overrides[0])
 
-        # 2. Fallback to plan tier limit
-        stmt = (
-            select(SubscriptionPlan.name, RateLimit.requests_per_minute, RateLimit.requests_per_day)
-            .select_from(OrganizationSubscription)
-            .join(SubscriptionPlan, SubscriptionPlan.id == OrganizationSubscription.plan_id)
-            .outerjoin(RateLimit, RateLimit.plan_tier.ilike(SubscriptionPlan.name))
-            .where(OrganizationSubscription.organization_id == org_id)
-            .execution_options(skip_tenant_filter=True)
-        )
+        # 2. Resolve the current versioned commercial offer.  The retired
+        # subscription-plan tables are deliberately not part of rate limiting.
+        account, contract, item, offer = (model.__table__ for model in
+            (CommercialAccount, CommercialContract, CommercialContractItem, CommercialOffer))
+        # Global plan rows are an explicit allowlisted configuration projection,
+        # not a generic customer ORM-filter bypass. Exact equality avoids LIKE
+        # wildcards in a configured plan code affecting unrelated plans.
+        stmt = select(limits.requests_per_minute, limits.requests_per_day).select_from(
+            contract.join(account, account.c.id == contract.c.commercial_account_id)
+            .join(item, item.c.contract_id == contract.c.id)
+            .join(offer, offer.c.id == item.c.offer_id)
+            .join(RateLimit.__table__, and_(limits.organization_id.is_(None), or_(
+                func.lower(limits.plan_tier) == func.lower(offer.c.name),
+                func.lower(limits.plan_tier) == func.lower(offer.c.code))))
+        ).where(contract.c.status == "ACTIVE", account.c.owner_organization_id == org_id)
         res = await db.execute(stmt)
         rows = res.all()
-        valid_limits = [(row[1], row[2]) for row in rows if row[1] is not None and row[2] is not None]
+        valid_limits = [validate_limits(minute, day) for minute, day in rows]
         if valid_limits:
-            return max(valid_limits, key=lambda item: (item[1], item[0]))
+            return validate_limits(*max(valid_limits, key=lambda item: (item[1], item[0])))
                 
         # Default fallback (Starter)
         return 60, 10000
 
+
+def validate_limits(minute, day):
+    if type(minute) is not int or type(day) is not int or not 1 <= minute <= 10_000_000 or not 1 <= day <= 10_000_000:
+        raise ValueError("Invalid tenant rate policy")
+    return minute, day
+
+
+async def current_rate_revision() -> int:
+    # Global scalar metadata only. Tenant policy data still uses verified
+    # transaction-local tenancy in fetch_db_rate_limits.
+    try:
+        async with AsyncSessionLocal() as db:
+            value = await db.scalar(text("SELECT revision FROM developer.rate_policy_revision WHERE singleton"))
+        if type(value) is int and 1 <= value < 9_223_372_036_854_775_807:
+            return value
+    except Exception:
+        pass
+    return 1
+
+
+async def versioned_rate_limits(org_id: uuid.UUID) -> Tuple[int, int]:
+    # Cache notifications are optional acceleration, never authority. Every
+    # request reads the committed PostgreSQL epoch; old version keys expire.
+    try:
+        revision = await current_rate_revision()
+        key = TenantCacheKey.build("rate-limit", "config-v2", revision, organization_id=org_id)
+        cached = await redis_client.get(key)
+        if cached is not None:
+            config = json.loads(cached)
+            if type(config) is dict and set(config) == {"revision", "minute", "day"} and type(config["revision"]) is int and config["revision"] == revision:
+                return validate_limits(config["minute"], config["day"])
+        minute, day = await fetch_db_rate_limits(org_id)
+        try:
+            await redis_client.set(key, json.dumps({"revision": revision, "minute": minute, "day": day}), ex=300)
+        except Exception:
+            pass
+        return minute, day
+    except Exception as exc:
+        logger.warning("Versioned rate limits resolution error (using fallback): {}", exc)
+        return (1000, 100000)
+
 async def check_sliding_window(key: str, limit: int, window_seconds: int) -> Tuple[bool, int, int]:
     """
-    Evaluates rate limit using a sliding window via Redis ZSET.
+    Compatibility admission using the fixed-state distributed service.
     Returns (allowed, current_count, reset_time_seconds).
     """
-    now = time.time()
-    cutoff = now - window_seconds
-    member = f"{now}:{uuid.uuid4().hex}"
-    
-    async with redis_client.pipeline(transaction=True) as pipe:
-        pipe.zremrangebyscore(key, 0, cutoff)
-        pipe.zadd(key, {member: now})
-        pipe.zcard(key)
-        pipe.expire(key, window_seconds)
-        pipe.zrange(key, 0, 0, withscores=True)
-        results = await pipe.execute()
-        
-    current_count = results[2]
-    oldest_member = results[4]
-    
-    if oldest_member:
-        oldest_score = oldest_member[0][1]
-        reset_time = max(1, int(oldest_score + window_seconds - now))
-    else:
-        reset_time = window_seconds
-        
-    if current_count > limit:
-        # Exceeded! Remove the member we just added to keep ZSET size correct
-        await redis_client.zrem(key, member)
-        return False, current_count - 1, reset_time
-        
-    return True, current_count, reset_time
+    # Compatibility name only. Never reuse an old ZSET key as a hash, nor keep
+    # one Redis entry per request. The common Lua service provides admission.
+    result = await admit([Budget(f"access-rate:compat:{identity_key(key)}", limit, window_seconds)])
+    return result.allowed, limit - result.remaining, result.retry_after
 
 class RateLimiterMiddleware:
     """
-    ASGI Middleware implementing Redis-backed sliding window rate limiting.
-    Applies per-organization rate limits. Skip logic is applied for health/docs paths
-    and Super Admin users.
+    Shared Redis admission for authenticated identities and tenant aggregates.
+    No platform-role, documentation or customer-admin exemption.
     """
-    _EXCLUDED_PREFIXES = ("/health", "/docs", "/redoc", "/openapi.json", "/ws")
+    _EXCLUDED_PATHS = {"/health", "/health/live", "/health/ready", "/ready"}
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -111,109 +140,57 @@ class RateLimiterMiddleware:
             return
 
         # Skip excluded paths
-        if any(path.startswith(prefix) for prefix in self._EXCLUDED_PREFIXES):
+        if path in self._EXCLUDED_PATHS:
             await self.app(scope, receive, send)
-            return
-
-        # Apply IP/path protection before tenant-plan limits so unauthenticated
-        # traffic is still bounded.
-        ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-        if not ip:
-            ip = request.client.host if request.client else "unknown"
-        path_rule = _find_rule(path)
-        if not _ip_limiter.is_allowed(ip, path_rule.max_requests, path_rule.window_seconds):
-            response = JSONResponse(
-                status_code=429,
-                content={"detail": "Rate limit exceeded. Too many requests."},
-                headers={
-                    "Retry-After": str(path_rule.window_seconds),
-                    "X-RateLimit-Limit": str(path_rule.max_requests),
-                    "X-RateLimit-Remaining": "0",
-                    "X-RateLimit-Reset": str(path_rule.window_seconds),
-                },
-            )
-            await response(scope, receive, send)
             return
 
         # Extract org_id from request state (set by AuthMiddleware)
         org_id = getattr(request.state, "org_id", None)
-        if not org_id:
-            await self.app(scope, receive, send)
-            return
-
-        # Super Admin bypass
         user_id = getattr(request.state, "user_id", None)
-        user_role = getattr(request.state, "user_role", None)
-        is_super = user_role == "super_admin"
-        
-        if user_id and not is_super:
-            try:
-                from app.modules.identity.models.user import User
-                async with AsyncSessionLocal() as db:
-                    user = await db.get(User, user_id)
-                    if user and (user.role == "super_admin" or user.platform_role == "SUPER_ADMIN" or getattr(user, "is_platform_admin", False)):
-                        is_super = True
-            except Exception as e:
-                logger.warning(f"[RateLimiter] User lookup failed: {e}")
-                
-        if is_super:
+        if not org_id and not user_id:
             await self.app(scope, receive, send)
             return
 
         # Resolve rate limit values
-        limit_config_key = TenantCacheKey.rate_limit_config(org_id)
         try:
-            cached_config = await redis_client.get(limit_config_key)
-            if cached_config:
-                config = json.loads(cached_config)
-                req_per_min = config["minute"]
-                req_per_day = config["day"]
-            else:
-                req_per_min, req_per_day = await fetch_db_rate_limits(org_id)
-                await redis_client.set(limit_config_key, json.dumps({"minute": req_per_min, "day": req_per_day}), ex=300)
+            if org_id:
+                org_id = uuid.UUID(str(org_id))
+                req_per_min, req_per_day = await versioned_rate_limits(org_id)
         except Exception as e:
-            logger.error(f"[RateLimiter] Failed to resolve limits: {e}")
-            req_per_min, req_per_day = 60, 10000
+            logger.warning("Rate policy unavailable (failing open): {}", type(e).__name__)
+            await self.app(scope, receive, send)
+            return
 
-        # Perform ZSET sliding window checks
-        min_key = TenantCacheKey.rate_limit_window(org_id, "minute")
-        day_key = TenantCacheKey.rate_limit_window(org_id, "day")
+        # Perform all application bucket checks in one atomic Lua admission.
+        # New hashes must never reuse the previous ZSET window keys during a
+        # rolling upgrade. Old state expires naturally; do not delete it.
+        min_key = f"access-rate:v2:tenant:minute:{identity_key(str(org_id))}"
+        day_key = f"access-rate:v2:tenant:day:{identity_key(str(org_id))}"
 
         try:
-            min_ok, min_count, reset_min = await check_sliding_window(min_key, req_per_min, 60)
-            day_ok, day_count, reset_day = await check_sliding_window(day_key, req_per_day, 86400)
-
-            # Determine response headers based on bottleneck (lowest remaining capacity percentage)
-            remaining_min = max(0, req_per_min - min_count)
-            remaining_day = max(0, req_per_day - day_count)
-
-            if (req_per_day - day_count) / req_per_day < (req_per_min - min_count) / req_per_min:
-                header_limit = req_per_day
-                header_remaining = remaining_day
-                header_reset = reset_day
-            else:
-                header_limit = req_per_min
-                header_remaining = remaining_min
-                header_reset = reset_min
-
-            if not min_ok or not day_ok:
-                logger.warning(f"[RateLimiter] Limit hit for Org={org_id}: min={min_count}/{req_per_min}, day={day_count}/{req_per_day}")
-                response = JSONResponse(
-                    status_code=429,
-                    content={"detail": "Rate limit exceeded. Too many requests."},
-                    headers={
-                        "Retry-After": str(header_reset),
-                        "X-RateLimit-Limit": str(header_limit),
-                        "X-RateLimit-Remaining": "0",
-                        "X-RateLimit-Reset": str(header_reset)
-                    }
-                )
-                await response(scope, receive, send)
+            operation = request_operation(request)
+            policy = operation.policy
+            machine = getattr(request.state, "user_role", None) == "developer"
+            if machine and policy.family in {"reads", "writes"}:
+                policy = POLICIES["machine"]
+            budgets = [Budget(f"access-rate:user:{policy.family}:{identity_key(str(user_id or org_id))}",
+                              policy.capacity, policy.window, policy.burst)]
+            if org_id:
+                budgets.extend([Budget(min_key, req_per_min, 60), Budget(day_key, req_per_day, 86400, fixed=True)])
+            if machine:
+                # Hash only a credential already accepted by AuthMiddleware;
+                # never log or store the raw API/OAuth credential in Redis keys.
+                credential_digest = getattr(request.state, "credential_digest", None)
+                if credential_digest:
+                    budgets.append(Budget(f"access-rate:credential:{policy.family}:{credential_digest}",
+                                          policy.capacity, policy.window, policy.burst))
+            result = await admit(budgets)
+            if not result.allowed:
+                await limiter_error(429, result.retry_after)(scope, receive, send)
                 return
 
         except Exception as e:
-            logger.error(f"[RateLimiter] Sliding window check failed (failing open): {e}")
-            # Fall back to passing through if Redis fails
+            logger.warning("Distributed rate admission unavailable (failing open): {}", type(e).__name__)
             await self.app(scope, receive, send)
             return
 
@@ -224,25 +201,16 @@ class RateLimiterMiddleware:
             if message["type"] == "http.response.start":
                 status_code[0] = message.get("status", 200)
                 headers = MutableHeaders(scope=message)
-                headers.append("X-RateLimit-Limit", str(header_limit))
-                headers.append("X-RateLimit-Remaining", str(header_remaining))
-                headers.append("X-RateLimit-Reset", str(header_reset))
+                # The minimum across budgets is conservative headroom, not
+                # the remaining allowance of a fabricated bottleneck window.
+                headers.append("X-RateLimit-Remaining", str(result.remaining))
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
 
         # Track completed request usage (if successful)
-        if 200 <= status_code[0] < 300:
+        if org_id and not getattr(request.state, "api_usage_accounted", False) and operation.operation_id != "unregistered" and 200 <= status_code[0] < 300:
             try:
-                normalized_endpoint = _UUID_PATTERN.sub("{id}", path)
-                redis_key, endpoint_fingerprint = TenantCacheKey.api_usage(
-                    org_id, normalized_endpoint
-                )
-                metadata_key = TenantCacheKey.api_usage_metadata(
-                    org_id, endpoint_fingerprint
-                )
-                await redis_client.incr(redis_key)
-                await redis_client.set(metadata_key, normalized_endpoint, ex=86400)
-                await redis_client.sadd("control:api_usage_keys", redis_key)
+                await record_completed(redis_client, org_id, operation.operation_id)
             except Exception as e:
-                logger.warning(f"[RateLimiter] Usage tracking failed: {e}")
+                logger.warning("Usage tracking unavailable: {}", type(e).__name__)

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="7" failures="0" errors="0" time="2.7648089">
+    <testsuite name="test/reviewed-blueprint-correction.test.tsx" timestamp="2026-10-17T14:05:54.177Z" hostname="Vishal" tests="7" failures="0" errors="0" skipped="0" time="2.7648089">
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; sends the loaded version, selected category and reviewed document; keeps a failed draft" time="1.3078929">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; refuses malformed reviewed JSON without issuing a mutation" time="0.2739459">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; requires explicit invalid-lineage confirmation and retains it after an error" time="0.2888056">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; drops the correction draft when identity context changes" time="0.1539151">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; does not restore an old blocked version from a refresh after confirmed repair" time="0.2085664">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; keeps the draft when a successful HTTP result identifies a different record" time="0.1704774">
+        </testcase>
+        <testcase classname="test/reviewed-blueprint-correction.test.tsx" name="reviewed blueprint category correction &gt; does not hide a newer blocker after a confirmed older repair" time="0.3311932">
+        </testcase>
+    </testsuite>
+</testsuites>

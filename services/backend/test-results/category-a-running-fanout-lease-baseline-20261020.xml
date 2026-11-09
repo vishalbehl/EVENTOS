@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="7" time="21.083" timestamp="2026-10-20T23:02:28.306682+05:30" hostname="Vishal"><testcase classname="tests.test_catalogue_worker_context" name="test_reconciliation_pages_over_one_hundred_without_loss_or_duplicate_evidence" time="14.625" /><testcase classname="tests.test_catalogue_worker_context" name="test_committed_dispatch_recovers_after_lease_and_preserves_context" time="0.902" /><testcase classname="tests.test_catalogue_worker_context" name="test_reconciliation_uses_target_and_restores_inherited_context[platform]" time="0.763" /><testcase classname="tests.test_catalogue_worker_context" name="test_reconciliation_uses_target_and_restores_inherited_context[customer]" time="0.851" /><testcase classname="tests.test_catalogue_worker_context" name="test_global_taxonomy_duplicate_count_includes_global_rows" time="0.712" /><testcase classname="tests.test_catalogue_worker_context" name="test_started_fanout_crash_is_reclaimable_after_its_lease" time="0.458"><failure message="AssertionError: assert [] == [(UUID('c83cf...96479a4'), 2)]&#10;  &#10;  Right contains one more item: (UUID('c83cf5bd-4696-4c53-9f81-54426cfc9ffb'), UUID('b50bc365-5d86-4212-99fe-ba47a96479a4'), 2)&#10;  Use -v to get more diff">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000028D24386210&gt;
+super_admin = &lt;User id=b50bc365-5d86-4212-99fe-ba47a96479a4 email=admin-6f136e@test.com role=super_admin&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x0000028D21395160&gt;
+
+    @pytest.mark.asyncio
+    async def test_started_fanout_crash_is_reclaimable_after_its_lease(db, super_admin, monkeypatch):
+        from datetime import datetime, timedelta, timezone
+        from app.tasks import catalogue_reconciliation as worker
+        from app.modules.registration.models.catalogue_reconciliation import CatalogueReconciliationRun
+        row = CatalogueReconciliationRun(organization_id=super_admin.organization_id,
+            actor_user_id=super_admin.id, reason="Crash after durable fanout start",
+            status="RUNNING", dispatch_attempts=1, started_at=datetime.now(timezone.utc) - timedelta(hours=1),
+            next_dispatch_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+        db.add(row)
+        await db.commit()
+    
+        @asynccontextmanager
+        async def sessions():
+            yield db
+    
+        monkeypatch.setattr(worker, "AsyncSessionLocal", sessions)
+        messages = await worker._claim_reconciliation_runs()
+&gt;       assert messages == [(row.id, super_admin.id, 2)]
+E       AssertionError: assert [] == [(UUID('c83cf...96479a4'), 2)]
+E         
+E         Right contains one more item: (UUID('c83cf5bd-4696-4c53-9f81-54426cfc9ffb'), UUID('b50bc365-5d86-4212-99fe-ba47a96479a4'), 2)
+E         Use -v to get more diff
+
+tests\test_catalogue_worker_context.py:166: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_worker_context" name="test_started_fanout_holds_a_lease_covering_its_hard_timeout" time="2.164"><failure message="AssertionError: assert datetime.datetime(2026, 10, 20, 17, 32, 46, 631267, tzinfo=datetime.timezone.utc) &gt;= (datetime.datetime(2026, 10, 20, 17, 32, 47, 636652, tzinfo=datetime.timezone.utc) + datetime.timedelta(seconds=1860))&#10; +  where datetime.datetime(2026, 10, 20, 17, 32, 46, 631267, tzinfo=datetime.timezone.utc) = &lt;app.modules.registration.models.catalogue_reconciliation.CatalogueReconciliationRun object at 0x0000028D2430DBD0&gt;.next_dispatch_at&#10; +  and   datetime.timedelta(seconds=1860) = &lt;class 'datetime.timedelta'&gt;(seconds=1860)&#10; +    where 1860 = TaskPolicy(queue='reconciliation', soft_timeout_seconds=1800, hard_timeout_seconds=1860, max_retries=5, backoff_seconds=30, jitter=True).hard_timeout_seconds&#10; +      where TaskPolicy(queue='reconciliation', soft_timeout_seconds=1800, hard_timeout_seconds=1860, max_retries=5, backoff_seconds=30, jitter=True) = &lt;module 'app.tasks.catalogue_reconciliation' from 'D:\\DEV\\conf-platform\\services\\backend\\app\\tasks\\catalogue_reconciliation.py'&gt;._POLICY">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000028D240FF240&gt;
+super_admin = &lt;User id=392a7860-4697-4f62-90d1-8d379281e92c email=admin-ca3cba@test.com role=super_admin&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x0000028D245D2CF0&gt;
+
+    @pytest.mark.asyncio
+    async def test_started_fanout_holds_a_lease_covering_its_hard_timeout(db, super_admin, monkeypatch):
+        from datetime import datetime, timedelta, timezone
+        from app.tasks import catalogue_reconciliation as worker
+        from app.modules.registration.models.catalogue_reconciliation import CatalogueReconciliationRun
+        row = CatalogueReconciliationRun(organization_id=super_admin.organization_id,
+            actor_user_id=super_admin.id, reason="Live worker lease must not expire early",
+            status="PENDING", dispatch_attempts=1,
+            next_dispatch_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+        db.add(row)
+        await db.commit()
+    
+        @asynccontextmanager
+        async def sessions():
+            yield db
+    
+        monkeypatch.setattr(worker, "AsyncSessionLocal", sessions)
+        before = datetime.now(timezone.utc)
+        assert await worker._mark_run_started(row.id, super_admin.id)
+        await db.refresh(row)
+&gt;       assert row.next_dispatch_at &gt;= before + timedelta(seconds=worker._POLICY.hard_timeout_seconds)
+E       AssertionError: assert datetime.datetime(2026, 10, 20, 17, 32, 46, 631267, tzinfo=datetime.timezone.utc) &gt;= (datetime.datetime(2026, 10, 20, 17, 32, 47, 636652, tzinfo=datetime.timezone.utc) + datetime.timedelta(seconds=1860))
+E        +  where datetime.datetime(2026, 10, 20, 17, 32, 46, 631267, tzinfo=datetime.timezone.utc) = &lt;app.modules.registration.models.catalogue_reconciliation.CatalogueReconciliationRun object at 0x0000028D2430DBD0&gt;.next_dispatch_at
+E        +  and   datetime.timedelta(seconds=1860) = &lt;class 'datetime.timedelta'&gt;(seconds=1860)
+E        +    where 1860 = TaskPolicy(queue='reconciliation', soft_timeout_seconds=1800, hard_timeout_seconds=1860, max_retries=5, backoff_seconds=30, jitter=True).hard_timeout_seconds
+E        +      where TaskPolicy(queue='reconciliation', soft_timeout_seconds=1800, hard_timeout_seconds=1860, max_retries=5, backoff_seconds=30, jitter=True) = &lt;module 'app.tasks.catalogue_reconciliation' from 'D:\\DEV\\conf-platform\\services\\backend\\app\\tasks\\catalogue_reconciliation.py'&gt;._POLICY
+
+tests\test_catalogue_worker_context.py:191: AssertionError</failure></testcase></testsuite></testsuites>

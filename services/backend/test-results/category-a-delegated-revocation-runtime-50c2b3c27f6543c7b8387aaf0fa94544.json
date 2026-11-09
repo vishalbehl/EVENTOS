@@ -1,0 +1,63 @@
+{
+  "status": "PASSED",
+  "database": "category_a_restore_20261027_63953839f729",
+  "organization_id": "0d6317c5-bedc-490a-8971-f028413baa91",
+  "scope": "WORKSPACE",
+  "checks": [
+    {
+      "purpose": "REGISTRATION",
+      "ordering": "suspension_first",
+      "blocking_observed": true,
+      "independent_commit_verified": true,
+      "post_suspension_write_denied": true
+    },
+    {
+      "purpose": "REGISTRATION",
+      "ordering": "writer_first",
+      "blocking_observed": true,
+      "independent_commit_verified": true,
+      "post_suspension_write_denied": true
+    },
+    {
+      "purpose": "SURVEY",
+      "ordering": "suspension_first",
+      "blocking_observed": true,
+      "independent_commit_verified": true,
+      "post_suspension_write_denied": true
+    },
+    {
+      "purpose": "SURVEY",
+      "ordering": "writer_first",
+      "blocking_observed": true,
+      "independent_commit_verified": true,
+      "post_suspension_write_denied": true
+    },
+    {
+      "purpose": "SPEAKER_INTAKE",
+      "ordering": "suspension_first",
+      "blocking_observed": true,
+      "independent_commit_verified": true,
+      "post_suspension_write_denied": true
+    },
+    {
+      "purpose": "SPEAKER_INTAKE",
+      "ordering": "writer_first",
+      "blocking_observed": true,
+      "independent_commit_verified": true,
+      "post_suspension_write_denied": true
+    }
+  ],
+  "relationship_id": "347a5194-7ba8-4bc2-b78d-04b3f6e1da5c",
+  "relationship_version": 13,
+  "independent_final_state_verified": true,
+  "committed_fixture_state_retained": true,
+  "http_browser_multi_replica_acceptance": "NOT_RUN",
+  "independent_operator_state": {
+    "relationship_status": "SUSPENDED",
+    "relationship_version": 13,
+    "registration_version": 2,
+    "binding_count": 2,
+    "active_event_copies": 3
+  },
+  "probe_sha256": "06423c611240d7e04ec3d5b35f117d77f5ef53fa3162fe6975c2aaa0cca09ba5"
+}

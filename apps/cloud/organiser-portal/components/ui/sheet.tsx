@@ -18,7 +18,7 @@ const SheetOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 bg-black/70 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      "cc-premium-overlay fixed inset-0 z-50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className
     )}
     {...props}
@@ -34,8 +34,9 @@ const SheetContent = React.forwardRef<
     <SheetOverlay />
     <DialogPrimitive.Content
       ref={ref}
+      data-side={side}
       className={cn(
-        "fixed inset-y-0 z-50 flex h-[100dvh] w-full max-w-[540px] flex-col overflow-hidden bg-[var(--popover)] text-[var(--text-primary)] cc-overlay-shadow duration-300 data-[state=open]:animate-in data-[state=closed]:animate-out",
+        "cc-premium-sheet fixed inset-y-0 z-50 flex h-[100dvh] w-full max-w-[540px] flex-col overflow-hidden text-[var(--text-primary)] duration-300 data-[state=open]:animate-in data-[state=closed]:animate-out",
         side === "left"
           ? "left-0 border-r border-[var(--border-default)] data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left"
           : "right-0 border-l border-[var(--border-default)] data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
@@ -44,7 +45,7 @@ const SheetContent = React.forwardRef<
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-3 top-3 z-10 grid size-9 place-items-center rounded-md border border-[var(--border-default)] bg-[var(--bg-surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-visible:outline-none">
+      <DialogPrimitive.Close className="absolute right-3 top-3 z-10 grid size-9 place-items-center rounded-full border border-white/60 bg-white/45 text-[var(--text-secondary)] shadow-sm backdrop-blur-md hover:bg-white/75 hover:text-[var(--text-primary)] focus-visible:outline-none dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10">
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>

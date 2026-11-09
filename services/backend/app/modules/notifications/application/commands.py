@@ -10,6 +10,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.concurrency import raise_version_conflict
 from app.core.tenant_context import TenantContextGuard
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.events.models.event import Event
@@ -147,7 +148,7 @@ class WebhookCommandService:
                 if row is None:
                     raise HTTPException(status_code=404, detail="Webhook not found.")
                 if row.version != expected_version:
-                    raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": row.version})
+                    raise_version_conflict(row.version)
                 old_state = {"url": row.url, "status": row.status, "subscribed_events": row.subscribed_events, "version": row.version}
                 updates = payload.model_dump(exclude_unset=True)
                 for field, value in updates.items():
@@ -193,7 +194,7 @@ class WebhookCommandService:
                 if row is None:
                     raise HTTPException(status_code=404, detail="Webhook not found.")
                 if row.version != expected_version:
-                    raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": row.version})
+                    raise_version_conflict(row.version)
                 row.status = "paused"
                 row.updated_at = datetime.now(timezone.utc)
                 row.version += 1

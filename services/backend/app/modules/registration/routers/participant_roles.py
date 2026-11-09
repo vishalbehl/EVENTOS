@@ -6,11 +6,12 @@ import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel
-from sqlalchemy import delete
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_db, get_current_event, get_current_user, CurrentEvent
+from app.dependencies import get_db, get_current_event, get_current_user, CurrentEvent, require_active_user
+from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.schemas.common import MessageResponse
@@ -18,7 +19,7 @@ from app.core.dependencies.feature_gate import enforce_event_operation, require_
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
 from app.core.cache import invalidate_event
 from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
-from app.modules.registration.application.role_commands import ParticipantRoleCommandService
+from app.modules.registration.application.role_commands import ParticipantRoleCommandService, role_projection
 from app.modules.registration.application.queries import ParticipantRoleQueryService
 
 router = APIRouter(prefix="/events/{event_id}/registration/roles", tags=["participant-roles"])
@@ -34,18 +35,16 @@ async def _invalidate_role_cache(event: CurrentEvent) -> None:
 
 ALL_ROLES: list[dict] = [
     # General Attendees
-    {"category": "General Attendees", "name": "Free Pass",              "is_default": True,  "sort_order": 1},
-    {"category": "General Attendees", "name": "Complimentary Pass",     "is_default": True,  "sort_order": 2},
-    {"category": "General Attendees", "name": "Delegate",               "is_default": True,  "sort_order": 3},
-    {"category": "General Attendees", "name": "Student Delegate",       "is_default": True,  "sort_order": 4},
-    {"category": "General Attendees", "name": "Faculty Delegate",       "is_default": False, "sort_order": 5},
-    {"category": "General Attendees", "name": "Industry Professional",  "is_default": False, "sort_order": 6},
-    {"category": "General Attendees", "name": "Research Scholar",       "is_default": False, "sort_order": 7},
-    {"category": "General Attendees", "name": "International Delegate", "is_default": False, "sort_order": 8},
-    {"category": "General Attendees", "name": "Corporate Attendee",     "is_default": False, "sort_order": 9},
-    {"category": "General Attendees", "name": "Government Representative", "is_default": False, "sort_order": 10},
-    {"category": "General Attendees", "name": "Academic Attendee",      "is_default": False, "sort_order": 11},
-    {"category": "General Attendees", "name": "Organizer",              "is_default": True,  "sort_order": 12},
+    {"category": "General Attendees", "name": "Delegate",               "is_default": True,  "sort_order": 1},
+    {"category": "General Attendees", "name": "Student Delegate",       "is_default": True,  "sort_order": 2},
+    {"category": "General Attendees", "name": "Organizer",              "is_default": True,  "sort_order": 3},
+    {"category": "General Attendees", "name": "Faculty Delegate",       "is_default": False, "sort_order": 4},
+    {"category": "General Attendees", "name": "Industry Professional",  "is_default": False, "sort_order": 5},
+    {"category": "General Attendees", "name": "Research Scholar",       "is_default": False, "sort_order": 6},
+    {"category": "General Attendees", "name": "International Delegate", "is_default": False, "sort_order": 7},
+    {"category": "General Attendees", "name": "Corporate Attendee",     "is_default": False, "sort_order": 8},
+    {"category": "General Attendees", "name": "Government Representative", "is_default": False, "sort_order": 9},
+    {"category": "General Attendees", "name": "Academic Attendee",      "is_default": False, "sort_order": 10},
     # Presentation Related
     {"category": "Presentation Related", "name": "Speaker",             "is_default": True,  "sort_order": 20},
     {"category": "Presentation Related", "name": "Speaker / Presenter", "is_default": False, "sort_order": 21},
@@ -93,8 +92,6 @@ ALL_ROLES: list[dict] = [
 ]
 
 ROLE_CODE_OVERRIDES = {
-    "Free Pass": "FRE",
-    "Complimentary Pass": "COM",
     "Delegate": "DEL",
     "Student Delegate": "STU",
     "Faculty Delegate": "FAC",
@@ -156,27 +153,56 @@ class ParticipantRoleOut(BaseModel):
     is_active: bool
     is_default: bool
     sort_order: int
+    version: int
+    event_version: int
 
     class Config:
         from_attributes = True
 
 
+class UpdateRolePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role_code: Optional[str] = Field(default=None, min_length=2, max_length=10, pattern=r"^[A-Za-z0-9]+$")
+    is_active: Optional[StrictBool] = None
+
+
+class VersionedRoleToggle(UpdateRolePayload):
+    id: uuid.UUID
+    version: int = Field(ge=1, strict=True)
+
+
 class BulkRoleToggle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Payload to toggle active state of multiple roles at once."""
-    updates: List[dict]  # [{id: str, is_active: bool}]
+    updates: List[VersionedRoleToggle] = Field(min_length=1, max_length=100)
+
+
+class BulkRoleResult(BaseModel):
+    message: str
+    event_version: int
+    roles: List[ParticipantRoleOut]
+
+
+class DeleteRoleResult(BaseModel):
+    message: str
+    event_version: int
 
 
 class AddRolePayload(BaseModel):
-    category: str
-    name: str
-    role_code: Optional[str] = None
-    is_active: bool = True
-    sort_order: int = 99
+    model_config = ConfigDict(extra="forbid")
+    category: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=100)
+    role_code: Optional[str] = Field(default=None, min_length=2, max_length=10, pattern=r"^[A-Za-z0-9]+$")
+    is_active: StrictBool = True
+    sort_order: int = Field(default=99, ge=0, le=10000)
 
-
-class UpdateRolePayload(BaseModel):
-    role_code: Optional[str] = None
-    is_active: Optional[bool] = None
+    @field_validator("category", "name")
+    @classmethod
+    def nonempty(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Role name and category cannot be blank.")
+        return value
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -195,7 +221,15 @@ async def list_roles(
         "registration.ticket_types.read",
         user_id=current_user.id,
     )
-    return await ParticipantRoleQueryService(db).list_for_event(event_id=event.id)
+    owned = await db.scalar(select(Event).where(Event.id == event.id,
+        Event.organization_id == event.organization_id, Event.deleted_at.is_(None))
+        .with_for_update(read=True).execution_options(populate_existing=True))
+    if owned is None:
+        raise HTTPException(404, detail={"code": "EVENT_NOT_FOUND"})
+    roles = await ParticipantRoleQueryService(db).list_for_event(event_id=event.id)
+    result = [role_projection(role, int(owned.version or 1)) for role in roles]
+    await db.commit()
+    return result
 
 
 
@@ -203,8 +237,8 @@ async def list_roles(
 async def add_role(
     payload: AddRolePayload,
     event: CurrentEvent,
-    actor: User = Depends(get_current_user),
-    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    actor: User = Depends(require_active_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db),
 ) -> ParticipantRoleOut:
     await enforce_event_operation(
@@ -229,14 +263,15 @@ async def add_role(
     return ParticipantRoleOut.model_validate(role)
 
 
-@router.patch("/bulk-toggle", response_model=MessageResponse, dependencies=[require_event_operation("registration.ticket_types.manage")])
+@router.patch("/bulk-toggle", response_model=BulkRoleResult, dependencies=[require_event_operation("registration.ticket_types.manage")])
 async def bulk_toggle_roles(
     payload: BulkRoleToggle,
     event: CurrentEvent,
-    actor: Optional[User] = Depends(get_current_user),
+    actor: User = Depends(require_active_user),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
     db: AsyncSession = Depends(get_db),
-) -> MessageResponse:
+) -> dict:
     """Enable or disable multiple roles at once."""
     if actor is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
@@ -245,10 +280,11 @@ async def bulk_toggle_roles(
         organization_id=event.organization_id,
         event_id=event.id,
         actor_id=actor.id,
-        updates=payload.updates,
+        updates=[update.model_dump(mode="json", exclude_none=True) for update in payload.updates],
         idempotency_key=idempotency_key,
+        if_match=if_match,
     )
-    return MessageResponse(**response)
+    return response
 
 
 @router.patch("/{role_id}", response_model=ParticipantRoleOut, dependencies=[require_event_operation("registration.ticket_types.manage")])
@@ -256,8 +292,9 @@ async def update_role(
     role_id: uuid.UUID,
     payload: UpdateRolePayload,
     event: CurrentEvent,
-    actor: Optional[User] = Depends(get_current_user),
+    actor: User = Depends(require_active_user),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
     db: AsyncSession = Depends(get_db),
 ) -> ParticipantRoleOut:
     if actor is None:
@@ -271,17 +308,19 @@ async def update_role(
         role_code=payload.role_code,
         is_active=payload.is_active,
         idempotency_key=idempotency_key,
+        if_match=if_match,
     )
 
 
-@router.delete("/{role_id}", response_model=MessageResponse, dependencies=[require_event_operation("registration.ticket_types.manage")])
+@router.delete("/{role_id}", response_model=DeleteRoleResult, dependencies=[require_event_operation("registration.ticket_types.manage")])
 async def delete_role(
     role_id: uuid.UUID,
     event: CurrentEvent,
-    actor: Optional[User] = Depends(get_current_user),
+    actor: User = Depends(require_active_user),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
     db: AsyncSession = Depends(get_db),
-) -> MessageResponse:
+) -> dict:
     """Delete a custom participant role (platform defaults cannot be deleted)."""
     if actor is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
@@ -292,5 +331,6 @@ async def delete_role(
         role_id=role_id,
         actor_id=actor.id,
         idempotency_key=idempotency_key,
+        if_match=if_match,
     )
-    return MessageResponse(**result)
+    return result

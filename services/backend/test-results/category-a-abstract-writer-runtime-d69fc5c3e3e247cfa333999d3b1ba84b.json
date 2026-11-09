@@ -1,0 +1,14 @@
+{
+  "status": "FAILED",
+  "run_id": "d69fc5c3e3e247cfa333999d3b1ba84b",
+  "environment": "local_isolated_rehearsal",
+  "scope": "actual_restricted_login_direct_accepted_owner",
+  "started_at": "2026-10-20T10:59:05.831305+00:00",
+  "delegated_http_browser_concurrency_acceptance": "NOT_RUN",
+  "migration_revision": "20261019_3640",
+  "error_type": "EntitlementRequiredException",
+  "denial_code": "NOT_ENTITLED",
+  "independent_original_state_and_receipts_restored": true,
+  "completed_at": "2026-10-20T10:59:12.327967+00:00",
+  "probe_sha256": "72eede25fd4b2f6fa5d7433eec26ee17539a6505e1003e565a1481c9c845e3fa"
+}

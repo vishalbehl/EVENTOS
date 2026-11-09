@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="12" time="36.069" timestamp="2026-10-20T22:38:45.446465+05:30" hostname="Vishal"><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[member-id]" time="14.965" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[member-slug]" time="1.750" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[unentitled_owner-id]" time="1.935" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[unentitled_owner-slug]" time="2.270" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[unaccepted-id]" time="1.346" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[unaccepted-slug]" time="1.483" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[platform-id]" time="1.078" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[platform-slug]" time="1.223" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_selected_event_detail_remains_available[id]" time="1.995" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_selected_event_detail_remains_available[slug]" time="1.497" /><testcase classname="tests.test_catalogue_platform_route_contracts" name="test_platform_catalogue_http_mutation_contract[templates]" time="0.932"><failure message="AssertionError: {&quot;detail&quot;:&quot;Category not found.&quot;}&#10;assert 404 == 201&#10; +  where 404 = &lt;Response [404 Not Found]&gt;.status_code">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000014972E2DE50&gt;
+super_admin = &lt;User id=004cb5e5-3811-43a5-afe7-3909a93094b7 email=admin-e428ca@test.com role=super_admin&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x0000014975EE6040&gt;
+kind = 'templates'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["templates", "categories"])
+    async def test_platform_catalogue_http_mutation_contract(db, super_admin, monkeypatch, kind):
+        monkeypatch.setattr(settings, "ENFORCE_PRIVILEGED_MFA", True)
+        actor_id, org_id = super_admin.id, super_admin.organization_id
+        token = TokenData(user_id=actor_id, role="super_admin", organization_id=org_id,
+            jti=str(uuid.uuid4()), amr=(), auth_time=datetime.now(timezone.utc))
+        app = FastAPI()
+        module = form_templates if kind == "templates" else form_categories
+        app.include_router(module.platform_router, prefix="/api/v1")
+    
+        async def identity():
+            # A new request reloads persisted identity after any command rollback.
+            return await db.scalar(select(User).where(User.id == actor_id).execution_options(populate_existing=True))
+    
+        async def parsed_token():
+            return token
+    
+        async def database():
+            async with TenantContextGuard.scoped(db, org_id):
+                yield db
+    
+        app.dependency_overrides[get_current_user] = identity
+        app.dependency_overrides[get_token_data] = parsed_token
+        app.dependency_overrides[get_db] = database
+        path = f"/api/v1/platform/forms/{kind}"
+        payload = {"name": "Platform adapter fixture", "slug": f"platform-adapter-{uuid.uuid4().hex}"}
+        if kind == "templates":
+            payload.update(scope_type="GLOBAL", category_key="registration", fields=[], settings={})
+        key = str(uuid.uuid4())
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            no_mfa = await client.post(path, json=payload, headers={"Idempotency-Key": key})
+            assert no_mfa.status_code == 403 and no_mfa.json()["detail"]["code"] == "STEP_UP_REQUIRED"
+            token.amr = ("mfa",)
+            missing_key = await client.post(path, json=payload)
+            assert missing_key.status_code == 428
+            created = await client.post(path, json=payload, headers={"Idempotency-Key": key})
+&gt;           assert created.status_code == 201, created.text
+E           AssertionError: {"detail":"Category not found."}
+E           assert 404 == 201
+E            +  where 404 = &lt;Response [404 Not Found]&gt;.status_code
+
+tests\test_catalogue_platform_route_contracts.py:60: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_platform_route_contracts" name="test_platform_catalogue_http_mutation_contract[categories]" time="4.395" /></testsuite></testsuites>

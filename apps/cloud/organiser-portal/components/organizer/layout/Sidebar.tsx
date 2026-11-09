@@ -13,6 +13,7 @@ import {
   Box,
   Building2,
   Calendar,
+  ClipboardCheck,
   ClipboardList,
   CheckCircle2,
   CheckSquare,
@@ -144,6 +145,12 @@ export function Sidebar() {
     { label: "Home", icon: Home, href: "/dashboard" },
     { label: "Organisation", icon: Globe, href: "/organisation/profile" },
     {
+      label: "Events",
+      icon: Calendar,
+      href: "/events",
+      permission: PERMISSIONS.EVENTS_VIEW,
+    },
+    {
       label: "People & Teams",
       icon: Users,
       href: "/people-teams/users",
@@ -156,17 +163,10 @@ export function Sidebar() {
       permission: PERMISSIONS.USERS_VIEW,
     },
     {
-      label: "Plans & Entitlements",
+      label: "Commercial",
       icon: LayoutTemplate,
-      href: "/plans-entitlements/overview",
+      href: "/commercial/overview",
     },
-    {
-      label: "Events",
-      icon: Calendar,
-      href: "/events",
-      permission: PERMISSIONS.EVENTS_VIEW,
-    },
-    { label: "Billing", icon: Banknote, href: "/billing/overview" },
     { label: "Settings", icon: Settings, href: "/settings/general" },
   ];
 
@@ -230,23 +230,22 @@ export function Sidebar() {
           items: [
             { label: "Dashboard", href: `/events/${id}/registration/dashboard`, icon: LayoutDashboard },
             { label: "Attendee Roster", href: `/events/${id}/registration/participants`, icon: Users },
-            { label: "Capacity & Approval", href: `/events/${id}/registration/review`, icon: UserCheck },
           ],
         },
         {
           title: "REGISTRATION MANAGEMENT",
           items: [
-            { label: "Role Categories", href: `/events/${id}/registration/roles`, icon: ShieldCheck },
+            { label: "Capacity & Approval", href: `/events/${id}/registration/review`, icon: UserCheck }, { label: "Role Categories", href: `/events/${id}/registration/roles`, icon: ShieldCheck },
             { label: "Pass Categories", href: `/events/${id}/registration/categories`, icon: Tag },
             { label: "Registration Forms", href: `/events/${id}/registration/templates`, icon: Layers },
-            { label: "Template Designer", href: `/events/${id}/registration/template-designer`, icon: LayoutTemplate },
-            { label: "Certificates", href: `/events/${id}/registration/certificates`, icon: Award },
           ],
         },
         {
-          title: "BADGES",
+          title: "DESIGNER",
           items: [
+            { label: "Template Designer", href: `/events/${id}/registration/template-designer`, icon: LayoutTemplate },
             { label: "Badge Design", href: `/events/${id}/design-studio/badges`, icon: CreditCard },
+            { label: "Certificates", href: `/events/${id}/registration/certificates`, icon: Award },
           ],
         },
         {
@@ -290,6 +289,7 @@ export function Sidebar() {
           title: "MANAGEMENT",
           items: [
             { label: "Speaker Categories", href: `/events/${id}/speakers/categories`, icon: Tag },
+            { label: "Intake Blueprints", href: `/events/${id}/speakers/templates`, icon: LayoutTemplate },
             { label: "Invitations", href: `/events/${id}/speakers/invitations`, icon: Send },
           ],
         },
@@ -298,7 +298,6 @@ export function Sidebar() {
           items: [
             { label: "Presentations & Files", href: `/events/${id}/speakers/files`, icon: FolderOpen },
             { label: "ePosters Showcase", href: `/events/${id}/speakers/eposters`, icon: ImageIcon },
-            { label: "Abstract Review", href: `/events/${id}/abstracts/submissions`, icon: CheckSquare },
           ],
         },
         {
@@ -326,32 +325,25 @@ export function Sidebar() {
         {
           title: "WORKSPACE",
           items: [
-            { label: "Command Center", href: `/events/${id}/abstracts`, icon: LayoutDashboard },
+            { label: "Dashboard", href: `/events/${id}/abstracts`, icon: LayoutDashboard },
             { label: "Submission Inbox", href: `/events/${id}/abstracts/submissions`, icon: Inbox },
-            { label: "Reviewer Roster", href: `/events/${id}/abstracts/reviewers`, icon: Users },
-            { label: "Decision Board", href: `/events/${id}/abstracts/decisions`, icon: CheckSquare },
+            { label: "Call for Reviewer", href: `/events/${id}/abstracts/review`, icon: Users },
             { label: "Accepted Directory", href: `/events/${id}/abstracts/accepted`, icon: FileText },
           ],
         },
         {
           title: "CONFIGURATION",
           items: [
-            { label: "Call Setup", href: `/events/${id}/abstracts/setup`, icon: SlidersHorizontal },
-            { label: "Form Builder", href: `/events/${id}/abstracts/form-builder`, icon: Layers },
-            { label: "Scoring Rubric", href: `/events/${id}/abstracts/rubric`, icon: ListOrdered },
+            { label: "Abstract Setup", href: `/events/${id}/abstracts/setup`, icon: SlidersHorizontal },
+            { label: "Evaluation", href: `/events/${id}/abstracts/evaluation`, icon: ClipboardCheck },
+            { label: "Submission Form", href: `/events/${id}/abstracts/templates`, icon: Layers },
+            { label: "Portal Settings", href: `/events/${id}/abstracts/portal-settings`, icon: Globe },
           ],
         },
         {
           title: "PUBLICATION",
           items: [
             { label: "Exports", href: `/events/${id}/abstracts/exports`, icon: Download },
-            { label: "ePosters & Media", href: `/events/${id}/speakers/eposters`, icon: ImageIcon },
-          ],
-        },
-        {
-          title: "SETTINGS",
-          items: [
-            { label: "Abstract Settings", href: `/events/${id}/abstracts/setup`, icon: SlidersHorizontal },
           ],
         },
       ],
@@ -597,28 +589,30 @@ export function Sidebar() {
     return (
       <motion.aside
         initial={false}
-        animate={{ width: isCollapsed ? 72 : 248 }}
+        animate={{ width: isCollapsed ? 82 : 228 }}
         transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
-        className="relative z-40 flex h-full flex-col overflow-visible border-r border-[var(--sidebar-border)] bg-[var(--sidebar-bg)]"
+        className="relative z-40 flex h-full flex-col overflow-visible"
       >
-        <div className="flex h-full flex-col overflow-visible px-3 py-4">
+        <div className="flex h-full flex-col overflow-visible px-3 py-5">
           {/* Logo and Collapse Toggle */}
-          <div className={cn("relative mb-3 flex h-11 items-center px-2", isCollapsed ? "justify-center" : "justify-between")}>
+          <div className={cn("group/logo relative mb-5 flex h-11 items-center px-1", isCollapsed ? "justify-center" : "justify-start")}>
             <div className={cn("flex min-w-0 items-center", isCollapsed ? "justify-center" : "gap-2.5")} aria-label="Eventos">
               <span className={cn("grid shrink-0 place-items-center overflow-visible", isCollapsed ? "size-7" : "size-8")}>
                 <Image src="/brand/eventos-emblem-metal.png" alt="" width={40} height={40} priority className="size-full scale-[2.05] object-contain" />
               </span>
-              {!isCollapsed && <span className="truncate text-sm font-semibold uppercase tracking-[0.25em] text-[var(--text-primary)]">Eventos</span>}
+              {!isCollapsed && <span className="truncate text-[21px] font-bold tracking-[-0.04em] text-[var(--org-ink)]">EventOS<sup className="ml-0.5 text-[8px]">®</sup></span>}
             </div>
-            {!isCollapsed && (
-              <button
-                onClick={toggleSidebar}
-                className="grid size-7 place-items-center rounded-lg border border-[var(--border)] bg-[var(--card)] text-[var(--muted)] transition-all duration-150 hover:text-[var(--text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
-                aria-label="Collapse navigation"
-              >
-                <ChevronLeft className="size-4" />
-              </button>
-            )}
+            <button
+              onClick={toggleSidebar}
+              className={cn(
+                "absolute top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-full border border-white/75 bg-[#111114]/90 text-white opacity-0 shadow-lg backdrop-blur-xl transition-all duration-150 hover:scale-105 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] group-hover/logo:opacity-100",
+                isCollapsed ? "left-1/2 -translate-x-1/2" : "left-1"
+              )}
+              aria-label={isCollapsed ? "Expand navigation" : "Collapse navigation"}
+              title={isCollapsed ? "Expand navigation" : "Collapse navigation"}
+            >
+              {isCollapsed ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
+            </button>
           </div>
 
           {/* Navigation Section */}
@@ -626,45 +620,11 @@ export function Sidebar() {
             aria-label="Platform navigation"
             className={cn("no-scrollbar min-h-0 flex-1 space-y-1", isCollapsed ? "overflow-visible" : "overflow-y-auto overflow-x-hidden")}
           >
-            {!isCollapsed && (
-              <h2 className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-tertiary)]">
-                Platform Management
-              </h2>
-            )}
             {platformRoutes.map((route) => (
               <SidebarLeaf key={route.label} route={route} pathname={pathname || ""} isCollapsed={isCollapsed} />
             ))}
           </nav>
 
-          {/* Bottom Pinned Links */}
-          <div className="space-y-1 border-t border-[var(--border)] pt-3">
-            <Link
-              href="/settings/general"
-              aria-current={pathname?.startsWith("/settings") ? "page" : undefined}
-              className={cn(
-                "group relative flex h-9 items-center rounded-lg px-3 text-xs hover:bg-[var(--sidebar-item-hover-bg)]",
-                pathname?.startsWith("/settings")
-                  ? "bg-[var(--sidebar-item-active-bg)] font-semibold text-[var(--text-primary)] border border-[var(--border-subtle)]"
-                  : "text-[var(--text-secondary)]",
-                isCollapsed && "justify-center px-0"
-              )}
-            >
-              <Settings className={cn("size-4", !isCollapsed && "mr-3")} />
-              {!isCollapsed && "Platform settings"}
-              {isCollapsed && <CollapsedTooltip label="Platform settings" />}
-            </Link>
-            <Link
-              href="/events"
-              className={cn(
-                "group relative flex h-9 items-center rounded-lg px-3 text-xs text-[var(--text-secondary)] hover:bg-[var(--sidebar-item-hover-bg)]",
-                isCollapsed && "justify-center px-0"
-              )}
-            >
-              <Grid2X2 className={cn("size-4", !isCollapsed && "mr-3")} />
-              {!isCollapsed && "Event catalog"}
-              {isCollapsed && <CollapsedTooltip label="Event catalog" />}
-            </Link>
-          </div>
         </div>
       </motion.aside>
     );
@@ -672,11 +632,11 @@ export function Sidebar() {
 
   // Event workspace: Primary Service Rail + On-Demand Sliding Secondary Navigation
   return (
-    <div className="relative z-40 flex h-full overflow-visible">
+    <div className="event-workspace-navigation relative z-40 flex h-full overflow-visible">
       {/* TIER 1: Primary Service Switcher Rail (68px) - Always visible, no scroller */}
       <nav
         aria-label="Primary Service Navigation"
-        className="flex w-[68px] shrink-0 flex-col items-center justify-between border-r border-[var(--sidebar-border)] bg-[var(--sidebar-bg)] py-3 px-2 z-50 select-none shadow-xs overflow-visible"
+        className="event-workspace-service-rail flex w-[68px] shrink-0 flex-col items-center justify-between py-3 px-2 z-50 select-none overflow-visible"
       >
         {/* Top: Brand Emblem with clean Organiser Workspace Return link */}
         <div className="flex flex-col items-center gap-2 w-full shrink-0 overflow-visible">
@@ -714,9 +674,9 @@ export function Sidebar() {
                 aria-label={`Open ${service.label} menu`}
                 aria-pressed={isActive}
                 className={cn(
-                  "group relative flex size-9 items-center justify-center rounded-lg border transition-all duration-150 cursor-pointer overflow-visible",
+                  "event-workspace-service-button group relative flex size-9 items-center justify-center rounded-lg border transition-all duration-150 cursor-pointer overflow-visible",
                   isActive
-                    ? "border-[var(--pri)] bg-[var(--pri)] text-[var(--primary-contrast)] shadow-xs font-bold"
+                    ? "is-active border-[var(--pri)] bg-[var(--pri)] text-[var(--primary-contrast)] shadow-xs font-bold"
                     : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-default)] hover:bg-[var(--sidebar-item-hover-bg)] hover:text-[var(--text-primary)]"
                 )}
               >
@@ -772,7 +732,7 @@ export function Sidebar() {
             animate={{ width: 240, opacity: 1, x: 0 }}
             exit={{ width: 0, opacity: 0, x: -10 }}
             transition={{ duration: 0.2, ease: [0.2, 0.8, 0.2, 1] }}
-            className="relative flex h-full flex-col overflow-hidden border-r border-[var(--sidebar-border)] bg-[var(--bg-surface-2)] z-40 shadow-sm"
+            className="event-workspace-secondary-nav relative flex h-full flex-col overflow-hidden z-40"
           >
             <div className="flex h-full flex-col px-3 py-3 overflow-hidden">
               {/* Secondary Header: Active Service Title with Close Button */}
@@ -894,14 +854,14 @@ function SidebarLeaf({
       aria-current={isActive ? "page" : undefined}
       aria-label={access.enabled ? route.label : `${route.label}, locked`}
       className={cn(
-        "group relative flex h-9 items-center rounded-lg px-3 text-xs font-medium transition-colors",
+        "org-nav-item group relative flex h-12 items-center rounded-2xl px-3 text-[14px] font-medium transition-colors",
         isActive
-          ? "bg-[var(--sidebar-item-active-bg)] text-[var(--text-primary)] border border-[var(--border-subtle)]"
-          : "text-[var(--text-secondary)] hover:bg-[var(--sidebar-item-hover-bg)] hover:text-[var(--text-primary)]",
+          ? "bg-[var(--org-purple-soft)] text-[#2f13a8] border border-transparent dark:text-[#cbbcff]"
+          : "text-[var(--org-ink)] hover:bg-white/60 dark:hover:bg-white/5",
         isCollapsed && "justify-center px-0"
       )}
     >
-      <route.icon className={cn("size-4 shrink-0", !isCollapsed && "mr-3")} />
+      <route.icon className={cn("size-[19px] shrink-0", !isCollapsed && "mr-3")} />
       {!isCollapsed && <span className="truncate">{route.label}</span>}
       {!access.enabled && !access.loading && (
         <Lock className={cn("size-3 text-[var(--warn)]", isCollapsed ? "absolute right-1 top-1" : "ml-auto")} aria-hidden="true" />

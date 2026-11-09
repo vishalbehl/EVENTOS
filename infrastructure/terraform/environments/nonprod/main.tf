@@ -24,6 +24,7 @@ module "application" {
 
   project                    = "Event"
   environment                = "sample"
+  deployment_profile         = "staging"
   aws_region                 = var.aws_region
   cost_center                = var.cost_center
   vpc_id                     = module.network.vpc_id

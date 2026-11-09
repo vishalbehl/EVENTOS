@@ -6,6 +6,8 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal, Optional
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
@@ -23,6 +25,7 @@ X_VENUE_KEY = APIKeyHeader(name="X-Venue-Key", auto_error=False)
 BEARER = HTTPBearer(auto_error=False)
 TOKEN_ALGORITHM = "HS256"
 PASSWORD_ITERATIONS = 310_000
+PASSWORD_HASHER = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4, hash_len=32, salt_len=16)
 VALID_MODES = {"admin", "registration", "scanning", "self_checkin"}
 
 
@@ -85,12 +88,15 @@ def _b64decode(value: str) -> bytes:
 
 
 def hash_password(password: str) -> str:
-    salt = secrets.token_bytes(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PASSWORD_ITERATIONS)
-    return f"pbkdf2_sha256${PASSWORD_ITERATIONS}${_b64encode(salt)}${_b64encode(digest)}"
+    return PASSWORD_HASHER.hash(password)
 
 
 def verify_password(password: str, encoded: str) -> bool:
+    if encoded.startswith("$argon2id$"):
+        try:
+            return PASSWORD_HASHER.verify(encoded, password)
+        except (InvalidHashError, VerificationError, VerifyMismatchError):
+            return False
     try:
         scheme, iterations, salt, expected = encoded.split("$", 3)
         if scheme != "pbkdf2_sha256":

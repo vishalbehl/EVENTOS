@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { Toaster } from "sonner";
+import { shouldRetryRead, readRetryDelay } from "@/lib/api-client";
 
 const ReactQueryDevtools = dynamic(
   () =>
@@ -23,8 +24,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
     defaultOptions: {
       queries: {
         staleTime: 60 * 1000,
-        retry: 1,
+        retry: shouldRetryRead,
+        retryDelay: readRetryDelay,
       },
+      mutations: { retry: false },
     },
   }));
 
@@ -90,4 +93,3 @@ export function Providers({ children }: { children: React.ReactNode }) {
     </QueryClientProvider>
   );
 }
-

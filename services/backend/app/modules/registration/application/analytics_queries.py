@@ -61,9 +61,33 @@ class ParticipantAnalyticsQueryService:
         ).all()
         pricing_matrix = {str(role).lower(): price for role, price in pricing_rows if role}
 
-        revenue_rows = (
+        total_tx_revenue = await self.db.scalar(
+            select(func.coalesce(func.sum(PaymentTransaction.amount), 0.0))
+            .select_from(Participant)
+            .join(
+                ParticipantRegistration,
+                ParticipantRegistration.participant_id == Participant.id,
+            )
+            .join(
+                PaymentTransaction,
+                and_(
+                    PaymentTransaction.registration_id == ParticipantRegistration.id,
+                    PaymentTransaction.status == "completed",
+                ),
+            )
+            .where(
+                Participant.event_id == event_id,
+                Participant.paid_status == "Paid",
+                Participant.deleted_at.is_(None),
+            )
+        )
+
+        role_counts_without_tx = (
             await self.db.execute(
-                select(Participant.role, PaymentTransaction.amount)
+                select(
+                    func.coalesce(Participant.role, "delegate"),
+                    func.count(Participant.id),
+                )
                 .select_from(Participant)
                 .outerjoin(
                     ParticipantRegistration,
@@ -80,17 +104,17 @@ class ParticipantAnalyticsQueryService:
                     Participant.event_id == event_id,
                     Participant.paid_status == "Paid",
                     Participant.deleted_at.is_(None),
+                    PaymentTransaction.id.is_(None),
                 )
+                .group_by(Participant.role)
             )
         ).all()
-        total_revenue = 0.0
-        for role_name, amount in revenue_rows:
-            if amount is not None:
-                total_revenue += float(amount)
-                continue
+        fallback_revenue = 0.0
+        for role_name, count in role_counts_without_tx:
             role_key = (role_name or "delegate").lower().strip()
-            fallback = 0.0 if "free" in role_key or "complimentary" in role_key else pricing_matrix.get(role_key, 0.0)
-            total_revenue += float(fallback or 0.0)
+            if "free" not in role_key and "complimentary" not in role_key:
+                fallback_revenue += float(pricing_matrix.get(role_key, 0.0) or 0.0) * count
+        total_revenue = float(total_tx_revenue or 0.0) + fallback_revenue
 
         growth_rows = (
             await self.db.execute(

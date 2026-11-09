@@ -56,6 +56,40 @@ def test_stripe_signature_and_signed_tenant_metadata(monkeypatch):
     assert event.payment_status == "SUCCEEDED"
 
 
+@pytest.mark.parametrize("payment_status", ["unpaid", "no_payment_required", None])
+def test_stripe_checkout_completion_without_settlement_does_not_grant(monkeypatch, payment_status):
+    monkeypatch.setattr(module, "decrypt", lambda _: "whsec_test")
+    payload = {
+        "id": "evt_checkout_unsettled",
+        "type": "checkout.session.completed",
+        "created": 1_750_000_000,
+        "data": {"object": {
+            "id": "cs_unsettled",
+            "amount_total": 12500,
+            "currency": "inr",
+            "payment_status": payment_status,
+            "metadata": {
+                "Event_organization_id": str(ORG_ID),
+                "Event_invoice_id": str(INVOICE_ID),
+            },
+        }},
+    }
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    timestamp = 1_750_000_100
+    signature = hmac.new(
+        b"whsec_test", str(timestamp).encode() + b"." + body, hashlib.sha256
+    ).hexdigest()
+
+    event = ProviderWebhookService.verify_and_normalize(
+        _gateway("STRIPE"),
+        body,
+        {"stripe-signature": f"t={timestamp},v1={signature}"},
+        now_epoch=timestamp,
+    )
+
+    assert event.payment_status == "FAILED"
+
+
 @pytest.mark.parametrize("signature,timestamp,code", [
     ("bad", 1_750_000_100, "WEBHOOK_SIGNATURE_INVALID"),
     (None, 1_750_001_000, "WEBHOOK_REPLAY_WINDOW_EXCEEDED"),

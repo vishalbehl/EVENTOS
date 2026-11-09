@@ -19,7 +19,7 @@ class LimitGuard:
         activation_id: str | None,
         grant_id: str | None,
         grant_consumption_id: str | None,
-        plan_name: str,
+        offer_name: str,
         allowed: int | None,
         used: int,
         source_type: str | None,
@@ -33,7 +33,7 @@ class LimitGuard:
                 "activation_id": activation_id,
                 "grant_id": grant_id,
                 "grant_consumption_id": grant_consumption_id,
-                "plan_name": plan_name,
+                "offer_name": offer_name,
                 "allowed": allowed,
                 "used": used,
                 "remaining": None if allowed is None else max(allowed - used, 0),
@@ -63,13 +63,13 @@ class LimitGuard:
         used = await UsageService.get_effective_event_metric(db, event_id, limit_key)
         if used >= int(limit["limit_value"]):
             activation = resolved.get("activation")
-            plan_name = activation.subscription.plan.name if activation and activation.subscription and activation.subscription.plan else "Unknown"
+            offer_name = str(limit.get("offer_id") or "Commercial contract")
             await LimitGuard._raise_limit(
                 limit_key=limit_key,
                 activation_id=str(activation.id) if activation else None,
                 grant_id=str(activation.grant_id) if activation and activation.grant_id else None,
                 grant_consumption_id=str(activation.grant_consumption_id) if activation and activation.grant_consumption_id else None,
-                plan_name=plan_name,
+                offer_name=offer_name,
                 allowed=int(limit["limit_value"]),
                 used=used,
                 source_type=limit["source_type"],
@@ -119,13 +119,13 @@ class LimitGuard:
         allowed = int(limit["limit_value"])
         if used + additional > allowed:
             activation = resolved.get("activation")
-            plan_name = activation.subscription.plan.name if activation and activation.subscription and activation.subscription.plan else "Unknown"
+            offer_name = str(limit.get("offer_id") or "Commercial contract")
             await LimitGuard._raise_limit(
                 limit_key="max_emails_per_event",
                 activation_id=str(activation.id) if activation else None,
                 grant_id=str(activation.grant_id) if activation and activation.grant_id else None,
                 grant_consumption_id=str(activation.grant_consumption_id) if activation and activation.grant_consumption_id else None,
-                plan_name=plan_name,
+                offer_name=offer_name,
                 allowed=allowed,
                 used=used,
                 source_type=limit["source_type"],
@@ -145,8 +145,8 @@ class LimitGuard:
         allowed_bytes = int(limit["limit_value"]) * 1024 * 1024
         if used_bytes + additional_bytes > allowed_bytes:
             activation = resolved.get("activation")
-            plan_name = activation.subscription.plan.name if activation and activation.subscription and activation.subscription.plan else "Unknown"
-            await LimitGuard._raise_limit(limit_key="storage_quota_mb", activation_id=str(activation.id) if activation else None, grant_id=str(activation.grant_id) if activation and activation.grant_id else None, grant_consumption_id=str(activation.grant_consumption_id) if activation and activation.grant_consumption_id else None, plan_name=plan_name, allowed=allowed_bytes, used=used_bytes, source_type=limit.get("source_type"), reason=f"Storage allowance of {limit['limit_value']} MB would be exceeded by this upload.")
+            offer_name = str(limit.get("offer_id") or "Commercial contract")
+            await LimitGuard._raise_limit(limit_key="storage_quota_mb", activation_id=str(activation.id) if activation else None, grant_id=str(activation.grant_id) if activation and activation.grant_id else None, grant_consumption_id=str(activation.grant_consumption_id) if activation and activation.grant_consumption_id else None, offer_name=offer_name, allowed=allowed_bytes, used=used_bytes, source_type=limit.get("source_type"), reason=f"Storage allowance of {limit['limit_value']} MB would be exceeded by this upload.")
 
     @staticmethod
     async def check_users(db: AsyncSession, org_id: UUID):

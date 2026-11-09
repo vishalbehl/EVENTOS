@@ -1,0 +1,35 @@
+{
+  "status": "FAILED",
+  "error_type": "MissingGreenlet",
+  "failure_sites": [
+    {
+      "file": "category_a_delegated_form_runtime_probe.py",
+      "line": 255,
+      "function": "main"
+    },
+    {
+      "file": "runners.py",
+      "line": 196,
+      "function": "run"
+    },
+    {
+      "file": "runners.py",
+      "line": 119,
+      "function": "run"
+    },
+    {
+      "file": "base_events.py",
+      "line": 726,
+      "function": "run_until_complete"
+    },
+    {
+      "file": "category_a_delegated_form_runtime_probe.py",
+      "line": 184,
+      "function": "probe"
+    }
+  ],
+  "database": "category_a_restore_20261020_02ef8206a768",
+  "organization_id": "60dba8c1-55d2-47be-9c0d-62cd6b693f46",
+  "scope": "EVENT",
+  "probe_sha256": "b9ce7b524f287f805de406d50842f658ecc70df9f9ab2c80b66720a479720f6b"
+}

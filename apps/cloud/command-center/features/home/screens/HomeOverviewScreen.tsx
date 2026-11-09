@@ -1,12 +1,11 @@
 "use client"
-import { useAdminDashboard, formatINR, calcDelta, useExtendTrial } from "@/services/super-admin-service"
+import { useAdminDashboard, formatINR, calcDelta } from "@/services/super-admin-service"
 import { KpiCard } from "@/components/super-admin/ui/KpiCard"
 import { ChartCard } from "@/components/super-admin/ui/ChartCard"
 import { StatusBadge } from "@/components/super-admin/ui/StatusBadge"
 import { PageContainer } from "@/components/super-admin/ui/PageContainer"
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
 import { Building2, Users, TrendingUp, Calendar, TicketCheck, BadgeIndianRupee, AlertTriangle } from "lucide-react"
-import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { SectionHeader } from "@/components/super-admin/ui/SectionHeader"
 import { Button } from "@/components/ui/button"
@@ -15,14 +14,12 @@ import { CalendarDays, Plus } from "lucide-react"
 export default function SuperAdminDashboard() {
   const { data, isLoading, error, refetch } = useAdminDashboard()
   const router = useRouter()
-  const [extendTrialOrg, setExtendTrialOrg] = useState<string|null>(null)
-
   if (isLoading) return <DashboardSkeleton />
   if (error) return (
     <PageContainer>
       <SectionHeader
         title="Welcome back"
-        description="Monitor organizations, revenue, subscriptions, and platform activity from one workspace."
+        description="Monitor organizations, revenue, commercial contracts, and platform activity from one workspace."
         breadcrumb={["Command Center", "Dashboard"]}
         actions={<><Button variant="outline"><CalendarDays className="mr-2 size-4" />This month</Button><Button onClick={() => router.push('/organizations')}><Plus className="mr-2 size-4" />Create organization</Button></>}
       />
@@ -39,12 +36,12 @@ export default function SuperAdminDashboard() {
   if (!data) return null
 
   const STATUS_MAP = {
-    ACTIVE: { count: data.subscriptions_active, label: 'Active', color: 'success' },
-    TRIAL: { count: data.subscriptions_trial, label: 'Trial', color: 'info' },
-    GRACE_PERIOD: { count: data.subscriptions_grace, label: 'Grace Period', color: 'warning' },
-    SUSPENDED: { count: data.subscriptions_suspended, label: 'Suspended', color: 'danger' },
-    EXPIRED: { count: data.subscriptions_expired, label: 'Expired', color: 'default' },
-    CANCELLED: { count: data.subscriptions_cancelled, label: 'Cancelled', color: 'default' },
+    ACTIVE: { count: data.contracts_active, label: 'Active', color: 'success' },
+    PENDING_PAYMENT: { count: data.contracts_pending_payment, label: 'Pending payment', color: 'info' },
+    GRACE_PERIOD: { count: data.contracts_grace, label: 'Grace period', color: 'warning' },
+    SUSPENDED: { count: data.contracts_suspended, label: 'Suspended', color: 'danger' },
+    EXPIRED: { count: data.contracts_expired, label: 'Expired', color: 'default' },
+    CANCELLED: { count: data.contracts_cancelled, label: 'Cancelled', color: 'default' },
   }
 
   const chartConfig = {
@@ -216,7 +213,7 @@ export default function SuperAdminDashboard() {
                   <p className="text-sm font-medium text-primary truncate">
                     {org.org_name}
                   </p>
-                  <p className="text-xs text-tertiary">{org.plan_name}</p>
+                  <p className="text-xs text-tertiary">{org.offer_name}</p>
                 </div>
                 <span className="text-sm font-mono text-success font-semibold">
                   {formatINR(org.mrr)}
@@ -234,10 +231,10 @@ export default function SuperAdminDashboard() {
 
       {/* ── ROW 4: SUBSCRIPTION HEALTH + ACTIVITY + TRIALS ── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* Subscription Health Matrix */}
+        {/* Contract Health Matrix */}
         <div className="bg-surface border border-border rounded-xl p-5">
           <h3 className="text-base font-semibold text-primary mb-4">
-            Subscription Health
+            Contract Health
           </h3>
           <div className="grid grid-cols-2 gap-3">
             {Object.entries(STATUS_MAP).map(([key, { count, label, color }]) => (
@@ -306,97 +303,41 @@ export default function SuperAdminDashboard() {
           </div>
         </div>
 
-        {/* Trials Expiring Soon */}
+        {/* Contracts Expiring Soon */}
         <div className="bg-surface border border-border rounded-xl p-5">
           <h3 className="text-base font-semibold text-primary mb-4">
-            Trials Expiring Soon
+            Contracts Expiring Soon
           </h3>
           <div className="space-y-3">
-            {data.trials_expiring.slice(0, 5).map((trial) => (
-              <div key={trial.org_id} className="space-y-1">
+            {data.contracts_expiring.slice(0, 5).map((contract) => (
+              <div key={contract.org_id} className="space-y-1">
                 <div className="flex items-center gap-2">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-primary truncate">
-                      {trial.org_name}
+                      {contract.org_name}
                     </p>
-                    <p className="text-xs text-tertiary">{trial.plan_name}</p>
+                    <p className="text-xs text-tertiary">{contract.offer_name}</p>
                   </div>
                   <span className={`text-xs font-bold px-2 py-1 rounded-full
-                    ${trial.days_remaining <= 3
+                    ${contract.days_remaining <= 3
                       ? 'bg-danger-muted text-danger'
-                      : trial.days_remaining <= 7
+                      : contract.days_remaining <= 7
                       ? 'bg-warning-muted text-warning'
                       : 'bg-info-muted text-info'}`}>
-                    {trial.days_remaining}d
+                    {contract.days_remaining}d
                   </span>
                 </div>
-                {extendTrialOrg === trial.org_id ? (
-                  <ExtendTrialInline
-                    orgId={trial.org_id}
-                    onClose={() => setExtendTrialOrg(null)}
-                  />
-                ) : (
-                  <button
-                    onClick={() => setExtendTrialOrg(trial.org_id)}
-                    className="text-xs text-brand-primary hover:underline">
-                    + Extend trial
-                  </button>
-                )}
               </div>
             ))}
-            {data.trials_expiring.length === 0 && (
+            {data.contracts_expiring.length === 0 && (
               <p className="text-sm text-tertiary text-center py-6">
-                No trials expiring soon
+                No contracts expiring soon
               </p>
             )}
           </div>
         </div>
       </div>
     </PageContainer>
-  )
-}
-
-// ── ExtendTrialInline sub-component ─────────────────
-function ExtendTrialInline({
-  orgId, onClose
-}: { orgId: string; onClose: () => void }) {
-  const [days, setDays] = useState(7)
-  const [reason, setReason] = useState('')
-  const { mutate, isPending } = useExtendTrial()
-
-  return (
-    <div className="bg-surface-2 rounded-lg p-3 space-y-2 border border-border">
-      <div className="flex gap-2">
-        <input
-          type="number" min={1} max={90} value={days}
-          onChange={e => setDays(Number(e.target.value))}
-          className="w-20 px-2 py-1 text-sm bg-bg-base border border-border
-            rounded-md text-primary"
-          placeholder="Days"
-        />
-        <input
-          value={reason}
-          onChange={e => setReason(e.target.value)}
-          className="flex-1 px-2 py-1 text-sm bg-bg-base border border-border
-            rounded-md text-primary"
-          placeholder="Reason (required)"
-        />
-      </div>
-      <div className="flex gap-2">
-        <button
-          onClick={() => mutate({ orgId, days, reason },
-            { onSuccess: onClose })}
-          disabled={isPending || reason.length < 5}
-          className="px-3 py-1 text-xs bg-brand-primary text-white rounded-md
-            disabled:opacity-50">
-          {isPending ? 'Extending...' : 'Confirm'}
-        </button>
-        <button onClick={onClose}
-          className="px-3 py-1 text-xs text-secondary hover:text-primary">
-          Cancel
-        </button>
-      </div>
-    </div>
   )
 }
 

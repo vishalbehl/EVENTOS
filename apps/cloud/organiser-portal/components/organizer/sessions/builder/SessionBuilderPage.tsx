@@ -58,12 +58,9 @@ export function SessionBuilderPage() {
     return (
       <div className="flex min-h-[520px] flex-col items-center justify-center gap-3 bg-[var(--background)] text-[var(--text-secondary)]">
         <div className="flex size-12 items-center justify-center rounded-2xl border border-[var(--border-default)] bg-[var(--card)] shadow-sm">
-          <Loader2 className="h-5 w-5 animate-spin text-[var(--pri)]" />
+          <Loader2 className="size-6 animate-spin text-[var(--pri)]" />
         </div>
-        <div className="text-center">
-          <p className="text-sm font-semibold text-[var(--text-primary)]">Preparing the programme desk</p>
-          <p className="mt-1 text-xs">Loading rooms, sessions, speakers and schedule checks.</p>
-        </div>
+        <p className="text-xs font-semibold text-[var(--text-primary)]">Loading Session Builder…</p>
       </div>
     );
   }

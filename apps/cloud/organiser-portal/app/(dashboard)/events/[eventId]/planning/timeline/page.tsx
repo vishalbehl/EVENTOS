@@ -1,6 +1,9 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { apiClient, ApiError } from "@/lib/api-client";
+import { accessContextCacheKey, useAuthStore } from "@/store/use-auth-store";
+import { usePermissions } from "@/hooks/usePermissions";
 import { useParams } from "next/navigation";
 import { 
   GitBranch, Play, CheckCircle2, Clock, 
@@ -25,6 +28,7 @@ interface Workflow {
 interface WorkflowTask {
   id: string;
   status: string;
+  version: number;
   step_id: string;
   created_at: string;
   step?: WorkflowStep;
@@ -60,57 +64,64 @@ export default function WorkflowsPage() {
   const [loading, setLoading] = useState(true);
   const [commentText, setCommentText] = useState("");
   const [triggering, setTriggering] = useState(false);
-
-  const token = typeof window !== "undefined" ? (localStorage.getItem("eventos_original_token") || localStorage.getItem("eventos_token") || "") : "";
+  const [error, setError] = useState<string | null>(null);
+  const { accessToken: token, activeContext, user, isContextSwitching } = useAuthStore();
+  const contextKey = accessContextCacheKey(activeContext, user?.organization_id);
+  const { permissions } = usePermissions();
+  const canManage = permissions.includes("workflows:manage") && activeContext?.access_mode !== "DELEGATED";
+  const canApprove = permissions.includes("workflows:approve") && activeContext?.access_mode !== "DELEGATED";
+  const requestScope = useRef(new AbortController());
+  const storageKey = `eventos_wf_instances_${user?.id}_${contextKey}_${eventId}`;
+  const showError = (problem: unknown) => {
+    const issue = problem as ApiError;
+    if (!issue.aborted) setError(issue.status === 412
+      ? "This task changed. Reload its current state before approving."
+      : issue.message || "The operation could not be completed.");
+  };
 
   const fetchWorkflows = async () => {
+    const signal = requestScope.current.signal;
     try {
       setLoading(true);
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/workflows`,
-        { headers: { "Authorization": `Bearer ${token}` } }
-      );
-      if (response.ok) {
-        const data = await response.json();
+      const data = await apiClient.get<Workflow[]>("/workflows", { signal });
+        if (signal.aborted) return;
         setWorkflows(data);
         
         // Auto-select first workflow to fetch instances
         if (data.length > 0) {
           await fetchInstances(data[0].id);
         }
-      }
     } catch (err) {
-      console.error("Failed to load workflows:", err);
+      if (!signal.aborted) showError(err);
     } finally {
-      setLoading(false);
+      if (!signal.aborted) setLoading(false);
     }
   };
 
   const fetchInstances = async (workflowId: string) => {
-    // We simulate listing instances for simplicity, or we can fetch detailed status
-    // Since there isn't a direct list_instances endpoint on router, we can query details of instances if we have their IDs,
-    // or simulate an active tracking session. Let's write a mock instance generator if no active instances exist in DB, 
-    // or trigger one and load it.
-    // In our backend router we have: GET /workflows/instances/{instance_id}.
-    // Let's check: if we trigger a workflow, it returns an instance, which we can track. Let's keep a history of triggered instances in state!
-    const saved = localStorage.getItem(`eventos_wf_instances_${eventId}`);
-    let instanceIds: string[] = saved ? JSON.parse(saved) : [];
+    const signal = requestScope.current.signal;
+    // Local IDs are hints only; every instance is authorised by the backend.
+    const saved = localStorage.getItem(storageKey);
+    let instanceIds: string[] = [];
+    try {
+      const parsed: unknown = saved ? JSON.parse(saved) : [];
+      if (Array.isArray(parsed)) instanceIds = parsed.filter((id): id is string =>
+        typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id)).slice(0, 100);
+    } catch { localStorage.removeItem(storageKey); }
     
     const fetched: WorkflowInstance[] = [];
     for (const id of instanceIds) {
       try {
-        const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/workflows/instances/${id}`,
-          { headers: { "Authorization": `Bearer ${token}` } }
-        );
-        if (res.ok) {
-          const inst = await res.json();
-          fetched.push(inst);
-        }
+        const inst = await apiClient.get<WorkflowInstance>(`/workflows/instances/${id}`,
+          { signal });
+        if (signal.aborted) return;
+        fetched.push(inst);
       } catch (e) {
-        console.error("Failed to fetch instance details:", id, e);
+        if (signal.aborted) return;
+        showError(e);
       }
     }
+    if (signal.aborted) return;
     setInstances(fetched);
     
     // Default select first loaded instance
@@ -120,76 +131,80 @@ export default function WorkflowsPage() {
   };
 
   useEffect(() => {
-    if (token) {
+    requestScope.current.abort();
+    requestScope.current = new AbortController();
+    setWorkflows([]);
+    setInstances([]);
+    setSelectedInstance(null);
+    setCommentText("");
+    setError(null);
+    setTriggering(false);
+    setLoading(false);
+    if (token && !isContextSwitching) {
       fetchWorkflows();
     }
-  }, [eventId]);
+    return () => requestScope.current.abort();
+  }, [eventId, token, contextKey, isContextSwitching]);
 
   const handleTriggerWorkflow = async (workflowId: string) => {
+    if (triggering || !canManage || isContextSwitching) return;
     setTriggering(true);
+    setError(null);
+    const signal = requestScope.current.signal;
     try {
-      const response = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/workflows/${workflowId}/trigger`,
-        {
-          method: "POST",
-          headers: { "Authorization": `Bearer ${token}` }
-        }
-      );
-      if (response.ok) {
-        const newInst = await response.json();
+        const newInst = await apiClient.post<WorkflowInstance>(`/workflows/${workflowId}/trigger`, undefined,
+          { signal });
+        if (signal.aborted) return;
         
         // Save instance ID locally to keep track of triggered instances
-        const saved = localStorage.getItem(`eventos_wf_instances_${eventId}`);
-        const list = saved ? JSON.parse(saved) : [];
+        const list = instances.map(instance => instance.id);
         list.unshift(newInst.id);
-        localStorage.setItem(`eventos_wf_instances_${eventId}`, JSON.stringify(list));
+        localStorage.setItem(storageKey, JSON.stringify([...new Set(list)].slice(0, 100)));
         
         // Reload details
         await fetchInstances(workflowId);
+        if (signal.aborted) return;
         setSelectedInstance(newInst);
-      }
     } catch (err) {
-      console.error("Failed to trigger workflow:", err);
+      if (!signal.aborted) showError(err);
     } finally {
-      setTriggering(false);
+      if (!signal.aborted) setTriggering(false);
     }
   };
 
   const handleCompleteTask = async (taskId: string, instanceId: string) => {
+    if (triggering || !canApprove || isContextSwitching) return;
+    const task = selectedInstance?.tasks.find(candidate => candidate.id === taskId);
+    if (!task || commentText.trim().length < 3) {
+      setError("Enter an approval reason of at least three characters.");
+      return;
+    }
+    setTriggering(true);
+    setError(null);
+    const signal = requestScope.current.signal;
     try {
-      const response = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/workflows/tasks/${taskId}/complete`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
-          },
-          body: JSON.stringify({ comment: commentText })
-        }
-      );
-      if (response.ok) {
+      await apiClient.post(`/workflows/tasks/${taskId}/complete`, { comment: commentText.trim() },
+        { headers: { "If-Match": String(task.version) }, signal });
+        if (signal.aborted) return;
         setCommentText("");
         // Reload instance state
-        const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/workflows/instances/${instanceId}`,
-          { headers: { "Authorization": `Bearer ${token}` } }
-        );
-        if (res.ok) {
-          const updated = await res.json();
+          const updated = await apiClient.get<WorkflowInstance>(`/workflows/instances/${instanceId}`,
+            { signal });
+          if (signal.aborted) return;
           setSelectedInstance(updated);
           
           // Update instances list
           setInstances(prev => prev.map(inst => inst.id === instanceId ? updated : inst));
-        }
-      }
     } catch (err) {
-      console.error("Failed to approve manual step:", err);
-    }
+      if (!signal.aborted) showError(err);
+    } finally { if (!signal.aborted) setTriggering(false); }
   };
 
   // Seed default demo workflows if list is empty
   const handleSeedDemoWorkflow = async () => {
+    if (!canManage || triggering || isContextSwitching) return;
+    setTriggering(true);
+    const signal = requestScope.current.signal;
     try {
       const demoWf = {
         name: "Speaker Registration & Slide Audit",
@@ -201,23 +216,12 @@ export default function WorkflowsPage() {
         ]
       };
 
-      const response = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/workflows`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
-          },
-          body: JSON.stringify(demoWf)
-        }
-      );
-      if (response.ok) {
+      await apiClient.post("/workflows", demoWf, { signal });
+      if (signal.aborted) return;
         await fetchWorkflows();
-      }
     } catch (e) {
-      console.error("Failed to seed workflow:", e);
-    }
+      if (!signal.aborted) showError(e);
+    } finally { if (!signal.aborted) setTriggering(false); }
   };
 
   const getStatusIcon = (status: string) => {
@@ -252,6 +256,7 @@ export default function WorkflowsPage() {
 
   return (
     <div className="flex flex-col space-y-6 h-full min-h-0">
+      {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
       {/* Page Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-default/20 pb-5">
         <div>
@@ -265,7 +270,7 @@ export default function WorkflowsPage() {
           {workflows.length > 0 && (
             <button 
               onClick={() => handleTriggerWorkflow(workflows[0].id)}
-              disabled={triggering}
+              disabled={triggering || !canManage || isContextSwitching}
               className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-black uppercase tracking-wider text-[var(--primary-contrast)] bg-[var(--pri)] hover:bg-[var(--pri)]/80 transition-all disabled:opacity-50"
             >
               <Play className="h-4 w-4 fill-white" />
@@ -275,6 +280,7 @@ export default function WorkflowsPage() {
           {workflows.length === 0 && (
             <button
               onClick={handleSeedDemoWorkflow}
+              disabled={triggering || !canManage || isContextSwitching}
               className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-black uppercase tracking-wider text-[var(--text)] border border-default/30 bg-card hover:bg-card-hover transition-all"
             >
               <GitBranch className="h-4 w-4" /> Initialize Speaker Workflow
@@ -412,12 +418,14 @@ export default function WorkflowsPage() {
                   <div className="flex items-center gap-3">
                     <input
                       type="text"
-                      placeholder="Add an optional review decision comment..."
+                      placeholder="Enter the approval reason..."
+                      maxLength={500}
                       value={commentText}
                       onChange={(e) => setCommentText(e.target.value)}
                       className="flex-1 text-xs px-3.5 py-2.5 rounded-xl border border-default/30 bg-card focus:outline-none focus:border-amber-400"
                     />
                     <button
+                      disabled={triggering || !canApprove || isContextSwitching || commentText.trim().length < 3}
                       onClick={() => {
                         const pendingTask = selectedInstance.tasks.find(t => t.status === "pending" && t.step?.step_name.toLowerCase() === "manual_review");
                         if (pendingTask) {

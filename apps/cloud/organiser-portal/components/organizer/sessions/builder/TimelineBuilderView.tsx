@@ -3,7 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { AlertTriangle, Clock3, GripVertical, MapPin, Plus, Users } from "lucide-react";
-import { cn } from "@/lib/utils";
+import {
+  cn,
+  getTimeComponentsInTZ,
+  getISODateInTZ,
+  fromDateTimeLocalString,
+  getFallbackTimezone,
+  getTimezoneAbbrev,
+} from "@/lib/utils";
 import {
   useSessionBuilderStore,
   type BuilderSession,
@@ -28,23 +35,22 @@ const BASE_HALF_HOUR_HEIGHT = 48;
 const DEFAULT_START_MINUTES = 8 * 60;
 const DEFAULT_END_MINUTES = 19 * 60;
 
-function dateOnly(value: string) {
-  return value.split("T")[0]?.split(" ")[0];
+function dateOnly(value: string, timezone?: string) {
+  if (!value) return "";
+  return getISODateInTZ(value, timezone || getFallbackTimezone());
 }
 
-function minutesFromDateTime(value: string) {
-  const match = value.match(/[T ](\d{2}):(\d{2})/);
-  if (match) return Number(match[1]) * 60 + Number(match[2]);
-  const parsed = new Date(value);
-  return parsed.getHours() * 60 + parsed.getMinutes();
+function minutesFromDateTime(value: string, timezone?: string) {
+  if (!value) return 0;
+  const comp = getTimeComponentsInTZ(value, timezone || getFallbackTimezone());
+  return comp.hour * 60 + comp.minute;
 }
 
-function scheduleDateTime(date: string, minutes: number, reference?: string) {
+function scheduleDateTime(date: string, minutes: number, timezone?: string) {
   const bounded = Math.max(0, Math.min(24 * 60 - 1, Math.round(minutes)));
   const hours = Math.floor(bounded / 60).toString().padStart(2, "0");
   const mins = (bounded % 60).toString().padStart(2, "0");
-  const suffix = reference?.match(/(Z|[+-]\d{2}:\d{2})$/)?.[1] || "";
-  return `${date}T${hours}:${mins}:00${suffix}`;
+  return fromDateTimeLocalString(`${date}T${hours}:${mins}`, timezone || getFallbackTimezone());
 }
 
 function formatMinutes(minutes: number) {
@@ -55,7 +61,9 @@ function formatMinutes(minutes: number) {
 }
 
 function sessionDuration(session: BuilderSession) {
-  return Math.max(15, minutesFromDateTime(session.end_time) - minutesFromDateTime(session.start_time));
+  if (!session.start_time || !session.end_time) return 30;
+  const diffMinutes = Math.round((new Date(session.end_time).getTime() - new Date(session.start_time).getTime()) / 60000);
+  return Math.max(15, isNaN(diffMinutes) ? 30 : diffMinutes);
 }
 
 interface TimelineSessionProps {
@@ -63,9 +71,10 @@ interface TimelineSessionProps {
   conflicts: SchedulingConflict[];
   dayStart: number;
   pixelsPerMinute: number;
+  eventTimezone: string;
 }
 
-function TimelineSession({ session, conflicts, dayStart, pixelsPerMinute }: TimelineSessionProps) {
+function TimelineSession({ session, conflicts, dayStart, pixelsPerMinute, eventTimezone }: TimelineSessionProps) {
   const selectedSessionId = useSessionBuilderStore((state) => state.selectedSessionId);
   const setSelectedSessionId = useSessionBuilderStore((state) => state.setSelectedSessionId);
   const updateSession = useSessionBuilderStore((state) => state.updateSession);
@@ -73,7 +82,7 @@ function TimelineSession({ session, conflicts, dayStart, pixelsPerMinute }: Time
   const [resizeStart, setResizeStart] = useState<{ pointerY: number; duration: number } | null>(null);
 
   const duration = previewDuration ?? sessionDuration(session);
-  const startMinutes = minutesFromDateTime(session.start_time);
+  const startMinutes = minutesFromDateTime(session.start_time, eventTimezone);
   const top = (startMinutes - dayStart) * pixelsPerMinute;
   const height = Math.max(44, duration * pixelsPerMinute - 4);
   const sessionConflicts = conflicts.filter((conflict) => conflict.session_ids.includes(session.id));
@@ -93,7 +102,7 @@ function TimelineSession({ session, conflicts, dayStart, pixelsPerMinute }: Time
     const handlePointerUp = (event: PointerEvent) => {
       const delta = Math.round((event.clientY - resizeStart.pointerY) / pixelsPerMinute / 15) * 15;
       const nextDuration = Math.max(15, resizeStart.duration + delta);
-      const nextEnd = scheduleDateTime(dateOnly(session.start_time), startMinutes + nextDuration, session.end_time);
+      const nextEnd = scheduleDateTime(dateOnly(session.start_time, eventTimezone), startMinutes + nextDuration, eventTimezone);
       setResizeStart(null);
       setPreviewDuration(null);
       if (nextDuration !== resizeStart.duration) updateSession(session.id, { end_time: nextEnd });
@@ -105,7 +114,7 @@ function TimelineSession({ session, conflicts, dayStart, pixelsPerMinute }: Time
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [pixelsPerMinute, resizeStart, session.end_time, session.id, session.start_time, startMinutes, updateSession]);
+  }, [eventTimezone, pixelsPerMinute, resizeStart, session.end_time, session.id, session.start_time, startMinutes, updateSession]);
 
   return (
     <article
@@ -170,22 +179,24 @@ export function TimelineBuilderView({ onCreateTemplate }: TimelineBuilderViewPro
   const conflicts = useSessionBuilderStore((state) => state.conflicts);
   const zoomLevel = useSessionBuilderStore((state) => state.zoomLevel);
   const moveSession = useSessionBuilderStore((state) => state.moveSession);
+  const storeTz = useSessionBuilderStore((state) => state.eventTimezone);
+  const eventTimezone = storeTz || getFallbackTimezone();
   const [dragRoomId, setDragRoomId] = useState<string | null>(null);
 
   const daySessions = useMemo(
-    () => sessions.filter((session) => dateOnly(session.start_time) === selectedDate && session.room_id),
-    [selectedDate, sessions],
+    () => sessions.filter((session) => session.room_id && dateOnly(session.start_time, eventTimezone) === selectedDate),
+    [selectedDate, sessions, eventTimezone],
   );
 
   const bounds = useMemo(() => {
     let start = DEFAULT_START_MINUTES;
     let end = DEFAULT_END_MINUTES;
     daySessions.forEach((session) => {
-      start = Math.min(start, Math.floor(minutesFromDateTime(session.start_time) / 60) * 60 - 30);
-      end = Math.max(end, Math.ceil(minutesFromDateTime(session.end_time) / 60) * 60 + 30);
+      start = Math.min(start, Math.floor(minutesFromDateTime(session.start_time, eventTimezone) / 60) * 60 - 30);
+      end = Math.max(end, Math.ceil(minutesFromDateTime(session.end_time, eventTimezone) / 60) * 60 + 30);
     });
     return { start: Math.max(0, start), end: Math.min(24 * 60, end) };
-  }, [daySessions]);
+  }, [daySessions, eventTimezone]);
 
   const pixelsPerMinute = (BASE_HALF_HOUR_HEIGHT * zoomLevel) / 30;
   const canvasHeight = (bounds.end - bounds.start) * pixelsPerMinute;
@@ -214,8 +225,8 @@ export function TimelineBuilderView({ onCreateTemplate }: TimelineBuilderViewPro
         name: payload.template.name,
         category: payload.template.category,
         roomId,
-        startTime: scheduleDateTime(selectedDate, startMinutes),
-        endTime: scheduleDateTime(selectedDate, startMinutes + payload.template.minutes),
+        startTime: scheduleDateTime(selectedDate, startMinutes, eventTimezone),
+        endTime: scheduleDateTime(selectedDate, startMinutes + payload.template.minutes, eventTimezone),
       });
       return;
     }
@@ -226,8 +237,8 @@ export function TimelineBuilderView({ onCreateTemplate }: TimelineBuilderViewPro
     moveSession(
       session.id,
       roomId,
-      scheduleDateTime(selectedDate, startMinutes, session.start_time),
-      scheduleDateTime(selectedDate, startMinutes + duration, session.end_time),
+      scheduleDateTime(selectedDate, startMinutes, eventTimezone),
+      scheduleDateTime(selectedDate, startMinutes + duration, eventTimezone),
     );
   };
 
@@ -243,14 +254,17 @@ export function TimelineBuilderView({ onCreateTemplate }: TimelineBuilderViewPro
     );
   }
 
-  const isToday = selectedDate === format(new Date(), "yyyy-MM-dd");
-  const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+  const nowComp = getTimeComponentsInTZ(new Date().toISOString(), eventTimezone);
+  const todayStr = getISODateInTZ(new Date().toISOString(), eventTimezone);
+  const isToday = selectedDate === todayStr;
+  const nowMinutes = nowComp.hour * 60 + nowComp.minute;
 
   return (
     <section className="h-full min-h-[520px] overflow-auto bg-[var(--surface-subtle)]/55" aria-label="Room schedule timeline">
       <div className="min-w-max" style={{ width: GUTTER_WIDTH + rooms.length * roomWidth }}>
         <div className="sticky top-0 z-30 flex h-[66px] border-b border-[var(--border-default)] bg-[var(--card)]/95 shadow-[0_4px_12px_rgba(15,23,42,0.05)] backdrop-blur">
-          <div className="sticky left-0 z-40 flex shrink-0 items-end border-r border-[var(--border-default)] bg-[var(--card)] px-2 pb-2" style={{ width: GUTTER_WIDTH }}>
+          <div className="sticky left-0 z-40 flex shrink-0 flex-col justify-end border-r border-[var(--border-default)] bg-[var(--card)] px-2 pb-2" style={{ width: GUTTER_WIDTH }}>
+            <span className="text-[8px] font-bold uppercase tracking-[0.14em] text-[var(--pri)]">{getTimezoneAbbrev(eventTimezone)}</span>
             <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--text-tertiary)]">Time</span>
           </div>
           {rooms.map((room, index) => {
@@ -315,8 +329,8 @@ export function TimelineBuilderView({ onCreateTemplate }: TimelineBuilderViewPro
                   name: "",
                   category: "CONTENT",
                   roomId: room.id,
-                  startTime: scheduleDateTime(selectedDate, startMinutes),
-                  endTime: scheduleDateTime(selectedDate, startMinutes + 45),
+                  startTime: scheduleDateTime(selectedDate, startMinutes, eventTimezone),
+                  endTime: scheduleDateTime(selectedDate, startMinutes + 45, eventTimezone),
                 });
               }}
             >
@@ -328,7 +342,14 @@ export function TimelineBuilderView({ onCreateTemplate }: TimelineBuilderViewPro
               {daySessions
                 .filter((session) => session.room_id === room.id)
                 .map((session) => (
-                  <TimelineSession key={session.id} session={session} conflicts={conflicts} dayStart={bounds.start} pixelsPerMinute={pixelsPerMinute} />
+                  <TimelineSession
+                    key={session.id}
+                    session={session}
+                    conflicts={conflicts}
+                    dayStart={bounds.start}
+                    pixelsPerMinute={pixelsPerMinute}
+                    eventTimezone={eventTimezone}
+                  />
                 ))}
             </div>
           ))}

@@ -1,6 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  Activity, BarChart3, Bell, Building2, Calculator, ClipboardList,
+  Activity, BarChart3, Bell, Building2, Calculator, ClipboardList, Cloud,
   Code2, CreditCard, Database, FileSpreadsheet, FileText, Globe, Landmark,
   LayoutDashboard, Library, Mail, Palette, Settings, ShieldCheck,
   Terminal, Users,
@@ -25,10 +25,9 @@ export const COMMAND_CENTER_DESTINATIONS: CommandCenterDestination[] = [
   { label: "Create proposal", href: "/business/sales/proposals/create", group: "Commercial", keywords: ["document", "sales"], icon: FileText },
   { label: "CRM", href: "/business/crm", group: "Commercial", keywords: ["accounts", "contacts", "opportunities"], icon: Users },
   { label: "Pricing simulator", href: "/business/pricing/pricing-simulator", group: "Pricing", keywords: ["calculate", "estimate"], icon: Calculator },
+  { label: "Cloud plans", href: "/business/pricing/cloud-plans", group: "Pricing", keywords: ["workspace", "event", "emc", "capacity", "price book", "snapshot"], icon: Cloud },
+  { label: "EMC administration", href: "/business/pricing/emc", group: "Pricing", keywords: ["pooled capacity", "client workspaces", "transfers"], icon: Cloud },
   { label: "Pricing templates", href: "/business/pricing/templates", group: "Pricing", keywords: ["room", "registration", "srr"], icon: Library },
-  { label: "Plans", href: "/business/subscription/plans", group: "Licensing", keywords: ["subscription", "limits"], icon: CreditCard },
-  { label: "Add-ons", href: "/business/subscription/add-ons", group: "Licensing", keywords: ["entitlement", "catalog"], icon: CreditCard },
-  { label: "Entitlements", href: "/business/subscription/entitlements", group: "Licensing", keywords: ["grant", "activation", "snapshot"], icon: ShieldCheck },
   { label: "Invoices", href: "/finance/invoices", group: "Finance", keywords: ["billing", "reconciliation"], icon: FileSpreadsheet },
   { label: "Payments", href: "/finance/payments", group: "Finance", keywords: ["transactions", "reconciliation"], icon: CreditCard },
   { label: "Credit notes", href: "/finance/credit-notes", group: "Finance", keywords: ["refund", "adjustment"], icon: FileText },

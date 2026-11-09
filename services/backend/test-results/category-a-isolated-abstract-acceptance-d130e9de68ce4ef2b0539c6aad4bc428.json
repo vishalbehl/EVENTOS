@@ -1,0 +1,20 @@
+{
+  "status": "FAILED",
+  "environment": "local_isolated_rehearsal",
+  "run_id": "d130e9de68ce4ef2b0539c6aad4bc428",
+  "database": "category_a_restore_20261020_d130e9de68ce",
+  "backup_database": "category_a_restore_20261020_4eeff58ce5f1",
+  "backup_evidence_sha256": "68ddc0cff7625306cb388b92b85d7c2ed0e3ad54bfc6b3a3aa8e8936f1b78042",
+  "started_at": "2026-10-20T11:02:42.044645+00:00",
+  "application_workers_providers": "NOT_STARTED",
+  "production_acceptance": "NOT_RUN",
+  "fixture_artifact": "category-a-abstract-fixture-d130e9de68ce4ef2b0539c6aad4bc428.json",
+  "runtime_artifact": "category-a-abstract-writer-runtime-13bbd629911e4eca9cf28e9af5165a36.json",
+  "runtime_artifact_sha256": "c3a6c863f25a0c1074a7b31c1d5be230d36356a73fc3411d822198eea1a2243e",
+  "runtime_status": "FAILED",
+  "failed_stage": "restricted_business_commands",
+  "error_type": "AssertionError",
+  "final_clone_quarantined": true,
+  "completed_at": "2026-10-20T11:02:59.555519+00:00",
+  "probe_sha256": "3362d9c835744fa89ddec257ef573ebd27ff824f88f1a826bf984a7c816f0e28"
+}

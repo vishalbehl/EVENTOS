@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="6" time="31.616" timestamp="2026-10-20T22:36:22.127351+05:30" hostname="Vishal"><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[member-id]" time="17.415"><failure message="assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000021CD78FA270&gt;
+organization = &lt;Organization id=dbc7fa8c-cea1-4fd1-be50-e865ba16d779 slug=test-org-ac9d38a3&gt;
+organizer = &lt;User id=4f0b7eee-ed38-42d6-9232-8c0d08a906ea email=organizer-fb9ceb@test.com role=organiser&gt;
+identifier = 'id', restriction = 'member'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("identifier", ["id", "slug"])
+    @pytest.mark.parametrize("restriction", ["member", "unentitled_owner"])
+    async def test_global_template_detail_requires_same_action_as_list(db, organization, organizer,
+            identifier, restriction):
+        actor = organizer
+        if restriction == "member":
+            actor = User(organization_id=organization.id, email=f"catalogue-member-{uuid.uuid4().hex}@example.test",
+                first_name="Catalogue", last_name="Member", role="organiser", is_active=True)
+            db.add(actor)
+            await db.flush()
+            db.add(UserOrganizationMembership(organization_id=organization.id, user_id=actor.id,
+                org_role="member", accepted_at=datetime.now(timezone.utc), is_active=True))
+        source = FormTemplate(name="Shared catalogue admission fixture", slug=f"route-catalogue-{uuid.uuid4().hex}",
+            scope_type="GLOBAL", category_key="registration", fields=[], settings={})
+        db.add(source)
+        await db.commit()
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+    
+        async def identity():
+            return actor
+    
+        async def database():
+            async with TenantContextGuard.scoped(db, organization.id):
+                yield db
+    
+        app.dependency_overrides[get_current_user] = identity
+        app.dependency_overrides[get_db] = database
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            listing = await client.get("/api/v1/forms/templates")
+            assert listing.status_code == 403
+            detail = await client.get(f"/api/v1/forms/templates/{source.id if identifier == 'id' else source.slug}")
+&gt;           assert detail.status_code == 403
+E           assert 200 == 403
+E            +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests\test_catalogue_customer_route_admission.py:56: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[member-slug]" time="1.130"><failure message="assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000021CD834EC10&gt;
+organization = &lt;Organization id=3772a353-a445-4ee1-adf1-95388cb6aec0 slug=test-org-09b15123&gt;
+organizer = &lt;User id=8de51393-bd8a-4802-b033-e8536e4f6007 email=organizer-e63b36@test.com role=organiser&gt;
+identifier = 'slug', restriction = 'member'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("identifier", ["id", "slug"])
+    @pytest.mark.parametrize("restriction", ["member", "unentitled_owner"])
+    async def test_global_template_detail_requires_same_action_as_list(db, organization, organizer,
+            identifier, restriction):
+        actor = organizer
+        if restriction == "member":
+            actor = User(organization_id=organization.id, email=f"catalogue-member-{uuid.uuid4().hex}@example.test",
+                first_name="Catalogue", last_name="Member", role="organiser", is_active=True)
+            db.add(actor)
+            await db.flush()
+            db.add(UserOrganizationMembership(organization_id=organization.id, user_id=actor.id,
+                org_role="member", accepted_at=datetime.now(timezone.utc), is_active=True))
+        source = FormTemplate(name="Shared catalogue admission fixture", slug=f"route-catalogue-{uuid.uuid4().hex}",
+            scope_type="GLOBAL", category_key="registration", fields=[], settings={})
+        db.add(source)
+        await db.commit()
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+    
+        async def identity():
+            return actor
+    
+        async def database():
+            async with TenantContextGuard.scoped(db, organization.id):
+                yield db
+    
+        app.dependency_overrides[get_current_user] = identity
+        app.dependency_overrides[get_db] = database
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            listing = await client.get("/api/v1/forms/templates")
+            assert listing.status_code == 403
+            detail = await client.get(f"/api/v1/forms/templates/{source.id if identifier == 'id' else source.slug}")
+&gt;           assert detail.status_code == 403
+E           assert 200 == 403
+E            +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests\test_catalogue_customer_route_admission.py:56: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[unentitled_owner-id]" time="1.725"><failure message="assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000021CD834EFD0&gt;
+organization = &lt;Organization id=6ec85017-2d81-4bad-a4f9-4e52b116abf0 slug=test-org-6049ab68&gt;
+organizer = &lt;User id=d9ca7ea3-1a08-45d9-be1b-740e0eac57ea email=organizer-dfb825@test.com role=organiser&gt;
+identifier = 'id', restriction = 'unentitled_owner'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("identifier", ["id", "slug"])
+    @pytest.mark.parametrize("restriction", ["member", "unentitled_owner"])
+    async def test_global_template_detail_requires_same_action_as_list(db, organization, organizer,
+            identifier, restriction):
+        actor = organizer
+        if restriction == "member":
+            actor = User(organization_id=organization.id, email=f"catalogue-member-{uuid.uuid4().hex}@example.test",
+                first_name="Catalogue", last_name="Member", role="organiser", is_active=True)
+            db.add(actor)
+            await db.flush()
+            db.add(UserOrganizationMembership(organization_id=organization.id, user_id=actor.id,
+                org_role="member", accepted_at=datetime.now(timezone.utc), is_active=True))
+        source = FormTemplate(name="Shared catalogue admission fixture", slug=f"route-catalogue-{uuid.uuid4().hex}",
+            scope_type="GLOBAL", category_key="registration", fields=[], settings={})
+        db.add(source)
+        await db.commit()
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+    
+        async def identity():
+            return actor
+    
+        async def database():
+            async with TenantContextGuard.scoped(db, organization.id):
+                yield db
+    
+        app.dependency_overrides[get_current_user] = identity
+        app.dependency_overrides[get_db] = database
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            listing = await client.get("/api/v1/forms/templates")
+            assert listing.status_code == 403
+            detail = await client.get(f"/api/v1/forms/templates/{source.id if identifier == 'id' else source.slug}")
+&gt;           assert detail.status_code == 403
+E           assert 200 == 403
+E            +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests\test_catalogue_customer_route_admission.py:56: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_detail_requires_same_action_as_list[unentitled_owner-slug]" time="1.639"><failure message="assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000021CDAA72650&gt;
+organization = &lt;Organization id=630c2af5-73ba-47bd-8498-430f22610aab slug=test-org-da3d04d5&gt;
+organizer = &lt;User id=43139ece-721e-4e31-9d21-ce31d477fac9 email=organizer-0a7c3a@test.com role=organiser&gt;
+identifier = 'slug', restriction = 'unentitled_owner'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("identifier", ["id", "slug"])
+    @pytest.mark.parametrize("restriction", ["member", "unentitled_owner"])
+    async def test_global_template_detail_requires_same_action_as_list(db, organization, organizer,
+            identifier, restriction):
+        actor = organizer
+        if restriction == "member":
+            actor = User(organization_id=organization.id, email=f"catalogue-member-{uuid.uuid4().hex}@example.test",
+                first_name="Catalogue", last_name="Member", role="organiser", is_active=True)
+            db.add(actor)
+            await db.flush()
+            db.add(UserOrganizationMembership(organization_id=organization.id, user_id=actor.id,
+                org_role="member", accepted_at=datetime.now(timezone.utc), is_active=True))
+        source = FormTemplate(name="Shared catalogue admission fixture", slug=f"route-catalogue-{uuid.uuid4().hex}",
+            scope_type="GLOBAL", category_key="registration", fields=[], settings={})
+        db.add(source)
+        await db.commit()
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+    
+        async def identity():
+            return actor
+    
+        async def database():
+            async with TenantContextGuard.scoped(db, organization.id):
+                yield db
+    
+        app.dependency_overrides[get_current_user] = identity
+        app.dependency_overrides[get_db] = database
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            listing = await client.get("/api/v1/forms/templates")
+            assert listing.status_code == 403
+            detail = await client.get(f"/api/v1/forms/templates/{source.id if identifier == 'id' else source.slug}")
+&gt;           assert detail.status_code == 403
+E           assert 200 == 403
+E            +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests\test_catalogue_customer_route_admission.py:56: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_selected_event_detail_remains_available[id]" time="2.575" /><testcase classname="tests.test_catalogue_customer_route_admission" name="test_global_template_selected_event_detail_remains_available[slug]" time="5.077" /></testsuite></testsuites>

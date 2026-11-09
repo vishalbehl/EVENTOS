@@ -24,7 +24,11 @@ def test_event_query_service_is_read_only_and_cursor_bounded():
 
 def test_event_legacy_list_is_bounded_and_uses_explicit_projection():
     source = inspect.getsource(EventQueryService.list_offset)
-    assert "load_only" in source
+    summary_source = inspect.getsource(EventQueryService._summary_options)
+    summary_columns = inspect.getsource(EventQueryService._summary_columns)
+    assert "load_only" in summary_source
+    assert "selectinload(Event.portal_theme_setting)" in summary_source
+    assert "Event.organizer_details" in summary_columns
     assert "list_page" in source
     assert "maximum=100" in source
     assert "db.commit" not in source

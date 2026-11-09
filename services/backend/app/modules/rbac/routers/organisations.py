@@ -4,16 +4,16 @@ import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import List, Optional, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, func, select, update, and_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.dependencies import StepUpAuth, get_current_user, get_db, require_active_user
+from app.dependencies import StepUpAuth, get_current_user, get_db, require_active_user, require_step_up
 from app.core.tenant_context import TenantContextGuard
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.billing.services.admin_lifecycle_service import BillingAdminLifecycleService
@@ -22,11 +22,27 @@ from app.modules.identity.models.refresh_token import RefreshToken
 from app.modules.identity.models.user import User
 from app.modules.events.models.event import Event
 from app.modules.rbac.models.organization_member import OrganizationMember
+from app.modules.organiser.application.member_commands import OrganizationMemberCommandService
+from app.modules.rbac.services.access_foundation import accepted_member, lock_revision
+from app.modules.rbac.services.access_administration import (
+    current_administration_organization,
+    scoped_billing_reader,
+    scoped_member_administration,
+    scoped_organization_profile,
+)
+from app.modules.rbac.services.platform_permissions import (
+    platform_organization_reader, platform_organization_manager, platform_organization_provisioner,
+    platform_member_reader, platform_member_manager, platform_member_grantor,
+)
+from app.modules.rbac.services import invitations
+from app.modules.rbac.services.organization_foundation import initialize_new_organization
+from app.modules.rbac.services.default_teams import ensure_default_organization_teams
 from app.modules.rbac.models.user_assignment import UserEventAssignment
 from app.modules.platform.models.organization import Organization
 from app.modules.rbac.schemas.organization import OrganizationResponse, OrganizationUpdate
 from app.services import auth_service
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
+from app.modules.billing.models.cloud_commercial import CommercialAccount, CommercialAccountWorkspace
 
 from app.redis import coordination_client as redis_client
 import json
@@ -37,6 +53,7 @@ SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{1,48}[a-z0-9])?$")
 
 
 class SignupRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     org_name: str = Field(min_length=2, max_length=100)
     slug: str = Field(min_length=3, max_length=50)
     first_name: str = Field(min_length=1, max_length=100)
@@ -48,19 +65,48 @@ class SignupRequest(BaseModel):
 
 
 class InviteRequest(BaseModel):
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
     email: EmailStr
     org_role: str = Field(pattern="^(admin|member|billing_only)$")
 
 
 class AcceptInviteRequest(BaseModel):
-    token: str
-    first_name: str = Field(min_length=1, max_length=100)
-    last_name: str = Field(min_length=1, max_length=100)
-    password: str = Field(min_length=8)
+    model_config = {"extra": "forbid"}
+    token: str = Field(min_length=32, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+class InvitationPreviewResponse(BaseModel):
+    membership_id: uuid.UUID
+    organization_id: uuid.UUID
+    organization_name: str
+    org_role: str
+    version: int
+    expires_at: datetime
+
+
+class InvitationAcceptanceResponse(BaseModel):
+    membership_id: uuid.UUID
+    organization_id: uuid.UUID
+    organization_name: str
+    state: str
+    version: int
+    policy_revision: int
+
+
+class InvitationIssueResponse(BaseModel):
+    membership_id: uuid.UUID
+    version: int
+    expires_at: datetime
+    delivery_mode: str
+    message: str
+    invite_token: str | None = Field(default=None, repr=False)
+    replayed: bool
 
 
 class MemberRoleUpdate(BaseModel):
     org_role: str = Field(pattern="^(owner|admin|member|billing_only)$")
+    reason: str = Field(min_length=3, max_length=500)
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
 
 
 class PlatformOrgUpdate(BaseModel):
@@ -73,16 +119,14 @@ class PlatformOrgUpdate(BaseModel):
     billing_email: Optional[str] = None
     country: Optional[str] = None
     timezone: Optional[str] = None
-    plan: Optional[str] = Field(None, pattern="^(trial|basic|pro|professional|enterprise)$")
-    max_events: Optional[int] = Field(None, ge=1)
-    max_users: Optional[int] = Field(None, ge=1)
-    max_storage_gb: Optional[int] = Field(None, ge=1)
     is_active: Optional[bool] = None
     suspension_reason: Optional[str] = None
     reason: str = Field(..., min_length=12, max_length=1000)
 
 
 class PlatformOrganizationProvision(BaseModel):
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
+    organization_kind: Literal["NORMAL", "EMC", "CLIENT"] = "NORMAL"
     name: str = Field(min_length=2, max_length=255)
     slug: str = Field(min_length=3, max_length=50)
     owner_email: EmailStr
@@ -94,21 +138,25 @@ class PlatformOrganizationProvision(BaseModel):
 
 
 class PlatformMemberInvite(BaseModel):
+    model_config = {"extra": "forbid"}
     email: EmailStr
     org_role: str = Field(pattern="^(admin|member|billing_only)$")
     reason: str = Field(min_length=12, max_length=1000)
 
 
 class PlatformMemberUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
     org_role: str = Field(pattern="^(owner|admin|member|billing_only)$")
     reason: str = Field(min_length=12, max_length=1000)
 
 
 class PlatformReason(BaseModel):
+    model_config = {"extra": "forbid"}
     reason: str = Field(min_length=12, max_length=1000)
 
 
 class PlatformAssignmentUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
     permissions: dict = Field(default_factory=dict)
     reason: str = Field(min_length=12, max_length=1000)
 
@@ -118,35 +166,30 @@ def _clean_slug(slug: str) -> str:
     return slug.strip().lower()
 
 
-async def _org_role(db: AsyncSession, user: User) -> str:
-    if user.role == "super_admin" or getattr(user, "is_platform_admin", False):
-        return "owner"
-    result = await db.execute(
-        select(OrganizationMember.org_role).where(
-            OrganizationMember.organization_id == user.organization_id,
-            OrganizationMember.user_id == user.id,
-            OrganizationMember.is_active.is_(True),
-        )
-    )
-    role = result.scalar_one_or_none()
-    if role in {"organiser", "organizer", "super_admin"}:
-        return "owner"
-    return role or ("owner" if user.role in ("organiser", "organizer", "admin") else "member")
+async def _org_role(db: AsyncSession, user: User, organization_id: uuid.UUID | None = None) -> str:
+    member = await accepted_member(db, user.id, organization_id or user.organization_id)
+    return member.org_role
 
 
-async def _require_org_admin(db: AsyncSession, user: User) -> None:
-    if await _org_role(db, user) not in ("owner", "admin"):
+async def _require_org_admin(db: AsyncSession, user: User, organization_id: uuid.UUID | None = None) -> None:
+    if await _org_role(db, user, organization_id) not in ("owner", "admin"):
         raise HTTPException(status_code=403, detail="Owner or admin access required.")
 
 
-async def _require_owner(db: AsyncSession, user: User) -> None:
-    if await _org_role(db, user) != "owner":
+async def _require_owner(db: AsyncSession, user: User, organization_id: uuid.UUID | None = None) -> None:
+    if await _org_role(db, user, organization_id) != "owner":
         raise HTTPException(status_code=403, detail="Owner access required.")
 
 
-def _token_response(user: User, access_token: str, organization: Organization) -> dict:
+def _token_response(
+    user: User,
+    access_token: str,
+    refresh_token: str,
+    organization: Organization,
+) -> dict:
     return {
         "access_token": access_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer",
         "organization": OrganizationResponse.model_validate(organization).model_dump(mode="json"),
         "user": {
@@ -172,42 +215,21 @@ async def _usage(db: AsyncSession, org_id: uuid.UUID) -> tuple[int, int]:
     return int(events or 0), int(members or 0)
 
 
-async def _member_rows(db: AsyncSession, org_id: uuid.UUID) -> list[dict]:
-    result = await db.execute(
-        select(OrganizationMember, User).outerjoin(User, OrganizationMember.user_id == User.id).where(
-            OrganizationMember.organization_id == org_id
-        ).order_by(OrganizationMember.invited_at.asc())
+async def _member_rows(db: AsyncSession, org_id: uuid.UUID, *, response: Response | None = None,
+                       cursor: str | None = None, limit: int = 50) -> list[dict]:
+    from app.modules.organiser.application.queries import OrganiserMemberQueryService
+    page = await OrganiserMemberQueryService(db).list_members_cursor(
+        organization_id=org_id, cursor=cursor, limit=limit, search=None, member_status=None,
     )
-    rows = result.all()
-    user_ids = [user.id for _, user in rows if user]
-    assignments_by_user: dict[uuid.UUID, list[str]] = {}
-    if user_ids:
-        assignment_rows = await db.execute(
-            select(UserEventAssignment.user_id, UserEventAssignment.event_id)
-            .join(Event, Event.id == UserEventAssignment.event_id)
-            .where(
-                UserEventAssignment.user_id.in_(user_ids),
-                Event.organization_id == org_id,
-            )
-        )
-        for user_id, event_id in assignment_rows.all():
-            assignments_by_user.setdefault(user_id, []).append(str(event_id))
-    return [{
-        "id": str(member.id),
-        "user_id": str(user.id) if user else None,
-        "name": user.full_name if user else (member.invite_email or "Pending invite"),
-        "first_name": user.first_name if user else None,
-        "last_name": user.last_name if user else None,
-        "email": user.email if user else member.invite_email,
-        "user_role": user.role if user else None,
-        "org_role": member.org_role,
-        "accepted_at": member.accepted_at.isoformat() if member.accepted_at else None,
-        "invited_at": member.invited_at.isoformat() if member.invited_at else None,
-        "is_active": member.is_active,
-        "is_2fa_enabled": user.is_2fa_enabled if user else False,
-        "last_login_at": user.last_login_at.isoformat() if user and user.last_login_at else None,
-        "event_ids": assignments_by_user.get(user.id, []) if user else [],
-    } for member, user in rows]
+    if response is not None:
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Page-Limit"] = str(limit)
+        if page.next_cursor:
+            response.headers["X-Next-Cursor"] = page.next_cursor
+    elif page.next_cursor:
+        # Embedded legacy detail cannot silently present a partial directory.
+        raise HTTPException(503, detail={"code": "MEMBER_CURSOR_REQUIRED"})
+    return page.items
 
 
 @router.get("/auth/check-slug")
@@ -220,7 +242,8 @@ async def check_slug(slug: str = Query(..., min_length=3, max_length=50), db: As
 
 
 @router.post("/auth/signup", status_code=status.HTTP_201_CREATED)
-async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> dict:
+async def signup(payload: SignupRequest, response: Response, db: AsyncSession = Depends(get_db)) -> dict:
+    response.headers["Cache-Control"] = "no-store"
     from app.config import settings
 
     if settings.is_production and not settings.PUBLIC_DEMO_SIGNUP_ENABLED:
@@ -237,105 +260,92 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> 
     if await db.scalar(select(func.count(User.id)).where(User.email == email)):
         raise HTTPException(status_code=409, detail="Email is already registered.")
 
-    org = Organization(
-        name=payload.org_name,
-        slug=slug,
-        plan="trial",
-        plan_expires_at=datetime.now(timezone.utc) + timedelta(days=14),
-        country=payload.country.upper(),
-        timezone=payload.timezone,
-    )
-    db.add(org)
-    await db.flush()
-    user = User(
-        organization_id=org.id,
-        email=email,
-        password_hash=auth_service.hash_password(payload.password),
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-        role="organiser",
-        is_active=True,
-    )
-    db.add(user)
-    await db.flush()
-    db.add(OrganizationMember(organization_id=org.id, user_id=user.id, org_role="owner", accepted_at=datetime.now(timezone.utc)))
-
-    from app.modules.billing.models.subscription import OrganizationSubscription, SubscriptionPlan
-    from app.modules.billing.services.activation_service import ActivationService
-
-    demo_plan = await db.scalar(
-        select(SubscriptionPlan).where(
-            SubscriptionPlan.name == settings.PUBLIC_DEMO_PLAN_NAME,
-            SubscriptionPlan.is_active.is_(True),
-        )
-    )
-    if demo_plan is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "DEMO_PLAN_UNAVAILABLE", "message": "The public demo plan is unavailable."},
-        )
-
-    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.PUBLIC_DEMO_RETENTION_DAYS)
-    subscription = OrganizationSubscription(
-        organization_id=org.id,
-        plan_id=demo_plan.id,
-        status="TRIAL",
-        trial_ends_at=expires_at,
-        current_period_end=expires_at,
-        status_reason="PUBLIC_DEMO_SIGNUP",
-        status_changed_at=datetime.now(timezone.utc),
-        status_changed_by=user.id,
-    )
-    db.add(subscription)
-    await db.flush()
-    await ActivationService.ensure_subscription_grant(db, subscription)
-    access_token = auth_service.create_access_token(user)
-    await db.commit()
-    await db.refresh(org)
-    await db.refresh(user)
-    return _token_response(user, access_token, org)
+    org = Organization(id=uuid.uuid4(), organization_kind="NORMAL", is_platform_org=False,
+        name=payload.org_name, slug=slug, country=payload.country.upper(), timezone=payload.timezone)
+    try:
+        db.add(org)
+        await initialize_new_organization(db, org)
+        async with TenantContextGuard.scoped(db, org.id):
+            user = User(organization_id=org.id, email=email,
+                password_hash=auth_service.hash_password(payload.password),
+                first_name=payload.first_name, last_name=payload.last_name,
+                role="organiser", is_active=True)
+            db.add(user)
+            await db.flush()
+            owner_member = OrganizationMember(organization_id=org.id, user_id=user.id, org_role="owner",
+                accepted_at=datetime.now(timezone.utc))
+            db.add(owner_member)
+            await db.flush()
+            await ensure_default_organization_teams(
+                db, org.id, created_by=user.id, owner_member_id=owner_member.id,
+            )
+            account = CommercialAccount(account_type="ORGANIZER", owner_organization_id=org.id,
+                status="ACTIVE", currency="INR", country=payload.country.upper())
+            db.add(account)
+            await db.flush()
+            db.add(CommercialAccountWorkspace(commercial_account_id=account.id,
+                organization_id=org.id, workspace_role="OWNER", status="ACTIVE"))
+            db.add(AuditLog(organization_id=org.id, actor_user_id=user.id,
+                action_type="ORGANIZATION_FOUNDED", resource_type="organization", resource_id=org.id,
+                new_state={"organization_kind": "NORMAL", "owner_user_id": str(user.id),
+                    "acting_organization_id": str(org.id), "target_organization_id": str(org.id)},
+                change_diff={"reason": "Authenticated founder registration"}, is_sensitive=True))
+            session_id = uuid.uuid4()
+            refresh_token = auth_service.create_refresh_token_string()
+            await auth_service.persist_refresh_token(
+                db,
+                user,
+                refresh_token,
+                family_id=session_id,
+                active_organization_id=org.id,
+                acting_organization_id=org.id,
+            )
+            access_token = auth_service.create_access_token(
+                user,
+                session_id=session_id,
+                active_organization_id=org.id,
+                acting_organization_id=org.id,
+            )
+            await db.commit()
+            return _token_response(user, access_token, refresh_token, org)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(409, detail={"code": "SIGNUP_CONFLICT",
+            "message": "Registration conflicts with an existing record."}) from None
+    except Exception:
+        await db.rollback()
+        raise
 
 
-@router.post("/auth/accept-invite")
-async def accept_invite(payload: AcceptInviteRequest, db: AsyncSession = Depends(get_db)) -> dict:
-    result = await db.execute(select(OrganizationMember).where(OrganizationMember.invite_token == payload.token))
-    member = result.scalar_one_or_none()
-    if not member or not member.invite_email:
-        raise HTTPException(status_code=404, detail="Invitation not found.")
-    if member.invited_at < datetime.now(timezone.utc) - timedelta(days=7):
-        raise HTTPException(status_code=410, detail="Invitation has expired.")
-    if await db.scalar(select(func.count(User.id)).where(User.email == member.invite_email.lower())):
-        raise HTTPException(status_code=409, detail="Email is already registered.")
-    user = User(
-        organization_id=member.organization_id,
-        email=member.invite_email.lower(),
-        password_hash=auth_service.hash_password(payload.password),
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-        role="admin" if member.org_role == "admin" else "session_manager",
-        is_active=True,
-    )
-    db.add(user)
-    await db.flush()
-    member.user_id = user.id
-    member.accepted_at = datetime.now(timezone.utc)
-    member.invite_token = None
-    org = await db.get(Organization, member.organization_id)
-    access_token = auth_service.create_access_token(user)
-    await db.commit()
-    return _token_response(user, access_token, org)
+@router.post("/auth/invitation", response_model=InvitationPreviewResponse)
+async def invitation_preview(payload: AcceptInviteRequest, response: Response,
+    actor: User = Depends(require_active_user), db: AsyncSession = Depends(get_db)) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    return await invitations.preview(db, actor, payload.token)
 
 
-@router.get("/organisations/me")
+@router.post("/auth/accept-invite", response_model=InvitationAcceptanceResponse, dependencies=[Depends(require_step_up)])
+async def accept_invite(payload: AcceptInviteRequest, response: Response,
+    if_match: int | None = Header(None, alias="If-Match", ge=1),
+    key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    actor: User = Depends(require_active_user), db: AsyncSession = Depends(get_db)) -> dict:
+    if if_match is None:
+        raise HTTPException(428, detail={"code": "VERSION_REQUIRED"})
+    response.headers["Cache-Control"] = "no-store"
+    return await invitations.accept(db, actor, payload.token, if_match, key)
+
+
+@router.get("/organisations/me", dependencies=[Depends(scoped_organization_profile)])
 async def get_my_org(current_user: User = Depends(require_active_user), db: AsyncSession = Depends(get_db)) -> dict:
-    org = await db.get(Organization, current_user.organization_id)
+    organization_id = current_administration_organization()
+    org = await db.get(Organization, organization_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organisation not found.")
     event_count, member_count = await _usage(db, org.id)
     max_events = await EntitlementResolver.get_limit(db, org.id, "max_events")
     max_users = await EntitlementResolver.get_limit(db, org.id, "max_users")
     storage_quota_mb = await EntitlementResolver.get_limit(db, org.id, "storage_quota_mb")
-    subscription = await EntitlementResolver.get_active_subscription(db, org.id)
+    contract = await EntitlementResolver.get_active_contract(db, org.id)
     measured = [max_events, max_users, storage_quota_mb]
     availability = (
         "AVAILABLE"
@@ -345,14 +355,12 @@ async def get_my_org(current_user: User = Depends(require_active_user), db: Asyn
         else "UNAVAILABLE"
     )
     organization = OrganizationResponse.model_validate(org).model_dump(mode="json")
-    for legacy_field in ("plan", "plan_expires_at", "max_events", "max_users", "max_storage_gb"):
-        organization.pop(legacy_field, None)
     return {
         "organization": organization,
         "member_count": member_count,
         "event_count": event_count,
         "storage_used_gb": 0,
-        "plan_limits": {
+        "entitlement_limits": {
             "events": max_events,
             "users": max_users,
             "storage_gb": round(storage_quota_mb / 1024, 3) if storage_quota_mb is not None else None,
@@ -361,19 +369,20 @@ async def get_my_org(current_user: User = Depends(require_active_user), db: Asyn
             "availability": availability,
             "freshness_at": datetime.now(timezone.utc).isoformat(),
             "source": "CANONICAL_ENTITLEMENT_RESOLVER",
-            "subscription_id": str(subscription.id) if subscription else None,
-            "subscription_status": subscription.status if subscription else None,
-            "plan_id": str(subscription.plan_id) if subscription else None,
-            "plan_name": subscription.plan.name if subscription and subscription.plan else None,
+            "contract_id": str(contract.id) if contract else None,
+            "contract_status": contract.status if contract else None,
+            "offer_id": str(contract.offer_id) if contract else None,
+            "offer_name": contract.offer.name if contract and contract.offer else None,
         },
-        "org_role": await _org_role(db, current_user),
+        "org_role": await _org_role(db, current_user, organization_id),
     }
 
 
-@router.put("/organisations/me")
+@router.put("/organisations/me", dependencies=[Depends(scoped_organization_profile)])
 async def update_my_org(payload: OrganizationUpdate, current_user: User = Depends(require_active_user), db: AsyncSession = Depends(get_db)) -> dict:
-    await _require_org_admin(db, current_user)
-    org = await db.get(Organization, current_user.organization_id)
+    organization_id = current_administration_organization()
+    await _require_org_admin(db, current_user, organization_id)
+    org = await db.get(Organization, organization_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organisation not found.")
 
@@ -398,114 +407,47 @@ async def update_my_org(payload: OrganizationUpdate, current_user: User = Depend
     return {"organization": OrganizationResponse.model_validate(org).model_dump(mode="json")}
 
 
-@router.get("/organisations/me/members")
-async def list_members(current_user: User = Depends(require_active_user), db: AsyncSession = Depends(get_db)) -> list[dict]:
-    return await _member_rows(db, current_user.organization_id)
+@router.get("/organisations/me/members", dependencies=[Depends(scoped_member_administration)])
+async def list_members(response: Response, cursor: str | None = Query(None, max_length=2048),
+    limit: int = Query(50, ge=1, le=100), current_user: User = Depends(require_active_user), db: AsyncSession = Depends(get_db)) -> list[dict]:
+    return await _member_rows(db, current_administration_organization(), response=response, cursor=cursor, limit=limit)
 
 
-@router.post("/organisations/me/members/invite")
+@router.post("/organisations/me/members/invite", response_model=InvitationIssueResponse, dependencies=[Depends(scoped_member_administration)])
 async def invite_member(
     payload: InviteRequest,
+    response: Response,
     current_user: User = Depends(require_active_user),
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    await _require_org_admin(db, current_user)
-    org = await db.get(Organization, current_user.organization_id)
-    reservation = await UsageReservationService.reserve(
-        db,
-        organization_id=org.id,
-        event_id=None,
-        limit_key="max_users",
-        quantity=1,
-        unit="user",
-        idempotency_key=f"organization-member-invite:{idempotency_key}",
-        metadata={"invite_email": payload.email.lower()},
-    )
-    token = secrets.token_urlsafe(32)[:64]
-    member = OrganizationMember(
-        organization_id=org.id,
-        org_role=payload.org_role,
-        invited_by=current_user.id,
-        invite_token=token,
-        invite_email=payload.email.lower(),
-    )
-    db.add(member)
-    await db.flush()
-    await UsageReservationService.consume(
-        db,
-        reservation.id,
-        source="organization.members.invite",
-        actor_user_id=current_user.id,
-    )
-    db.add(AuditLog(
-        organization_id=org.id,
-        actor_user_id=current_user.id,
-        actor_role=current_user.role,
-        action_type="ORGANIZATION_MEMBER_INVITED",
-        resource_type="organization_member",
-        resource_id=member.id,
-        new_state={"invite_email": payload.email.lower(), "org_role": payload.org_role},
-        occurred_at=datetime.now(timezone.utc),
-    ))
-    await db.commit()
-    return {"message": "Invitation sent", "invite_token": token}
+    response.headers["Cache-Control"] = "no-store"
+    return await OrganizationMemberCommandService(db).create_invitation(
+        organization_id=current_administration_organization(), actor=current_user, email=str(payload.email),
+        org_role=payload.org_role, idempotency_key=idempotency_key)
 
 
-@router.put("/organisations/me/members/{member_id}")
-async def update_member(member_id: uuid.UUID, payload: MemberRoleUpdate, current_user: User = Depends(require_active_user), db: AsyncSession = Depends(get_db)) -> dict:
-    await _require_owner(db, current_user)
-    member = await db.get(OrganizationMember, member_id)
-    if not member or member.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="Member not found.")
-    if member.org_role == "owner" and payload.org_role != "owner":
-        owners = await db.scalar(select(func.count(OrganizationMember.id)).where(
-            OrganizationMember.organization_id == current_user.organization_id,
-            OrganizationMember.org_role == "owner",
-            OrganizationMember.is_active.is_(True),
-        ))
-        if int(owners or 0) <= 1:
-            raise HTTPException(status_code=400, detail="Cannot demote the last owner.")
-    member.org_role = payload.org_role
-    await db.commit()
-    return {"message": "Member updated"}
+@router.put("/organisations/me/members/{member_id}", dependencies=[Depends(scoped_member_administration)])
+async def update_member(member_id: uuid.UUID, payload: MemberRoleUpdate, if_match: int = Header(..., alias="If-Match", ge=1), current_user: User = Depends(require_active_user), db: AsyncSession = Depends(get_db)) -> dict:
+    organization_id = current_administration_organization()
+    await _require_owner(db, current_user, organization_id)
+    member = await OrganizationMemberCommandService(db).update_role(
+        organization_id=organization_id, member_id=member_id,
+        actor=current_user, org_role=payload.org_role, if_match=if_match, reason=payload.reason)
+    return {"message": "Member updated", "version": member.version}
 
 
-@router.delete("/organisations/me/members/{member_id}")
-async def remove_member(member_id: uuid.UUID, current_user: User = Depends(require_active_user), db: AsyncSession = Depends(get_db)) -> dict:
-    await _require_owner(db, current_user)
-    member = await db.get(OrganizationMember, member_id)
-    if not member or member.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="Member not found.")
-    if member.org_role == "owner":
-        raise HTTPException(status_code=400, detail="Cannot remove an owner.")
-    member.is_active = False
-    if member.user_id:
-        user = await db.get(User, member.user_id)
-        if user:
-            user.is_active = False
-        organization_event_ids = select(Event.id).where(
-            Event.organization_id == current_user.organization_id
-        )
-        await db.execute(
-            delete(UserEventAssignment).where(
-                UserEventAssignment.user_id == member.user_id,
-                UserEventAssignment.event_id.in_(organization_event_ids),
-            )
-        )
-        await db.execute(
-            update(RefreshToken)
-            .where(RefreshToken.user_id == member.user_id, RefreshToken.is_revoked.is_(False))
-            .values(is_revoked=True, revoked_at=datetime.now(timezone.utc))
-        )
-    await db.commit()
-    return {"message": "Member removed"}
+@router.delete("/organisations/me/members/{member_id}", dependencies=[Depends(scoped_member_administration)])
+async def remove_member(member_id: uuid.UUID, reason: str = Query(..., min_length=3, max_length=500), if_match: int = Header(..., alias="If-Match", ge=1), current_user: User = Depends(require_active_user), db: AsyncSession = Depends(get_db)) -> dict:
+    organization_id = current_administration_organization()
+    await _require_owner(db, current_user, organization_id)
+    member = await OrganizationMemberCommandService(db).update_status(
+        organization_id=organization_id, member_id=member_id,
+        actor=current_user, is_active=False, if_match=if_match, reason=reason)
+    return {"message": "Membership suspended", "version": member.version}
 
 
-async def _require_platform_admin(current_user: User = Depends(get_current_user)) -> User:
-    if not getattr(current_user, "is_platform_admin", False) and current_user.role != "super_admin" and not (current_user.organization and current_user.organization.slug == "Eventos"):
-        raise HTTPException(status_code=403, detail="Platform admin access required.")
-    return current_user
+_require_platform_admin = platform_organization_manager  # compatibility, no legacy wildcard
 
 
 @router.get("/platform/organisations")
@@ -513,16 +455,15 @@ async def platform_orgs(
     page: int = 1,
     per_page: int = 25,
     search: Optional[str] = None,
-    plan: Optional[str] = None,
+    offer: Optional[str] = None,
     is_active: Optional[bool] = None,
-    _: User = Depends(_require_platform_admin),
+    _: User = Depends(platform_organization_reader),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     query = select(Organization)
     if search:
         query = query.where(Organization.name.ilike(f"%{search}%") | Organization.slug.ilike(f"%{search}%") | Organization.billing_email.ilike(f"%{search}%"))
-    if plan:
-        query = query.where(Organization.plan == plan)
+    del offer
     if is_active is not None:
         query = query.where(Organization.is_active.is_(is_active))
     result = await db.execute(query.order_by(Organization.created_at.desc()).offset((page - 1) * per_page).limit(per_page))
@@ -543,12 +484,14 @@ async def platform_orgs(
 @router.post("/platform/organisations", status_code=status.HTTP_201_CREATED)
 async def platform_provision_org(
     payload: PlatformOrganizationProvision,
+    response: Response,
     step_up: StepUpAuth,
-    actor: User = Depends(_require_platform_admin),
+    actor: User = Depends(platform_organization_provisioner),
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     del step_up
+    response.headers["Cache-Control"] = "no-store"
     slug = _clean_slug(payload.slug)
     if not SLUG_RE.match(slug):
         raise HTTPException(status_code=422, detail="Slug must be 3-50 lowercase letters, numbers, or hyphens.")
@@ -556,11 +499,9 @@ async def platform_provision_org(
 
     try:
         async with TenantContextGuard.scoped(db, actor.organization_id):
-            await db.scalar(
-                select(Organization.id)
-                .where(Organization.id == actor.organization_id)
-                .with_for_update()
-            )
+            from app.modules.rbac.services.platform_permissions import platform_permission_authority
+            await lock_revision(db, actor.organization_id, write=False)
+            await platform_permission_authority(db, actor.id, "platform:organizations:provision")
             operation, replay = await BillingAdminLifecycleService._begin_operation(
                 db,
                 actor.organization_id,
@@ -575,6 +516,7 @@ async def platform_provision_org(
                     select(OrganizationMember).where(
                         OrganizationMember.organization_id == operation.result_ref_id,
                         OrganizationMember.org_role == "owner",
+                        func.lower(OrganizationMember.invite_email) == payload.owner_email.lower(),
                     )
                 )
             if org is None or member is None:
@@ -587,20 +529,20 @@ async def platform_provision_org(
                 "owner_invitation": {
                     "membership_id": str(member.id),
                     "email": member.invite_email,
-                    "token": member.invite_token,
+                    "token": None,
+                    "link_available": False,
                 },
                 "replayed": True,
             }
 
         organization_id = uuid.uuid4()
-        invitation_token = secrets.token_urlsafe(32)[:64]
         async with TenantContextGuard.scoped(db, organization_id):
             org = Organization(
                 id=organization_id,
+                organization_kind=payload.organization_kind,
+                is_platform_org=False,
                 name=payload.name.strip(),
                 slug=slug,
-                plan="trial",
-                plan_expires_at=datetime.now(timezone.utc) + timedelta(days=14),
                 country=payload.country.upper(),
                 timezone=payload.timezone,
             )
@@ -608,13 +550,19 @@ async def platform_provision_org(
                 organization_id=organization_id,
                 org_role="owner",
                 invited_by=actor.id,
-                invite_token=invitation_token,
                 invite_email=payload.owner_email.lower(),
                 invite_first_name=payload.owner_first_name.strip(),
                 invite_last_name=payload.owner_last_name.strip(),
             )
-            db.add_all([org, member])
+            invitation_token = invitations.issue_token(member)
+            await invitations.admission(actor.id, organization_id)
+            db.add(org)
+            await initialize_new_organization(db, org)
+            db.add(member)
             await db.flush()
+            await ensure_default_organization_teams(
+                db, organization_id, created_by=actor.id,
+            )
             db.add(AuditLog(
                 organization_id=organization_id,
                 actor_user_id=actor.id,
@@ -623,6 +571,7 @@ async def platform_provision_org(
                 resource_id=organization_id,
                 new_state={
                     "name": org.name,
+                    "organization_kind": org.organization_kind,
                     "slug": org.slug,
                     "owner_email": member.invite_email,
                     "membership_id": str(member.id),
@@ -630,10 +579,12 @@ async def platform_provision_org(
                 change_diff={"reason": payload.reason, "idempotency_key": idempotency_key},
                 is_sensitive=True,
             ))
+            await db.flush()
         async with TenantContextGuard.scoped(db, actor.organization_id):
             operation.status = "SUCCEEDED"
             operation.result_ref_type = "organization"
             operation.result_ref_id = organization_id
+            await db.flush()
         await db.commit()
         return {
             "organization": OrganizationResponse.model_validate(org).model_dump(mode="json"),
@@ -655,267 +606,149 @@ async def platform_provision_org(
 @router.get("/platform/organisations/{org_id}/members")
 async def platform_org_members(
     org_id: uuid.UUID,
-    _: User = Depends(_require_platform_admin),
+    response: Response,
+    cursor: str | None = Query(None, max_length=2048),
+    limit: int = Query(50, ge=1, le=100),
+    _: User = Depends(platform_member_reader),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     async with TenantContextGuard.scoped(db, org_id):
         if await db.get(Organization, org_id) is None:
             raise HTTPException(status_code=404, detail="Organisation not found.")
-        return await _member_rows(db, org_id)
+        return await _member_rows(db, org_id, response=response, cursor=cursor, limit=limit)
+
+
+@router.get("/platform/organisations/{org_id}/member-directory")
+async def platform_member_directory(
+    org_id: uuid.UUID, response: Response,
+    cursor: str | None = Query(None, max_length=2048), limit: int = Query(50, ge=1, le=100),
+    _: User = Depends(platform_member_reader), db: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.modules.organiser.application.queries import OrganiserMemberQueryService
+    response.headers["Cache-Control"] = "no-store"
+    async with TenantContextGuard.scoped(db, org_id):
+        if await db.get(Organization, org_id) is None:
+            raise HTTPException(404, detail={"code": "RESOURCE_NOT_FOUND"})
+        page = await OrganiserMemberQueryService(db).list_members_cursor(
+            organization_id=org_id, cursor=cursor, limit=limit, search=None, member_status=None)
+        return {"items": page.items, "next_cursor": page.next_cursor, "has_next": page.has_next}
 
 
 @router.post("/platform/organisations/{org_id}/members", status_code=status.HTTP_201_CREATED)
 async def platform_invite_org_member(
-    org_id: uuid.UUID,
-    payload: PlatformMemberInvite,
-    step_up: StepUpAuth,
-    actor: User = Depends(_require_platform_admin),
-    db: AsyncSession = Depends(get_db),
+    org_id: uuid.UUID, payload: PlatformMemberInvite, response: Response, step_up: StepUpAuth,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    actor: User = Depends(platform_member_manager), db: AsyncSession = Depends(get_db),
 ) -> dict:
     del step_up
+    response.headers["Cache-Control"] = "no-store"
     async with TenantContextGuard.scoped(db, org_id):
-        if await db.get(Organization, org_id) is None:
-            raise HTTPException(status_code=404, detail="Organisation not found.")
-        existing = await db.scalar(select(OrganizationMember).where(
-            OrganizationMember.organization_id == org_id,
-            func.lower(OrganizationMember.invite_email) == payload.email.lower(),
-            OrganizationMember.is_active.is_(True),
-        ))
-        if existing:
-            raise HTTPException(status_code=409, detail={"code": "MEMBERSHIP_EXISTS", "message": "An active membership or invitation already exists."})
-        member = OrganizationMember(
-            organization_id=org_id,
-            org_role=payload.org_role,
-            invited_by=actor.id,
-            invite_token=secrets.token_urlsafe(32)[:64],
-            invite_email=payload.email.lower(),
-        )
-        db.add(member)
-        await db.flush()
-        db.add(AuditLog(
-            organization_id=org_id,
-            actor_user_id=actor.id,
-            action_type="ORGANIZATION_MEMBER_INVITED",
-            resource_type="organization_member",
-            resource_id=member.id,
-            new_state={"email": member.invite_email, "org_role": member.org_role},
-            change_diff={"reason": payload.reason},
-            is_sensitive=True,
-        ))
-        await db.commit()
-        return {"membership_id": str(member.id), "email": member.invite_email, "invite_token": member.invite_token}
+        result = await OrganizationMemberCommandService(db, platform_administration=True).create_invitation(
+            organization_id=org_id, actor=actor, email=payload.email, org_role=payload.org_role,
+            idempotency_key=idempotency_key, reason=payload.reason)
+        return {**result, "email": payload.email}
+
+
+@router.post("/platform/organisations/{org_id}/members/{member_id}/invitation/resend")
+async def platform_resend_org_invitation(
+    org_id: uuid.UUID, member_id: uuid.UUID, payload: PlatformReason, response: Response,
+    step_up: StepUpAuth,
+    if_match: int | None = Header(None, alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    actor: User = Depends(platform_member_manager), db: AsyncSession = Depends(get_db),
+) -> dict:
+    del step_up
+    response.headers["Cache-Control"] = "no-store"
+    if if_match is None:
+        raise HTTPException(428, detail={"code": "PRECONDITION_REQUIRED"})
+    async with TenantContextGuard.scoped(db, org_id):
+        member, token = await OrganizationMemberCommandService(db, platform_administration=True).resend_invitation(
+            organization_id=org_id, member_id=member_id, actor=actor, if_match=if_match,
+            idempotency_key=idempotency_key, reason=payload.reason)
+        return {"membership_id": str(member.id), "version": member.version,
+            "invite_token": token, "replayed": token is None, "delivery_mode": "MANUAL"}
 
 
 @router.patch("/platform/organisations/{org_id}/members/{member_id}")
 async def platform_update_org_member(
-    org_id: uuid.UUID,
-    member_id: uuid.UUID,
-    payload: PlatformMemberUpdate,
+    org_id: uuid.UUID, member_id: uuid.UUID, payload: PlatformMemberUpdate, response: Response,
     step_up: StepUpAuth,
-    actor: User = Depends(_require_platform_admin),
-    db: AsyncSession = Depends(get_db),
+    if_match: int | None = Header(None, alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    actor: User = Depends(platform_member_manager), db: AsyncSession = Depends(get_db),
 ) -> dict:
     del step_up
+    response.headers["Cache-Control"] = "no-store"
+    if if_match is None:
+        raise HTTPException(428, detail={"code": "PRECONDITION_REQUIRED"})
     async with TenantContextGuard.scoped(db, org_id):
-        member = await db.scalar(select(OrganizationMember).where(
-            OrganizationMember.id == member_id,
-            OrganizationMember.organization_id == org_id,
-            OrganizationMember.is_active.is_(True),
-        ).with_for_update())
-        if member is None:
-            raise HTTPException(status_code=404, detail="Member not found.")
-        if member.org_role == "owner" and payload.org_role != "owner":
-            owners = await db.scalar(select(func.count(OrganizationMember.id)).where(
-                OrganizationMember.organization_id == org_id,
-                OrganizationMember.org_role == "owner",
-                OrganizationMember.is_active.is_(True),
-            ))
-            if int(owners or 0) <= 1:
-                raise HTTPException(status_code=409, detail={"code": "LAST_OWNER", "message": "The last active owner cannot be demoted."})
-        old_role = member.org_role
-        member.org_role = payload.org_role
-        db.add(AuditLog(
-            organization_id=org_id,
-            actor_user_id=actor.id,
-            action_type="ORGANIZATION_MEMBER_ROLE_CHANGED",
-            resource_type="organization_member",
-            resource_id=member.id,
-            old_state={"org_role": old_role},
-            new_state={"org_role": member.org_role},
-            change_diff={"reason": payload.reason},
-            is_sensitive=True,
-        ))
-        await db.commit()
-        return {"message": "Member role updated", "org_role": member.org_role}
+        member = await OrganizationMemberCommandService(db, platform_administration=True).update_role(
+            organization_id=org_id, member_id=member_id, actor=actor, org_role=payload.org_role,
+            if_match=if_match, reason=payload.reason, idempotency_key=idempotency_key)
+        return {"message": "Member role updated", "org_role": member.org_role, "version": member.version}
 
 
 @router.delete("/platform/organisations/{org_id}/members/{member_id}")
 async def platform_remove_org_member(
-    org_id: uuid.UUID,
-    member_id: uuid.UUID,
-    payload: PlatformReason,
+    org_id: uuid.UUID, member_id: uuid.UUID, payload: PlatformReason, response: Response,
     step_up: StepUpAuth,
-    actor: User = Depends(_require_platform_admin),
-    db: AsyncSession = Depends(get_db),
+    if_match: int | None = Header(None, alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    actor: User = Depends(platform_member_manager), db: AsyncSession = Depends(get_db),
 ) -> dict:
     del step_up
+    response.headers["Cache-Control"] = "no-store"
+    if if_match is None:
+        raise HTTPException(428, detail={"code": "PRECONDITION_REQUIRED"})
     async with TenantContextGuard.scoped(db, org_id):
-        member = await db.scalar(select(OrganizationMember).where(
-            OrganizationMember.id == member_id,
-            OrganizationMember.organization_id == org_id,
-            OrganizationMember.is_active.is_(True),
-        ).with_for_update())
-        if member is None:
-            raise HTTPException(status_code=404, detail="Member not found.")
-        if member.org_role == "owner":
-            raise HTTPException(status_code=409, detail={"code": "OWNER_REMOVAL_FORBIDDEN", "message": "Transfer or demote ownership before removal."})
-        member.is_active = False
-        revoked_sessions = 0
-        removed_assignments = 0
-        if member.user_id:
-            user = await db.get(User, member.user_id)
-            if user:
-                user.is_active = False
-            organization_event_ids = select(Event.id).where(Event.organization_id == org_id)
-            assignment_result = await db.execute(
-                delete(UserEventAssignment).where(
-                    UserEventAssignment.user_id == member.user_id,
-                    UserEventAssignment.event_id.in_(organization_event_ids),
-                )
-            )
-            removed_assignments = assignment_result.rowcount or 0
-            session_result = await db.execute(
-                update(RefreshToken)
-                .where(RefreshToken.user_id == member.user_id, RefreshToken.is_revoked.is_(False))
-                .values(is_revoked=True, revoked_at=datetime.now(timezone.utc))
-            )
-            revoked_sessions = session_result.rowcount or 0
-        db.add(AuditLog(
-            organization_id=org_id,
-            actor_user_id=actor.id,
-            action_type="ORGANIZATION_MEMBER_REMOVED",
-            resource_type="organization_member",
-            resource_id=member.id,
-            old_state={"is_active": True, "org_role": member.org_role},
-            new_state={"is_active": False},
-            change_diff={
-                "reason": payload.reason,
-                "sessions_revoked": revoked_sessions,
-                "event_assignments_removed": removed_assignments,
-            },
-            is_sensitive=True,
-        ))
-        await db.commit()
-        return {"message": "Member removed", "sessions_revoked": revoked_sessions, "event_assignments_removed": removed_assignments}
+        # Tenant revocation is not global identity deactivation. Preserve existing
+        # assignments/history; accepted active membership remains their live gate.
+        member = await OrganizationMemberCommandService(db, platform_administration=True).update_status(
+            organization_id=org_id, member_id=member_id, actor=actor, is_active=False,
+            if_match=if_match, reason=payload.reason, idempotency_key=idempotency_key)
+        return {"message": "Membership suspended", "version": member.version}
 
 
 @router.put("/platform/organisations/{org_id}/members/{member_id}/events/{event_id}")
 async def platform_assign_member_event(
-    org_id: uuid.UUID,
-    member_id: uuid.UUID,
-    event_id: uuid.UUID,
-    payload: PlatformAssignmentUpdate,
-    step_up: StepUpAuth,
+    org_id: uuid.UUID, member_id: uuid.UUID, event_id: uuid.UUID, payload: PlatformAssignmentUpdate,
+    response: Response, step_up: StepUpAuth,
+    if_match: int | None = Header(None, alias="If-Match", ge=1),
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
-    actor: User = Depends(_require_platform_admin),
-    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(platform_member_grantor), db: AsyncSession = Depends(get_db),
 ) -> dict:
     del step_up
+    response.headers["Cache-Control"] = "no-store"
+    if if_match is None:
+        raise HTTPException(428, detail={"code": "PRECONDITION_REQUIRED"})
     async with TenantContextGuard.scoped(db, org_id):
-        member = await db.scalar(select(OrganizationMember).where(
-            OrganizationMember.id == member_id,
-            OrganizationMember.organization_id == org_id,
-            OrganizationMember.is_active.is_(True),
-        ))
-        event = await db.scalar(select(Event).where(Event.id == event_id, Event.organization_id == org_id))
-        if member is None or member.user_id is None or event is None:
-            raise HTTPException(status_code=404, detail="Member or event not found.")
-        existing = await db.scalar(select(UserEventAssignment).where(
-            UserEventAssignment.user_id == member.user_id,
-            UserEventAssignment.event_id == event_id,
-        ).with_for_update())
-        reservation = None
-        if existing is None:
-            reservation = await UsageReservationService.reserve(
-                db,
-                organization_id=org_id,
-                event_id=event_id,
-                limit_key="max_event_team_members",
-                quantity=1,
-                unit="member",
-                idempotency_key=f"platform-event-assignment:{idempotency_key}",
-                metadata={"member_id": str(member_id), "user_id": str(member.user_id)},
-            )
-            existing = UserEventAssignment(user_id=member.user_id, event_id=event_id, permissions=payload.permissions)
-            db.add(existing)
-            action = "EVENT_WORKSPACE_MEMBER_ASSIGNED"
-        else:
-            existing.permissions = payload.permissions
-            action = "EVENT_WORKSPACE_ASSIGNMENT_UPDATED"
-        await db.flush()
-        if reservation is not None:
-            await UsageReservationService.consume(
-                db,
-                reservation.id,
-                source="command_center.event_assignments.create",
-                actor_user_id=actor.id,
-            )
-        db.add(AuditLog(
-            organization_id=org_id,
-            actor_user_id=actor.id,
-            action_type=action,
-            resource_type="user_event_assignment",
-            resource_id=existing.id,
-            new_state={"user_id": str(member.user_id), "event_id": str(event_id), "permissions": payload.permissions},
-            change_diff={"reason": payload.reason},
-            is_sensitive=True,
-        ))
-        await db.commit()
-        return {"assignment_id": str(existing.id), "event_id": str(event_id), "permissions": existing.permissions}
+        return await OrganizationMemberCommandService(db, platform_administration=True).set_platform_event_assignment(
+            organization_id=org_id, member_id=member_id, event_id=event_id, actor=actor,
+            permissions=payload.permissions, assigned=True, if_match=if_match,
+            reason=payload.reason, idempotency_key=idempotency_key)
 
 
 @router.delete("/platform/organisations/{org_id}/members/{member_id}/events/{event_id}")
 async def platform_unassign_member_event(
-    org_id: uuid.UUID,
-    member_id: uuid.UUID,
-    event_id: uuid.UUID,
-    payload: PlatformReason,
-    step_up: StepUpAuth,
-    actor: User = Depends(_require_platform_admin),
-    db: AsyncSession = Depends(get_db),
+    org_id: uuid.UUID, member_id: uuid.UUID, event_id: uuid.UUID, payload: PlatformReason,
+    response: Response, step_up: StepUpAuth,
+    if_match: int | None = Header(None, alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    actor: User = Depends(platform_member_grantor), db: AsyncSession = Depends(get_db),
 ) -> dict:
     del step_up
+    response.headers["Cache-Control"] = "no-store"
+    if if_match is None:
+        raise HTTPException(428, detail={"code": "PRECONDITION_REQUIRED"})
     async with TenantContextGuard.scoped(db, org_id):
-        member = await db.scalar(select(OrganizationMember).where(
-            OrganizationMember.id == member_id,
-            OrganizationMember.organization_id == org_id,
-        ))
-        if member is None or member.user_id is None:
-            raise HTTPException(status_code=404, detail="Member not found.")
-        assignment = await db.scalar(select(UserEventAssignment).where(
-            UserEventAssignment.user_id == member.user_id,
-            UserEventAssignment.event_id == event_id,
-        ))
-        if assignment is None:
-            raise HTTPException(status_code=404, detail="Event assignment not found.")
-        assignment_id = assignment.id
-        await db.delete(assignment)
-        db.add(AuditLog(
-            organization_id=org_id,
-            actor_user_id=actor.id,
-            action_type="EVENT_WORKSPACE_MEMBER_UNASSIGNED",
-            resource_type="user_event_assignment",
-            resource_id=assignment_id,
-            old_state={"user_id": str(member.user_id), "event_id": str(event_id)},
-            change_diff={"reason": payload.reason},
-            is_sensitive=True,
-        ))
-        await db.commit()
-        return {"message": "Event workspace assignment removed"}
+        return await OrganizationMemberCommandService(db, platform_administration=True).set_platform_event_assignment(
+            organization_id=org_id, member_id=member_id, event_id=event_id, actor=actor,
+            permissions={}, assigned=False, if_match=if_match,
+            reason=payload.reason, idempotency_key=idempotency_key)
 
 
-@router.get("/platform/organisations/{org_id}")
-async def platform_org_detail(org_id: uuid.UUID, _: User = Depends(_require_platform_admin), db: AsyncSession = Depends(get_db)) -> dict:
+@router.get("/platform/organisations/{org_id}", dependencies=[Depends(platform_member_reader)])
+async def platform_org_detail(org_id: uuid.UUID, _: User = Depends(platform_organization_reader), db: AsyncSession = Depends(get_db)) -> dict:
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organisation not found.")
@@ -942,14 +775,7 @@ async def platform_update_org(
     if not org:
         raise HTTPException(status_code=404, detail="Organisation not found.")
     changes = payload.model_dump(exclude_unset=True, exclude={"reason"})
-    governed_fields = {
-        "plan",
-        "max_events",
-        "max_users",
-        "max_storage_gb",
-        "is_active",
-        "suspension_reason",
-    }
+    governed_fields = {"is_active", "suspension_reason"}
     attempted_governed_fields = sorted(governed_fields.intersection(changes))
     if attempted_governed_fields:
         raise HTTPException(
@@ -991,668 +817,57 @@ async def platform_update_org(
 
 @router.post("/platform/organisations/{org_id}/impersonate")
 async def impersonate(org_id: uuid.UUID, _: User = Depends(_require_platform_admin), db: AsyncSession = Depends(get_db)) -> dict:
-    result = await db.execute(select(User).where(User.organization_id == org_id, User.is_active.is_(True)).order_by(User.created_at.asc()))
-    user = result.scalars().first()
-    if not user:
-        raise HTTPException(status_code=404, detail="No active user in this organisation.")
-    return {"access_token": auth_service.create_access_token(user)}
+    # A platform role cannot silently become a customer identity. Approved,
+    # scoped support sessions are a later category; never mint a normal login.
+    raise HTTPException(503, detail={"code": "SUPPORT_SESSION_REQUIRED",
+        "message": "This legacy impersonation route is disabled. Use an approved scoped support-access workflow."},
+        headers={"Cache-Control": "no-store"})
 
 
-class CalculatePriceRequest(BaseModel):
-    plan_name: str
-    is_custom: bool = False
-    custom_limits: Optional[dict[str, int]] = None
-    addon_keys: Optional[list[str]] = None
-    promo_code: Optional[str] = None
 
 
-async def _calculate_price_logic(
-    db: AsyncSession,
-    plan_name: str,
-    is_custom: bool,
-    custom_limits: Optional[dict[str, int]],
-    addon_keys: Optional[list[str]],
-    promo_code: Optional[str]
-) -> dict:
-    from app.modules.billing.models.subscription import SubscriptionPlan, Addon
-    
-    # 1. Fetch base plan
-    search_name = plan_name.strip().lower()
-    if search_name == "starter":
-        search_name = "basic"
-    elif search_name == "pro":
-        search_name = "professional"
-        
-    stmt = select(SubscriptionPlan).where(func.lower(SubscriptionPlan.name) == search_name)
-    plan = (await db.execute(stmt)).scalar_one_or_none()
-    if not plan:
-        raise HTTPException(status_code=404, detail=f"Plan '{plan_name}' not found.")
-        
-    base_price_per_event = float(plan.price_per_event or 0)
-    
-    # Quota additions
-    extra_quota_price_per_event = 0.0
-    number_of_events = 1
-    
-    limits_breakdown = []
-    
-    if is_custom and custom_limits:
-        number_of_events = max(1, custom_limits.get("max_events", 1))
-        
-        # Calculate extra users
-        if "max_users" in custom_limits:
-            target_users = custom_limits["max_users"]
-            base_users = plan.max_users or 0
-            if target_users > base_users:
-                extra = target_users - base_users
-                cost = extra * 1500.0
-                extra_quota_price_per_event += cost
-                limits_breakdown.append({"key": "max_users", "extra": extra, "cost": cost})
-                
-        # Calculate extra registrations
-        if "max_registrations" in custom_limits:
-            target_reg = custom_limits["max_registrations"]
-            base_reg = plan.max_registrations or 0
-            if target_reg > base_reg:
-                extra = target_reg - base_reg
-                cost = extra * 5.0
-                extra_quota_price_per_event += cost
-                limits_breakdown.append({"key": "max_registrations", "extra": extra, "cost": cost})
-
-        # Calculate extra speakers
-        if "max_speakers" in custom_limits:
-            target_speakers = custom_limits["max_speakers"]
-            base_speakers = plan.max_speakers or 0
-            if target_speakers > base_speakers:
-                extra = target_speakers - base_speakers
-                cost = extra * 100.0
-                extra_quota_price_per_event += cost
-                limits_breakdown.append({"key": "max_speakers", "extra": extra, "cost": cost})
-
-        # Calculate extra rooms
-        if "max_rooms" in custom_limits:
-            target_rooms = custom_limits["max_rooms"]
-            base_rooms = plan.max_rooms or 0
-            if target_rooms > base_rooms:
-                extra = target_rooms - base_rooms
-                cost = extra * 1000.0
-                extra_quota_price_per_event += cost
-                limits_breakdown.append({"key": "max_rooms", "extra": extra, "cost": cost})
-
-        # Calculate extra storage
-        if "max_storage_gb" in custom_limits:
-            target_storage = custom_limits["max_storage_gb"]
-            base_storage = max(1, (plan.storage_quota_mb or 0) // 1024)
-            if target_storage > base_storage:
-                extra = target_storage - base_storage
-                cost = extra * 200.0
-                extra_quota_price_per_event += cost
-                limits_breakdown.append({"key": "max_storage_gb", "extra": extra, "cost": cost})
-
-    # Addons pricing
-    addons_price_per_event = 0.0
-    addons_breakdown = []
-    if addon_keys:
-        for key in addon_keys:
-            addon_stmt = select(Addon).where(Addon.key == key)
-            addon = (await db.execute(addon_stmt)).scalar_one_or_none()
-            if addon:
-                if addon.included_in_plan and addon.included_in_plan.lower() == plan.name.lower():
-                    price = 0.0
-                else:
-                    price = float(addon.price_inr or 0)
-                
-                addons_price_per_event += price
-                addons_breakdown.append({"name": addon.name, "key": addon.key, "price": price})
-
-    # Subtotal
-    subtotal_per_event = base_price_per_event + extra_quota_price_per_event + addons_price_per_event
-    subtotal = subtotal_per_event * number_of_events
-    
-    # Promo code discount
-    discount = 0.0
-    discount_percent = 0
-    if promo_code:
-        code = promo_code.strip().upper()
-        if code == "EVENTOS50":
-            discount_percent = 50
-            discount = subtotal * 0.50
-        elif code == "WELCOME20":
-            discount_percent = 20
-            discount = subtotal * 0.20
-            
-    total = max(0.0, subtotal - discount)
-    
-    return {
-        "plan_name": plan.name,
-        "base_price_per_event": base_price_per_event,
-        "extra_quota_price_per_event": extra_quota_price_per_event,
-        "addons_price_per_event": addons_price_per_event,
-        "price_per_event": subtotal_per_event,
-        "number_of_events": number_of_events,
-        "subtotal": subtotal,
-        "discount": discount,
-        "discount_percent": discount_percent,
-        "total": total,
-        "limits_breakdown": limits_breakdown,
-        "addons_breakdown": addons_breakdown
-    }
-
-
-@router.post("/organisations/calculate-price")
-async def calculate_price(
-    payload: CalculatePriceRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_active_user)
-) -> dict:
-    """Calculate checkout price for subscription dynamically based on DB records."""
-    await _require_org_admin(db, current_user)
-    res = await _calculate_price_logic(
-        db,
-        plan_name=payload.plan_name,
-        is_custom=payload.is_custom,
-        custom_limits=payload.custom_limits,
-        addon_keys=payload.addon_keys,
-        promo_code=payload.promo_code
-    )
-    res["selected_plan_name"] = payload.plan_name
-    res["selected_addon_keys"] = payload.addon_keys or []
-    # Save to redis cart
-    cart_key = f"cart:{current_user.organization_id}"
-    await redis_client.set(cart_key, json.dumps(payload.model_dump()), ex=3600)
-    return res
-
-
-@router.get("/organisations/calculate-price")
-async def get_calculate_price(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_active_user)
-) -> dict:
-    """Fetch the current tentative billing cart from Redis."""
-    cart_key = f"cart:{current_user.organization_id}"
-    data = await redis_client.get(cart_key)
-    if data:
-        try:
-            payload_dict = json.loads(data)
-            result = await _calculate_price_logic(db, **payload_dict)
-            result["selected_plan_name"] = payload_dict["plan_name"]
-            result["selected_addon_keys"] = payload_dict.get("addon_keys") or []
-            return result
-        except Exception:
-            pass
-            
-    subscription = await EntitlementResolver.get_active_subscription(
-        db, current_user.organization_id
-    )
-    if not subscription or not subscription.plan:
-        return {
-            "availability": "UNAVAILABLE",
-            "reason_code": "CONTRACT_REQUIRED",
-            "selected_plan_name": None,
-            "selected_addon_keys": [],
-            "addons_breakdown": [],
-        }
-    result = await _calculate_price_logic(
-        db,
-        plan_name=subscription.plan.name,
-        is_custom=False,
-        custom_limits=None,
-        addon_keys=None,
-        promo_code=None,
-    )
-    result["selected_plan_name"] = subscription.plan.name
-    result["selected_addon_keys"] = []
-    result["availability"] = "AVAILABLE"
-    result["source"] = "ACTIVE_SUBSCRIPTION"
-    return result
-
-
-@router.get("/organisations/addons")
-async def list_available_addons(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_active_user)
-) -> list[dict]:
-    """List all active addons from the DB."""
-    from app.modules.billing.models.subscription import Addon
-    result = await db.execute(
-        select(Addon).where(Addon.is_active == True).order_by(Addon.name.asc())
-    )
-    addons = result.scalars().all()
-    return [
-        {
-            "id": str(addon.id),
-            "name": addon.name,
-            "key": addon.key,
-            "description": addon.description,
-            "addon_type": addon.addon_type,
-            "short_description": addon.short_description,
-            "image_url": addon.image_url,
-            "price_inr": float(addon.price_inr) if addon.price_inr is not None else None,
-            "min_price_inr": float(addon.min_price_inr) if addon.min_price_inr is not None else None,
-            "max_price_inr": float(addon.max_price_inr) if addon.max_price_inr is not None else None,
-            "billing_unit": addon.billing_unit,
-            "price_unit": addon.price_unit,
-            "final_price": float(addon.final_price) if addon.final_price is not None else None,
-            "available_for_plans": addon.available_for_plans,
-            "is_optional_for_plan": addon.is_optional_for_plan,
-            "included_in_plan": addon.included_in_plan,
-            "is_active": addon.is_active,
-            "inclusions": addon.inclusions or [],
-            "exclusions": addon.exclusions or [],
-            "consumables_cost": float(addon.consumables_cost) if addon.consumables_cost is not None else 0.0,
-            "template_types": addon.template_types or [],
-            "hardware_spec": addon.hardware_spec or [],
-            "staff_spec": addon.staff_spec or [],
-        }
-        for addon in addons
-    ]
-
-
-async def _organizer_plan_catalog_payload(
-    db: AsyncSession,
-    plan,
-) -> dict:
-    from app.modules.billing.services.plan_projection_service import PlanProjectionService
-
-    projection = await PlanProjectionService.project(db, plan)
-    allowed = {
-        key: item.get("allowed")
-        for key, item in projection["limits"].items()
-    }
-    enabled_feature_names = [
-        item["name"]
-        for item in projection["features"].values()
-        if item["enabled"]
-    ]
-    return {
-        "id": str(plan.id),
-        "name": plan.name,
-        "tagline": plan.tagline,
-        "description": plan.description,
-        "billing_model": plan.billing_model,
-        "currency": plan.currency,
-        "price_per_event": float(plan.price_per_event) if plan.price_per_event is not None else None,
-        "price_display": plan.price_display,
-        # Compatibility aliases are derived from the typed projection. They no
-        # longer read the legacy scalar columns directly.
-        **{
-            key: allowed.get(key)
-            for key in PlanProjectionService.LEGACY_LIMIT_FIELDS
-        },
-        "limits": allowed,
-        "limit_details": projection["limits"],
-        "feature_assignments": projection["assignments"],
-        "features": enabled_feature_names,
-        "availability": projection["availability"],
-        "source": projection["source"],
-        "legacy_compatibility_keys": projection["legacy_compatibility_keys"],
-        "is_popular": plan.is_popular,
-        "color_hex": plan.color_hex,
-        "version": plan.version,
-        "lifecycle_status": plan.lifecycle_status,
-    }
-
-
-@router.get("/organisations/plans/{plan_id}")
-async def get_plan_details(
-    plan_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_active_user)
-) -> dict:
-    """Fetch details of a single subscription plan by ID or name."""
-    from app.modules.billing.models.subscription import SubscriptionPlan
-    import uuid
-    
-    try:
-        plan_uuid = uuid.UUID(plan_id)
-        stmt = select(SubscriptionPlan).where(SubscriptionPlan.id == plan_uuid)
-    except ValueError:
-        stmt = select(SubscriptionPlan).where(SubscriptionPlan.name.ilike(plan_id))
-        
-    res = await db.execute(stmt)
-    p = res.scalars().first()
-    if not p:
-        raise HTTPException(status_code=404, detail="Plan not found")
-        
-    return await _organizer_plan_catalog_payload(db, p)
-
-
-@router.get("/organisations/addons/{addon_id}")
-async def get_addon_details(
-    addon_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_active_user)
-) -> dict:
-    """Fetch details of a single addon by ID or key."""
-    from app.modules.billing.models.subscription import Addon
-    import uuid
-    
-    try:
-        addon_uuid = uuid.UUID(addon_id)
-        stmt = select(Addon).where(Addon.id == addon_uuid)
-    except ValueError:
-        stmt = select(Addon).where(Addon.key == addon_id)
-        
-    res = await db.execute(stmt)
-    addon = res.scalars().first()
-    if not addon:
-        raise HTTPException(status_code=404, detail="Addon not found")
-        
-    return {
-        "id": str(addon.id),
-        "name": addon.name,
-        "key": addon.key,
-        "description": addon.description,
-        "addon_type": addon.addon_type,
-        "short_description": addon.short_description,
-        "image_url": addon.image_url,
-        "price_inr": float(addon.price_inr) if addon.price_inr is not None else None,
-        "min_price_inr": float(addon.min_price_inr) if addon.min_price_inr is not None else None,
-        "max_price_inr": float(addon.max_price_inr) if addon.max_price_inr is not None else None,
-        "billing_unit": addon.billing_unit,
-        "price_unit": addon.price_unit,
-        "final_price": float(addon.final_price) if addon.final_price is not None else None,
-        "available_for_plans": addon.available_for_plans,
-        "is_optional_for_plan": addon.is_optional_for_plan,
-        "included_in_plan": addon.included_in_plan,
-        "is_active": addon.is_active,
-        "inclusions": addon.inclusions or [],
-        "exclusions": addon.exclusions or [],
-        "consumables_cost": float(addon.consumables_cost) if addon.consumables_cost is not None else 0.0,
-        "template_types": addon.template_types or [],
-        "hardware_spec": addon.hardware_spec or [],
-        "staff_spec": addon.staff_spec or [],
-    }
-
-
-class SubscribeRequest(BaseModel):
-    plan_name: str
-    is_custom: bool = False
-    custom_limits: Optional[dict[str, int]] = None
-    addon_keys: Optional[list[str]] = None
-    promo_code: Optional[str] = None
-    billing_name: str
-    billing_email: EmailStr
-    billing_phone: str
-    gst_number: Optional[str] = None
-    cardholder_name: Optional[str] = None
-    card_number: Optional[str] = None
-    expiry: Optional[str] = None
-    cvv: Optional[str] = None
-
-
-class CommercialAccessRequestCreate(BaseModel):
-    event_id: Optional[uuid.UUID] = None
-    plan_name: str = Field(min_length=1, max_length=100)
-    addon_keys: list[str] = Field(default_factory=list, max_length=50)
-    billing_name: str = Field(min_length=2, max_length=180)
-    billing_email: EmailStr
-    billing_phone: str = Field(min_length=3, max_length=40)
-    gst_number: Optional[str] = Field(default=None, max_length=40)
-    reason: str = Field(min_length=12, max_length=2000)
-
-
-@router.post("/organisations/me/commercial-access-requests", status_code=status.HTTP_202_ACCEPTED)
-async def request_commercial_access(
-    payload: CommercialAccessRequestCreate,
-    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160),
-    current_user: User = Depends(require_active_user),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    """Request plan/add-on access without granting commercial rights in the portal."""
-    await _require_org_admin(db, current_user)
-    if not current_user.organization_id:
-        raise HTTPException(status_code=409, detail={"code": "ORGANIZATION_CONTEXT_REQUIRED"})
-
-    from app.modules.billing.models.subscription import Addon, SubscriptionPlan
-    from app.modules.platform.models.organization_console import CommercialAccessRequest
-
-    existing = await db.scalar(select(CommercialAccessRequest).where(
-        CommercialAccessRequest.organization_id == current_user.organization_id,
-        CommercialAccessRequest.idempotency_key == idempotency_key,
-    ))
-    if existing:
-        return {"id": existing.id, "status": existing.status, "version": existing.version}
-
-    if payload.event_id:
-        event = await db.scalar(select(Event).where(
-            Event.id == payload.event_id,
-            Event.organization_id == current_user.organization_id,
-        ))
-        if not event:
-            raise HTTPException(status_code=404, detail="Event not found")
-
-    plan = await db.scalar(select(SubscriptionPlan).where(
-        func.lower(SubscriptionPlan.name) == payload.plan_name.strip().lower(),
-        SubscriptionPlan.is_active.is_(True),
-        SubscriptionPlan.lifecycle_status == "PUBLISHED",
-    ))
-    if not plan:
-        raise HTTPException(status_code=404, detail="Published plan not found")
-
-    addon_keys = sorted(set(key.strip().upper() for key in payload.addon_keys if key.strip()))
-    addons = (await db.scalars(select(Addon).where(
-        Addon.key.in_(addon_keys),
-        Addon.is_active.is_(True),
-    ))).all() if addon_keys else []
-    found_addons = {addon.key: addon for addon in addons}
-    missing_addons = sorted(set(addon_keys) - set(found_addons))
-    if missing_addons:
-        raise HTTPException(status_code=422, detail={"code": "UNKNOWN_ADDON_KEYS", "keys": missing_addons})
-    incompatible = sorted(
-        addon.key for addon in addons
-        if addon.available_for_plans and plan.name not in addon.available_for_plans
-    )
-    if incompatible:
-        raise HTTPException(status_code=422, detail={"code": "INCOMPATIBLE_ADDONS", "keys": incompatible})
-
-    price_info = await _calculate_price_logic(
-        db,
-        plan_name=plan.name,
-        is_custom=False,
-        custom_limits=None,
-        addon_keys=addon_keys,
-        promo_code=None,
-    )
-    row = CommercialAccessRequest(
-        organization_id=current_user.organization_id,
-        event_id=payload.event_id,
-        requested_plan_id=plan.id,
-        requested_addon_keys=addon_keys,
-        billing_profile={
-            "name": payload.billing_name,
-            "email": str(payload.billing_email),
-            "phone": payload.billing_phone,
-            "gst_number": payload.gst_number,
-        },
-        quoted_amount=price_info.get("total"),
-        currency=getattr(plan, "currency", None) or "INR",
-        reason=payload.reason,
-        requested_by=current_user.id,
-        idempotency_key=idempotency_key,
-    )
-    db.add(row)
-    await db.flush()
-    db.add(AuditLog(
-        actor_user_id=current_user.id,
-        organization_id=current_user.organization_id,
-        action_type="COMMERCIAL_ACCESS_REQUESTED",
-        resource_type="commercial_access_request",
-        resource_id=row.id,
-        new_state={"plan_id": str(plan.id), "addon_keys": addon_keys, "event_id": str(payload.event_id) if payload.event_id else None},
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-        occurred_at=datetime.now(timezone.utc),
-    ))
-    await db.commit()
-    return {"id": row.id, "status": row.status, "version": row.version, "quoted_amount": row.quoted_amount, "currency": row.currency}
-
-
-@router.get("/organisations/me/commercial-access-requests")
-async def list_my_commercial_access_requests(
-    current_user: User = Depends(require_active_user),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    await _require_org_admin(db, current_user)
-    from app.modules.platform.models.organization_console import CommercialAccessRequest
-    rows = (await db.scalars(select(CommercialAccessRequest).where(
-        CommercialAccessRequest.organization_id == current_user.organization_id,
-    ).order_by(CommercialAccessRequest.created_at.desc()).limit(100))).all()
-    return {"items": [{
-        "id": row.id,
-        "event_id": row.event_id,
-        "requested_plan_id": row.requested_plan_id,
-        "requested_addon_keys": row.requested_addon_keys,
-        "quoted_amount": row.quoted_amount,
-        "currency": row.currency,
-        "status": row.status,
-        "decision_reason": row.decision_reason,
-        "version": row.version,
-        "created_at": row.created_at,
-        "updated_at": row.updated_at,
-    } for row in rows]}
-
-
-@router.post(
-    "/organisations/me/subscribe",
-    deprecated=True,
-    include_in_schema=False,
-)
-async def subscribe_organization(
-    payload: SubscribeRequest,
-    current_user: User = Depends(require_active_user),
-    db: AsyncSession = Depends(get_db)
-) -> dict:
-    """Subscribe current organization to a plan with custom limits, addons, and invoice logging."""
-    await _require_org_admin(db, current_user)
-    raise HTTPException(
-        status_code=409,
-        detail={
-            "code": "COMMAND_CENTER_APPROVAL_REQUIRED",
-            "message": "Organizer Portal cannot grant plans, add-ons, or limits. Submit a commercial access request for Command Center approval.",
-            "request_url": "/organisations/me/commercial-access-requests",
-        },
-    )
-
-
-@router.get("/organisations/plans")
-async def list_available_plans(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_active_user)
-) -> list[dict]:
-    """List available subscription plans for organization signup."""
-    from app.modules.billing.models.subscription import SubscriptionPlan
-    
-    result = await db.execute(
-        select(SubscriptionPlan).where(SubscriptionPlan.is_active == True).order_by(SubscriptionPlan.display_order.asc())
-    )
-    plans = result.scalars().all()
-    
-    return [await _organizer_plan_catalog_payload(db, plan) for plan in plans]
-
-
-@router.get("/organisations/features/matrix")
-async def get_org_features_matrix(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_active_user)
-):
-    """Get grouped feature catalog matrix for plan comparison (Organizer Facing)."""
-    from app.modules.platform.models.feature import FeatureCatalog
-    from app.modules.billing.models.subscription import SubscriptionPlan
-    from app.modules.billing.capability_registry import CATALOG_LIMIT_KEYS
-    from app.modules.billing.services.plan_projection_service import PlanProjectionService
-
-    stmt = select(FeatureCatalog).where(FeatureCatalog.is_active == True).order_by(
-        FeatureCatalog.category_order.asc(),
-        FeatureCatalog.feature_order.asc()
-    )
-    features = (await db.execute(stmt)).scalars().all()
-    
-    plans_stmt = select(SubscriptionPlan).where(SubscriptionPlan.is_active == True).order_by(SubscriptionPlan.display_order.asc())
-    plans = (await db.execute(plans_stmt)).scalars().all()
-    plans_map = {p.name.upper(): p for p in plans}
-    
-    projections = {
-        plan.id: await PlanProjectionService.project(db, plan)
-        for plan in plans
-    }
-    
-    categories = {}
-    for f in features:
-        cat = f.category or "General"
-        if cat not in categories:
-            categories[cat] = {
-                "id": cat,
-                "category": cat,
-                "category_name": cat.replace("_", " ").title(),
-                "features": []
-            }
-            
-        plan_values = {}
-        for p_name, p in plans_map.items():
-            projection = projections[p.id]
-            limit_key = CATALOG_LIMIT_KEYS.get(f.key)
-            if limit_key:
-                limit = projection["limits"].get(limit_key)
-                allowed = limit.get("allowed") if limit else None
-                if allowed is None:
-                    val = "Not configured"
-                elif limit_key == "storage_quota_mb":
-                    val = f"{allowed / 1024:g} GB"
-                else:
-                    val = f"Up to {allowed:,}"
-            else:
-                assignment = projection["features"].get(f.key)
-                if not assignment:
-                    val = "No"
-                elif assignment["value_type"] == "BOOLEAN":
-                    val = "Yes" if assignment["enabled"] else "No"
-                else:
-                    raw_value = assignment.get("value")
-                    val = str(raw_value) if raw_value not in (None, "") else "Not configured"
-            plan_values[p.name] = val # Using plan name as key for frontend mapping
-
-        categories[cat]["features"].append({
-            "id": str(f.id),
-            "key": f.key,
-            "name": f.name,
-            "label": f.name,
-            "description": f.description,
-            "plans": plan_values
-        })
-        
-    return {"categories": list(categories.values()), "plans": [{"key": p.name, "name": p.name} for p in plans]}
-
-
-@router.get("/organisations/me/billing-history")
+@router.get("/organisations/me/billing-history", dependencies=[Depends(scoped_billing_reader)])
 async def get_billing_history(
     current_user: User = Depends(require_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    """List subscription purchase history for the current organization."""
-    from app.modules.billing.models.subscription import SubscriptionTransaction
-    
-    stmt = (
-        select(SubscriptionTransaction)
-        .where(SubscriptionTransaction.organization_id == current_user.organization_id)
-        .order_by(SubscriptionTransaction.created_at.desc())
-    )
-    res = await db.execute(stmt)
-    transactions = res.scalars().all()
-    
-    return [
-        {
-            "id": str(t.id),
-            "plan_name": t.plan_name,
-            "amount_paid": float(t.amount),
-            "purchase_date": t.created_at.isoformat() if t.created_at else None,
-            "status": t.status,
-            "addons_purchased": t.addon_keys or [],
-            "event_name": "Workspace Subscription",
-            "actions": []
-        }
-        for t in transactions
-    ]
+    """List invoices and immutable commercial contract references."""
+    organization_id = current_administration_organization()
+    rows = (await db.execute(text("""
+        SELECT i.id, i.invoice_number, i.amount, i.gst_amount, i.total_amount_inr,
+               i.currency, i.status, i.issued_at, i.paid_at, i.event_id,
+               i.commercial_contract_id,
+               COALESCE(jsonb_agg(jsonb_build_object(
+                   'description', ii.description,
+                   'amount', ii.amount,
+                   'quantity', ii.quantity,
+                   'offer_code', ii.commercial_offer_code,
+                   'offer_version_id', ii.commercial_offer_version_id
+               ) ORDER BY ii.id) FILTER (WHERE ii.id IS NOT NULL), '[]'::jsonb) AS items
+        FROM commerce.invoices i
+        LEFT JOIN commerce.invoice_items ii ON ii.invoice_id = i.id
+        WHERE i.organization_id = :organization_id
+        GROUP BY i.id
+        ORDER BY i.issued_at DESC
+        LIMIT 100
+    """), {"organization_id": organization_id})).mappings().all()
+    return [{
+        "id": str(row["id"]),
+        "invoice_number": row["invoice_number"],
+        "amount": float(row["amount"] or 0),
+        "gst_amount": float(row["gst_amount"] or 0),
+        "total_amount_inr": float(row["total_amount_inr"] or 0),
+        "currency": row["currency"],
+        "status": row["status"],
+        "purchase_date": row["issued_at"].isoformat() if row["issued_at"] else None,
+        "paid_at": row["paid_at"].isoformat() if row["paid_at"] else None,
+        "event_id": str(row["event_id"]) if row["event_id"] else None,
+        "commercial_contract_id": str(row["commercial_contract_id"]) if row["commercial_contract_id"] else None,
+        "items": row["items"] or [],
+    } for row in rows]
+
+
+
 
 
 
@@ -1674,180 +889,100 @@ from app.modules.rbac.schemas.organization import (
 )
 from app.modules.rbac.services.health_service import OrganizationHealthService
 from app.modules.analytics.models.usage import OrganizationUsage
+from app.modules.platform.models.health import OrganizationHealth
 
 
 @router.get(
     "/superadmin/organisations",
     response_model=PaginatedOrgsResponse,
-    summary="Super Admin — Paginated enriched organization list",
+    summary="Super Admin - paginated commercial organization list",
     tags=["superadmin-organisations"],
 )
 async def superadmin_list_organisations(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
-    search: Optional[str] = Query(default=None, description="Filter by name, slug, or billing_email"),
-    plan: Optional[str] = Query(default=None, description="Filter by plan name (trial, basic, professional, enterprise)"),
-    status: Optional[str] = Query(default=None, description="Filter by subscription status (ACTIVE, TRIAL, SUSPENDED, EXPIRED)"),
-    country: Optional[str] = Query(default=None, description="Filter by country ISO code"),
-    sort_by: str = Query(default="created_at", description="Sort field: created_at | name | health_score | mrr"),
+    search: Optional[str] = Query(default=None),
+    offer: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    country: Optional[str] = Query(default=None),
+    sort_by: str = Query(default="created_at"),
     _: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ) -> PaginatedOrgsResponse:
-    """
-    Paginated, filterable, sortable organization list for the Super Admin registry.
-    Enriches each row with health score, live usage counts, subscription status, and MRR.
-    """
-    from app.modules.billing.models.subscription import (
-        OrganizationSubscription, SubscriptionPlan, SubscriptionTransaction,
-    )
-    from app.modules.platform.models.health import OrganizationHealth
-    from sqlalchemy import and_, or_, desc, asc
-
-    # ── Base query ─────────────────────────────────────────────
-    q = select(Organization)
-
+    del sort_by
+    filters = []
+    params: dict[str, object] = {}
     if search:
-        term = f"%{search}%"
-        q = q.where(
-            or_(
-                Organization.name.ilike(term),
-                Organization.slug.ilike(term),
-                Organization.billing_email.ilike(term),
-            )
-        )
-    if plan:
-        organizations_with_plan = (
-            select(OrganizationSubscription.organization_id)
-            .join(SubscriptionPlan, SubscriptionPlan.id == OrganizationSubscription.plan_id)
-            .where(SubscriptionPlan.name.ilike(plan))
-        )
-        q = q.where(Organization.id.in_(organizations_with_plan))
+        filters.append("(o.name ILIKE :search OR o.slug ILIKE :search OR o.billing_email ILIKE :search)")
+        params["search"] = f"%{search}%"
     if country:
-        q = q.where(Organization.country.ilike(country))
+        filters.append("o.country ILIKE :country")
+        params["country"] = country
+    if offer:
+        filters.append("(co.code ILIKE :offer OR co.display_name ILIKE :offer)")
+        params["offer"] = f"%{offer}%"
     if status:
-        # status is on OrganizationSubscription, handled post-fetch
-        pass
-
-    # Sort: name and created_at can be applied at SQL level
-    if sort_by == "name":
-        q = q.order_by(asc(Organization.name))
-    else:
-        q = q.order_by(desc(Organization.created_at))
-
-    # Count total (before pagination)
-    count_q = select(func.count(Organization.id))
-    if search:
-        term = f"%{search}%"
-        count_q = count_q.where(
-            or_(
-                Organization.name.ilike(term),
-                Organization.slug.ilike(term),
-                Organization.billing_email.ilike(term),
-            )
-        )
-    if plan:
-        count_q = count_q.where(Organization.id.in_(organizations_with_plan))
-    if country:
-        count_q = count_q.where(Organization.country.ilike(country))
-
-    total_unfiltered = (await db.scalar(count_q)) or 0
-
-    # Paginate
-    offset = (page - 1) * page_size
-    q = q.offset(offset).limit(page_size)
-    orgs = (await db.execute(q)).scalars().all()
-
-    # ── Enrich each org ────────────────────────────────────────
-    items: list[EnrichedOrgResponse] = []
-    for org in orgs:
-        # Subscription status
-        sub = (await db.execute(
-            select(OrganizationSubscription)
-            .options(selectinload(OrganizationSubscription.plan))
-            .where(OrganizationSubscription.organization_id == org.id)
-            .order_by(OrganizationSubscription.created_at.desc())
-            .limit(1)
-        )).scalar_one_or_none()
-        sub_status = sub.status if sub else "NOT_CONFIGURED"
-
-        # Filter by status if requested
-        if status and sub_status.upper() != status.upper():
-            continue
-
-        # Health (from cache table, no recompute on list)
-        health_rec = await db.get(OrganizationHealth, org.id)
-        health_score = health_rec.health_score if health_rec else None
-        health_status = health_rec.status if health_rec else "NOT_MEASURED"
-
-        # Usage
-        usage_rec = await db.get(OrganizationUsage, org.id)
-        storage_bytes = usage_rec.storage_used_bytes if usage_rec else None
-        user_count = usage_rec.active_users_count if usage_rec else None
-        event_count_val = usage_rec.active_events_count if usage_rec else None
-
-        # MRR: latest successful transaction amount
-        latest_txn = (await db.execute(
-            select(SubscriptionTransaction.amount)
-            .where(
-                SubscriptionTransaction.organization_id == org.id,
-                SubscriptionTransaction.status == "SUCCESS",
-            )
-            .order_by(desc(SubscriptionTransaction.created_at))
-            .limit(1)
-        )).scalar()
-        mrr = float(latest_txn) if latest_txn is not None else None
-
+        filters.append("cc.status = :status")
+        params["status"] = status
+    where = " AND ".join(filters) or "TRUE"
+    count = int(await db.scalar(text(f"""
+        SELECT COUNT(DISTINCT o.id)
+        FROM platform.organizations o
+        LEFT JOIN commerce.billing_accounts ca ON ca.owner_organization_id = o.id
+        LEFT JOIN commerce.plan_contracts cc ON cc.commercial_account_id = ca.id
+        LEFT JOIN commerce.contract_items ci ON ci.contract_id = cc.id
+        LEFT JOIN commerce.plans co ON co.id = ci.offer_id
+        WHERE {where}
+    """), params) or 0)
+    params.update({"offset": (page - 1) * page_size, "limit": page_size})
+    rows = (await db.execute(text(f"""
+        SELECT o.id, o.name, o.slug, o.logo_url, o.country, o.timezone, o.billing_email,
+               o.custom_domain, o.is_active, o.suspension_reason, o.created_at,
+               COALESCE(MAX(co.display_name), 'NOT_CONFIGURED') AS offer_name,
+               COALESCE(MAX(cc.status), 'NOT_CONFIGURED') AS contract_status,
+               COALESCE(MAX(ou.active_users_count), 0) AS user_count,
+               COALESCE(MAX(ou.active_events_count), 0) AS event_count,
+               COALESCE(MAX(ou.storage_used_bytes), 0) AS storage_used_bytes,
+               COALESCE(SUM(rm.mrr), 0) AS mrr
+        FROM platform.organizations o
+        LEFT JOIN commerce.billing_accounts ca ON ca.owner_organization_id = o.id
+        LEFT JOIN commerce.plan_contracts cc ON cc.commercial_account_id = ca.id
+        LEFT JOIN commerce.contract_items ci ON ci.contract_id = cc.id
+        LEFT JOIN commerce.plans co ON co.id = ci.offer_id
+        LEFT JOIN analytics.organization_usage ou ON ou.organization_id = o.id
+        LEFT JOIN commerce.revenue_metrics rm ON rm.organization_id = o.id
+             AND rm.period = TO_CHAR(NOW(), 'YYYY-MM')
+        WHERE {where}
+        GROUP BY o.id
+        ORDER BY o.created_at DESC, o.id DESC
+        OFFSET :offset LIMIT :limit
+    """), params)).mappings().all()
+    items = []
+    for row in rows:
+        health = await db.get(OrganizationHealth, row["id"])
         items.append(EnrichedOrgResponse(
-            id=org.id,
-            name=org.name,
-            slug=org.slug,
-            logo_url=org.logo_url,
-            plan=sub.plan.name if sub and sub.plan else "NOT_CONFIGURED",
-            country=org.country,
-            timezone=org.timezone,
-            billing_email=org.billing_email,
-            custom_domain=org.custom_domain,
-            is_active=org.is_active,
-            suspension_reason=org.suspension_reason,
-            created_at=org.created_at,
-            subscription_status=sub_status,
-            health_score=health_score,
-            health_status=health_status,
-            user_count=user_count,
-            event_count=event_count_val,
-            storage_used_bytes=storage_bytes,
-            mrr=mrr,
+            id=row["id"], name=row["name"], slug=row["slug"], logo_url=row["logo_url"],
+            offer_name=row["offer_name"], country=row["country"], timezone=row["timezone"],
+            billing_email=row["billing_email"], custom_domain=row["custom_domain"],
+            is_active=row["is_active"], suspension_reason=row["suspension_reason"],
+            created_at=row["created_at"], contract_status=row["contract_status"],
+            health_score=health.health_score if health else None,
+            health_status=health.status if health else "NOT_MEASURED",
+            user_count=int(row["user_count"] or 0), event_count=int(row["event_count"] or 0),
+            storage_used_bytes=int(row["storage_used_bytes"] or 0),
+            mrr=float(row["mrr"] or 0),
         ))
+    total_pages = max(1, (count + page_size - 1) // page_size)
+    return PaginatedOrgsResponse(items=items, total=count, page=page, page_size=page_size, total_pages=total_pages)
 
-    # Sort enriched items for health_score and mrr (cannot be done at SQL level)
-    if sort_by == "health_score":
-        items.sort(
-            key=lambda x: (x.health_score is not None, x.health_score or 0),
-            reverse=True,
-        )
-    elif sort_by == "mrr":
-        items.sort(
-            key=lambda x: (x.mrr is not None, x.mrr or 0),
-            reverse=True,
-        )
 
-    # Recalculate total accounting for status filter
-    total = len(items) if status else total_unfiltered
-    total_pages = max(1, (total + page_size - 1) // page_size)
 
-    return PaginatedOrgsResponse(
-        items=items,
-        total=total,
-        page=page,
-        page_size=page_size,
-        total_pages=total_pages,
-    )
 
 
 @router.get(
     "/superadmin/organisations/{org_id}/feature-overrides",
     response_model=List[FeatureOverrideItem],
-    summary="Super Admin — Get feature overrides for an organization",
+    summary="Super Admin - get explicit entitlement overrides",
     tags=["superadmin-organisations"],
 )
 async def superadmin_get_feature_overrides(
@@ -1855,80 +990,34 @@ async def superadmin_get_feature_overrides(
     _: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ) -> List[FeatureOverrideItem]:
-    """
-    Returns all features from the catalog with:
-    - The plan default (whether this org's current plan enables it)
-    - Any override set specifically for this org
-    - The effective resolved value
-
-    Joins:
-      platform.feature_catalog
-      billing.plan_features (for plan default)
-      billing.organization_feature_overrides (for org-specific override)
-    """
     from app.modules.platform.models.feature import FeatureCatalog
-    from app.modules.billing.models.subscription import (
-        OrganizationSubscription, PlanFeature, OrganizationFeature,
-    )
-
-    # Get org's current plan
-    sub = (await db.execute(
-        select(OrganizationSubscription)
-        .where(OrganizationSubscription.organization_id == org_id)
-        .order_by(OrganizationSubscription.created_at.desc())
-        .limit(1)
-    )).scalar_one_or_none()
-    plan_id = sub.plan_id if sub else None
-
-    # Load all features
-    features = (await db.execute(
-        select(FeatureCatalog).where(FeatureCatalog.is_active.is_(True)).order_by(
-            FeatureCatalog.category_order.asc(), FeatureCatalog.feature_order.asc()
-        )
-    )).scalars().all()
-
-    # Plan features enabled set
-    plan_enabled: set[uuid.UUID] = set()
-    if plan_id:
-        pf_rows = (await db.execute(
-            select(PlanFeature.feature_id).where(
-                PlanFeature.plan_id == plan_id, PlanFeature.enabled.is_(True)
-            )
-        )).scalars().all()
-        plan_enabled = set(pf_rows)
-
-    # Org-level overrides
-    org_overrides: dict[uuid.UUID, bool] = {}
-    ov_rows = (await db.execute(
-        select(OrganizationFeature).where(OrganizationFeature.organization_id == org_id)
-    )).scalars().all()
-    for ov in ov_rows:
-        org_overrides[ov.feature_id] = ov.is_enabled
-
-    result = []
-    for f in features:
-        plan_default = f.id in plan_enabled
-        override = org_overrides.get(f.id)  # None if not set
-        effective = override if override is not None else plan_default
-
-        result.append(FeatureOverrideItem(
-            feature_id=f.id,
-            feature_key=f.key,
-            feature_name=f.name,
-            category=f.category,
-            description=f.description,
-            is_addon=False,  # Could extend with Addon join if needed
-            plan_default=plan_default,
-            override=override,
-            effective_value=effective,
-        ))
-    return result
+    from app.modules.billing.models.commercial_support import OrganizationFeature
+    features = (await db.scalars(select(FeatureCatalog).where(
+        FeatureCatalog.is_active.is_(True)
+    ).order_by(FeatureCatalog.category_order.asc(), FeatureCatalog.feature_order.asc()))).all()
+    overrides = {
+        row.feature_id: row.is_enabled
+        for row in (await db.scalars(select(OrganizationFeature).where(
+            OrganizationFeature.organization_id == org_id
+        ))).all()
+    }
+    return [FeatureOverrideItem(
+        feature_id=feature.id,
+        feature_key=feature.key,
+        feature_name=feature.name,
+        category=feature.category,
+        description=feature.description,
+        is_addon=False,
+        offer_default=False,
+        override=overrides.get(feature.id),
+        effective_value=overrides.get(feature.id, False),
+    ) for feature in features]
 
 
 @router.put(
     "/superadmin/organisations/{org_id}/feature-overrides",
     response_model=FeatureOverrideItem,
-    summary="Super Admin — Upsert a feature override for an organization",
+    summary="Super Admin - update explicit entitlement override",
     tags=["superadmin-organisations"],
     deprecated=True,
     include_in_schema=False,
@@ -1939,93 +1028,33 @@ async def superadmin_upsert_feature_override(
     current_user: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ) -> FeatureOverrideItem:
-    """
-    Upsert a feature override for a specific organization.
-
-    Body: { feature_key, override: true | false | null }
-    - null → removes override, restores plan default
-    - true → force-enables regardless of plan
-    - false → force-disables regardless of plan
-    """
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail={
-            "code": "COMMAND_CENTER_APPROVAL_REQUIRED",
-            "message": (
-                "Direct Boolean feature overrides are retired. Create a typed "
-                "entitlement override request and obtain an independent approval."
-            ),
-            "request_url": f"/platform/organizations/{org_id}/console/override-requests",
-        },
-    )
-
     from app.modules.platform.models.feature import FeatureCatalog
-    from app.modules.billing.models.subscription import (
-        OrganizationSubscription, PlanFeature, OrganizationFeature,
-    )
-    from sqlalchemy import delete as sql_delete
-
-    # Resolve feature by key
-    feature = (await db.execute(
-        select(FeatureCatalog).where(FeatureCatalog.key == payload.feature_key)
-    )).scalar_one_or_none()
+    from app.modules.billing.models.commercial_support import OrganizationFeature
+    feature = await db.scalar(select(FeatureCatalog).where(
+        FeatureCatalog.key == payload.feature_key,
+        FeatureCatalog.is_active.is_(True),
+    ))
     if not feature:
         raise HTTPException(status_code=404, detail=f"Feature '{payload.feature_key}' not found.")
-
-    # Get plan default for this org
-    sub = (await db.execute(
-        select(OrganizationSubscription)
-        .where(OrganizationSubscription.organization_id == org_id)
-        .order_by(OrganizationSubscription.created_at.desc())
-        .limit(1)
-    )).scalar_one_or_none()
-    plan_default = False
-    if sub:
-        pf = (await db.execute(
-            select(PlanFeature).where(
-                PlanFeature.plan_id == sub.plan_id,
-                PlanFeature.feature_id == feature.id,
-                PlanFeature.enabled.is_(True),
-            )
-        )).scalar_one_or_none()
-        plan_default = pf is not None
-
+    existing = await db.scalar(select(OrganizationFeature).where(
+        OrganizationFeature.organization_id == org_id,
+        OrganizationFeature.feature_id == feature.id,
+    ))
     if payload.override is None:
-        # Remove the override entirely — revert to plan default
-        await db.execute(
-            sql_delete(OrganizationFeature).where(
-                OrganizationFeature.organization_id == org_id,
-                OrganizationFeature.feature_id == feature.id,
-            )
-        )
-        await db.commit()
-        override_val = None
-    else:
-        # Upsert the override
-        existing = (await db.execute(
-            select(OrganizationFeature).where(
-                OrganizationFeature.organization_id == org_id,
-                OrganizationFeature.feature_id == feature.id,
-            )
-        )).scalar_one_or_none()
-
         if existing:
-            existing.is_enabled = payload.override
-            existing.override_by = current_user.id
-            from datetime import datetime, timezone as tz
-            existing.override_at = datetime.now(tz.utc)
-        else:
-            db.add(OrganizationFeature(
-                organization_id=org_id,
-                feature_id=feature.id,
-                is_enabled=payload.override,
-                override_by=current_user.id,
-            ))
-        await db.commit()
-        override_val = payload.override
-
-    effective = override_val if override_val is not None else plan_default
-
+            await db.delete(existing)
+    elif existing:
+        existing.is_enabled = payload.override
+        existing.override_by = current_user.id
+        existing.override_at = datetime.now(timezone.utc)
+    else:
+        db.add(OrganizationFeature(
+            organization_id=org_id,
+            feature_id=feature.id,
+            is_enabled=payload.override,
+            override_by=current_user.id,
+        ))
+    await db.commit()
     return FeatureOverrideItem(
         feature_id=feature.id,
         feature_key=feature.key,
@@ -2033,10 +1062,13 @@ async def superadmin_upsert_feature_override(
         category=feature.category,
         description=feature.description,
         is_addon=False,
-        plan_default=plan_default,
-        override=override_val,
-        effective_value=effective,
+        offer_default=False,
+        override=payload.override,
+        effective_value=payload.override if payload.override is not None else False,
     )
+
+
+
 
 
 @router.get(

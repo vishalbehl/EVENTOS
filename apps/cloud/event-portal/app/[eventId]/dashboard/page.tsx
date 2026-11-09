@@ -11,7 +11,7 @@ import {
   Download, Award, Sparkles, Presentation, CreditCard, Tag,
   ShieldCheck, Wallet, Bookmark, Layers, Printer, Info, AlertTriangle, Lock
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -23,6 +23,8 @@ import {
 } from "@/components/ui/dialog";
 import { COUNTRY_DIAL_CODES, getDialCodeForCountry } from "@/lib/country-dial-codes";
 import { fallbackCountryStates, getStatesForCountry } from "@/lib/country-states";
+import { QRCodeSVG } from "qrcode.react";
+
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -91,6 +93,12 @@ export default function AttendeeExecutiveDashboard() {
 
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any>(null);
+
+  // Notification bar state
+  const [abstractCall, setAbstractCall] = useState<any>(null);
+  const [abstractBarDismissed, setAbstractBarDismissed] = useState(false);
+  const [reviewerBarDismissed, setReviewerBarDismissed] = useState(false);
+  const [eventsUser, setEventsUser] = useState<any>(null);
 
   // Profile Edit Modal State
   const [editing, setEditing] = useState(false);
@@ -214,6 +222,41 @@ export default function AttendeeExecutiveDashboard() {
   useEffect(() => {
     fetchDashboard();
   }, [fetchDashboard]);
+
+  // Load dismissed state from localStorage
+  useEffect(() => {
+    if (!eventId) return;
+    setAbstractBarDismissed(
+      localStorage.getItem(`portal_abstract_banner_dismissed_${eventId}`) === "true"
+    );
+    setReviewerBarDismissed(
+      localStorage.getItem(`portal_reviewer_banner_dismissed_${eventId}`) === "true"
+    );
+    // Load events_user for reviewer status check
+    try {
+      const eu = localStorage.getItem(`events_user_${eventId}`);
+      if (eu) setEventsUser(JSON.parse(eu));
+    } catch {}
+  }, [eventId]);
+
+  // Fetch abstract call data after dashboard loads
+  useEffect(() => {
+    if (!eventId) return;
+    fetch(`${API_BASE}/api/v1/programme/events/${eventId}/call-for-abstracts`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((call) => setAbstractCall(call))
+      .catch(() => {});
+  }, [eventId]);
+
+  const dismissAbstractBar = () => {
+    setAbstractBarDismissed(true);
+    try { localStorage.setItem(`portal_abstract_banner_dismissed_${eventId}`, "true"); } catch {}
+  };
+
+  const dismissReviewerBar = () => {
+    setReviewerBarDismissed(true);
+    try { localStorage.setItem(`portal_reviewer_banner_dismissed_${eventId}`, "true"); } catch {}
+  };
 
   // Handle saving updated profile details
   const handleSaveProfile = async () => {
@@ -675,13 +718,6 @@ export default function AttendeeExecutiveDashboard() {
       ctx.lineWidth = 1.5;
       ctx.strokeRect(110, 240, 220, 220);
 
-      // Standard Black on White QR Code Image (no color bleeding)
-      const qrImg = new Image();
-      qrImg.crossOrigin = "Anonymous";
-      qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&bgcolor=FFFFFF&color=000000&data=${encodeURIComponent(
-        regno
-      )}`;
-      
       const finalizeDownload = () => {
         ctx.fillStyle = "#64748b";
         ctx.font = "11px sans-serif";
@@ -710,13 +746,25 @@ export default function AttendeeExecutiveDashboard() {
         toast.success("Official Entry Pass image downloaded!");
       };
 
-      qrImg.onload = () => {
-        ctx.drawImage(qrImg, 120, 250, 200, 200);
+      const qrSvg = document.getElementById("entry-pass-qr-svg");
+      if (qrSvg) {
+        const svgData = new XMLSerializer().serializeToString(qrSvg);
+        const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+        const blobUrl = URL.createObjectURL(svgBlob);
+        const qrImg = new Image();
+        qrImg.onload = () => {
+          ctx.drawImage(qrImg, 120, 250, 200, 200);
+          URL.revokeObjectURL(blobUrl);
+          finalizeDownload();
+        };
+        qrImg.onerror = () => {
+          URL.revokeObjectURL(blobUrl);
+          finalizeDownload();
+        };
+        qrImg.src = blobUrl;
+      } else {
         finalizeDownload();
-      };
-      qrImg.onerror = () => {
-        finalizeDownload();
-      };
+      }
     } catch {
       toast.error("Failed to generate pass image.");
     }
@@ -737,6 +785,11 @@ export default function AttendeeExecutiveDashboard() {
       const sec = typeof window !== "undefined"
         ? getComputedStyle(document.documentElement).getPropertyValue("--sec").trim() || "#8b5cf6"
         : "#8b5cf6";
+
+      const qrSvg = document.getElementById("entry-pass-qr-svg");
+      const qrSvgHtml = qrSvg
+        ? new XMLSerializer().serializeToString(qrSvg)
+        : `<img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&bgcolor=FFFFFF&color=000000&data=${encodeURIComponent(regno)}" alt="QR code" />`;
 
       printWindow.document.write(`
         <!DOCTYPE html>
@@ -816,9 +869,10 @@ export default function AttendeeExecutiveDashboard() {
               .qr-box {
                 display: flex;
                 justify-content: center;
+                align-items: center;
                 margin-bottom: 16px;
               }
-              .qr-box img {
+              .qr-box svg, .qr-box img {
                 width: 180px;
                 height: 180px;
                 border-radius: 12px;
@@ -848,9 +902,7 @@ export default function AttendeeExecutiveDashboard() {
                 <div class="role-badge">${role}</div>
                 <div class="reg-box">REG #: ${regno}</div>
                 <div class="qr-box">
-                  <img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&bgcolor=FFFFFF&color=000000&data=${encodeURIComponent(
-                    regno
-                  )}" />
+                  ${qrSvgHtml}
                 </div>
                 <div class="instruction">
                   Present this pass at the registration desk for check-in and instant badge printing.
@@ -974,11 +1026,15 @@ export default function AttendeeExecutiveDashboard() {
   }
 
   const isPaid = (
-    participant?.paid_status === "Paid" ||
-    payment?.status === "completed" ||
-    data?.registration?.paid_status === "Paid" ||
-    data?.registration?.registration_data?.paid_status === "Paid"
+    ["paid", "free", "complimentary", "waived", "sponsored", "confirmed", "settled"].includes((participant?.paid_status || "").toLowerCase()) ||
+    ["paid", "free", "complimentary", "waived", "sponsored", "confirmed", "settled"].includes((data?.registration?.paid_status || "").toLowerCase()) ||
+    ["paid", "free", "complimentary", "waived", "sponsored", "confirmed", "settled"].includes((data?.registration?.registration_data?.paid_status || "").toLowerCase()) ||
+    ["completed", "success", "paid", "settled"].includes((payment?.status || "").toLowerCase()) ||
+    (participant?.status || "").toLowerCase() === "confirmed" ||
+    (registration?.status || "").toLowerCase() === "confirmed" ||
+    (basePrice === 0 && Boolean(regno))
   );
+
 
   const paymentAmount = payment?.amount
     ? `${payment.currency || currency} ${Number(payment.amount).toLocaleString("en-IN")}`
@@ -998,6 +1054,115 @@ export default function AttendeeExecutiveDashboard() {
     <div className="min-h-screen pb-16 bg-transparent text-[var(--text)] transition-colors duration-200 relative z-10">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-8 space-y-8">
         
+        {/* ── Notification Bars ───────────────────────────────────────────────── */}
+        {(() => {
+          const isReviewer =
+            eventsUser?.is_reviewer === true &&
+            (eventsUser?.reviewer_status === "ACCEPTED" || eventsUser?.reviewer_status === "ACTIVE");
+
+          const abstractIsOpen =
+            abstractCall !== null &&
+            (!abstractCall.closes_at || new Date(abstractCall.closes_at).getTime() > Date.now());
+
+          const abstractDeadline = abstractCall?.closes_at
+            ? new Date(abstractCall.closes_at).toLocaleDateString("en-IN", {
+                day: "2-digit",
+                month: "long",
+                year: "numeric",
+              })
+            : null;
+
+          return (
+            <div className="space-y-2">
+              {/* Abstract Submission Open Bar */}
+              {abstractIsOpen && !abstractBarDismissed && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl border border-[var(--sec)]/25 bg-[var(--sec)]/10"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-xl bg-[var(--sec)]/15 border border-[var(--sec)]/20 flex items-center justify-center shrink-0">
+                      <FileText className="w-4 h-4 text-[var(--sec)]" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-xs font-black text-[var(--text)] block leading-tight">
+                        Abstract Submission Open
+                      </span>
+                      <span className="text-[11px] font-medium text-[var(--muted)] leading-tight">
+                        {abstractDeadline
+                          ? `Submit your research paper before the deadline — ${abstractDeadline}`
+                          : "Submit your research paper for peer review and conference presentation."}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/${eventId}/call-for-abstracts`)}
+                      className="h-8 px-3 rounded-xl text-[11px] font-black uppercase tracking-wider text-white bg-[var(--sec)] hover:opacity-90 flex items-center gap-1.5 cursor-pointer transition-all"
+                    >
+                      <span>Submit Now</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={dismissAbstractBar}
+                      className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--bg-surface-2)] transition-all cursor-pointer"
+                      title="Dismiss"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Reviewer Center Bar */}
+              {isReviewer && !reviewerBarDismissed && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl border border-indigo-500/25 bg-indigo-500/10"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-xl bg-indigo-500/15 border border-indigo-500/20 flex items-center justify-center shrink-0">
+                      <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-xs font-black text-[var(--text)] block leading-tight">
+                        Reviewer Assignment Active
+                      </span>
+                      <span className="text-[11px] font-medium text-[var(--muted)] leading-tight">
+                        You have abstracts assigned for peer review. Access your Reviewer Center to submit evaluations.
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/${eventId}/review`)}
+                      className="h-8 px-3 rounded-xl text-[11px] font-black uppercase tracking-wider text-white bg-indigo-500 hover:opacity-90 flex items-center gap-1.5 cursor-pointer transition-all"
+                    >
+                      <span>Open Center</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={dismissReviewerBar}
+                      className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--bg-surface-2)] transition-all cursor-pointer"
+                      title="Dismiss"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* ── Top Welcome Greeting Banner + Top-Right Edit Button ─────────────── */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-left">
           <div className="space-y-1">
@@ -1114,13 +1279,16 @@ export default function AttendeeExecutiveDashboard() {
                   
                   {/* Pass QR Box or Locked Pass Box */}
                   {isPaid ? (
-                    <div className="p-3 bg-white rounded-2xl border-2 border-gray-200 shadow-md shrink-0">
-                      <img
-                        src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&bgcolor=FFFFFF&color=000000&data=${encodeURIComponent(
-                          regno
-                        )}`}
-                        alt={`QR code for ${regno}`}
-                        className="w-36 h-36 object-contain block bg-white"
+                    <div className="p-3 bg-white rounded-2xl border-2 border-gray-200 shadow-md shrink-0 flex items-center justify-center w-36 h-36">
+                      <QRCodeSVG
+                        id="entry-pass-qr-svg"
+                        value={regno || "ATTENDEE"}
+                        size={120}
+                        level="H"
+                        includeMargin={false}
+                        bgColor="#FFFFFF"
+                        fgColor="#000000"
+                        className="w-full h-full block"
                       />
                     </div>
                   ) : (
@@ -1139,7 +1307,7 @@ export default function AttendeeExecutiveDashboard() {
                       <h2 className="text-xl md:text-2xl font-black text-[var(--text)] uppercase tracking-tight truncate">
                         {attendeeName}
                       </h2>
-                      <span className="inline-block px-3 py-1 rounded-lg bg-gradient-to-r from-[var(--pri)]/15 to-[var(--sec)]/15 text-[var(--text)] border border-[var(--pri)]/30 text-[10px] font-black uppercase tracking-wider">
+                      <span className="inline-block px-3 py-1 rounded-lg bg-[var(--pri)]/15 text-[var(--pri)] border border-[var(--pri)]/30 text-[10px] font-black uppercase tracking-wider">
                         {roleName || "DELEGATE"}
                       </span>
                     </div>
@@ -1785,8 +1953,8 @@ export default function AttendeeExecutiveDashboard() {
       {/* ── DIALOG: PAYMENT RECEIPT / TAX INVOICE PREVIEW ──────────────────── */}
       <Dialog open={receiptModalOpen} onOpenChange={setReceiptModalOpen}>
         <DialogContent className="max-w-2xl rounded-[28px] bg-[var(--card)] border-2 border-[var(--border-default)] p-6 md:p-8 space-y-6 overflow-hidden">
-          {/* Top Gradient Accent Stripe */}
-          <div className="h-1.5 -mx-6 -mt-6 sm:-mx-8 sm:-mt-8 rounded-t-[26px] bg-gradient-to-r from-[var(--pri)] to-[var(--sec)]" />
+          {/* Top Accent Stripe */}
+          <div className="h-1.5 -mx-6 -mt-6 sm:-mx-8 sm:-mt-8 rounded-t-[26px] bg-[var(--pri)]" />
 
           <DialogHeader>
             <DialogTitle className="text-xl font-black text-[var(--text)] flex items-center gap-2">
@@ -1800,7 +1968,7 @@ export default function AttendeeExecutiveDashboard() {
 
           {/* Receipt Preview Box */}
           <div className="p-6 rounded-2xl bg-[var(--bg-surface-2)] border-2 border-[var(--border-default)] space-y-6 text-left relative overflow-hidden">
-            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[var(--pri)] to-[var(--sec)]" />
+            <div className="absolute top-0 left-0 right-0 h-1 bg-[var(--pri)]" />
             <div className="flex items-start justify-between border-b border-[var(--border-default)] pb-4 pt-1">
               <div>
                 <h3 className="font-black text-base text-[var(--text)]">{eventName}</h3>

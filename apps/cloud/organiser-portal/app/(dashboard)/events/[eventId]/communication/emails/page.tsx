@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
-import { getCampaigns, Campaign } from "@/services/email-service";
-import { apiClient } from "@/lib/api-client";
+import { useState, use } from "react";
+import type { Campaign } from "@/services/email-service";
+import { useCampaignPage } from "@/hooks/useCommunicationPages";
+import { usePermissions } from "@/hooks/usePermissions";
+import { useAuthStore } from "@/store/use-auth-store";
+import { useRetryAfter } from "@/hooks/useRetryAfter";
+import type { ApiError } from "@/lib/api-client";
 
 // ===== Components =====
 import CampaignDashboard from "@/components/organizer/emails/dashboard/CampaignDashboard";
@@ -19,48 +23,36 @@ type InnerTabType = "dashboard" | "sent" | "campaigns";
 export default function UnifiedEmailPage({ params: paramsPromise }: { params: Promise<{ eventId: string }> }) {
   const params = use(paramsPromise);
   const { eventId } = params;
+  const { user } = useAuthStore();
+  const access = usePermissions(eventId);
+  return <ScopedEmailPage key={JSON.stringify([user?.id, user?.organization_id,
+    eventId, access.policyRevision])} eventId={eventId} />;
+}
 
+function ScopedEmailPage({ eventId }: { eventId: string }) {
   const [section, setSection] = useState<SectionType>("speaker");
   const [activeTab, setActiveTab] = useState<InnerTabType>("dashboard");
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [cursors, setCursors] = useState<(string | undefined)[]>([undefined]);
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
 
-  // Fetch campaigns based on the active section (speaker vs participant)
-  const fetchCampaigns = async () => {
-    if (!eventId || eventId === "undefined") return;
-    try {
-      if (section === "participant") {
-        const data = await apiClient.get(`/events/${eventId}/notifications/campaigns?target_type=participant`);
-        setCampaigns(data as Campaign[]);
-        if (selectedCampaign) {
-          const updated = (data as Campaign[]).find(c => c.id === selectedCampaign.id);
-          if (updated) setSelectedCampaign(updated);
-        }
-      } else {
-        const data = await getCampaigns(eventId);
-        setCampaigns(data);
-        if (selectedCampaign) {
-          const updated = data.find(c => c.id === selectedCampaign.id);
-          if (updated) setSelectedCampaign(updated);
-        }
-      }
-    } catch (err: any) {
-      console.error("Failed to fetch campaigns:", err);
-    }
+  const listing = useCampaignPage(eventId, section === "participant" ? "participant" : "speaker",
+    cursors[cursors.length - 1]);
+  const campaigns = listing.data?.items ?? [];
+  const loading = listing.accessLoading || listing.isFetching;
+  const problem = (listing.accessError || listing.error) as ApiError | null;
+  const retrySeconds = useRetryAfter(problem);
+  const errorText = listing.accessDenied ? "Campaign access is not available."
+    : problem?.status === 401 ? "Your session expired. Please sign in again."
+    : problem?.status === 403 ? "Your campaign access has changed."
+    : problem?.status === 404 ? "Campaigns are unavailable in this context."
+    : problem?.status === 429 ? "Too many requests. Wait before trying again."
+    : problem?.status === 503 ? "The service is temporarily unavailable."
+    : problem?.status === 409 || problem?.status === 412 ? "Campaign state changed. Reload the first page."
+    : problem ? "Campaigns could not be loaded. Try again later." : null;
+  const fetchCampaigns = () => {
+    if (cursors.length > 1) setCursors([undefined]);
+    else void listing.refetch();
   };
-
-  useEffect(() => {
-    setSelectedCampaign(null);
-    fetchCampaigns();
-  }, [section, eventId]);
-
-  useEffect(() => {
-    if (eventId && eventId !== "undefined") {
-      fetchCampaigns();
-      const interval = setInterval(fetchCampaigns, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [eventId, section]);
 
   const renderInnerContent = () => {
     if (section === "templates") {
@@ -71,6 +63,16 @@ export default function UnifiedEmailPage({ params: paramsPromise }: { params: Pr
 
     switch (activeTab) {
       case "dashboard":
+        if (errorText) return <div className="space-y-3">
+          <p role="alert">{errorText}</p>
+          {retrySeconds > 0 && <p>Try again in {retrySeconds}s.</p>}
+          {problem?.correlationId && <p>Reference: {problem.correlationId}</p>}
+          {!listing.accessDenied && ![401, 403, 404].includes(problem?.status ?? 0)
+            && <button disabled={retrySeconds > 0 || loading} onClick={() => {
+              if (listing.accessError) void listing.refreshAccess(); else fetchCampaigns();
+            }}>Retry activity</button>}
+        </div>;
+        if (loading || !listing.data) return <p role="status">Loading communication activity…</p>;
         return <CampaignDashboard eventId={eventId} campaigns={campaigns} targetType={isParticipant ? "participant" : "speaker"} />;
       case "sent":
         return <LogsTable eventId={eventId} targetType={isParticipant ? "participant" : "speaker"} />;
@@ -98,7 +100,27 @@ export default function UnifiedEmailPage({ params: paramsPromise }: { params: Pr
               eventId={eventId}
               onSelect={setSelectedCampaign}
               onDeleted={fetchCampaigns}
+              loading={loading}
+              errorText={errorText}
             />
+            <div className="flex items-center justify-between gap-4">
+              <span>{loading ? "Loading…" : errorText ? "Page unavailable" : campaigns.length + " campaigns on this page"}</span>
+              {retrySeconds > 0 && <span role="status">Try again in {retrySeconds}s.</span>}
+              {problem?.correlationId && <span>Reference: {problem.correlationId}</span>}
+              <div className="flex items-center gap-3">
+                <button disabled={loading || !!errorText || cursors.length <= 1}
+                  onClick={() => setCursors(previous => previous.slice(0, -1))}>Previous</button>
+                <button disabled={loading || cursors.length <= 1}
+                  onClick={() => setCursors([undefined])}>First page</button>
+                <button disabled={loading || !!errorText || !listing.data?.has_next || !listing.data?.next_cursor}
+                  onClick={() => { const next = listing.data?.next_cursor;
+                    if (next) setCursors(previous => [...previous.slice(-99), next]); }}>Next</button>
+                <button disabled={loading || retrySeconds > 0 || listing.accessDenied
+                  || [401, 403, 404].includes(problem?.status ?? 0)} onClick={() => {
+                  if (listing.accessError) void listing.refreshAccess(); else fetchCampaigns();
+                }}>Refresh</button>
+              </div>
+            </div>
           </div>
         );
       default:
@@ -130,7 +152,7 @@ export default function UnifiedEmailPage({ params: paramsPromise }: { params: Pr
             {(["speaker", "participant", "templates"] as SectionType[]).map((sec) => (
               <button
                 key={sec}
-                onClick={() => setSection(sec)}
+                onClick={() => { setSection(sec); setSelectedCampaign(null); setCursors([undefined]); }}
                 className={`
                   px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all duration-350
                   ${section === sec
@@ -154,6 +176,7 @@ export default function UnifiedEmailPage({ params: paramsPromise }: { params: Pr
                 onClick={() => {
                   setActiveTab(tab);
                   setSelectedCampaign(null);
+                  setCursors([undefined]);
                 }}
                 className={`
                   px-5 py-2 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all

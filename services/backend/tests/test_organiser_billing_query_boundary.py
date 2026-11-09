@@ -18,3 +18,36 @@ def test_organiser_billing_list_sections_use_bounded_query_service():
     assert "MAX_PAGE_SIZE = 100" in queries
     assert "order_by(Invoice.issued_at.desc(), Invoice.id.desc())" in queries
     assert "Invoice.total_amount_inr" in queries
+
+
+def test_invoice_download_uses_canonical_signed_pdf_service():
+    router = (ROOT / "app/modules/organiser/router.py").read_text(encoding="utf-8")
+    region = router.split("async def download_organiser_invoice", 1)[1].split(
+        '@router.get("/integrations")', 1
+    )[0]
+
+    assert "build_invoice_pdf_snapshot" in region
+    assert "InvoicePdfSigningConfig.from_settings" in region
+    assert "render_invoice_pdf" in region
+    assert 'media_type="application/pdf"' in region
+    assert 'filename = f"invoice-{safe_reference}.pdf"' in region
+    assert '"Cache-Control": "private, no-store"' in region
+    assert "INVOICE_SIGNATURE_UNAVAILABLE" in region
+    assert "csv.writer" not in region
+
+
+def test_invoice_download_projection_preloads_every_snapshot_field():
+    queries = (ROOT / "app/modules/organiser/application/queries.py").read_text(
+        encoding="utf-8"
+    )
+    region = queries.split("async def get_invoice_for_download", 1)[1].split(
+        "async def get_tax_profile", 1
+    )[0]
+
+    for field in (
+        "Invoice.organization_id",
+        "Invoice.event_id",
+        "Invoice.paid_at",
+        "Invoice.version",
+    ):
+        assert field in region

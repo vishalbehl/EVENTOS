@@ -1,0 +1,802 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="9" skipped="0" tests="53" time="216.988" timestamp="2026-10-17T14:07:11.345489+05:30" hostname="Vishal"><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[global-repair]" time="23.546" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[global-copy]" time="4.758"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join&#10;[SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 &#10;FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id &#10;WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]&#10;[parameters: (UUID('8b9437b0-e7fe-48c8-9896-3a4499809576'), UUID('7eb375ae-e66d-4317-8fa1-8b4028cca337'), UUID('7eb375ae-e66d-4317-8fa1-8b4028cca337'))]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.FeatureNotSupportedError: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+tests\test_template_lineage_ownership.py:75: in test_lineage_writers_validate_owner_without_destroying_history
+    await write()
+tests\test_template_lineage_ownership.py:67: in write
+    return await FormTemplateCommandService.save_event_copy(db, source_template_id=copy_id,
+app\modules\registration\application\commands.py:1037: in save_event_copy
+    event = await db.scalar(select(Event).where(Event.id == payload.event_id,
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:504: in scalar
+    return await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2420: in scalar
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+E   [SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 
+E   FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id 
+E   WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]
+E   [parameters: (UUID('8b9437b0-e7fe-48c8-9896-3a4499809576'), UUID('7eb375ae-e66d-4317-8fa1-8b4028cca337'), UUID('7eb375ae-e66d-4317-8fa1-8b4028cca337'))]
+E   (Background on this error at: https://sqlalche.me/e/20/dbapi)</failure></testcase><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[global-registration]" time="6.781" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[retired-repair]" time="3.489" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[retired-copy]" time="4.224"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join&#10;[SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 &#10;FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id &#10;WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]&#10;[parameters: (UUID('c9e26742-267a-442a-97ad-fb37cf267356'), UUID('5c3dd991-bd13-473c-abbf-daafd4c3dd8f'), UUID('5c3dd991-bd13-473c-abbf-daafd4c3dd8f'))]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.FeatureNotSupportedError: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+tests\test_template_lineage_ownership.py:75: in test_lineage_writers_validate_owner_without_destroying_history
+    await write()
+tests\test_template_lineage_ownership.py:67: in write
+    return await FormTemplateCommandService.save_event_copy(db, source_template_id=copy_id,
+app\modules\registration\application\commands.py:1037: in save_event_copy
+    event = await db.scalar(select(Event).where(Event.id == payload.event_id,
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:504: in scalar
+    return await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2420: in scalar
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+E   [SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 
+E   FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id 
+E   WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]
+E   [parameters: (UUID('c9e26742-267a-442a-97ad-fb37cf267356'), UUID('5c3dd991-bd13-473c-abbf-daafd4c3dd8f'), UUID('5c3dd991-bd13-473c-abbf-daafd4c3dd8f'))]
+E   (Background on this error at: https://sqlalche.me/e/20/dbapi)</failure></testcase><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[retired-registration]" time="6.797" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[deleted-repair]" time="3.687" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[deleted-copy]" time="4.688"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join&#10;[SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 &#10;FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id &#10;WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]&#10;[parameters: (UUID('2d38ba53-4970-42cb-a52a-6f39ee3092f2'), UUID('a62d8a07-e033-4a9c-84b1-e4eb09ab2daf'), UUID('a62d8a07-e033-4a9c-84b1-e4eb09ab2daf'))]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.FeatureNotSupportedError: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+tests\test_template_lineage_ownership.py:75: in test_lineage_writers_validate_owner_without_destroying_history
+    await write()
+tests\test_template_lineage_ownership.py:67: in write
+    return await FormTemplateCommandService.save_event_copy(db, source_template_id=copy_id,
+app\modules\registration\application\commands.py:1037: in save_event_copy
+    event = await db.scalar(select(Event).where(Event.id == payload.event_id,
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:504: in scalar
+    return await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2420: in scalar
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+E   [SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 
+E   FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id 
+E   WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]
+E   [parameters: (UUID('2d38ba53-4970-42cb-a52a-6f39ee3092f2'), UUID('a62d8a07-e033-4a9c-84b1-e4eb09ab2daf'), UUID('a62d8a07-e033-4a9c-84b1-e4eb09ab2daf'))]
+E   (Background on this error at: https://sqlalche.me/e/20/dbapi)</failure></testcase><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[deleted-registration]" time="5.309" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[owned-repair]" time="3.130" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[owned-copy]" time="4.012"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join&#10;[SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 &#10;FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id &#10;WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]&#10;[parameters: (UUID('90965dce-6f58-4288-9934-82d2b22d33c7'), UUID('ff4cec22-0871-4ff4-b39a-e321cda80cc0'), UUID('ff4cec22-0871-4ff4-b39a-e321cda80cc0'))]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.FeatureNotSupportedError: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+tests\test_template_lineage_ownership.py:75: in test_lineage_writers_validate_owner_without_destroying_history
+    await write()
+tests\test_template_lineage_ownership.py:67: in write
+    return await FormTemplateCommandService.save_event_copy(db, source_template_id=copy_id,
+app\modules\registration\application\commands.py:1037: in save_event_copy
+    event = await db.scalar(select(Event).where(Event.id == payload.event_id,
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:504: in scalar
+    return await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2420: in scalar
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+E   [SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 
+E   FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id 
+E   WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]
+E   [parameters: (UUID('90965dce-6f58-4288-9934-82d2b22d33c7'), UUID('ff4cec22-0871-4ff4-b39a-e321cda80cc0'), UUID('ff4cec22-0871-4ff4-b39a-e321cda80cc0'))]
+E   (Background on this error at: https://sqlalche.me/e/20/dbapi)</failure></testcase><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[owned-registration]" time="5.432" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[foreign-repair]" time="3.286" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[foreign-copy]" time="4.649"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join&#10;[SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 &#10;FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id &#10;WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]&#10;[parameters: (UUID('6548fa6e-06a6-4aa8-a130-3e184a0791ac'), UUID('7f464351-2dd8-46f3-a97d-87290130fc41'), UUID('7f464351-2dd8-46f3-a97d-87290130fc41'))]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.FeatureNotSupportedError: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+tests\test_template_lineage_ownership.py:78: in test_lineage_writers_validate_owner_without_destroying_history
+    await write()
+tests\test_template_lineage_ownership.py:67: in write
+    return await FormTemplateCommandService.save_event_copy(db, source_template_id=copy_id,
+app\modules\registration\application\commands.py:1037: in save_event_copy
+    event = await db.scalar(select(Event).where(Event.id == payload.event_id,
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:504: in scalar
+    return await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2420: in scalar
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+E   [SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 
+E   FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id 
+E   WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]
+E   [parameters: (UUID('6548fa6e-06a6-4aa8-a130-3e184a0791ac'), UUID('7f464351-2dd8-46f3-a97d-87290130fc41'), UUID('7f464351-2dd8-46f3-a97d-87290130fc41'))]
+E   (Background on this error at: https://sqlalche.me/e/20/dbapi)</failure></testcase><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[foreign-registration]" time="5.699" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[event-repair]" time="3.207" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[event-copy]" time="4.114"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join&#10;[SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 &#10;FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id &#10;WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]&#10;[parameters: (UUID('14999f87-31f7-4c17-9bf6-7a3106dffbc7'), UUID('48bbf35b-9551-44bd-90f1-230d163f6d32'), UUID('48bbf35b-9551-44bd-90f1-230d163f6d32'))]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.FeatureNotSupportedError: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+tests\test_template_lineage_ownership.py:78: in test_lineage_writers_validate_owner_without_destroying_history
+    await write()
+tests\test_template_lineage_ownership.py:67: in write
+    return await FormTemplateCommandService.save_event_copy(db, source_template_id=copy_id,
+app\modules\registration\application\commands.py:1037: in save_event_copy
+    event = await db.scalar(select(Event).where(Event.id == payload.event_id,
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:504: in scalar
+    return await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2420: in scalar
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+E   [SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 
+E   FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id 
+E   WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]
+E   [parameters: (UUID('14999f87-31f7-4c17-9bf6-7a3106dffbc7'), UUID('48bbf35b-9551-44bd-90f1-230d163f6d32'), UUID('48bbf35b-9551-44bd-90f1-230d163f6d32'))]
+E   (Background on this error at: https://sqlalche.me/e/20/dbapi)</failure></testcase><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[event-registration]" time="5.436" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[missing-repair]" time="3.643" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[missing-copy]" time="4.634"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join&#10;[SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 &#10;FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id &#10;WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]&#10;[parameters: (UUID('67564d96-e8b6-4222-a0d6-faa4f2e470be'), UUID('85728bf2-5a63-4e74-b41d-e820303a27c1'), UUID('85728bf2-5a63-4e74-b41d-e820303a27c1'))]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.FeatureNotSupportedError: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+tests\test_template_lineage_ownership.py:78: in test_lineage_writers_validate_owner_without_destroying_history
+    await write()
+tests\test_template_lineage_ownership.py:67: in write
+    return await FormTemplateCommandService.save_event_copy(db, source_template_id=copy_id,
+app\modules\registration\application\commands.py:1037: in save_event_copy
+    event = await db.scalar(select(Event).where(Event.id == payload.event_id,
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:504: in scalar
+    return await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2420: in scalar
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+E   [SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 
+E   FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id 
+E   WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]
+E   [parameters: (UUID('67564d96-e8b6-4222-a0d6-faa4f2e470be'), UUID('85728bf2-5a63-4e74-b41d-e820303a27c1'), UUID('85728bf2-5a63-4e74-b41d-e820303a27c1'))]
+E   (Background on this error at: https://sqlalche.me/e/20/dbapi)</failure></testcase><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[missing-registration]" time="5.254" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[self-repair]" time="3.138" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[self-copy]" time="4.054"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join&#10;[SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 &#10;FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id &#10;WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]&#10;[parameters: (UUID('17c3eae7-0479-478e-a571-59ced23a98d8'), UUID('b7365320-73d9-4e3b-a97f-dff85aef6817'), UUID('b7365320-73d9-4e3b-a97f-dff85aef6817'))]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.FeatureNotSupportedError: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+tests\test_template_lineage_ownership.py:75: in test_lineage_writers_validate_owner_without_destroying_history
+    await write()
+tests\test_template_lineage_ownership.py:67: in write
+    return await FormTemplateCommandService.save_event_copy(db, source_template_id=copy_id,
+app\modules\registration\application\commands.py:1037: in save_event_copy
+    event = await db.scalar(select(Event).where(Event.id == payload.event_id,
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:504: in scalar
+    return await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2420: in scalar
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+E   [SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 
+E   FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id 
+E   WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]
+E   [parameters: (UUID('17c3eae7-0479-478e-a571-59ced23a98d8'), UUID('b7365320-73d9-4e3b-a97f-dff85aef6817'), UUID('b7365320-73d9-4e3b-a97f-dff85aef6817'))]
+E   (Background on this error at: https://sqlalche.me/e/20/dbapi)</failure></testcase><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[self-registration]" time="5.409" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[none-repair]" time="3.307" /><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[none-copy]" time="4.069"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join&#10;[SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 &#10;FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id &#10;WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]&#10;[parameters: (UUID('1cf3d108-1e4d-492a-a348-a2c6b3e750d5'), UUID('f9153698-2178-470e-bc67-aa0679d77e61'), UUID('f9153698-2178-470e-bc67-aa0679d77e61'))]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.FeatureNotSupportedError: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+
+The above exception was the direct cause of the following exception:
+tests\test_template_lineage_ownership.py:75: in test_lineage_writers_validate_owner_without_destroying_history
+    await write()
+tests\test_template_lineage_ownership.py:67: in write
+    return await FormTemplateCommandService.save_event_copy(db, source_template_id=copy_id,
+app\modules\registration\application\commands.py:1037: in save_event_copy
+    event = await db.scalar(select(Event).where(Event.id == payload.event_id,
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:504: in scalar
+    return await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2420: in scalar
+    return self._execute_internal(
+.venv\Lib\site-packages\sqlalchemy\orm\session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv\Lib\site-packages\sqlalchemy\orm\context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.FeatureNotSupportedError'&gt;: FOR UPDATE cannot be applied to the nullable side of an outer join
+E   [SQL: SELECT events.events.id, events.events.version, events.events.updated_by, events.events.organization_id, events.events.operational_workspace_id, events.events.organization_location_id, events.events.created_by, events.events.name, events.events.short_code, events.events.location, events.events.venue_name, events.events.country, events.events.state, events.events.organizer_name, events.events.organizer_details, events.events.start_date, events.events.end_date, events.events.timezone, events.events.upload_deadline, events.events.max_file_size_mb, events.events.allowed_formats, events.events.status, events.events.event_mode, events.events.is_maintenance, events.events.is_read_only, events.events.license_tier, events.events.feature_toggles, events.events.currency, events.events.tagline, events.events.description, events.events.map_link, events.events.venue_images, events.events.venue_details, events.events.created_at, events.events.updated_at, events.events.deleted_at, events.events.deleted_by, portal_theme_settings_1.id AS id_1, portal_theme_settings_1.event_id, portal_theme_settings_1.theme_color, portal_theme_settings_1.primary_color, portal_theme_settings_1.secondary_color, portal_theme_settings_1.theme_preset, portal_theme_settings_1.svg_pattern, portal_theme_settings_1.dark_mode_default, portal_theme_settings_1.font_family, portal_theme_settings_1.custom_css, portal_theme_settings_1.logo_url, portal_theme_settings_1.banner_url, portal_theme_settings_1.favicon_url, portal_theme_settings_1.theme, portal_theme_settings_1.header_images, portal_theme_settings_1.tagline AS tagline_1, portal_theme_settings_1.hero_description, portal_theme_settings_1.stats, portal_theme_settings_1.use_dynamic_stats, portal_theme_settings_1.terms_and_conditions, portal_theme_settings_1.faqs, portal_theme_settings_1.include_default_faqs, portal_theme_settings_1.program_url, portal_theme_settings_1.speaker_guidelines_url, portal_theme_settings_1.presentation_template_url, portal_theme_settings_1.support_email, portal_theme_settings_1.support_phone, portal_theme_settings_1.additional_contacts, portal_theme_settings_1.enabled, portal_theme_settings_1.registration_allowed, portal_theme_settings_1.participants_list_allowed, portal_theme_settings_1.window_required, portal_theme_settings_1.profile_settings, portal_theme_settings_1.payment_enabled, portal_theme_settings_1.active_gateway, portal_theme_settings_1.stripe_credentials, portal_theme_settings_1.encrypted_stripe_credentials, portal_theme_settings_1.tier_cutoffs, portal_theme_settings_1.disabled_categories, portal_theme_settings_1.extra_settings, portal_theme_settings_1.created_at AS created_at_1, portal_theme_settings_1.updated_at AS updated_at_1 
+E   FROM events.events LEFT OUTER JOIN design.portal_theme_settings AS portal_theme_settings_1 ON events.events.id = portal_theme_settings_1.event_id 
+E   WHERE events.events.id = $1::UUID AND events.events.organization_id = $2::UUID AND events.events.deleted_at IS NULL AND events.events.organization_id = $3::UUID FOR UPDATE]
+E   [parameters: (UUID('1cf3d108-1e4d-492a-a348-a2c6b3e750d5'), UUID('f9153698-2178-470e-bc67-aa0679d77e61'), UUID('f9153698-2178-470e-bc67-aa0679d77e61'))]
+E   (Background on this error at: https://sqlalche.me/e/20/dbapi)</failure></testcase><testcase classname="tests.test_template_lineage_ownership" name="test_lineage_writers_validate_owner_without_destroying_history[none-registration]" time="6.440" /><testcase classname="tests.test_template_lineage_ownership" name="test_old_valid_foreign_lineage_is_quarantined_in_a_batch" time="3.193" /><testcase classname="tests.test_registration_catalogue_reference_scope" name="test_registration_save_revalidates_catalogue_scope_and_preserves_lineage[shared]" time="8.142" /><testcase classname="tests.test_registration_catalogue_reference_scope" name="test_registration_save_revalidates_catalogue_scope_and_preserves_lineage[foreign]" time="4.401" /><testcase classname="tests.test_registration_catalogue_reference_scope" name="test_registration_save_revalidates_catalogue_scope_and_preserves_lineage[retired]" time="4.380" /><testcase classname="tests.test_source_template_review" name="test_source_template_review_cursor_and_safe_projection" time="2.823" /><testcase classname="tests.test_source_template_review" name="test_reviewed_source_repair_is_scoped_versioned_audited_and_repeatable[GLOBAL]" time="2.941" /><testcase classname="tests.test_source_template_review" name="test_reviewed_source_repair_is_scoped_versioned_audited_and_repeatable[ORGANIZATION]" time="3.065" /><testcase classname="tests.test_source_template_review" name="test_reviewed_source_repair_is_scoped_versioned_audited_and_repeatable[EVENT]" time="3.157" /><testcase classname="tests.test_source_template_review" name="test_source_review_preflight_rejects_unsafe_projection[changes0]" time="0.026" /><testcase classname="tests.test_source_template_review" name="test_source_review_preflight_rejects_unsafe_projection[changes1]" time="0.008" /><testcase classname="tests.test_source_template_review" name="test_source_review_preflight_rejects_unsafe_projection[changes2]" time="0.008" /><testcase classname="tests.test_source_template_review" name="test_source_review_preflight_rejects_unsafe_projection[changes3]" time="0.008" /><testcase classname="tests.test_source_template_review" name="test_source_review_preflight_rejects_unsafe_projection[changes4]" time="0.007" /><testcase classname="tests.test_source_template_review" name="test_source_review_preflight_rejects_unsafe_projection[changes5]" time="0.008" /><testcase classname="tests.test_source_template_review" name="test_source_review_preflight_rejects_unsafe_projection[changes6]" time="0.007" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[foreign-owned_worker]" time="1.894" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[foreign-global_worker]" time="1.957" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[foreign-manual]" time="1.885" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[retired-owned_worker]" time="1.744" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[retired-global_worker]" time="1.947" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[retired-manual]" time="2.064" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[key_mismatch-owned_worker]" time="2.437" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[key_mismatch-global_worker]" time="2.383" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_evidence_is_superseded_not_rewritten[key_mismatch-manual]" time="2.482" /><testcase classname="tests.test_template_reference_revalidation" name="test_old_valid_event_reference_is_rechecked" time="1.593" /><testcase classname="tests.test_template_reference_revalidation" name="test_valid_reference_batch_is_constant_query_and_preserves_approval" time="4.567" /></testsuite></testsuites>

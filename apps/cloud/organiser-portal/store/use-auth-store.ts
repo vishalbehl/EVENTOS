@@ -22,6 +22,35 @@ export interface User {
   notification_preferences?: Record<string, any>;
 }
 
+export interface ActiveAccessContext {
+  organization_id: string;
+  acting_organization_id: string;
+  workspace_id: string | null;
+  event_id: string | null;
+  relationship_id: string | null;
+  access_mode: 'DIRECT' | 'DELEGATED';
+  role: string;
+  actions: string[];
+  policy_revisions: number[];
+  correlation_id?: string;
+}
+
+export function accessContextCacheKey(
+  context: ActiveAccessContext | null,
+  fallbackOrganizationId?: string | null,
+): string {
+  if (!context) return `direct:${fallbackOrganizationId ?? 'none'}:unselected`;
+  return [
+    context.access_mode,
+    context.acting_organization_id,
+    context.organization_id,
+    context.workspace_id ?? 'all-workspaces',
+    context.event_id ?? 'all-events',
+    context.relationship_id ?? 'no-relationship',
+    context.policy_revisions.join('.'),
+  ].join(':');
+}
+
 interface AuthState {
   user: User | null;
   accessToken: string | null;
@@ -31,6 +60,8 @@ interface AuthState {
   loginTime: number | null;
   lastActivity: number | null;
   hasHydrated: boolean;
+  activeContext: ActiveAccessContext | null;
+  isContextSwitching: boolean;
   
   // Impersonation Support
   originalUser: User | null;
@@ -45,8 +76,20 @@ interface AuthState {
   updateUser: (user: Partial<User>) => void;
   updateActivity: () => void;
   setHasHydrated: (state: boolean) => void;
+  setAccessContext: (context: ActiveAccessContext, accessToken: string) => void;
+  setContextSwitching: (switching: boolean) => void;
   startImpersonation: (impersonatedUser: User, token: string, orgName: string, userName: string, sessionId: string) => void;
   stopImpersonation: () => void;
+}
+
+// UI routing only: server permissions remain authoritative. A selected customer
+// context or support session must continue through the customer admission path.
+export function isPlatformSelfSession(state: Pick<AuthState, 'user' | 'activeContext' | 'impersonationSessionId'>): boolean {
+  return Boolean(state.user?.is_platform_admin && !state.impersonationSessionId &&
+    (!state.activeContext || (
+      state.activeContext.access_mode === 'DIRECT' &&
+      state.activeContext.organization_id === state.user.organization_id
+    )));
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -60,6 +103,8 @@ export const useAuthStore = create<AuthState>()(
       loginTime: null,
       lastActivity: null,
       hasHydrated: false,
+      activeContext: null,
+      isContextSwitching: false,
       
       originalUser: null,
       originalAccessToken: null,
@@ -76,7 +121,19 @@ export const useAuthStore = create<AuthState>()(
           isAuthenticated: true,
           rememberMe,
           loginTime: Date.now(),
-          lastActivity: Date.now()
+          lastActivity: Date.now(),
+          activeContext: {
+            organization_id: user.organization_id,
+            acting_organization_id: user.organization_id,
+            workspace_id: null,
+            event_id: null,
+            relationship_id: null,
+            access_mode: 'DIRECT',
+            role: user.org_role || user.role,
+            actions: [],
+            policy_revisions: [],
+          },
+          isContextSwitching: false,
         }),
       logout: () => 
         set({ 
@@ -91,8 +148,10 @@ export const useAuthStore = create<AuthState>()(
           originalAccessToken: null,
           originalRefreshToken: null,
           impersonatedOrgName: null,
-          impersonatedUserName: null
-          ,impersonationSessionId: null
+          impersonatedUserName: null,
+          impersonationSessionId: null,
+          activeContext: null,
+          isContextSwitching: false,
         }),
       updateUser: (userData) => 
         set((state) => ({
@@ -103,6 +162,13 @@ export const useAuthStore = create<AuthState>()(
           lastActivity: state.isAuthenticated ? Date.now() : null
         })),
       setHasHydrated: (state) => set({ hasHydrated: state }),
+      setAccessContext: (activeContext, accessToken) => set({
+        activeContext,
+        accessToken,
+        lastActivity: Date.now(),
+        isContextSwitching: false,
+      }),
+      setContextSwitching: (isContextSwitching) => set({ isContextSwitching }),
       
       startImpersonation: (impersonatedUser, token, orgName, userName, sessionId) => {
         set((state) => ({
@@ -116,7 +182,18 @@ export const useAuthStore = create<AuthState>()(
           impersonatedUserName: userName,
           impersonationSessionId: sessionId,
           isAuthenticated: true,
-          lastActivity: Date.now()
+          lastActivity: Date.now(),
+          activeContext: {
+            organization_id: impersonatedUser.organization_id,
+            acting_organization_id: impersonatedUser.organization_id,
+            workspace_id: null,
+            event_id: null,
+            relationship_id: null,
+            access_mode: 'DIRECT',
+            role: impersonatedUser.org_role || impersonatedUser.role,
+            actions: [],
+            policy_revisions: [],
+          },
         }));
       },
       stopImpersonation: () => {
@@ -131,14 +208,26 @@ export const useAuthStore = create<AuthState>()(
           impersonatedUserName: null,
           impersonationSessionId: null,
           isAuthenticated: !!state.originalAccessToken,
-          lastActivity: Date.now()
+          lastActivity: Date.now(),
+          activeContext: state.originalUser ? {
+            organization_id: state.originalUser.organization_id,
+            acting_organization_id: state.originalUser.organization_id,
+            workspace_id: null,
+            event_id: null,
+            relationship_id: null,
+            access_mode: 'DIRECT',
+            role: state.originalUser.org_role || state.originalUser.role,
+            actions: [],
+            policy_revisions: [],
+          } : null,
+          isContextSwitching: false,
         }));
       }
     }),
     {
       name: 'obsidian-auth-storage',
       partialize: (state) => {
-        const { hasHydrated, ...rest } = state;
+        const { hasHydrated, isContextSwitching, ...rest } = state;
         return rest;
       },
       onRehydrateStorage: () => (state) => {

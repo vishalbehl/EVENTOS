@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="3" failures="3" errors="0" time="0.3180501">
+    <testsuite name="services/auth-session-races.test.ts" timestamp="2026-10-19T12:13:28.702Z" hostname="Vishal" tests="3" failures="3" errors="0" skipped="0" time="0.3180501">
+        <testcase classname="services/auth-session-races.test.ts" name="session response ordering &gt; does not let an old failed restoration log out a newly installed session" time="0.2327899">
+            <failure message="expected null to be &apos;new-login-token&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected null to be &apos;new-login-token&apos; // Object.is equality
+
+- Expected:
+&quot;new-login-token&quot;
+
++ Received:
+null
+
+ ❯ services/auth-session-races.test.ts:34:49
+            </failure>
+        </testcase>
+        <testcase classname="services/auth-session-races.test.ts" name="session response ordering &gt; does not resurrect a session when an old successful restoration finishes after logout" time="0.0331145">
+            <failure message="expected true to be false // Object.is equality" type="AssertionError">
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ services/auth-session-races.test.ts:49:53
+            </failure>
+        </testcase>
+        <testcase classname="services/auth-session-races.test.ts" name="session response ordering &gt; does not merge an obsolete profile into a different logged-in identity" time="0.0246971">
+            <failure message="expected &apos;current-admin&apos; to be &apos;second-admin&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;current-admin&apos; to be &apos;second-admin&apos; // Object.is equality
+
+Expected: &quot;second-admin&quot;
+Received: &quot;current-admin&quot;
+
+ ❯ services/auth-session-races.test.ts:66:46
+            </failure>
+        </testcase>
+    </testsuite>
+</testsuites>

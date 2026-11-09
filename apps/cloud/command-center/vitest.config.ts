@@ -6,6 +6,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "."),
+      "@eventos/form-builder-studio": path.resolve(__dirname, "../../../packages/form-builder-studio/src/index.ts"),
     },
   },
   test: {

@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import Date, and_, case, distinct, func, literal, or_, select, text
+from sqlalchemy import Date, and_, case, distinct, func, literal, or_, select, text, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -16,12 +16,12 @@ from app.modules.analytics.models.event_payment_summary import EventPaymentSumma
 from app.modules.analytics.models.event_speaker_summary import EventSpeakerSummary
 from app.modules.analytics.models.usage import OrganizationUsage
 from app.modules.audit.models.audit_domain_tables import DataExport
-from app.modules.billing.models.subscription import (
+from app.modules.billing.models.commercial_support import (
     ActivityTimeline,
-    OrganizationSubscription,
     RevenueMetric,
-    SubscriptionTransaction,
 )
+from app.modules.billing.models.billing_domain_tables import Invoice
+from app.modules.billing.models.cloud_commercial import CommercialContract
 from app.modules.communications.models.email_campaign import EmailCampaign
 from app.modules.communications.models.email_log import EmailLog
 from app.modules.agenda.models import Room, Session
@@ -635,39 +635,37 @@ class AnalyticsDashboardQueryService:
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         previous_month_end = month_start - timedelta(seconds=1)
 
-        latest_txn = select(
-            SubscriptionTransaction.organization_id,
-            func.max(SubscriptionTransaction.created_at).label("latest_at"),
+        latest_invoice = select(
+            Invoice.organization_id,
+            func.max(Invoice.issued_at).label("latest_at"),
         ).where(
-            SubscriptionTransaction.status == "SUCCESS",
-        ).group_by(SubscriptionTransaction.organization_id).subquery()
-        previous_latest_txn = select(
-            SubscriptionTransaction.organization_id,
-            func.max(SubscriptionTransaction.created_at).label("latest_at"),
+            Invoice.status.in_(["PAID", "UNPAID"]),
+        ).group_by(Invoice.organization_id).subquery()
+        previous_latest_invoice = select(
+            Invoice.organization_id,
+            func.max(Invoice.issued_at).label("latest_at"),
         ).where(
-            SubscriptionTransaction.status == "SUCCESS",
-            SubscriptionTransaction.created_at <= previous_month_end,
-        ).group_by(SubscriptionTransaction.organization_id).subquery()
+            Invoice.status.in_(["PAID", "UNPAID"]),
+            Invoice.issued_at <= previous_month_end,
+        ).group_by(Invoice.organization_id).subquery()
 
         def latest_total(subquery):
-            return select(func.coalesce(func.sum(SubscriptionTransaction.amount), 0.0)).select_from(
-                SubscriptionTransaction
+            return select(func.coalesce(func.sum(Invoice.total_amount_inr), 0.0)).select_from(
+                Invoice
             ).join(
                 subquery,
                 and_(
-                    SubscriptionTransaction.organization_id == subquery.c.organization_id,
-                    SubscriptionTransaction.created_at == subquery.c.latest_at,
+                    Invoice.organization_id == subquery.c.organization_id,
+                    Invoice.issued_at == subquery.c.latest_at,
                 ),
-            ).where(
-                SubscriptionTransaction.status == "SUCCESS",
             ).scalar_subquery()
 
         total_orgs = select(func.count(Organization.id)).scalar_subquery()
         active_orgs = select(func.count(Organization.id)).where(
             Organization.is_active.is_(True)
         ).scalar_subquery()
-        trial_orgs = select(func.count(Organization.id)).where(
-            Organization.plan == "trial"
+        trial_orgs = select(func.count(CommercialContract.id)).where(
+            CommercialContract.status == "PENDING_PAYMENT"
         ).scalar_subquery()
         suspended_orgs = select(func.count(Organization.id)).where(
             Organization.is_active.is_(False)
@@ -689,11 +687,11 @@ class AnalyticsDashboardQueryService:
         tickets_open = select(func.count(SupportTicket.id)).where(
             SupportTicket.status == "OPEN"
         ).scalar_subquery()
-        cancelled = select(func.count(OrganizationSubscription.id)).where(
-            OrganizationSubscription.status == "CANCELLED"
+        cancelled = select(func.count(CommercialContract.id)).where(
+            CommercialContract.status == "CANCELLED"
         ).scalar_subquery()
-        active_subscriptions = select(func.count(OrganizationSubscription.id)).where(
-            OrganizationSubscription.status.in_(["ACTIVE", "TRIAL"])
+        active_subscriptions = select(func.count(CommercialContract.id)).where(
+            CommercialContract.status.in_(["ACTIVE", "PENDING_PAYMENT"])
         ).scalar_subquery()
         churn_denominator = cancelled + active_subscriptions
 
@@ -708,11 +706,11 @@ class AnalyticsDashboardQueryService:
                 total_events.label("total_events"),
                 events_this_month.label("events_this_month"),
                 tickets_open.label("tickets_open"),
-                latest_total(latest_txn).label("mrr"),
-                latest_total(previous_latest_txn).label("mrr_prev_month"),
-                select(func.coalesce(func.sum(SubscriptionTransaction.amount), 0.0)).where(
-                    SubscriptionTransaction.status == "SUCCESS",
-                    SubscriptionTransaction.created_at >= today_start,
+                latest_total(latest_invoice).label("mrr"),
+                latest_total(previous_latest_invoice).label("mrr_prev_month"),
+                select(func.coalesce(func.sum(Invoice.total_amount_inr), 0.0)).where(
+                    Invoice.status.in_(["PAID", "UNPAID"]),
+                    Invoice.issued_at >= today_start,
                 ).scalar_subquery().label("revenue_today"),
                 cancelled.label("cancelled"),
                 active_subscriptions.label("active_subscriptions"),
@@ -794,18 +792,10 @@ class AnalyticsDashboardQueryService:
             rows = reversed(metric_rows)
             return [self._mrr_point(row.period, row.mrr, row.arr) for row in rows]
 
-        cutoff = datetime.now(timezone.utc) - timedelta(days=bounded_months * 31)
-        transaction_rows = (await self.db.execute(select(
-            func.to_char(SubscriptionTransaction.created_at, "YYYY-MM").label("period"),
-            func.sum(SubscriptionTransaction.amount).label("total"),
-        ).where(
-            SubscriptionTransaction.status == "SUCCESS",
-            SubscriptionTransaction.created_at >= cutoff,
-        ).group_by(text("period")).order_by(text("period")))).all()
-        return [
-            self._mrr_point(row.period, row.total, (row.total or 0) * 12)
-            for row in transaction_rows
-        ]
+        # The removed transaction table is not a fallback pricing authority.
+        # If the canonical revenue projection is empty, return an empty history
+        # and let the console render its unavailable state.
+        return []
 
     async def room_readiness(self, *, event_id: uuid.UUID) -> list[dict]:
         """Return room readiness from one bounded grouped projection."""

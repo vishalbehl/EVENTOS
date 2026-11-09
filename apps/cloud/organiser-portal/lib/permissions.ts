@@ -73,13 +73,10 @@ export type PermissionCode = typeof PERMISSIONS[keyof typeof PERMISSIONS];
 
 /**
  * Checks if a specific code exists in a list of granted permissions.
- * Handles wildcards if implemented in the future (e.g. 'EVENTS:*').
+ * Customer grants are explicit; platform/global wildcard labels are not authority.
  */
 export const hasPermission = (granted: string[], required: string): boolean => {
   if (!granted || !required) return false;
-  
-  // Super admin wildcard check
-  if (granted.includes('*')) return true;
   
   return granted.includes(required);
 };

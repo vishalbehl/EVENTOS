@@ -121,9 +121,9 @@ export function ThemedIllustration({
       className={`relative select-none pointer-events-none flex items-center justify-center ${className}`}
       style={style}
     >
-      {/* Optional Ambient Glow Halo behind the illustration */}
+      {/* Subtle ring accent behind the illustration (no glow) */}
       {glow && (
-        <div className="absolute -inset-4 bg-gradient-to-tr from-[var(--pri)]/20 via-[var(--sec)]/15 to-transparent rounded-full blur-2xl pointer-events-none -z-10 opacity-75" />
+        <div className="absolute -inset-4 rounded-full pointer-events-none -z-10 ring-1 ring-[var(--pri)]/20 opacity-75" />
       )}
 
       {/* Floating Badge */}

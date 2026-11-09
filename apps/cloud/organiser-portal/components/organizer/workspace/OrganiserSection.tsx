@@ -8,12 +8,14 @@ import { useOrganiserNeedsAttention } from "@/hooks/useOrganiserDashboard";
 export type SectionTab = { label: string; href: string };
 
 export function OrganiserSection({
+  eyebrow,
   title,
   description,
   tabs,
   actions,
   children,
 }: {
+  eyebrow?: string;
   title: string;
   description: string;
   tabs: SectionTab[];
@@ -26,6 +28,7 @@ export function OrganiserSection({
 
   return (
     <OrganiserPage
+      eyebrow={eyebrow}
       title={title}
       description={description}
       actions={actions}

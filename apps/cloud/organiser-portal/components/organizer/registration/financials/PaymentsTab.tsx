@@ -8,6 +8,11 @@ import {
 import { apiClient } from '@/lib/api-client'
 import { toast } from 'sonner'
 import { useOperationAccess } from '@/lib/capabilities'
+import { useTablePagination } from '@/hooks/useTablePagination'
+import { TablePagination } from '@/components/organizer/common/TablePagination'
+import { useScopedCommand } from '@/hooks/useScopedCommand'
+import { ScopedEventEditor } from '@/components/organizer/events/ScopedEventEditor'
+import { ScopedCommandFeedback } from '@/components/organizer/events/ScopedCommandFeedback'
 
 interface Transaction {
   id: string
@@ -25,7 +30,16 @@ interface Transaction {
 }
 
 export default function PaymentsTab({ eventId }: { eventId: string }) {
+  return <ScopedEventEditor eventId={eventId}><PaymentsEditor eventId={eventId} /></ScopedEventEditor>
+}
+
+function PaymentsEditor({ eventId }: { eventId: string }) {
+  const command = useScopedCommand(eventId)
   const paymentAccess = useOperationAccess('registration.payments.manage')
+  const [version, setVersion] = useState<number | null>(null)
+  const [configError, setConfigError] = useState<string | null>(null)
+  const [stripeConfigured, setStripeConfigured] = useState(false)
+  const [razorpayConfigured, setRazorpayConfigured] = useState(false)
   const [paymentEnabled, setPaymentEnabled] = useState(false)
   const [activeGateway, setActiveGateway] = useState('simulated')
   const [autoApprovePaid, setAutoApprovePaid] = useState(true)
@@ -37,6 +51,9 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
   // Razorpay Credentials
   const [razorpayKeyId, setRazorpayKeyId] = useState('')
   const [razorpayKeySecret, setRazorpayKeySecret] = useState('')
+
+  // Offline Bank Transfer Instructions
+  const [offlineInstructions, setOfflineInstructions] = useState('')
   
   const [showStripeSecret, setShowStripeSecret] = useState(false)
   const [showRazorpaySecret, setShowRazorpaySecret] = useState(false)
@@ -58,17 +75,27 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
     setLoadingConfig(true)
     try {
       const res = await apiClient.get<any>(`/events/${eventId}/payments/config`)
+      if (!command.isCurrent()) return
+      if (!Number.isInteger(res.version) || res.version < 1) throw new Error('Payment configuration version is unavailable.')
+      setVersion(res.version)
+      setConfigError(null)
       setPaymentEnabled(res.payment_enabled)
       setActiveGateway(res.active_gateway)
       setAutoApprovePaid(res.auto_approve_paid ?? true)
+      setOfflineInstructions(res.offline_instructions || '')
       setStripePubKey(res.stripe_credentials?.publishable_key || '')
-      setStripeSecKey(res.stripe_credentials?.secret_key || '')
+      setStripeSecKey('')
+      setStripeConfigured(Boolean(res.stripe_secret_configured))
       setRazorpayKeyId(res.razorpay_credentials?.key_id || '')
-      setRazorpayKeySecret(res.razorpay_credentials?.key_secret || '')
-    } catch {
-      toast.error('Failed to load payment configuration.')
+      setRazorpayKeySecret('')
+      setRazorpayConfigured(Boolean(res.razorpay_secret_configured))
+    } catch (error: any) {
+      if (command.isCurrent()) {
+        setVersion(null)
+        setConfigError(error.message || 'Failed to load payment configuration.')
+      }
     } finally {
-      setLoadingConfig(false)
+      if (command.isCurrent()) setLoadingConfig(false)
     }
   }
 
@@ -76,21 +103,23 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
     setLoadingTx(true)
     try {
       const res = await apiClient.get<Transaction[]>(`/events/${eventId}/payments/transactions`)
+      if (!command.isCurrent()) return
       setTransactions(res || [])
     } catch {
-      toast.error('Failed to load transactions.')
+      if (command.isCurrent()) toast.error('Failed to load transactions.')
     } finally {
-      setLoadingTx(false)
+      if (command.isCurrent()) setLoadingTx(false)
     }
   }
 
   const handleSaveConfig = async () => {
     setSaving(true)
     try {
-      await apiClient.post(`/events/${eventId}/payments/config`, {
+      const saved = await command.execute<{ version: number }>('post', `/events/${eventId}/payments/config`, {
         payment_enabled: paymentEnabled,
         active_gateway: activeGateway,
         auto_approve_paid: autoApprovePaid,
+        offline_instructions: offlineInstructions,
         stripe_credentials: {
           publishable_key: stripePubKey,
           secret_key: stripeSecKey
@@ -99,12 +128,20 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
           key_id: razorpayKeyId,
           key_secret: razorpayKeySecret
         }
-      })
+      }, version)
+      if (!saved) return
+      setVersion(saved.version)
+      if (stripeSecKey) setStripeConfigured(true)
+      if (razorpayKeySecret) setRazorpayConfigured(true)
+      setStripeSecKey('')
+      setRazorpayKeySecret('')
       toast.success('Payment settings updated!')
-    } catch {
-      toast.error('Failed to update payment settings.')
+    } catch (error: any) {
+      if (command.isCurrent()) toast.error(error.code === 'STEP_UP_REQUIRED'
+        ? 'Recent MFA is required. Re-authenticate, then explicitly retry. Your draft is retained.'
+        : error.message || 'Failed to update payment settings. Your draft is retained.')
     } finally {
-      setSaving(false)
+      if (command.isCurrent()) setSaving(false)
     }
   }
 
@@ -118,6 +155,14 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
     )
   })
 
+  const {
+    currentPage,
+    pageSize,
+    paginatedItems: paginatedTransactions,
+    setCurrentPage,
+    setPageSize,
+  } = useTablePagination(filteredTransactions, 10)
+
   if (loadingConfig) {
     return (
       <div className="flex items-center justify-center py-24 text-muted animate-pulse text-xs font-black uppercase tracking-widest">
@@ -126,8 +171,12 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
     )
   }
 
+  if (!version) return <div role="alert">{configError || 'Payment configuration is unavailable.'}<button type="button" onClick={() => void loadConfig()}>Reload configuration</button></div>
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0 overflow-hidden">
+    <fieldset disabled={saving || command.pending} className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0 overflow-hidden border-0 p-0">
+      <ScopedCommandFeedback failure={command.failure} retryAt={command.retryAt} />
+      <button type="button" className="col-span-full text-left text-xs" onClick={() => void loadConfig()}>Discard draft and reload payment configuration</button>
       {/* ── Settings Panel ── */}
       <div className="lg:col-span-1 flex flex-col space-y-4 h-full overflow-y-auto custom-scrollbar pr-1">
         <div className="glass-card rounded-[2rem] p-6 border border-white/5 bg-[var(--surf)]/20 space-y-6 flex flex-col">
@@ -201,7 +250,7 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
                     <div className="relative">
                       <input
                         type={showStripeSecret ? 'text' : 'password'}
-                        placeholder="sk_live_..."
+                        placeholder={stripeConfigured ? 'Configured — leave blank to keep existing secret' : 'sk_live_...'}
                         value={stripeSecKey}
                         onChange={e => setStripeSecKey(e.target.value)}
                         className="w-full h-9 pl-3 pr-9 bg-black/40 border border-white/10 rounded-lg text-xs font-mono text-[var(--text)] focus:border-[var(--pri)] focus:outline-none"
@@ -239,7 +288,7 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
                     <div className="relative">
                       <input
                         type={showRazorpaySecret ? 'text' : 'password'}
-                        placeholder="••••••••••••"
+                        placeholder={razorpayConfigured ? 'Configured — leave blank to keep existing secret' : 'Enter a new secret'}
                         value={razorpayKeySecret}
                         onChange={e => setRazorpayKeySecret(e.target.value)}
                         className="w-full h-9 pl-3 pr-9 bg-black/40 border border-white/10 rounded-lg text-xs font-mono text-[var(--text)] focus:border-[var(--pri)] focus:outline-none"
@@ -252,6 +301,30 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
                         {showRazorpaySecret ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                       </button>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Offline Bank Transfer Instructions */}
+              {activeGateway === 'offline' && (
+                <div className="space-y-3.5 p-4 bg-white/5 border border-white/5 rounded-xl">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[var(--pri)] block">
+                    Offline Bank Wire &amp; UPI Instructions
+                  </span>
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-bold text-muted block">
+                      Bank Details &amp; Payment Instructions for Attendee
+                    </label>
+                    <textarea
+                      rows={4}
+                      placeholder={"Account Name: Event Organization Ltd\nAccount No: 123456789012\nBank: HDFC Bank / Chase\nIFSC / SWIFT: HDFC0001234\nUPI ID: eventos@hdfcbank"}
+                      value={offlineInstructions}
+                      onChange={e => setOfflineInstructions(e.target.value)}
+                      className="w-full p-3 bg-black/40 border border-white/10 rounded-lg text-xs font-mono text-[var(--text)] focus:border-[var(--pri)] focus:outline-none resize-none leading-relaxed"
+                    />
+                    <p className="text-[9px] text-muted">
+                      Displayed on the attendee portal checkout step and payment invoice.
+                    </p>
                   </div>
                 </div>
               )}
@@ -354,7 +427,7 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
                     </td>
                   </tr>
                 ) : (
-                  filteredTransactions.map(tx => (
+                  paginatedTransactions.map(tx => (
                     <tr key={tx.id} className="hover:bg-white/[0.01] transition-all">
                       <td className="px-5 py-3">
                         <div className="flex flex-col">
@@ -410,8 +483,17 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
               </tbody>
             </table>
           </div>
+
+          <TablePagination
+            currentPage={currentPage}
+            pageSize={pageSize}
+            totalItems={filteredTransactions.length}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+            itemLabel="transactions"
+          />
         </div>
       </div>
-    </div>
+    </fieldset>
   )
 }

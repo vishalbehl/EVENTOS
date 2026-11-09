@@ -1,12 +1,5 @@
-from app.modules.billing.models.subscription import (
-    SubscriptionPlan,
-    OrganizationSubscription,
-    PlanFeature,
+from app.modules.billing.models.commercial_support import (
     OrganizationFeature,
-    Addon,
-    AddonFeature,
-    CommercialTemplateVersion,
-    OrganizationAddon,
     ActivityTimeline,
     RevenueMetric,
 )
@@ -24,25 +17,34 @@ from app.modules.billing.models.billing_domain_tables import (
     Invoice,
     InvoiceItem,
     PaymentMethod,
+    PaymentMethodSetup,
 )
 # Phase 1 — Super Admin Console models
-from app.modules.billing.models.subscription_analytics import SubscriptionAnalytics
 from app.modules.billing.models.org_credits import OrgCredit
 from app.modules.billing.models.payment_gateway import PaymentGateway
 from app.modules.billing.models.financial_audit_trail import FinancialAuditTrail
 from app.modules.billing.models.credit_notes import CreditNote
 from app.modules.billing.models.provider_webhook_event import ProviderWebhookEvent
+from app.modules.billing.models.cloud_commercial import (
+    CommercialAccount,
+    CommercialAccountWorkspace,
+    CommercialOffer,
+    CommercialOfferVersion,
+    CommercialOfferPrice,
+    CommercialOfferEntitlement,
+    CommercialPricingConfiguration,
+    CommercialRequest,
+    CommercialContract,
+    CommercialContractAmendment,
+    CommercialContractItem,
+    CommercialAllocation,
+    CommercialAllocationTransfer,
+    CommercialUsageLedger,
+)
 
 __all__ = [
-    # Subscription
-    "SubscriptionPlan",
-    "OrganizationSubscription",
-    "PlanFeature",
+    # Supporting billing models
     "OrganizationFeature",
-    "Addon",
-    "AddonFeature",
-    "CommercialTemplateVersion",
-    "OrganizationAddon",
     "ActivityTimeline",
     "RevenueMetric",
     # Event activation
@@ -58,11 +60,25 @@ __all__ = [
     "Invoice",
     "InvoiceItem",
     "PaymentMethod",
+    "PaymentMethodSetup",
     # Phase 1 new models
-    "SubscriptionAnalytics",
     "OrgCredit",
     "PaymentGateway",
     "FinancialAuditTrail",
     "CreditNote",
     "ProviderWebhookEvent",
+    "CommercialAccount",
+    "CommercialAccountWorkspace",
+    "CommercialOffer",
+    "CommercialOfferVersion",
+    "CommercialOfferPrice",
+    "CommercialOfferEntitlement",
+    "CommercialPricingConfiguration",
+    "CommercialRequest",
+    "CommercialContract",
+    "CommercialContractAmendment",
+    "CommercialContractItem",
+    "CommercialAllocation",
+    "CommercialAllocationTransfer",
+    "CommercialUsageLedger",
 ]

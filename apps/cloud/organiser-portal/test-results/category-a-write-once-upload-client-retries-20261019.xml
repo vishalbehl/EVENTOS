@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="28" failures="0" errors="0" time="0.0923424">
+    <testsuite name="test/category-a/scan-gated-upload-clients.test.ts" timestamp="2026-10-19T06:27:26.342Z" hostname="Vishal" tests="28" failures="0" errors="0" skipped="0" time="0.0923424">
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; returns only after READY and removes completed timer listeners" time="0.0258967">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; never accepts failed as a finished upload" time="0.006068">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; never accepts quarantined as a finished upload" time="0.0031226">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; never accepts deleted as a finished upload" time="0.0038148">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; never accepts cleanup_pending as a finished upload" time="0.0033543">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; rotates only a confirmed closed receipt, not 409/UPLOAD_ATTEMPT_CLOSED" time="0.0028473">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; rotates only a confirmed closed receipt, not 409/UPLOAD_OBJECT_CONFLICT" time="0.001868">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; rotates only a confirmed closed receipt, not 409/UPLOAD_RECOVERY_IN_PROGRESS" time="0.002221">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; rotates only a confirmed closed receipt, not 503/REGISTRATION_STORAGE_UNAVAILABLE" time="0.0024953">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; rotates only a confirmed closed receipt, not 429/RATE_LIMITED" time="0.0018204">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; rotates only a confirmed closed receipt, not 404/UPLOAD_NOT_FOUND" time="0.0013049">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; rejects mismatched status identity even if it claims READY" time="0.0028811">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; rejects a cross-origin status address before sending the capability" time="0.0021407">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="public scan-gated client &gt; cancels a pending poll without retaining listeners or retrying the upload" time="0.0042046">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; returns only after READY and removes completed timer listeners" time="0.0045235">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; never accepts failed as a finished upload" time="0.0021011">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; never accepts quarantined as a finished upload" time="0.0012764">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; never accepts deleted as a finished upload" time="0.0020499">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; never accepts cleanup_pending as a finished upload" time="0.0016969">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; rotates only a confirmed closed receipt, not 409/UPLOAD_ATTEMPT_CLOSED" time="0.0017528">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; rotates only a confirmed closed receipt, not 409/UPLOAD_OBJECT_CONFLICT" time="0.001285">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; rotates only a confirmed closed receipt, not 409/UPLOAD_RECOVERY_IN_PROGRESS" time="0.0014719">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; rotates only a confirmed closed receipt, not 503/REGISTRATION_STORAGE_UNAVAILABLE" time="0.001146">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; rotates only a confirmed closed receipt, not 429/RATE_LIMITED" time="0.0010872">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; rotates only a confirmed closed receipt, not 404/UPLOAD_NOT_FOUND" time="0.0009868">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; rejects mismatched status identity even if it claims READY" time="0.001112">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; rejects a cross-origin status address before sending the capability" time="0.0012784">
+        </testcase>
+        <testcase classname="test/category-a/scan-gated-upload-clients.test.ts" name="organiser scan-gated client &gt; cancels a pending poll without retaining listeners or retrying the upload" time="0.0020806">
+        </testcase>
+    </testsuite>
+</testsuites>

@@ -3,31 +3,47 @@
 # =============================================================
 import uuid
 from datetime import date, datetime
-from typing import List, Optional
+from typing import ClassVar, List, Literal, Optional
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
+from app.modules.events.services.settings_policy import (
+    REGISTRATION_FIELDS, BRANDING_FIELDS, SPEAKER_FIELDS, validate_settings, public_settings,
+)
 
 
 # ── Nested JSONB schemas ────────────────────────────────────
 
-class SpeakerSettings(BaseModel):
+class OperationalSettings(BaseModel):
+    allowed_fields: ClassVar[frozenset[str]]
+    model_config = ConfigDict(extra="allow")
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_operational_fields(cls, value):
+        return validate_settings(value, cls.allowed_fields)
+
+
+class SpeakerSettings(OperationalSettings):
     """Configuration for the Speaker Presentation Desk module."""
     model_config = ConfigDict(extra="allow")
+    allowed_fields: ClassVar[frozenset[str]] = SPEAKER_FIELDS
     enabled: bool = True
     window_required: bool = True
 
 
-class RegistrationSettings(BaseModel):
+class RegistrationSettings(OperationalSettings):
     """Configuration for the On-Site Registration & Badges module."""
     model_config = ConfigDict(extra="allow")
+    allowed_fields: ClassVar[frozenset[str]] = REGISTRATION_FIELDS
     enabled: bool = True
     registration_allowed: bool = True
     participants_list_allowed: bool = True
 
 
-class BrandingSettings(BaseModel):
+class BrandingSettings(OperationalSettings):
     """Branding configuration for an event (theme color, logos, banners)."""
     model_config = ConfigDict(extra="allow")
+    allowed_fields: ClassVar[frozenset[str]] = BRANDING_FIELDS
     theme_color: str = "#1A73E8"
     logo_url: Optional[str] = None
     banner_url: Optional[str] = None
@@ -38,13 +54,17 @@ class BrandingSettings(BaseModel):
 class EventCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    operational_workspace_id: uuid.UUID | None = None
+
     name: str = Field(min_length=2, max_length=255)
     short_code: str = Field(
         min_length=2, max_length=20,
         pattern=r"^[A-Z0-9-]+$",
         description="Uppercase alphanumeric, used in upload URLs e.g. AMS26"
     )
-    status: Optional[str] = Field("draft", max_length=50)
+    # Event creation always produces a safe draft. A paid event-plan contract
+    # is the only customer path that can activate it.
+    status: Literal["draft"] = "draft"
     location: Optional[str] = Field(None, max_length=255)
     venue_name: Optional[str] = Field(None, max_length=255)
     country: Optional[str] = Field(None, max_length=100)
@@ -150,15 +170,8 @@ class EventUpdate(BaseModel):
         return self
 
 
-class ApplyPlanRequest(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    plan_id: Optional[str] = None
-    plan_name: Optional[str] = None
-    addon_keys: Optional[List[str]] = Field(default_factory=list)
-
-
 class EventResponse(BaseModel):
+    operational_workspace_id: uuid.UUID | None = None
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -201,9 +214,18 @@ class EventResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @field_validator("registration_settings", "speaker_settings", "branding_settings", mode="before")
+    @classmethod
+    def project_operational_settings(cls, value, info):
+        catalogue = {"registration_settings": REGISTRATION_FIELDS,
+            "speaker_settings": SPEAKER_FIELDS, "branding_settings": BRANDING_FIELDS}
+        return public_settings(value or {}, catalogue[info.field_name])
+
 
 class EventSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+    operational_workspace_id: uuid.UUID | None = None
 
     id: uuid.UUID
     organization_id: uuid.UUID

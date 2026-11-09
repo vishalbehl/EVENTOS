@@ -31,7 +31,6 @@ const VARIABLE_GROUPS = [
             'SpeakerEmail',
             'Affiliation',
             'Country',
-            'AccessCode',
             'RejectedReason',
         ],
     },

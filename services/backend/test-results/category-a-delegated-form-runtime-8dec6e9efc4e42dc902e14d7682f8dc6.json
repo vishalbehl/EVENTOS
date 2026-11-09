@@ -1,0 +1,30 @@
+{
+  "status": "PASSED",
+  "checks": [
+    "requested_relationship_has_no_access",
+    "client_approved_form_action_admitted",
+    "registration_active_save_replay_audit",
+    "survey_active_save_replay_audit",
+    "speaker_intake_active_save_replay_audit",
+    "billing_not_inherited",
+    "foreign_event_concealed",
+    "organisation_catalogue_administration_denied",
+    "old_selector_denied_after_committed_suspension",
+    "registration_suspended_write_denied",
+    "survey_suspended_write_denied",
+    "speaker_intake_suspended_write_denied",
+    "old_selector_denied_after_committed_detachment",
+    "registration_detached_write_denied",
+    "survey_detached_write_denied",
+    "speaker_intake_detached_write_denied"
+  ],
+  "temporary_relationship_id": "da9e8134-a046-4483-9cff-111d08c43c1f",
+  "temporary_session_id": "57a76bf2-1a71-4181-96a6-d93080f19b78",
+  "business_mutation_acceptance": "PASSED_SCOPED_REGISTRATION_SURVEY_SPEAKER_WRITES",
+  "independent_rollback_verified": true,
+  "independent_original_state_and_receipts_restored": true,
+  "database": "category_a_restore_20261027_1f5bb0beb5e8",
+  "organization_id": "6fc4544a-5234-4899-9b2c-cf4e0f4a5a23",
+  "scope": "EVENT",
+  "probe_sha256": "257338d1129d98a0c26d9fd85beef69582d7706ca84dbdfbed5e31781a2e4fb7"
+}

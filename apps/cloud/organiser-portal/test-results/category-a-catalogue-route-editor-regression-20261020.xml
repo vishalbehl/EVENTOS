@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="23" failures="0" errors="0" time="0.7934191">
+    <testsuite name="test/category-a/registration-editor-load.test.ts" timestamp="2026-10-20T17:10:40.951Z" hostname="Vishal" tests="16" failures="0" errors="0" skipped="0" time="0.0301832">
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (401)" time="0.0071545">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (403)" time="0.0007608">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (404)" time="0.0006839">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (409)" time="0.0005883">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (429)" time="0.0017757">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="never substitutes a local document for failed required template read (503)" time="0.0008572">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="retains intentionally empty server fields, with no synthetic default or reset" time="0.0016957">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="uses a verified selected blueprint and the loaded aggregate version" time="0.0027033">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="preserves the active aggregate when its original source was selected" time="0.002183">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="keeps a valid current form editable but explicitly disables an unavailable reset" time="0.001434">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="rejects conflicting event markers instead of treating another copy as active" time="0.0021738">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="rejects a non-registration or retired target" time="0.0013524">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="does not publish a response completed after its scope became obsolete" time="0.0009439">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="rejects foreign, unversioned or oversized aggregate responses" time="0.0008131">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="rejects foreign, unversioned or oversized aggregate responses" time="0.0007547">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-load.test.ts" name="rejects foreign, unversioned or oversized aggregate responses" time="0.0006582">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/category-a/registration-editor-unavailable.test.tsx" timestamp="2026-10-20T17:10:40.962Z" hostname="Vishal" tests="7" failures="0" errors="0" skipped="0" time="0.7632359">
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="never opens a substitute editor after a required source fails (403)" time="0.468169">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="never opens a substitute editor after a required source fails (404)" time="0.0279748">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="never opens a substitute editor after a required source fails (503)" time="0.0275343">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="shows an intentionally empty server form without a fabricated default or reset" time="0.0793936">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="keeps a valid copy editable when its historical root is unavailable, without resetting from a fixture" time="0.0646547">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="binds the selected server blueprint when reset is saved, preserving its disabled features" time="0.0549732">
+        </testcase>
+        <testcase classname="test/category-a/registration-editor-unavailable.test.tsx" name="honours retry-after without automatically reading or replaying a mutation" time="0.0357668">
+        </testcase>
+    </testsuite>
+</testsuites>

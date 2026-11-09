@@ -31,7 +31,7 @@ class EventCommandService:
         actor_user_id: uuid.UUID,
         idempotency_key: str | None = None,
     ) -> Event:
-        """Publish a draft event with one application-owned transaction."""
+        """Publish an event only after its paid Event plan has activated."""
         try:
             idem = None
             if idempotency_key:
@@ -55,14 +55,31 @@ class EventCommandService:
                         raise RuntimeError("Completed event idempotency resource is missing.")
                     await db.commit()
                     return existing
-            if event.status != "draft":
+            from app.modules.billing.models.event_activation import EventActivation
+
+            activation_id = await db.scalar(
+                select(EventActivation.id)
+                .where(
+                    EventActivation.organization_id == event.organization_id,
+                    EventActivation.event_id == event.id,
+                    EventActivation.status == "ACTIVE",
+                )
+                .limit(1)
+            )
+            if activation_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"code": "EVENT_PLAN_ACTIVATION_REQUIRED"},
+                )
+            if event.status not in {"draft", "active"}:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=f"Event is '{event.status}', not 'draft'.",
                 )
-            event.status = "active"
-            event.updated_by = actor_user_id
-            event.version = int(event.version or 1) + 1
+            if event.status == "draft":
+                event.status = "active"
+                event.updated_by = actor_user_id
+                event.version = int(event.version or 1) + 1
             if idem is not None:
                 response = EventResponse.model_validate(event)
                 await complete_idempotent(
@@ -88,6 +105,7 @@ class EventCommandService:
         actor_user_id: uuid.UUID,
         actor_role: str | None = None,
         reason: str,
+        expected_version: int,
         idempotency_key: str,
     ) -> Event:
         """Archive an event and deactivate any live commercial activation atomically."""
@@ -101,6 +119,7 @@ class EventCommandService:
                 payload={
                     "event_id": str(event.id),
                     "reason": reason,
+                    "expected_version": expected_version,
                 },
             )
             replay = replay_response(idem)
@@ -115,6 +134,19 @@ class EventCommandService:
                     raise RuntimeError("Completed event idempotency resource is missing.")
                 await db.commit()
                 return existing
+
+            locked_event = await db.scalar(select(Event).where(
+                Event.id == event.id,
+                Event.organization_id == event.organization_id,
+            ).with_for_update())
+            if locked_event is None:
+                raise HTTPException(status_code=404, detail={"code": "EVENT_NOT_FOUND"})
+            event = locked_event
+            if event.version != expected_version:
+                raise HTTPException(status_code=412, detail={
+                    "code": "STALE_VERSION", "current_version": event.version,
+                    "message": "This event changed. Reload before archiving it.",
+                })
 
             if event.deleted_at is not None:
                 await complete_idempotent(
@@ -201,6 +233,9 @@ class EventCommandService:
         source: str,
     ) -> Event:
         try:
+            # Re-authorise before a retry receipt can return an existing event.
+            await EventMutationService.authorize_creation(db, organization_id=organization_id,
+                payload=payload, actor_user_id=actor_user_id)
             idem = await begin_idempotent(
                 db,
                 organization_id=organization_id,
@@ -256,8 +291,19 @@ class EventCommandService:
         actor_user_id: uuid.UUID,
         expected_version: int | None = None,
         idempotency_key: str | None = None,
-    ) -> tuple[Event, dict[str, Any], list[str]]:
+    ) -> tuple[EventResponse, dict[str, Any], list[str]]:
+        # Enforce at the command boundary too; internal callers cannot opt out.
+        from app.core.concurrency import require_if_match
+        expected_version = require_if_match(expected_version)
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 <= len(idempotency_key.strip()) <= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
         try:
+            # Authorise before reading any receipt: an old key is not authority.
+            await EventMutationService.authorize_update(db, event=event, payload=payload,
+                actor_user_id=actor_user_id)
+            organization_id, event_id = event.organization_id, event.id
             idem = None
             if idempotency_key:
                 idem = await begin_idempotent(
@@ -268,25 +314,17 @@ class EventCommandService:
                     key=idempotency_key,
                     payload={
                         "event_id": str(event.id),
-                        "payload": payload.model_dump(mode="json"),
+                        "payload": payload.model_dump(mode="json", exclude_unset=True),
                         "expected_version": expected_version,
                     },
                 )
                 replay = replay_response(idem)
                 if replay is not None:
-                    if idem.resource_id is None:
-                        raise RuntimeError("Completed event idempotency record has no resource.")
-                    existing = await db.scalar(
-                        select(Event).where(
-                            Event.id == idem.resource_id,
-                            Event.organization_id == event.organization_id,
-                        )
-                    )
-                    if existing is None:
-                        raise RuntimeError("Completed event idempotency resource is missing.")
+                    response = EventResponse.model_validate(replay[1])
+                    if response.id != event_id or response.organization_id != organization_id:
+                        raise RuntimeError("Event receipt does not match the requested resource.")
                     await db.commit()
-                    await db.refresh(existing)
-                    return existing, {}, []
+                    return response, {}, []
 
             updated, old_state, changed_fields = await EventMutationService.update(
                 db,
@@ -295,8 +333,20 @@ class EventCommandService:
                 actor_user_id=actor_user_id,
                 expected_version=expected_version,
             )
+            selector = db.info.get("customer_request_selector")
+            db.add(AuditLog(
+                organization_id=organization_id, actor_user_id=actor_user_id,
+                resource_type="event", resource_id=event_id,
+                action_type="EVENT_SETTINGS_UPDATED", is_sensitive=True,
+                old_state={"version": int(updated.version) - 1},
+                new_state={"changed_fields": changed_fields, "version": int(updated.version),
+                    "workspace_id": str(updated.operational_workspace_id),
+                    "target_organization_id": str(organization_id),
+                    "acting_organization_id": str(getattr(selector, "acting_organization_id", None) or organization_id),
+                    "access_mode": getattr(selector, "access_mode", "DIRECT")},
+            ))
+            response = EventResponse.model_validate(updated)
             if idem is not None:
-                response = EventResponse.model_validate(updated)
                 await complete_idempotent(
                     db,
                     idem,
@@ -305,9 +355,8 @@ class EventCommandService:
                     resource_id=updated.id,
                 )
             await db.commit()
-            await db.refresh(updated)
-            await cache_service.invalidate_event(updated.organization_id, updated.id)
-            return updated, old_state, changed_fields
         except Exception:
             await db.rollback()
             raise
+        await cache_service.invalidate_event(organization_id, event_id)
+        return response, old_state, changed_fields

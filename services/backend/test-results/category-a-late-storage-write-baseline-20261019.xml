@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="16.143" timestamp="2026-10-19T11:39:24.679876+05:30" hostname="Vishal"><testcase classname="tests.test_upload_cleanup_claim_takeover" name="test_late_storage_write_cannot_create_orphan_after_missing_recovery" time="15.306"><failure message="Failed: DID NOT RAISE &lt;class 'FileNotFoundError'&gt;">tests\test_upload_cleanup_claim_takeover.py:252: in test_late_storage_write_cannot_create_orphan_after_missing_recovery
+    with pytest.raises(FileNotFoundError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE &lt;class 'FileNotFoundError'&gt;</failure></testcase></testsuite></testsuites>

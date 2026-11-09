@@ -28,7 +28,6 @@ from app.modules.platform.models.organization_console import (
     UsageReservation,
     CapabilityRestriction,
     OrganizationFinancialAdjustment,
-    CommercialAccessRequest,
     OrganizationBrandProfile,
     OrganizationInsightSnapshot,
     OrganizationLifecycleJob,
@@ -92,5 +91,4 @@ __all__ = [
     "PrivilegedAccessSession",
     "PrivilegedMutationReceipt",
     "OrganizationFinancialAdjustment",
-    "CommercialAccessRequest",
 ]

@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import uuid
+from functools import wraps
 from typing import Any
 
 import socketio
@@ -32,6 +33,8 @@ from loguru import logger
 
 from app.config import settings
 from app.database import AsyncSessionLocal
+from app.websocket.protection import RealtimeQuotaError, ingress, acquire, control, watchdog, cleanup
+from app.websocket.socket_manager import ScopedSocketManager
 from app.websocket.auth import (
     RealtimeAuthError,
     RealtimePrincipal,
@@ -39,6 +42,7 @@ from app.websocket.auth import (
     authorize_event,
     authorize_moderator_command,
     authorize_room,
+    reauthorize_principal,
 )
 
 
@@ -47,13 +51,48 @@ from app.websocket.auth import (
 # cors_allowed_origins="*" — tighten in production to your domain list.
 
 sio = socketio.AsyncServer(
+    client_manager=ScopedSocketManager(settings.redis_lock_url),
     async_mode="asgi",
     cors_allowed_origins="*" if not settings.is_production else settings.CORS_ORIGINS,
     logger=False,
     engineio_logger=False,
     ping_interval=settings.WS_HEARTBEAT_INTERVAL,
     ping_timeout=20,
+    max_http_buffer_size=1024 * 1024,
 )
+
+# Process-local handles only; admission/capacity live in shared Redis. Each
+# authenticated transport has one watchdog and the disconnect path removes it.
+_connection_resources = {}
+sio.manager.recipient_lease = lambda sid: _connection_resources.get(sid, (None, None))[0]
+
+
+def _limited_control(handler):
+    @wraps(handler)
+    async def wrapped(sid, data):
+        try:
+            principal = await _principal_for(sid)
+            await control(principal, data)
+            if handler.__name__.startswith("join_") and len(sio.rooms(sid)) >= 101:
+                raise RealtimeQuotaError(413, 0)
+            async with AsyncSessionLocal() as db:
+                await reauthorize_principal(db, principal)
+        except RealtimeAuthError:
+            await _emit_denied(sid)
+            await sio.disconnect(sid)
+            return {"ack": False, "code": "PERMISSION_DENIED"}
+        except RealtimeQuotaError as exc:
+            await sio.emit("error", {"code": exc.code, "retry_after": exc.retry_after}, to=sid)
+            await sio.disconnect(sid)
+            return {"ack": False, "code": exc.code, "retry_after": exc.retry_after}
+        except Exception:
+            try:
+                await sio.emit("error", {"code": "REALTIME_UNAVAILABLE"}, to=sid)
+            finally:
+                await sio.disconnect(sid)
+            return {"ack": False, "code": "REALTIME_UNAVAILABLE"}
+        return await handler(sid, data)
+    return wrapped
 
 # We will wrap the FastAPI app in main.py directly using sio.
 
@@ -154,22 +193,63 @@ async def connect(sid: str, environ: dict, auth: dict | None = None) -> bool:
     In production, validate the token here and disconnect if invalid.
     """
     try:
+        await ingress(environ.get("asgi.scope"))
         async with AsyncSessionLocal() as db:
             principal = await authenticate_realtime(db, auth)
+        lease = await acquire(principal)
+    except RealtimeQuotaError as exc:
+        raise ConnectionRefusedError({"code": exc.code, "retry_after": exc.retry_after}) from exc
     except RealtimeAuthError as exc:
         logger.warning(f"Rejected realtime connection sid={sid}: {exc}")
-        raise ConnectionRefusedError(str(exc))
+        raise ConnectionRefusedError({"code": "PERMISSION_DENIED"}) from exc
+    except Exception as exc:
+        raise ConnectionRefusedError({"code": "REALTIME_UNAVAILABLE", "retry_after": 5}) from exc
 
-    await sio.save_session(sid, principal.to_session())
-    logger.info(f"Authenticated realtime connection sid={sid} kind={principal.kind}")
-    await sio.emit("connected", {"sid": sid, "status": "ok"}, to=sid)
+    async def validate():
+        current = await _principal_for(sid)
+        rooms = sorted(sio.rooms(sid))
+        if len(rooms) > 101:
+            raise RealtimeAuthError("Realtime subscription bound exceeded.")
+        async with AsyncSessionLocal() as db:
+            await reauthorize_principal(db, current)
+            for room in rooms:
+                if room == sid:
+                    continue
+                prefix, separator, identifier = room.partition(":")
+                if not separator or prefix not in {"event", "room", "srr", "venue-ops"}:
+                    raise RealtimeAuthError("Realtime resource is unavailable.")
+                if prefix == "room":
+                    await authorize_room(db, current, uuid.UUID(identifier))
+                else:
+                    await authorize_event(db, current, uuid.UUID(identifier))
+
+    async def terminate(error):
+        code = "PERMISSION_DENIED" if isinstance(error, RealtimeAuthError) else "REALTIME_UNAVAILABLE"
+        try:
+            await sio.emit("error", {"code": code}, to=sid)
+        finally:
+            await sio.disconnect(sid)
+
+    try:
+        await sio.save_session(sid, principal.to_session())
+        task = watchdog(lease, validate, terminate)
+        _connection_resources[sid] = (lease, task)
+        logger.info(f"Authenticated realtime connection sid={sid} kind={principal.kind}")
+        await sio.emit("connected", {"sid": sid, "status": "ok"}, to=sid)
+    except BaseException:
+        resources = _connection_resources.pop(sid, (lease, None))
+        await cleanup(*resources)
+        raise
     return True
 
 
 @sio.event
-async def disconnect(sid: str) -> None:
+async def disconnect(sid: str, reason=None) -> None:
     """Called when a client disconnects (intentional or network loss)."""
     logger.info(f"WebSocket client disconnected: sid={sid}")
+    resources = _connection_resources.pop(sid, None)
+    if resources is not None:
+        await cleanup(*resources)
 
 
 async def _principal_for(sid: str) -> RealtimePrincipal:
@@ -183,7 +263,39 @@ async def _emit_denied(sid: str) -> None:
     await sio.emit("error", {"code": "PERMISSION_DENIED", "message": "Access denied."}, to=sid)
 
 
+@_limited_control
+async def _unknown_control(sid, data):
+    return {"ack": False, "code": "UNSUPPORTED_REALTIME_OPERATION"}
+
+
+@sio.on("*")
+async def unknown_control(event, sid, *data):
+    # Unsupported event names still consume the authenticated control budget.
+    # Names/payloads are bounded together and never become Redis key segments.
+    return await _unknown_control(sid, {"event": event, "data": data})
+
+
 @sio.event
+@_limited_control
+async def leave_resource_room(sid: str, data: dict) -> dict:
+    """Remove only this connection's bounded resource subscription."""
+    if set(data) != {"room"} or not isinstance(data.get("room"), str):
+        return {"ack": False, "code": "INVALID_REALTIME_OPERATION"}
+    room = data["room"]
+    family, separator, identifier = room.partition(":")
+    if not separator or family not in {"event", "venueops", "room", "srr"}:
+        return {"ack": False, "code": "INVALID_REALTIME_OPERATION"}
+    try:
+        canonical = f"{family}:{uuid.UUID(identifier)}"
+    except (TypeError, ValueError):
+        return {"ack": False, "code": "INVALID_REALTIME_OPERATION"}
+    # Never accept a caller-supplied SID or invoke cross-replica room mutations.
+    await sio.leave_room(sid, canonical)
+    return {"ack": True}
+
+
+@sio.event
+@_limited_control
 async def join_event_room(sid: str, data: dict) -> None:
     """
     Client requests to join an event room.
@@ -211,6 +323,7 @@ async def join_event_room(sid: str, data: dict) -> None:
 
 
 @sio.event
+@_limited_control
 async def join_room_room(sid: str, data: dict) -> None:
     """
     Client (Room App / Moderator) requests to join a conference room channel.
@@ -232,6 +345,7 @@ async def join_room_room(sid: str, data: dict) -> None:
 
 
 @sio.event
+@_limited_control
 async def join_srr_room(sid: str, data: dict) -> None:
     """
     SRR technician / Kiosk joins the ready-room channel.
@@ -253,6 +367,7 @@ async def join_srr_room(sid: str, data: dict) -> None:
 
 
 @sio.event
+@_limited_control
 async def join_venue_ops_room(sid: str, data: dict) -> None:
     """Join the authenticated organiser/Command Center Venue Ops workflow room."""
     try:
@@ -272,6 +387,7 @@ async def join_venue_ops_room(sid: str, data: dict) -> None:
 
 
 @sio.event
+@_limited_control
 async def ping(sid: str, data: dict) -> dict:
     """
     Heartbeat handler. Client sends { ts: <unix_ms> }.
@@ -284,6 +400,7 @@ async def ping(sid: str, data: dict) -> dict:
 # ── Presentation control events (Moderator → Room App) ────────
 
 @sio.event
+@_limited_control
 async def moderator_command(sid: str, data: dict) -> None:
     """
     Moderator App sends a presentation control command.
@@ -319,9 +436,9 @@ async def moderator_command(sid: str, data: dict) -> None:
     try:
         parsed_room_id = uuid.UUID(str(room_id))
         principal = await _principal_for(sid)
-        authorize_moderator_command(principal)
         async with AsyncSessionLocal() as db:
-            await authorize_room(db, principal, parsed_room_id)
+            target = await authorize_room(db, principal, parsed_room_id)
+            await authorize_moderator_command(db, principal, target.event_id)
     except (RealtimeAuthError, TypeError, ValueError):
         await _emit_denied(sid)
         return
@@ -333,6 +450,7 @@ async def moderator_command(sid: str, data: dict) -> None:
 
 
 @sio.event
+@_limited_control
 async def station_heartbeat(sid: str, data: dict) -> dict:
     """
     SRR Station App sends periodic heartbeats so the backend

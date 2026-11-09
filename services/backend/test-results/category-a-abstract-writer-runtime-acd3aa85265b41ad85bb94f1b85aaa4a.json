@@ -1,0 +1,67 @@
+{
+  "status": "PASSED",
+  "run_id": "acd3aa85265b41ad85bb94f1b85aaa4a",
+  "environment": "local_isolated_rehearsal",
+  "scope": "actual_restricted_login_direct_accepted_owner",
+  "started_at": "2026-10-27T03:44:58.917525+00:00",
+  "delegated_http_browser_concurrency_acceptance": "NOT_RUN",
+  "database": "category_a_restore_20261027_b83b23ab0064",
+  "organization_id": "348bccec-bc4b-4f1d-aaf7-60681c34800b",
+  "event_id": "352a2053-273a-4c0d-bd24-6e0329d7ee1c",
+  "migration_revision": "20261022_3670",
+  "current_case": "invalid_rubric",
+  "checks": [
+    {
+      "case": "success_replay",
+      "expected_decision_verified": true
+    },
+    {
+      "case": "stale_version",
+      "expected_status": 412,
+      "expected_decision_verified": true
+    },
+    {
+      "case": "missing_version",
+      "expected_status": 428,
+      "expected_decision_verified": true
+    },
+    {
+      "case": "missing_key",
+      "expected_status": 428,
+      "expected_decision_verified": true
+    },
+    {
+      "case": "foreign_source",
+      "expected_status": 404,
+      "expected_decision_verified": true
+    },
+    {
+      "case": "wrong_purpose",
+      "expected_status": 422,
+      "expected_decision_verified": true
+    },
+    {
+      "case": "retired_source",
+      "expected_status": 409,
+      "expected_decision_verified": true
+    },
+    {
+      "case": "stale_source_version",
+      "expected_status": 412,
+      "expected_decision_verified": true
+    },
+    {
+      "case": "changed_retry_payload",
+      "expected_status": 409,
+      "expected_decision_verified": true
+    },
+    {
+      "case": "invalid_rubric",
+      "expected_status": 422,
+      "expected_decision_verified": true
+    }
+  ],
+  "independent_original_state_and_receipts_restored": true,
+  "completed_at": "2026-10-27T03:46:26.538948+00:00",
+  "probe_sha256": "ab4a53dcee3e8a0653387722f1ad028aa7dede5e44567727d5ae61eebd03e039"
+}

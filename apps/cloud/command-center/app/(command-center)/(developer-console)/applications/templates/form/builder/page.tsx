@@ -3,120 +3,89 @@
 import React, { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import {
-  FormBuilderStudio,
-  FormTemplate,
-  FormField,
-  FormSettings,
-  DEFAULT_FORM_TEMPLATES,
-} from "@eventos/form-builder-studio";
+import { FormBuilderStudio, FormTemplate, FormField, FormSettings, catalogueDocumentForSave } from "@eventos/form-builder-studio";
 import { platformFormService } from "@/services/form-template-service";
-import { RefreshCw } from "lucide-react";
+import { useCatalogueCommand } from "@/hooks/useCatalogueCommand";
+import { useAuthStore } from "@/store/use-auth-store";
+import { PageContainer } from "@/components/super-admin/ui/PageContainer";
 
-function FormBuilderContent() {
+function ScopedBuilder() {
+  const { user, isAuthenticated } = useAuthStore();
+  const id = useSearchParams().get("id");
+  if (!isAuthenticated) return <p role="status">Sign in to manage the catalogue.</p>;
+  return <FormBuilderContent key={`${user?.id}:${user?.organization_id}:${id}`} templateId={id} />;
+}
+
+function FormBuilderContent({ templateId }: { templateId: string | null }) {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const templateId = searchParams.get("id");
-
+  const command = useCatalogueCommand();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [template, setTemplate] = useState<FormTemplate | null>(null);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
-    async function loadTemplate() {
-      if (!templateId) {
-        // Fallback default
-        setTemplate(DEFAULT_FORM_TEMPLATES[0]);
-        setLoading(false);
-        return;
-      }
-
-      setLoading(true);
-      try {
-        const res = await platformFormService.getTemplate(templateId);
-        setTemplate(res);
-      } catch (err: any) {
-        // Fallback to local default if API fails
-        const local = DEFAULT_FORM_TEMPLATES.find((t: FormTemplate) => t.id === templateId) || DEFAULT_FORM_TEMPLATES[0];
-        setTemplate(local);
-      } finally {
-        setLoading(false);
-      }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setTemplate(null);
+    if (!templateId) {
+      setError("Select a persisted blueprint from the catalogue first.");
+      setLoading(false);
+      return;
     }
+    void platformFormService.getTemplate(templateId).then(result => {
+      if (!cancelled && command.isCurrent()) setTemplate(result);
+    }).catch((problem: unknown) => {
+      if (!cancelled && command.isCurrent()) setError(problem instanceof Error ? problem.message : "Blueprint unavailable.");
+    }).finally(() => {
+      if (!cancelled && command.isCurrent()) setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [templateId, reload, command.isCurrent]);
 
-    loadTemplate();
-  }, [templateId]);
-
-  const handleSave = async (data: {
-    fields: FormField[];
-    settings: FormSettings;
-    is_live: boolean;
-  }) => {
-    if (!template) return;
+  const handleSave = async (data: { fields: FormField[]; settings: FormSettings; is_live: boolean }) => {
+    if (!template?.version) {
+      toast.error("Reload the persisted blueprint before saving.");
+      return;
+    }
     try {
-      if (template.id && !template.id.startsWith("tpl_")) {
-        await platformFormService.updateTemplate(template.id, {
-          name: template.name,
-          description: template.description,
-          category_key: template.category_key,
-          fields: data.fields,
-          settings: data.settings,
-        });
-      } else {
-        // Create new template record
-        await platformFormService.createTemplate({
-          name: template.name,
-          category_key: template.category_key,
-          description: template.description,
-          fields: data.fields,
-          settings: data.settings,
-          scope_type: "GLOBAL",
-        });
-      }
-      toast.success("Form blueprint saved and published successfully!");
-    } catch (err: any) {
-      toast.error(err.message || "Failed to save template");
+      const document = catalogueDocumentForSave(data.fields, data.settings);
+      const saved = await command.execute<FormTemplate>("put", `/platform/forms/templates/${template.id}`, {
+        name: template.name,
+        description: template.description,
+        category_key: template.category_key,
+        ...document,
+        is_active: data.is_live,
+      }, template.version);
+      if (!saved || !command.isCurrent()) return;
+      setTemplate(saved);
+      toast.success("Blueprint saved.");
+    } catch (problem: unknown) {
+      if (command.isCurrent()) toast.error(problem instanceof Error ? problem.message : "Blueprint was not saved.");
     }
   };
 
-  if (loading || !template) {
-    return (
-      <div className="p-16 flex flex-col items-center justify-center space-y-3 text-center min-h-[500px]">
-        <RefreshCw className="size-8 text-[var(--pri,#4f46e5)] animate-spin" />
-        <p className="text-xs font-bold text-[var(--text-secondary,#a1a1aa)] uppercase tracking-wider">
-          Loading Form Studio...
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <FormBuilderStudio
-      initialFields={template.fields || []}
-      initialSettings={template.settings || {}}
-      templateName={template.name}
-      categoryName={template.category_name || template.category_key}
-      isLive={template.is_active}
-      mode="command-center"
-      onSave={handleSave}
-      onBack={() => router.push("/applications/templates/form")}
-      onBrowseTemplates={() => router.push("/applications/templates/form")}
-    />
-  );
+  if (loading) return <PageContainer className="p-0"><p role="status">Loading Form Studio…</p></PageContainer>;
+  if (error || !template) return <PageContainer className="p-0"><p role="alert">{error || "Blueprint unavailable."}</p>
+    <button type="button" onClick={() => setReload(value => value + 1)}>Reload blueprint</button>
+    <button type="button" onClick={() => router.push("/applications/templates/form")}>Back to catalogue</button>
+  </PageContainer>;
+  return <PageContainer className="p-0">
+    {command.failure ? <p role="alert">{command.failure.message}
+      {command.failure.retryAfter ? ` Retry after ${command.failure.retryAfter} seconds.` : ""}
+      {command.failure.correlationId ? ` Reference: ${command.failure.correlationId}` : ""}
+    </p> : null}
+    <fieldset disabled={command.pending} aria-busy={command.pending}>
+      <FormBuilderStudio initialFields={template.fields || []} initialSettings={template.settings || {}}
+        templateName={template.name} categoryName={template.category_name || template.category_key}
+        isLive={template.is_active} mode="command-center" onSave={handleSave}
+        onBack={() => router.push("/applications/templates/form")}
+        onBrowseTemplates={() => router.push("/applications/templates/form")} />
+    </fieldset>
+  </PageContainer>;
 }
 
 export default function CommandCenterFormBuilderPage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="p-16 flex flex-col items-center justify-center space-y-3 text-center min-h-[500px]">
-          <RefreshCw className="size-8 text-[var(--pri,#4f46e5)] animate-spin" />
-          <p className="text-xs font-bold text-[var(--text-secondary,#a1a1aa)] uppercase tracking-wider">
-            Loading Form Studio...
-          </p>
-        </div>
-      }
-    >
-      <FormBuilderContent />
-    </Suspense>
-  );
+  return <Suspense fallback={<p role="status">Loading Form Studio…</p>}><ScopedBuilder /></Suspense>;
 }

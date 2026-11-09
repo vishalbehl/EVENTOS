@@ -1,0 +1,40 @@
+{
+  "status": "PASSED",
+  "environment": "local_migrated_rehearsal",
+  "database": "category_a_rehearsal_20261015",
+  "migration_revision": "20261019_3640",
+  "runtime_role": "category_a_rehearsal_runtime_20261015",
+  "role_proof": "SET LOCAL ROLE; not independent runtime login",
+  "checks": [
+    {
+      "case": "uuid_detail_actual_action_feature_and_rls",
+      "outcome": "ALLOWED"
+    },
+    {
+      "case": "foreign_event_detail",
+      "outcome": "CONCEALED_404"
+    },
+    {
+      "case": "actual_slug_or_alias",
+      "outcome": "UNIQUE_GLOBAL_SOURCE"
+    },
+    {
+      "case": "actual_slug_or_alias",
+      "outcome": "UNIQUE_GLOBAL_SOURCE"
+    },
+    {
+      "case": "owned_mutation_selector_excludes_global",
+      "outcome": "VERIFIED"
+    },
+    {
+      "case": "selector_context_mismatch",
+      "outcome": "DENIED_BEFORE_LOOKUP"
+    }
+  ],
+  "selected_records_unchanged": true,
+  "before_state_sha256": "7fe77236aeb7ef7396b0a661d1b50808158f59d59741f0452c30a5470ebad975",
+  "after_state_sha256": "7fe77236aeb7ef7396b0a661d1b50808158f59d59741f0452c30a5470ebad975",
+  "signed_http_browser_acceptance": "NOT_RUN",
+  "metadata_correction_applied": false,
+  "provider_io_performed": false
+}

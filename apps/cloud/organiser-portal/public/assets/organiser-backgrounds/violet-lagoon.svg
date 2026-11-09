@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1200" viewBox="0 0 1920 1200" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="80" y1="40" x2="1820" y2="1160" gradientUnits="userSpaceOnUse"><stop stop-color="#F8F5FF"/><stop offset=".32" stop-color="#E8DAFF"/><stop offset=".66" stop-color="#CCEAF6"/><stop offset="1" stop-color="#B9D7F1"/></linearGradient>
+    <linearGradient id="water" x1="960" y1="570" x2="960" y2="1200" gradientUnits="userSpaceOnUse"><stop stop-color="#9CCFE7" stop-opacity=".55"/><stop offset="1" stop-color="#648FC9" stop-opacity=".92"/></linearGradient>
+    <filter id="blur"><feGaussianBlur stdDeviation="42"/></filter>
+    <pattern id="grid" width="144" height="144" patternUnits="userSpaceOnUse"><path d="M144 0H0V144" stroke="#634D94" stroke-opacity=".06"/></pattern>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#sky)"/>
+  <circle cx="420" cy="250" r="300" fill="#C7A7FF" fill-opacity=".42" filter="url(#blur)"/>
+  <circle cx="1530" cy="210" r="310" fill="#9DE3F3" fill-opacity=".5" filter="url(#blur)"/>
+  <path d="M0 707C180 605 294 653 438 576C596 492 702 567 855 488C1010 408 1121 493 1276 426C1446 352 1640 416 1920 302V1200H0V707Z" fill="#B8B6E7" fill-opacity=".62"/>
+  <path d="M0 870C149 791 281 825 420 743C570 655 681 727 827 649C976 569 1089 650 1237 584C1403 510 1571 558 1721 497C1792 468 1853 449 1920 432V1200H0V870Z" fill="#9FC8E2" fill-opacity=".72"/>
+  <path d="M0 990C193 896 354 947 509 859C669 768 809 857 965 770C1125 681 1251 768 1410 702C1574 634 1731 675 1920 602V1200H0V990Z" fill="url(#water)"/>
+  <rect width="1920" height="1200" fill="url(#grid)"/>
+</svg>

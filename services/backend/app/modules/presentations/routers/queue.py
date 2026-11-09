@@ -20,6 +20,7 @@ from app.modules.presentations.schemas.queue import (
     QueueEntryCreate, QueueStatusUpdate, QueueReorderRequest,
     QueueOverrideRequest, QueueEntryResponse, SessionQueueResponse,
 )
+from app.modules.presentations.application.queries import PresentationQueueQueryService
 from app.schemas.common import MessageResponse
 from app.websocket.events import broadcast_file_event, EventType
 from app.core.dependencies.feature_gate import require_event_operation
@@ -35,13 +36,10 @@ async def list_event_queue(
     db: AsyncSession = Depends(get_db),
 ) -> List[QueueEntryResponse]:
     """Return the event-wide presentation queue without cross-tenant leakage."""
-    result = await db.execute(
-        select(PresentationQueue)
-        .join(Session, Session.id == PresentationQueue.session_id)
-        .where(Session.event_id == event.id)
-        .order_by(Session.start_time, PresentationQueue.queue_order)
+    entries = await PresentationQueueQueryService(db).list_for_event(
+        organization_id=event.organization_id, event_id=event.id
     )
-    return [QueueEntryResponse.model_validate(entry) for entry in result.scalars().all()]
+    return [QueueEntryResponse.model_validate(entry) for entry in entries]
 
 
 @router.get("/sessions/{session_id}", response_model=SessionQueueResponse)
@@ -54,13 +52,10 @@ async def get_session_queue(
     Returns the ordered presentation queue for a session.
     Used by: Room PC, Venue Server sync, Technician Dashboard.
     """
-    session = await _get_session_or_404(db, session_id, event.id)
-    result = await db.execute(
-        select(PresentationQueue)
-        .where(PresentationQueue.session_id == session_id)
-        .order_by(PresentationQueue.queue_order)
+    await _get_session_or_404(db, session_id, event.id)
+    entries = await PresentationQueueQueryService(db).list_for_session(
+        organization_id=event.organization_id, event_id=event.id, session_id=session_id
     )
-    entries = result.scalars().all()
     entry_responses = [QueueEntryResponse.model_validate(e) for e in entries]
     active = next((e for e in entry_responses if e.status == "active"), None)
     completed = sum(1 for e in entry_responses if e.status == "completed")
@@ -86,25 +81,13 @@ async def get_room_queue(
     Used by: Room Presentation App and Venue Server for offline-first sync.
     Returns entries ordered by session start time then queue_order.
     """
-    # Resolve session IDs for this room+event
-    sessions_result = await db.execute(
-        select(Session.id).where(
-            Session.room_id == room_id,
-            Session.event_id == event.id,
-        )
+    entries = await PresentationQueueQueryService(db).list_for_room(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        room_id=room_id,
+        queued_only=queued_only,
     )
-    session_ids = [row[0] for row in sessions_result.all()]
-    if not session_ids:
-        return []
-
-    q = select(PresentationQueue).where(
-        PresentationQueue.session_id.in_(session_ids)
-    )
-    if queued_only:
-        q = q.where(PresentationQueue.status.in_(["queued", "active"]))
-    q = q.order_by(PresentationQueue.queue_order)
-    result = await db.execute(q)
-    return [QueueEntryResponse.model_validate(e) for e in result.scalars().all()]
+    return [QueueEntryResponse.model_validate(entry) for entry in entries]
 
 
 # ── Technician: add entry to queue ────────────────────────────

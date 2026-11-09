@@ -1,13 +1,14 @@
 import logging
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Literal
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, StrictBool
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_db, get_current_event, CurrentEvent, AdminOrAbove
+from app.dependencies import get_db, get_current_event, CurrentEvent, AdminOrAbove, require_active_user, require_step_up
+from app.modules.identity.models.user import User
 from app.modules.events.models.event import Event
 from app.modules.registration.models.promo_code import PromoCode
 from app.modules.registration.models.payment_transaction import PaymentTransaction
@@ -26,33 +27,45 @@ router = APIRouter(prefix="/events/{event_id}/payments", tags=["payments"], depe
 # ── Pydantic Request/Response schemas ─────────────────────────────────────
 
 class StripeCredentialsSchema(BaseModel):
-    publishable_key: str = ""
-    # On GET responses this holds a masked value (e.g. "••••••••ab12").
-    # On POST requests this holds the raw key submitted by the organizer.
-    secret_key: str = ""
+    model_config = ConfigDict(extra="forbid")
+    publishable_key: str = Field(default="", max_length=512)
+    # Write-only: reads return an empty value plus a configured flag.
+    secret_key: str = Field(default="", max_length=2048)
 
 
 class RazorpayCredentialsSchema(BaseModel):
-    key_id: str = ""
-    # On GET responses this holds a masked value.
-    # On POST requests this holds the raw secret submitted by the organizer.
-    key_secret: str = ""
+    model_config = ConfigDict(extra="forbid")
+    key_id: str = Field(default="", max_length=512)
+    # Write-only: reads return an empty value plus a configured flag.
+    key_secret: str = Field(default="", max_length=2048)
 
 
 class PaymentConfigResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     payment_enabled: bool = False
-    active_gateway: str = "simulated"   # stripe | razorpay | simulated
+    active_gateway: str = "simulated"   # stripe | razorpay | phonepe | offline | simulated
     stripe_credentials: StripeCredentialsSchema
     razorpay_credentials: RazorpayCredentialsSchema
     auto_approve_paid: bool = True
+    offline_instructions: Optional[str] = None
+    version: int
+    stripe_secret_configured: bool
+    razorpay_secret_configured: bool
+
+
+class PaymentConfigSaveResponse(BaseModel):
+    message: str
+    version: int
 
 
 class PaymentConfigUpdateRequest(BaseModel):
-    payment_enabled: Optional[bool] = None
-    active_gateway: Optional[str] = None
+    model_config = ConfigDict(extra="forbid")
+    payment_enabled: Optional[StrictBool] = None
+    active_gateway: Optional[Literal["stripe", "razorpay", "phonepe", "offline", "simulated"]] = None
     stripe_credentials: Optional[StripeCredentialsSchema] = None
     razorpay_credentials: Optional[RazorpayCredentialsSchema] = None
-    auto_approve_paid: Optional[bool] = None
+    auto_approve_paid: Optional[StrictBool] = None
+    offline_instructions: Optional[str] = Field(default=None, max_length=65536)
 
 
 class PromoCodeCreate(BaseModel):
@@ -109,67 +122,33 @@ class TransactionResponse(BaseModel):
 
 # ── GET /config — read gateway settings ───────────────────────────────────
 
-@router.get("/config", response_model=PaymentConfigResponse)
+@router.get("/config", response_model=PaymentConfigResponse,
+    dependencies=[require_event_operation("registration.payments.manage")])
 async def get_payment_config(event: CurrentEvent, response: Response):
     settings = event.registration_settings or {}
 
     stripe_creds  = settings.get("stripe_credentials", {}) or {}
     razorpay_creds = settings.get("razorpay_credentials", {}) or {}
 
-    # Mask the secrets — raw values must NEVER be returned over HTTP.
-    def mask_stripe_secret(token: str) -> str:
-        if not token:
-            return ""
-        from app.core.encryption import decrypt as new_decrypt
-        try:
-            plaintext = new_decrypt(token)
-        except Exception:
-            try:
-                from app.services.credential_cipher import cipher
-                plaintext = cipher.decrypt(token)
-            except Exception:
-                plaintext = ""
-        if not plaintext:
-            return ""
-        suffix = plaintext[-4:] if len(plaintext) >= 4 else plaintext
-        return f"••••••••{suffix}"
-
-    stripe_secret_masked   = mask_stripe_secret(stripe_creds.get("secret_key", ""))
-    razorpay_secret_masked = cipher.mask(razorpay_creds.get("key_secret", ""))
-
-    logger.info(
-        "payment_credentials_accessed",
-        extra={
-            "event_id": str(event.id),
-            "user_id": "system",
-            "gateway": "stripe",
-            "action": "mask",
-        },
-    )
-    logger.info(
-        "payment_credentials_accessed",
-        extra={
-            "event_id": str(event.id),
-            "user_id": "system",
-            "gateway": "razorpay",
-            "action": "mask",
-        },
-    )
-
     if response is not None:
         response.headers["ETag"] = f'"{int(event.version or 1)}"'
+        response.headers["Cache-Control"] = "no-store"
     return PaymentConfigResponse(
         payment_enabled=settings.get("payment_enabled", False),
         active_gateway=settings.get("active_gateway", "simulated"),
         stripe_credentials=StripeCredentialsSchema(
             publishable_key=stripe_creds.get("publishable_key", ""),
-            secret_key=stripe_secret_masked,
+            secret_key="",
         ),
         razorpay_credentials=RazorpayCredentialsSchema(
             key_id=razorpay_creds.get("key_id", ""),
-            key_secret=razorpay_secret_masked,
+            key_secret="",
         ),
         auto_approve_paid=settings.get("auto_approve_paid", True),
+        offline_instructions=settings.get("offline_instructions", ""),
+        version=int(event.version or 1),
+        stripe_secret_configured=bool(stripe_creds.get("secret_key")),
+        razorpay_secret_configured=bool(razorpay_creds.get("key_secret")),
     )
 
 
@@ -178,34 +157,33 @@ async def get_payment_config(event: CurrentEvent, response: Response):
 
 @router.post(
     "/config",
-    response_model=MessageResponse,
-    dependencies=[require_event_operation("registration.payments.manage")],
+    response_model=PaymentConfigSaveResponse,
+    dependencies=[require_event_operation("registration.payments.manage"), Depends(require_step_up)],
 )
 async def update_payment_config(
     payload: PaymentConfigUpdateRequest,
     event: CurrentEvent,
-    current_user: AdminOrAbove,
     response: Response,
+    current_user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     if_match: Optional[str] = Header(None, alias="If-Match"),
 ):
-    expected_version = require_if_match(if_match) if if_match is not None else None
-    effective_key = idempotency_key or f"legacy-payment-config-{uuid.uuid4()}"
+    expected_version = require_if_match(if_match)
     try:
         version = await PaymentCommandService.update_config(
             db,
             event=event,
             payload=payload,
             actor=current_user,
-            idempotency_key=effective_key,
+            idempotency_key=idempotency_key,
             expected_version=expected_version,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if response is not None:
         response.headers["ETag"] = f'"{version}"'
-    return MessageResponse(message="Payment configuration updated successfully.")
+    return PaymentConfigSaveResponse(message="Payment configuration updated successfully.", version=version)
 
 
 # ── Promo codes ────────────────────────────────────────────────────────────

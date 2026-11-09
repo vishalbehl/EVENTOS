@@ -91,5 +91,108 @@ class AgendaSessionPerson(Base):
             return None
         return next((item for item in loaded_files if item.is_current_version), None)
 
+    @property
+    def talk_duration_minutes(self) -> int:
+        if self.presentation_slot and hasattr(self.presentation_slot, "duration_minutes"):
+            return self.presentation_slot.duration_minutes
+        return self.__dict__.get("_talk_duration_minutes", 20)
+
+    @talk_duration_minutes.setter
+    def talk_duration_minutes(self, value: int):
+        self._talk_duration_minutes = value
+        if self.presentation_slot and hasattr(self.presentation_slot, "duration_minutes"):
+            self.presentation_slot.duration_minutes = value
+
+    @property
+    def start_time(self) -> Optional[datetime]:
+        if self.presentation_slot and hasattr(self.presentation_slot, "start_time"):
+            return self.presentation_slot.start_time
+        return self.__dict__.get("_start_time", None)
+
+    @start_time.setter
+    def start_time(self, value: Optional[datetime]):
+        self._start_time = value
+        if self.presentation_slot and hasattr(self.presentation_slot, "start_time"):
+            self.presentation_slot.start_time = value
+
+    @property
+    def end_time(self) -> Optional[datetime]:
+        if self.presentation_slot and hasattr(self.presentation_slot, "end_time"):
+            return self.presentation_slot.end_time
+        return self.__dict__.get("_end_time", None)
+
+    @end_time.setter
+    def end_time(self, value: Optional[datetime]):
+        self._end_time = value
+        if self.presentation_slot and hasattr(self.presentation_slot, "end_time"):
+            self.presentation_slot.end_time = value
+
+    @property
+    def speaker_type(self) -> Optional[str]:
+        return self.role or self.__dict__.get("_speaker_type", "Speaker")
+
+    @speaker_type.setter
+    def speaker_type(self, value: Optional[str]):
+        if value:
+            self.role = value
+        self._speaker_type = value
+
+    @property
+    def abstract_text(self) -> Optional[str]:
+        return self.__dict__.get("_abstract_text", None)
+
+    @abstract_text.setter
+    def abstract_text(self, value: Optional[str]):
+        self._abstract_text = value
+
+    @property
+    def abstract_keywords(self) -> list:
+        return self.__dict__.get("_abstract_keywords", [])
+
+    @abstract_keywords.setter
+    def abstract_keywords(self, value: list):
+        self._abstract_keywords = value
+
+    @property
+    def abstract_status(self) -> str:
+        return self.__dict__.get("_abstract_status", "DRAFT")
+
+    @abstract_status.setter
+    def abstract_status(self, value: str):
+        self._abstract_status = value
+
+    @property
+    def abstract_version(self) -> int:
+        return self.__dict__.get("_abstract_version", 1)
+
+    @abstract_version.setter
+    def abstract_version(self, value: int):
+        self._abstract_version = value
+
+    @property
+    def abstract_submitted_at(self) -> Optional[datetime]:
+        return self.__dict__.get("_abstract_submitted_at", None)
+
+    @abstract_submitted_at.setter
+    def abstract_submitted_at(self, value: Optional[datetime]):
+        self._abstract_submitted_at = value
+
+    @property
+    def abstract_reviewed_at(self) -> Optional[datetime]:
+        return self.__dict__.get("_abstract_reviewed_at", None)
+
+    @abstract_reviewed_at.setter
+    def abstract_reviewed_at(self, value: Optional[datetime]):
+        self._abstract_reviewed_at = value
+
+    @property
+    def abstract_review_notes(self) -> Optional[str]:
+        return self.__dict__.get("_abstract_review_notes", None)
+
+    @abstract_review_notes.setter
+    def abstract_review_notes(self, value: Optional[str]):
+        self._abstract_review_notes = value
+
 
 SessionPerson = AgendaSessionPerson
+

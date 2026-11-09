@@ -1,0 +1,34 @@
+{
+  "status": "PASSED",
+  "scope": "isolated_actual_runtime_login_direct_accepted_owner",
+  "operation": "update",
+  "checks": [
+    {
+      "source_scope": "GLOBAL",
+      "allowed": true,
+      "expected_decision_verified": true
+    },
+    {
+      "source_scope": "FOREIGN_ORGANIZATION",
+      "allowed": false,
+      "expected_decision_verified": true
+    }
+  ],
+  "global_shared_reference_write_verified": true,
+  "non_owner_runtime_role_verified": true,
+  "mandatory_audit_and_replay_verified": true,
+  "business_changes_rolled_back": true,
+  "raw_catalogue_guards": {
+    "missing_context_reads_fail_closed": true,
+    "foreign_rows_concealed": true,
+    "denied_mutations": [
+      "global_template_update",
+      "global_template_owner_claim",
+      "global_template_delete",
+      "global_category_update",
+      "global_category_owner_claim",
+      "global_category_delete"
+    ]
+  },
+  "independent_original_state_restoration_verified": true
+}

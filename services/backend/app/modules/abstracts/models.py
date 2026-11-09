@@ -38,6 +38,19 @@ class AbstractCall(Base):
     disclosure_rules: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     email_triggers: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     blind_review_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Normalized relational columns
+    allow_coauthors: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    max_coauthors: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=5)
+    require_presenter: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    require_affiliation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    require_country: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    max_submissions_per_author: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    require_attachments: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    allowed_file_extensions: Mapped[str] = mapped_column(String(100), nullable=False, default="pdf,docx")
+    max_file_size_mb: Mapped[int] = mapped_column(Integer, nullable=False, default=25)
+    require_disclosures: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    evaluation_plan_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("programme.evaluation_plans.id", ondelete="SET NULL"), nullable=True)
+    target_reviews_per_submission: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
@@ -178,7 +191,10 @@ class AbstractAssignment(Base):
 
 class AbstractReview(Base):
     __tablename__ = "abstract_reviews"
-    __table_args__ = {"schema": "abstract"}
+    __table_args__ = (
+        UniqueConstraint("assignment_id", name="uq_abstract_reviews_assignment_id"),
+        {"schema": "abstract"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -209,5 +225,120 @@ class AbstractDecision(Base):
     decided_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+
+
+class AbstractPortalSettings(Base):
+    __tablename__ = "abstract_portal_settings"
+    __table_args__ = (
+        UniqueConstraint("event_id", name="uq_abstract_portal_settings_event_id"),
+        {"schema": "abstract"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=False, index=True)
+    call_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("abstract.abstract_calls.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    # Submission Portal
+    sub_access_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="OPEN_PUBLIC")
+    sub_show_countdown: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    sub_show_taxonomy_guide: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    sub_guidelines_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sub_allow_edits: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    sub_allow_withdrawal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    sub_require_coauthor_verify: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sub_feedback_policy: Mapped[str] = mapped_column(String(32), nullable=False, default="ANONYMIZED_COMMENTS")
+    sub_success_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sub_support_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    sub_support_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    send_confirmation_email: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Review Portal
+    rev_redact_author_names: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    rev_redact_affiliations: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    rev_redact_coauthors: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    rev_peer_visibility: Mapped[str] = mapped_column(String(32), nullable=False, default="AFTER_SUBMIT")
+    rev_show_aggregate_scores: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    rev_allow_editing: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    rev_mandatory_comments: Mapped[str] = mapped_column(String(32), nullable=False, default="LOW_SCORES_ONLY")
+    rev_enforce_coi: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    rev_auto_warn_institution: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    rev_in_browser_pdf: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    rev_remind_72h: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    rev_remind_48h: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    rev_remind_24h: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow)
+
+
+class AbstractTopic(Base):
+    __tablename__ = "abstract_topics"
+    __table_args__ = (
+        UniqueConstraint("event_id", "name", name="uq_abstract_topics_event_name"),
+        Index("ix_abstract_topics_event_id", "event_id"),
+        {"schema": "abstract"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=False, index=True)
+    call_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("abstract.abstract_calls.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow)
+
+
+class AbstractCategory(Base):
+    __tablename__ = "abstract_categories"
+    __table_args__ = (
+        UniqueConstraint("event_id", "name", name="uq_abstract_categories_event_name"),
+        Index("ix_abstract_categories_event_id", "event_id"),
+        {"schema": "abstract"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=False, index=True)
+    call_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("abstract.abstract_calls.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow)
+
+
+class AbstractFormat(Base):
+    __tablename__ = "abstract_formats"
+    __table_args__ = (
+        UniqueConstraint("event_id", "code", name="uq_abstract_formats_event_code"),
+        Index("ix_abstract_formats_event_id", "event_id"),
+        {"schema": "abstract"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=False, index=True)
+    call_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("abstract.abstract_calls.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    code: Mapped[str] = mapped_column(String(40), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow)
+
+
+class AbstractReviewerTopic(Base):
+    __tablename__ = "abstract_reviewer_topics"
+    __table_args__ = {"schema": "abstract"}
+
+    reviewer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("abstract.abstract_reviewers.id", ondelete="CASCADE"), primary_key=True)
+    topic_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("abstract.abstract_topics.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
 
 

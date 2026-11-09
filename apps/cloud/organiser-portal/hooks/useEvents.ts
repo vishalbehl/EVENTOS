@@ -1,90 +1,197 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api-client";
 import { EventSummary, EventResponse } from "@/types/backend";
-import { useAuthStore } from "@/store/use-auth-store";
+import { accessContextCacheKey, useAuthStore } from "@/store/use-auth-store";
+import { useRef } from "react";
 
-export function useEvents(filters?: { status?: string; search?: string }) {
-  const { user, hasHydrated, isAuthenticated } = useAuthStore();
-  const orgId = user?.organization_id ?? null;
+function useAccessQueryScope() {
+  const {
+    user,
+    activeContext,
+    hasHydrated,
+    isAuthenticated,
+    isContextSwitching,
+  } = useAuthStore();
+  return {
+    key: `${user?.id ?? "anonymous"}:${accessContextCacheKey(activeContext, user?.organization_id)}`,
+    enabled: hasHydrated && isAuthenticated && !isContextSwitching,
+  };
+}
+
+export function useEvents(
+  filters?: { status?: string; search?: string; page_size?: number },
+  enabled = true,
+) {
+  const {
+    user,
+    activeContext,
+    hasHydrated,
+    isAuthenticated,
+    isContextSwitching,
+  } = useAuthStore();
+  const contextKey = accessContextCacheKey(
+    activeContext,
+    user?.organization_id,
+  );
 
   return useQuery({
-    queryKey: ["events", orgId, filters],
-    queryFn: () => {
+    queryKey: ["events", contextKey, filters],
+    queryFn: async ({ signal }) => {
       const params = new URLSearchParams();
       if (filters?.status) params.append("status", filters.status);
       if (filters?.search) params.append("search", filters.search);
+      params.append("page_size", String(filters?.page_size || 100));
       const queryString = params.toString();
-      return apiGet<EventSummary[]>(`/events${queryString ? `?${queryString}` : ""}`);
+      const res = await apiGet<any>(
+        `/events${queryString ? `?${queryString}` : ""}`,
+        { signal },
+      );
+      if (Array.isArray(res)) return res as EventSummary[];
+      if (Array.isArray(res?.items)) return res.items as EventSummary[];
+      if (Array.isArray(res?.data)) return res.data as EventSummary[];
+      return [] as EventSummary[];
     },
-    enabled: hasHydrated && isAuthenticated,
+    enabled: enabled && hasHydrated && isAuthenticated && !isContextSwitching,
   });
 }
 
 export function useEvent(eventId: string) {
-  const { user, hasHydrated, isAuthenticated } = useAuthStore();
-  const orgId = user?.organization_id ?? null;
+  const {
+    user,
+    activeContext,
+    hasHydrated,
+    isAuthenticated,
+    isContextSwitching,
+  } = useAuthStore();
+  const contextKey = accessContextCacheKey(
+    activeContext,
+    user?.organization_id,
+  );
 
   return useQuery({
-    queryKey: ["event", orgId, eventId],
-    queryFn: () => apiGet<EventResponse>(`/events/${eventId}`),
-    enabled: hasHydrated && isAuthenticated && !!eventId,
+    queryKey: ["event", contextKey, eventId],
+    queryFn: ({ signal }) =>
+      apiGet<EventResponse>(`/events/${eventId}`, { signal }),
+    enabled: hasHydrated && isAuthenticated && !isContextSwitching && !!eventId,
   });
 }
 
 export function useCreateEvent() {
   const queryClient = useQueryClient();
+  const { user, activeContext } = useAuthStore();
+  const contextKey = accessContextCacheKey(
+    activeContext,
+    user?.organization_id,
+  );
+  const receipt = useRef<{ fingerprint: string; key: string } | null>(null);
   return useMutation({
-    mutationFn: (data: any) => apiPost<EventResponse>("/events", data, {
-      headers: { "Idempotency-Key": crypto.randomUUID() },
-    }),
+    mutationFn: (data: any) => {
+      const fingerprint = JSON.stringify([user?.id, contextKey, data]);
+      if (receipt.current?.fingerprint !== fingerprint) {
+        receipt.current = { fingerprint, key: crypto.randomUUID() };
+      }
+      return apiPost<EventResponse>("/events", data, {
+        headers: { "Idempotency-Key": receipt.current.key },
+      });
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["events"] });
+      receipt.current = null;
+      queryClient.invalidateQueries({ queryKey: ["events", contextKey] });
     },
   });
 }
 
-export function useUpdateEvent(eventId: string) {
+export function useUpdateEvent(
+  eventId: string,
+  expectedVersion: number | null,
+) {
   const queryClient = useQueryClient();
+  const { user, activeContext } = useAuthStore();
+  const contextKey = accessContextCacheKey(
+    activeContext,
+    user?.organization_id,
+  );
+  const receipt = useRef<{ fingerprint: string; key: string } | null>(null);
   return useMutation({
-    mutationFn: (data: any) => apiPatch<EventResponse>(`/events/${eventId}`, data),
+    mutationFn: (data: Record<string, unknown>) => {
+      if (!Number.isInteger(expectedVersion) || Number(expectedVersion) < 1) {
+        throw new Error(
+          "Reload current event details before saving; no valid version is available.",
+        );
+      }
+      const fingerprint = JSON.stringify([
+        user?.id,
+        contextKey,
+        eventId,
+        expectedVersion,
+        data,
+      ]);
+      if (receipt.current?.fingerprint !== fingerprint) {
+        receipt.current = { fingerprint, key: crypto.randomUUID() };
+      }
+      return apiPatch<EventResponse>(`/events/${eventId}`, data, {
+        headers: {
+          "Idempotency-Key": receipt.current.key,
+          "If-Match": String(expectedVersion),
+        },
+      });
+    },
+    retry: false,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["events"] });
-      queryClient.invalidateQueries({ queryKey: ["event", eventId] });
+      receipt.current = null;
+      queryClient.invalidateQueries({ queryKey: ["events", contextKey] });
+      queryClient.invalidateQueries({
+        queryKey: ["event", contextKey, eventId],
+      });
     },
   });
 }
 
 export function useDashboardStats(eventId?: string) {
+  const scope = useAccessQueryScope();
   return useQuery({
-    queryKey: ['dashboard-stats', eventId],
-    queryFn: () => apiGet<any>(`/events/${eventId}/analytics/dashboard`),
-    enabled: !!eventId,
+    queryKey: ["dashboard-stats", scope.key, eventId],
+    queryFn: ({ signal }) =>
+      apiGet<any>(`/events/${eventId}/analytics/dashboard`, { signal }),
+    enabled: scope.enabled && !!eventId,
     refetchInterval: 30000,
   });
 }
 
 export function useGlobalStats() {
+  const scope = useAccessQueryScope();
   return useQuery({
-    queryKey: ['global-stats'],
-    queryFn: () => apiGet<any>(`/analytics/summary`),
+    queryKey: ["global-stats", scope.key],
+    queryFn: ({ signal }) => apiGet<any>(`/analytics/summary`, { signal }),
+    enabled: scope.enabled,
     refetchInterval: 60000,
   });
 }
 
 export function useActivity(eventId?: string, limit: number = 10) {
+  const scope = useAccessQueryScope();
   return useQuery({
-    queryKey: ['activity', eventId, limit],
-    queryFn: () => apiGet<any[]>(`/events/${eventId}/analytics/activity`, { params: { limit } }),
-    enabled: !!eventId,
+    queryKey: ["activity", scope.key, eventId, limit],
+    queryFn: ({ signal }) =>
+      apiGet<any[]>(`/events/${eventId}/analytics/activity`, {
+        signal,
+        params: { limit },
+      }),
+    enabled: scope.enabled && !!eventId,
     refetchInterval: 15000,
   });
 }
 export function useDeleteEvent() {
   const queryClient = useQueryClient();
+  const { user, activeContext } = useAuthStore();
+  const contextKey = accessContextCacheKey(
+    activeContext,
+    user?.organization_id,
+  );
   return useMutation({
     mutationFn: (eventId: string) => apiDelete(`/events/${eventId}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["events"] });
+      queryClient.invalidateQueries({ queryKey: ["events", contextKey] });
     },
   });
 }
@@ -92,37 +199,45 @@ export function useDeleteEvent() {
 // ── New analytics hooks ────────────────────────────────────────
 
 export function useMainDashboardStats(eventId?: string) {
+  const scope = useAccessQueryScope();
   return useQuery({
-    queryKey: ["main-dashboard-stats", eventId],
-    queryFn: () => apiGet<any>(`/events/${eventId}/analytics/main-dashboard`),
-    enabled: !!eventId,
+    queryKey: ["main-dashboard-stats", scope.key, eventId],
+    queryFn: ({ signal }) =>
+      apiGet<any>(`/events/${eventId}/analytics/main-dashboard`, { signal }),
+    enabled: scope.enabled && !!eventId,
     refetchInterval: 30000,
   });
 }
 
 export function useApprovalTimes(eventId?: string) {
+  const scope = useAccessQueryScope();
   return useQuery({
-    queryKey: ["approval-times", eventId],
-    queryFn: () => apiGet<any[]>(`/events/${eventId}/analytics/approval-times`),
-    enabled: !!eventId,
+    queryKey: ["approval-times", scope.key, eventId],
+    queryFn: ({ signal }) =>
+      apiGet<any[]>(`/events/${eventId}/analytics/approval-times`, { signal }),
+    enabled: scope.enabled && !!eventId,
     staleTime: 60_000,
   });
 }
 
 export function useFileFormats(eventId?: string) {
+  const scope = useAccessQueryScope();
   return useQuery({
-    queryKey: ["file-formats", eventId],
-    queryFn: () => apiGet<any[]>(`/events/${eventId}/analytics/formats`),
-    enabled: !!eventId,
+    queryKey: ["file-formats", scope.key, eventId],
+    queryFn: ({ signal }) =>
+      apiGet<any[]>(`/events/${eventId}/analytics/formats`, { signal }),
+    enabled: scope.enabled && !!eventId,
     staleTime: 60_000,
   });
 }
 
 export function useRoomBreakdown(eventId?: string) {
+  const scope = useAccessQueryScope();
   return useQuery({
-    queryKey: ["room-breakdown", eventId],
-    queryFn: () => apiGet<any[]>(`/events/${eventId}/analytics/rooms/breakdown`),
-    enabled: !!eventId,
+    queryKey: ["room-breakdown", scope.key, eventId],
+    queryFn: ({ signal }) =>
+      apiGet<any[]>(`/events/${eventId}/analytics/rooms/breakdown`, { signal }),
+    enabled: scope.enabled && !!eventId,
     staleTime: 60_000,
   });
 }
@@ -130,29 +245,16 @@ export function useRoomBreakdown(eventId?: string) {
 /** Triggers a file download by creating a temporary anchor element. */
 export function useExportDownload(eventId: string) {
   return async (format: "csv" | "xlsx" | "pdf") => {
-    // We need the bearer token for the download URL
-    const storage = typeof window !== "undefined"
-      ? localStorage.getItem("obsidian-auth-storage")
-      : null;
-    const token = storage ? JSON.parse(storage)?.state?.accessToken : null;
-
-    const apiBase = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000") + "/api/v1";
-    const url = `${apiBase}/events/${eventId}/analytics/export?format=${format}`;
-
-    const res = await fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    // Use the shared client so context-switch blocking, stale-token response
+    // rejection and safe throttling/unavailable errors also cover downloads.
+    const blob = await apiGet<Blob>(`/events/${eventId}/analytics/export`, {
+      params: { format },
+      responseType: "blob",
     });
-
-    if (!res.ok) throw new Error(`Export failed: ${res.statusText}`);
-
-    const blob = await res.blob();
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = blobUrl;
-    // Derive filename from Content-Disposition header if present
-    const cd = res.headers.get("Content-Disposition") || "";
-    const match = cd.match(/filename="?([^"]+)"?/);
-    a.download = match ? match[1] : `analytics.${format}`;
+    a.download = `analytics.${format}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -160,68 +262,102 @@ export function useExportDownload(eventId: string) {
   };
 }
 
-export function useDashboardSummary(eventId?: string, liveMode: boolean = false) {
+export function useDashboardSummary(
+  eventId?: string,
+  liveMode: boolean = false,
+) {
+  const scope = useAccessQueryScope();
   return useQuery({
-    queryKey: ["dashboard-summary", eventId, liveMode],
-    queryFn: () => apiGet<any>("/dashboard/summary", { params: { event_id: eventId } }),
-    enabled: !!eventId,
+    queryKey: ["dashboard-summary", scope.key, eventId, liveMode],
+    queryFn: ({ signal }) =>
+      apiGet<any>("/dashboard/summary", {
+        signal,
+        params: { event_id: eventId },
+      }),
+    enabled: scope.enabled && !!eventId,
     staleTime: liveMode ? 0 : 5 * 60 * 1000,
     refetchInterval: liveMode ? 15000 : false,
   });
 }
 
 export function useRegistrationsTimeline(eventId?: string) {
+  const scope = useAccessQueryScope();
   return useQuery({
-    queryKey: ["dashboard-timeline", eventId],
-    queryFn: () => apiGet<any[]>("/dashboard/registrations/timeline", { params: { event_id: eventId } }),
-    enabled: !!eventId,
+    queryKey: ["dashboard-timeline", scope.key, eventId],
+    queryFn: ({ signal }) =>
+      apiGet<any[]>("/dashboard/registrations/timeline", {
+        signal,
+        params: { event_id: eventId },
+      }),
+    enabled: scope.enabled && !!eventId,
     staleTime: 5 * 60 * 1000,
   });
 }
 
 export function useRolesBreakdown(eventId?: string) {
+  const scope = useAccessQueryScope();
   return useQuery({
-    queryKey: ["dashboard-roles-breakdown", eventId],
-    queryFn: () => apiGet<any[]>("/dashboard/roles-breakdown", { params: { event_id: eventId } }),
-    enabled: !!eventId,
+    queryKey: ["dashboard-roles-breakdown", scope.key, eventId],
+    queryFn: ({ signal }) =>
+      apiGet<any[]>("/dashboard/roles-breakdown", {
+        signal,
+        params: { event_id: eventId },
+      }),
+    enabled: scope.enabled && !!eventId,
     staleTime: 5 * 60 * 1000,
   });
 }
 
 export function usePendingActions(eventId?: string, liveMode: boolean = false) {
+  const scope = useAccessQueryScope();
   return useQuery({
-    queryKey: ["dashboard-pending-actions", eventId, liveMode],
-    queryFn: () => apiGet<any[]>("/dashboard/pending-actions", { params: { event_id: eventId } }),
-    enabled: !!eventId,
+    queryKey: ["dashboard-pending-actions", scope.key, eventId, liveMode],
+    queryFn: ({ signal }) =>
+      apiGet<any[]>("/dashboard/pending-actions", {
+        signal,
+        params: { event_id: eventId },
+      }),
+    enabled: scope.enabled && !!eventId,
     staleTime: liveMode ? 0 : 5 * 60 * 1000,
     refetchInterval: liveMode ? 15000 : false,
   });
 }
 
 export function useRecentActivity(eventId?: string, liveMode: boolean = false) {
+  const scope = useAccessQueryScope();
   return useQuery({
-    queryKey: ["dashboard-recent-activity", eventId, liveMode],
-    queryFn: () => apiGet<any[]>("/dashboard/recent-activity", { params: { event_id: eventId } }),
-    enabled: !!eventId,
+    queryKey: ["dashboard-recent-activity", scope.key, eventId, liveMode],
+    queryFn: ({ signal }) =>
+      apiGet<any[]>("/dashboard/recent-activity", {
+        signal,
+        params: { event_id: eventId },
+      }),
+    enabled: scope.enabled && !!eventId,
     staleTime: liveMode ? 0 : 5 * 60 * 1000,
     refetchInterval: liveMode ? 15000 : false,
   });
 }
 
 export function useUpcomingDeadlines(eventId?: string) {
+  const scope = useAccessQueryScope();
   return useQuery({
-    queryKey: ["dashboard-deadlines", eventId],
-    queryFn: () => apiGet<any[]>("/dashboard/deadlines", { params: { event_id: eventId } }),
-    enabled: !!eventId,
+    queryKey: ["dashboard-deadlines", scope.key, eventId],
+    queryFn: ({ signal }) =>
+      apiGet<any[]>("/dashboard/deadlines", {
+        signal,
+        params: { event_id: eventId },
+      }),
+    enabled: scope.enabled && !!eventId,
     staleTime: 5 * 60 * 1000,
   });
 }
 
 export function useBillingPlan() {
+  const scope = useAccessQueryScope();
   return useQuery({
-    queryKey: ["billing-plan"],
-    queryFn: () => apiGet<any>("/billing/plan"),
+    queryKey: ["billing-plan", scope.key],
+    queryFn: ({ signal }) => apiGet<any[]>("/commercial/contracts", { signal }),
+    enabled: scope.enabled,
     staleTime: 5 * 60 * 1000,
   });
 }
-

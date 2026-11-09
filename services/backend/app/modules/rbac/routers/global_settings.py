@@ -58,6 +58,16 @@ async def _read_global_settings(db: AsyncSession) -> GlobalSettingsResponse:
     )
 
 
+@router.get("/public")
+async def get_public_settings(
+    db: AsyncSession = Depends(get_db)
+):
+    """Return public platform configuration such as timezone."""
+    return {
+        "timezone": get_cached_timezone(),
+    }
+
+
 @router.get("", response_model=GlobalSettingsResponse)
 async def get_global_settings(
     _: User = Depends(require_roles("super_admin")),

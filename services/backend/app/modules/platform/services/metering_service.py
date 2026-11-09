@@ -16,6 +16,7 @@ from app.modules.platform.models.organization_console import (
     UsageReconciliationRun,
 )
 from app.modules.billing.capability_registry import LIMIT_DEFINITIONS
+from app.modules.billing.services.commercial_usage_service import CommercialUsageService
 
 
 class MeteringService:
@@ -37,6 +38,15 @@ class MeteringService:
         "devices": "max_devices_per_event",
     }
     ENTITLEMENT_METRICS = {**AUTHORITATIVE_METRICS, "storage_bytes": "storage_quota_mb", "registration_submissions": "max_registrations"}
+    COMMERCIAL_METRICS = {
+        "registration_submissions": "registrations",
+        "registrations": "registrations",
+        "abstracts": "abstracts",
+        "speakers": "speakers",
+        "emails": "event_email_credits",
+        "emails_sent": "event_email_credits",
+        "storage_bytes": "storage_gb",
+    }
 
     @staticmethod
     def _period(occurred_at: datetime) -> tuple[datetime, datetime, datetime]:
@@ -98,6 +108,17 @@ class MeteringService:
         parent_entry_id: uuid.UUID | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> tuple[UsageLedgerEntry, bool]:
+        commercial_key = MeteringService.COMMERCIAL_METRICS.get(metric_key)
+        if commercial_key and quantity > 0:
+            await CommercialUsageService(db).consume_if_allocated(
+                organization_id=organization_id,
+                event_id=event_id,
+                entitlement_key=commercial_key,
+                quantity=quantity,
+                actor_id=actor_user_id,
+                idempotency_key=idempotency_key,
+                source_record_id=idempotency_key,
+            )
         existing = await db.scalar(
             select(UsageLedgerEntry).where(
                 UsageLedgerEntry.organization_id == organization_id,

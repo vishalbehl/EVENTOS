@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.billing.services.event_entitlement_service import EventEntitlementService
@@ -23,6 +23,21 @@ from app.modules.analytics.models.analytics_domain_tables import ApiUsageMetric
 
 class UsageReservationService:
     """Concurrency-safe reserve/consume/release lifecycle for finite limits."""
+
+    @staticmethod
+    def _consumption_metadata(row: UsageReservation) -> dict:
+        identity = {"reservation_id": str(row.id), "limit_key": row.metric_key,
+            "source_event_id": str(row.event_id) if row.event_id else None}
+        if row.idempotency_key.startswith(("registration-upload:", "program-upload:")):
+            # Retry receipts may contain bearer capabilities, filenames and
+            # object/authority snapshots. None belongs in immutable accounting.
+            upload_id = (row.metadata_json or {}).get("upload_id")
+            try:
+                identity["upload_id"] = str(uuid.UUID(str(upload_id)))
+            except (ValueError, TypeError, AttributeError):
+                pass
+            return identity
+        return {**(row.metadata_json or {}), **identity}
 
     @staticmethod
     async def reserve(db: AsyncSession, *, organization_id: uuid.UUID, event_id: uuid.UUID | None, limit_key: str, quantity: int, unit: str, idempotency_key: str, ttl_seconds: int = 300, metadata: dict | None = None) -> UsageReservation:
@@ -46,8 +61,12 @@ class UsageReservationService:
                 "reservation_id": str(existing.id),
                 "consumed_entry_id": str(existing.consumed_entry_id) if existing.consumed_entry_id else None,
             })
+        if existing and (existing.metadata_json or {}).get("reconciliation_required"):
+            raise HTTPException(status_code=409, detail={"code": "RESERVATION_RECONCILIATION_REQUIRED"})
         now = datetime.now(timezone.utc)
-        if existing and existing.status == "RESERVED" and existing.expires_at > now:
+        if existing and existing.status == "RESERVED" and (
+            existing.expires_at > now or (existing.metadata_json or {}).get("delivery_hold")
+        ):
             return existing
         definition = LIMIT_DEFINITIONS.get(limit_key, {})
         # Organization-scoped limits must serialize across every event. Event
@@ -103,7 +122,24 @@ class UsageReservationService:
         if limit_key == "max_events":
             used = int(await db.scalar(select(func.count(Event.id)).where(Event.organization_id == organization_id, Event.deleted_at.is_(None), ~func.lower(Event.status).in_(["archived", "cancelled"]))) or 0)
         elif limit_key == "max_users":
-            used = int(await db.scalar(select(func.count(User.id)).where(User.organization_id == organization_id, User.is_active.is_(True))) or 0)
+            from app.modules.rbac.models.organization_member import OrganizationMember
+            # A cross-tenant accepted member consumes a seat here, regardless of
+            # their identity's home organisation. Pending invitations reserve
+            # seats until revoked; accepting an invitation does not add a seat.
+            identities = select(User.id).where(User.organization_id == organization_id, User.is_active.is_(True)).union(
+                select(OrganizationMember.user_id).where(
+                    OrganizationMember.organization_id == organization_id,
+                    OrganizationMember.is_active.is_(True),
+                    OrganizationMember.accepted_at.is_not(None),
+                    OrganizationMember.user_id.is_not(None),
+                )
+            ).subquery()
+            used = int(await db.scalar(select(func.count()).select_from(identities)) or 0)
+            used += int(await db.scalar(select(func.count(OrganizationMember.id)).where(
+                OrganizationMember.organization_id == organization_id,
+                OrganizationMember.is_active.is_(True),
+                OrganizationMember.accepted_at.is_(None),
+            )) or 0)
         elif limit_key == "max_integrations":
             used = int(await db.scalar(select(func.count(IntegrationConnection.id)).where(IntegrationConnection.organization_id == organization_id, IntegrationConnection.is_active.is_(True))) or 0)
         elif limit_key == "max_api_calls_per_month":
@@ -146,7 +182,11 @@ class UsageReservationService:
             if definition.get("period") == "BILLING_PERIOD":
                 usage_filters.extend((UsageLedgerEntry.period_start <= now, UsageLedgerEntry.period_end > now))
             used = int(await db.scalar(select(func.coalesce(func.sum(UsageLedgerEntry.quantity), 0)).where(*usage_filters)) or 0)
-        reservation_filters = [UsageReservation.organization_id == organization_id, UsageReservation.metric_key == limit_key, UsageReservation.status == "RESERVED", UsageReservation.expires_at > now]
+        reservation_filters = [UsageReservation.organization_id == organization_id,
+            UsageReservation.metric_key == limit_key, UsageReservation.status == "RESERVED",
+            or_(UsageReservation.expires_at > now,
+                UsageReservation.metadata_json["reconciliation_required"].as_boolean().is_(True),
+                UsageReservation.metadata_json["delivery_hold"].as_boolean().is_(True))]
         if definition.get("scope") != "ORGANIZATION":
             reservation_filters.append(UsageReservation.event_id == event_id)
         reserved = int(await db.scalar(select(func.coalesce(func.sum(UsageReservation.quantity), 0)).where(*reservation_filters)) or 0)
@@ -215,6 +255,8 @@ class UsageReservationService:
         row = await db.scalar(select(UsageReservation).where(UsageReservation.id == reservation_id).with_for_update())
         if not row or row.status != "RESERVED" or row.expires_at <= datetime.now(timezone.utc):
             raise HTTPException(status_code=409, detail={"code": "RESERVATION_UNAVAILABLE"})
+        if (row.metadata_json or {}).get("reconciliation_required") or (row.metadata_json or {}).get("delivery_hold"):
+            raise HTTPException(status_code=409, detail={"code": "RESERVATION_RECONCILIATION_REQUIRED"})
         usage_metric_key = LIMIT_DEFINITIONS.get(row.metric_key, {}).get("metric_key", row.metric_key)
         metered_event_id = None if LIMIT_DEFINITIONS.get(row.metric_key, {}).get("scope") == "ORGANIZATION" else row.event_id
         metered_quantity = int(row.metadata_json.get("consumption_quantity", row.quantity))
@@ -229,7 +271,7 @@ class UsageReservationService:
             source=source,
             idempotency_key=f"reservation:{row.id}",
             actor_user_id=actor_user_id,
-            metadata={**row.metadata_json, "reservation_id": str(row.id), "limit_key": row.metric_key, "source_event_id": str(row.event_id) if row.event_id else None},
+            metadata=UsageReservationService._consumption_metadata(row),
         )
         row.status = "CONSUMED"; row.consumed_entry_id = ledger.id
         return ledger
@@ -239,5 +281,7 @@ class UsageReservationService:
         row = await db.scalar(select(UsageReservation).where(UsageReservation.id == reservation_id).with_for_update())
         if not row or row.status != "RESERVED":
             raise HTTPException(status_code=409, detail={"code": "RESERVATION_UNAVAILABLE"})
+        if (row.metadata_json or {}).get("reconciliation_required") or (row.metadata_json or {}).get("delivery_hold"):
+            raise HTTPException(status_code=409, detail={"code": "RESERVATION_RECONCILIATION_REQUIRED"})
         row.status = "RELEASED"; row.released_at = datetime.now(timezone.utc)
         return row

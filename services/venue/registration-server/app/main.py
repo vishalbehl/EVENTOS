@@ -26,9 +26,10 @@ async def lifespan(app: FastAPI):
     try:
         from app.database import async_engine, AsyncSessionLocal, Base
         from app import models as _app_models
-        from sqlalchemy import select, distinct, text
+        from sqlalchemy import select, distinct, text, func
         from app.models.event import Event
         from app.models.participant import Participant
+        from app.models.participant_role import ParticipantRole
         from app.models.venue_capacity_rule import VenueCapacityRule
         from app.routers.auth import ensure_bootstrap_admin
 
@@ -41,6 +42,44 @@ async def lifespan(app: FastAPI):
         
         async with AsyncSessionLocal() as db:
             await ensure_bootstrap_admin(db)
+
+            # Check for active event
+            result = await db.execute(select(Event).limit(1))
+            event = result.scalar_one_or_none()
+
+            if event:
+                # Seed default participant roles if none exist for this event
+                role_count = (await db.execute(select(func.count(ParticipantRole.id)).where(ParticipantRole.event_id == event.id))).scalar() or 0
+                if role_count == 0:
+                    logger.info(f"Seeding default participant roles for venue registration event: {event.id}")
+                    default_venue_roles = [
+                        {"category": "General Attendees", "name": "Delegate", "role_code": "DEL", "is_default": True, "sort_order": 1},
+                        {"category": "General Attendees", "name": "Student Delegate", "role_code": "STU", "is_default": True, "sort_order": 2},
+                        {"category": "General Attendees", "name": "Organizer", "role_code": "ORG", "is_default": True, "sort_order": 3},
+                        {"category": "Presentation Related", "name": "Speaker", "role_code": "SPK", "is_default": True, "sort_order": 20},
+                        {"category": "Presentation Related", "name": "Keynote Speaker", "role_code": "KEY", "is_default": True, "sort_order": 22},
+                        {"category": "Presentation Related", "name": "Moderator", "role_code": "MOD", "is_default": True, "sort_order": 26},
+                        {"category": "Business & Partners", "name": "Sponsor Representative", "role_code": "SPO", "is_default": True, "sort_order": 30},
+                        {"category": "Business & Partners", "name": "Exhibitor", "role_code": "EXH", "is_default": True, "sort_order": 31},
+                        {"category": "Media & Public Relations", "name": "Media", "role_code": "MED", "is_default": True, "sort_order": 40},
+                        {"category": "Event Operations", "name": "Volunteer", "role_code": "VOL", "is_default": True, "sort_order": 50},
+                        {"category": "Event Operations", "name": "Technical Staff", "role_code": "TEC", "is_default": True, "sort_order": 51},
+                        {"category": "Special Access", "name": "VIP Guest", "role_code": "VIP", "is_default": True, "sort_order": 60},
+                        {"category": "Session Specific", "name": "Workshop Participant", "role_code": "WOR", "is_default": True, "sort_order": 70},
+                        {"category": "Session Specific", "name": "Poster Presenter", "role_code": "POS", "is_default": True, "sort_order": 73},
+                    ]
+                    for vr in default_venue_roles:
+                        db.add(ParticipantRole(
+                            id=uuid.uuid4(),
+                            event_id=event.id,
+                            category=vr["category"],
+                            name=vr["name"],
+                            role_code=vr["role_code"],
+                            is_default=True,
+                            is_active=True,
+                            sort_order=vr["sort_order"]
+                        ))
+                    await db.commit()
 
             # 1. Fetch all distinct roles dynamically from participants table
             p_roles = (await db.execute(select(distinct(Participant.role)).where(Participant.role.isnot(None)))).scalars().all()

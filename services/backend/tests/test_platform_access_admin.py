@@ -89,7 +89,6 @@ async def test_access_admin_role_lifecycle_is_scoped_versioned_and_audited(
     other_org = Organization(
         name="Other Access Tenant",
         slug=f"other-access-{uuid.uuid4().hex[:8]}",
-        plan="pro",
     )
     db.add(other_org)
     await db.flush()
@@ -172,7 +171,6 @@ async def test_access_admin_permission_mapping_rejects_cross_tenant_role(
     other_org = Organization(
         name="Permission Isolation Tenant",
         slug=f"permission-isolation-{uuid.uuid4().hex[:8]}",
-        plan="pro",
     )
     db.add(other_org)
     await db.flush()
@@ -201,18 +199,36 @@ async def test_user_deactivation_revokes_sessions_and_writes_sensitive_audit(
     super_admin: User,
     organizer: User,
 ):
+    member = await db.scalar(select(OrganizationMember).where(OrganizationMember.user_id == organizer.id))
+    customer_org_id = organizer.organization_id
+    await db.commit()
+    headers = {**auth_headers(super_admin), "If-Match": str(organizer.version),
+        "Idempotency-Key": f"owner-deactivation-{uuid.uuid4()}"}
+    protected = await client.patch(f"/api/v1/platform/users/{organizer.id}/status", headers=headers,
+        json={"is_active": False, "reason": "Suspending compromised organizer account"})
+    assert protected.status_code == 409, protected.text
+    assert protected.json()["detail"]["code"] == "OWNERSHIP_TRANSFER_REQUIRED"
+    from app.core.tenant_context import TenantContextGuard
+    async with TenantContextGuard.scoped(db, customer_org_id):
+        await db.refresh(member)
+        await db.refresh(organizer)
+        # Model an already transferred owner, then prove ordinary member revocation.
+        member.org_role = "member"
+        await db.flush()
     response = await client.patch(
         f"/api/v1/platform/users/{organizer.id}/status",
-        headers=auth_headers(super_admin),
+        headers={**auth_headers(super_admin), "If-Match": str(organizer.version),
+                 "Idempotency-Key": f"deactivate-{uuid.uuid4()}"},
         json={"is_active": False, "reason": "Suspending compromised organizer account"},
     )
     assert response.status_code == 200, response.text
-    await db.refresh(organizer)
-    assert organizer.is_active is False
-    audit = await db.scalar(select(AuditLog).where(
-        AuditLog.resource_id == organizer.id,
-        AuditLog.action_type == "USER_DEACTIVATED",
-    ))
+    async with TenantContextGuard.scoped(db, customer_org_id):
+        await db.refresh(organizer)
+        assert organizer.is_active is False
+        audit = await db.scalar(select(AuditLog).where(
+            AuditLog.resource_id == organizer.id,
+            AuditLog.action_type == "USER_DEACTIVATED",
+        ))
     assert audit is not None
     assert audit.is_sensitive is True
     assert audit.change_diff["reason"] == "Suspending compromised organizer account"
@@ -225,19 +241,26 @@ async def test_platform_role_change_is_step_up_boundary_and_audited(
     super_admin: User,
     organizer: User,
 ):
+    staff = User(organization_id=super_admin.organization_id,
+        email=f"platform-staff-{uuid.uuid4().hex[:8]}@test.com",
+        password_hash=organizer.password_hash, first_name="Platform", last_name="Staff",
+        role="user", is_active=True)
+    db.add(staff)
+    await db.flush()
     response = await client.patch(
-        f"/api/v1/platform/users/{organizer.id}/platform-role",
-        headers=auth_headers(super_admin),
+        f"/api/v1/platform/users/{staff.id}/platform-role",
+        headers={**auth_headers(super_admin), "If-Match": str(staff.version),
+                 "Idempotency-Key": f"platform-role-{uuid.uuid4()}"},
         json={
             "platform_role": "SUPPORT_ADMIN",
             "reason": "Granting approved support administrator duties",
         },
     )
     assert response.status_code == 200, response.text
-    await db.refresh(organizer)
-    assert organizer.platform_role == "SUPPORT_ADMIN"
+    await db.refresh(staff)
+    assert staff.platform_role == "SUPPORT_ADMIN"
     audit = await db.scalar(select(AuditLog).where(
-        AuditLog.resource_id == organizer.id,
+        AuditLog.resource_id == staff.id,
         AuditLog.action_type == "USER_PLATFORM_ROLE_CHANGED",
     ))
     assert audit is not None
@@ -356,14 +379,18 @@ async def test_member_event_assignment_is_tenant_scoped_limited_and_removed_with
         OrganizationMember.user_id == organizer.id,
     ))
     assert member is not None
+    member.org_role = "member"
+    db.add(UserEventAssignment(user_id=organizer.id, event_id=event.id, permissions={"SESSIONS:EDIT": True}))
+    await db.commit()
     reason = "Assigning approved organizer to event workspace"
     assigned = await client.put(
         f"/api/v1/platform/organisations/{organization.id}/members/{member.id}/events/{event.id}",
         headers={
             **auth_headers(super_admin),
             "Idempotency-Key": f"member-event-assign-{uuid.uuid4()}",
+            "If-Match": str(member.version),
         },
-        json={"permissions": {"can_manage_sessions": True}, "reason": reason},
+        json={"permissions": {"SESSIONS:EDIT": True}, "reason": reason},
     )
     assert assigned.status_code == 200, assigned.text
     updated = await client.put(
@@ -371,8 +398,9 @@ async def test_member_event_assignment_is_tenant_scoped_limited_and_removed_with
         headers={
             **auth_headers(super_admin),
             "Idempotency-Key": f"member-event-update-{uuid.uuid4()}",
+            "If-Match": str(assigned.json()["version"]),
         },
-        json={"permissions": {"can_manage_sessions": False}, "reason": "Reducing approved event workspace permissions"},
+        json={"permissions": {"SESSIONS:EDIT": False}, "reason": "Reducing approved event workspace permissions"},
     )
     assert updated.status_code == 200, updated.text
     assignments = (await db.execute(select(UserEventAssignment).where(
@@ -381,11 +409,16 @@ async def test_member_event_assignment_is_tenant_scoped_limited_and_removed_with
     ))).scalars().all()
     assert len(assignments) == 1
 
-    other_org = Organization(name="Hidden Assignment Tenant", slug=f"hidden-{uuid.uuid4().hex[:8]}", plan="pro")
+    other_org = Organization(name="Hidden Assignment Tenant", slug=f"hidden-{uuid.uuid4().hex[:8]}")
     db.add(other_org)
+    await db.flush()
+    from app.modules.rbac.models.access_foundation import OperationalWorkspace, OrganizationAccessRevision
+    hidden_workspace = OperationalWorkspace(organization_id=other_org.id, name="Hidden Workspace")
+    db.add_all([hidden_workspace, OrganizationAccessRevision(organization_id=other_org.id, revision=1)])
     await db.flush()
     hidden_event = Event(
         organization_id=other_org.id,
+        operational_workspace_id=hidden_workspace.id,
         created_by=super_admin.id,
         name="Hidden Event",
         short_code=f"HE{uuid.uuid4().hex[:4].upper()}",
@@ -405,18 +438,25 @@ async def test_member_event_assignment_is_tenant_scoped_limited_and_removed_with
         headers={
             **auth_headers(super_admin),
             "Idempotency-Key": f"member-event-cross-tenant-{uuid.uuid4()}",
+            "If-Match": str(updated.json()["version"]),
         },
         json={"permissions": {}, "reason": "Testing cross tenant assignment concealment"},
     )
     assert concealed.status_code == 404
+    await db.refresh(organization)
+    await db.refresh(member)
+    await db.refresh(organizer)
 
     removed = await client.request(
         "DELETE",
         f"/api/v1/platform/organisations/{organization.id}/members/{member.id}",
-        headers=auth_headers(super_admin),
+        headers={**auth_headers(super_admin), "If-Match": str(updated.json()["version"]),
+            "Idempotency-Key": f"member-remove-{uuid.uuid4()}"},
         json={"reason": "Removing organizer after approved access review"},
     )
     assert removed.status_code == 200, removed.text
     await db.refresh(organizer)
-    assert organizer.is_active is False
-    assert await db.scalar(select(UserEventAssignment.id).where(UserEventAssignment.user_id == organizer.id)) is None
+    assert organizer.is_active is True
+    await db.refresh(member)
+    assert member.is_active is False
+    assert await db.scalar(select(UserEventAssignment.id).where(UserEventAssignment.user_id == organizer.id)) is not None

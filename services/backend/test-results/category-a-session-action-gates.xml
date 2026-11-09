@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="6" failures="0" errors="0" time="1.1551953">
+    <testsuite name="test/category-a/session-action-gates.test.tsx" timestamp="2026-10-16T17:23:11.821Z" hostname="Vishal" tests="6" failures="0" errors="0" skipped="0" time="1.1551953">
+        <testcase classname="test/category-a/session-action-gates.test.tsx" name="Session action boundaries &gt; blocks creation for loading access, including direct form submit" time="0.5605352">
+        </testcase>
+        <testcase classname="test/category-a/session-action-gates.test.tsx" name="Session action boundaries &gt; blocks creation for denied access, including direct form submit" time="0.1096415">
+        </testcase>
+        <testcase classname="test/category-a/session-action-gates.test.tsx" name="Session action boundaries &gt; blocks creation for quota access, including direct form submit" time="0.1058807">
+        </testcase>
+        <testcase classname="test/category-a/session-action-gates.test.tsx" name="Session action boundaries &gt; preserves entered values when access is revoked and rechecks the submit handler" time="0.1048803">
+        </testcase>
+        <testcase classname="test/category-a/session-action-gates.test.tsx" name="Session action boundaries &gt; allows an admitted create request" time="0.1037595">
+        </testcase>
+        <testcase classname="test/category-a/session-action-gates.test.tsx" name="Session action boundaries &gt; disables quick-edit writes for a read-only user" time="0.1670138">
+        </testcase>
+    </testsuite>
+</testsuites>

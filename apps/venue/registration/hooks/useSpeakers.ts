@@ -14,7 +14,6 @@ export interface SpeakerSummary {
   checked_in_at?: string | null;
   is_checked_in?: boolean;
   talks_count: number;
-  speaker_code?: string;
   qr_code_url?: string;
   email_logs?: Array<{
     id: string;

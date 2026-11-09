@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import {
   useAdminOrgs,
-  useSubscriptionPlans,
   useProvisionOrganization,
   adminApi,
   AdminOrg,
@@ -67,6 +66,7 @@ function HealthBadge({ score }: { score: number | null | undefined }) {
 function CreateOrgPanel({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
   const [formData, setFormData] = useState({
     org_name: "",
+    organization_kind: "NORMAL" as "NORMAL" | "EMC" | "CLIENT",
     slug: "",
     first_name: "",
     last_name: "",
@@ -76,6 +76,8 @@ function CreateOrgPanel({ onClose, onSuccess }: { onClose: () => void; onSuccess
     reason: "",
   });
   const [invitationToken, setInvitationToken] = useState<string | null>(null);
+  const [provisioned, setProvisioned] = useState(false);
+  const command = useRef<{ signature: string; key: string } | null>(null);
   const provision = useProvisionOrganization();
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -94,6 +96,7 @@ function CreateOrgPanel({ onClose, onSuccess }: { onClose: () => void; onSuccess
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (provision.isPending || provisioned) return;
     if (!formData.org_name || !formData.slug || !formData.email || !formData.first_name || !formData.last_name) {
       toast.error("Please fill in all required fields");
       return;
@@ -103,9 +106,12 @@ function CreateOrgPanel({ onClose, onSuccess }: { onClose: () => void; onSuccess
       return;
     }
     try {
+      const signature = JSON.stringify(formData);
+      if (command.current?.signature !== signature) command.current = { signature, key: crypto.randomUUID() };
       const result = await provision.mutateAsync({
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: command.current.key,
         payload: {
+          organization_kind: formData.organization_kind,
           name: formData.org_name.trim(),
           slug: formData.slug.trim(),
           owner_email: formData.email.trim(),
@@ -117,6 +123,7 @@ function CreateOrgPanel({ onClose, onSuccess }: { onClose: () => void; onSuccess
         },
       });
       setInvitationToken(result.owner_invitation.token);
+      setProvisioned(true);
       toast.success(result.replayed ? "Existing provisioning result recovered" : "Organization provisioned");
       onSuccess();
     } catch (error) {
@@ -137,8 +144,8 @@ function CreateOrgPanel({ onClose, onSuccess }: { onClose: () => void; onSuccess
           <Building2 className="w-5 h-5 text-[var(--brand-primary)]" />
           <h3 className="text-sm font-black text-[var(--text-primary)] uppercase tracking-wider">Provision New Tenant</h3>
         </div>
-        <button onClick={onClose} className="text-[10px] font-bold text-[var(--text-tertiary)] hover:text-[var(--text-primary)] uppercase tracking-wider">
-          Cancel
+        <button disabled={provision.isPending} onClick={onClose} className="text-[10px] font-bold text-[var(--text-tertiary)] hover:text-[var(--text-primary)] uppercase tracking-wider">
+          {provisioned ? "Close" : "Cancel"}
         </button>
       </div>
 
@@ -146,6 +153,14 @@ function CreateOrgPanel({ onClose, onSuccess }: { onClose: () => void; onSuccess
         <div className="md:col-span-2 space-y-3">
           <h4 className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">Organization Settings</h4>
           <div className="space-y-2">
+            <label className="block text-xs">Operational organisation kind
+              <select name="organization_kind" value={formData.organization_kind} onChange={handleChange} disabled={provision.isPending || provisioned} className="mt-1 w-full rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface-3)] px-3 py-2">
+                <option value="NORMAL">Normal organiser</option>
+                <option value="EMC">EMC organisation</option>
+                <option value="CLIENT">Client organisation</option>
+              </select>
+            </label>
+            <p className="text-xs text-[var(--text-tertiary)]">This selects operational access, not a subscription or commercial account type.</p>
             <input
               type="text"
               name="org_name"
@@ -224,6 +239,7 @@ function CreateOrgPanel({ onClose, onSuccess }: { onClose: () => void; onSuccess
           </div>
         </div>
 
+        {provisioned && !invitationToken && <p role="status" className="md:col-span-4 text-xs">Organisation provisioning is committed. Its one-time invitation token is not stored for replay. Use the owner invitation administration flow to issue a replacement; do not provision the organisation again.</p>}
         {invitationToken && (
           <div className="md:col-span-4 rounded-xl border border-[var(--status-success)]/20 bg-[var(--status-success)]/5 p-3">
             <p className="text-xs font-bold text-[var(--status-success)]">Owner invitation created</p>
@@ -240,7 +256,7 @@ function CreateOrgPanel({ onClose, onSuccess }: { onClose: () => void; onSuccess
         <div className="md:col-span-4 flex justify-end pt-2 border-t border-[var(--border-subtle)]">
           <button
             type="submit"
-            disabled={provision.isPending}
+            disabled={provision.isPending || provisioned}
             className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[var(--brand-primary)] hover:bg-[var(--brand-primary-hover)] text-xs font-black uppercase text-[var(--primary-contrast)] shadow-lg transition-all disabled:opacity-40"
           >
             {provision.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
@@ -264,8 +280,6 @@ export default function OrganizationsPage() {
   const [showCreate, setShowCreate] = useState(false);
 
   const { data: orgs = [], isLoading, refetch } = useAdminOrgs({ limit: 100 });
-  const { data: plans = [] } = useSubscriptionPlans();
-
   const filteredData = useMemo(() => {
     return orgs.filter((org) => {
       const matchSearch =
@@ -273,10 +287,10 @@ export default function OrganizationsPage() {
         org.name?.toLowerCase().includes(search.toLowerCase()) ||
         org.slug?.toLowerCase().includes(search.toLowerCase()) ||
         org.custom_domain?.toLowerCase().includes(search.toLowerCase());
-      const matchPlan = !planFilter || org.plan.toUpperCase() === planFilter.toUpperCase();
+      const matchOffer = !planFilter || org.offer_name.toUpperCase() === planFilter.toUpperCase();
       const matchStatus = !statusFilter || org.status.toUpperCase() === statusFilter.toUpperCase();
       const matchCountry = !countryFilter || (org as any).country?.toUpperCase() === countryFilter.toUpperCase();
-      return matchSearch && matchPlan && matchStatus && matchCountry;
+      return matchSearch && matchOffer && matchStatus && matchCountry;
     });
   }, [orgs, search, planFilter, statusFilter, countryFilter]);
 
@@ -305,10 +319,10 @@ export default function OrganizationsPage() {
         ),
       },
       {
-        accessorKey: "plan",
-        header: "Plan",
+        accessorKey: "offer_name",
+        header: "Offer",
         cell: ({ row }) => (
-          <span className="text-xs font-bold text-[var(--text-secondary)]">{row.original.plan}</span>
+          <span className="text-xs font-bold text-[var(--text-secondary)]">{row.original.offer_name}</span>
         ),
       },
       {
@@ -380,7 +394,7 @@ export default function OrganizationsPage() {
       return;
     }
     const headers = ["ID", "Name", "Slug", "Plan", "Status", "Health Score", "MRR", "Created At"];
-    const rows = filteredData.map((o) => [o.id, o.name, o.slug, o.plan, o.status, o.health_score, o.mrr, o.created_at]);
+    const rows = filteredData.map((o) => [o.id, o.name, o.slug, o.offer_name, o.status, o.health_score, o.mrr, o.created_at]);
     const csvContent =
       "data:text/csv;charset=utf-8," +
       [headers.join(","), ...rows.map((r) => r.map((field) => `"${field}"`).join(","))].join("\n");
@@ -457,7 +471,7 @@ export default function OrganizationsPage() {
             className="w-full bg-transparent text-xs text-[var(--text-secondary)] focus:outline-none border-none py-1.5 cursor-pointer"
           >
             <option value="">All Plans</option>
-            {Array.from(new Set(orgs.map((o) => o.plan))).map((p) => (
+            {Array.from(new Set(orgs.map((o) => o.offer_name))).map((p) => (
               <option key={p} value={p}>{p}</option>
             ))}
           </select>

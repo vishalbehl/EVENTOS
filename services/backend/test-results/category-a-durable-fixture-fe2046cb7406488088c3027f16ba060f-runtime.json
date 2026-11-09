@@ -1,0 +1,31 @@
+{
+  "status": "PASSED",
+  "stage": "completed",
+  "database": "category_a_restore_20261026_fe2046cb7406",
+  "staging_acceptance": "NOT_RUN",
+  "production_acceptance": "NOT_RUN",
+  "fixture_only": true,
+  "private_broker_unavailable_verified": true,
+  "offline_checkpoint": {
+    "pages_completed": 1,
+    "status": "PENDING",
+    "generation": 3,
+    "dispatch_attempts": 1
+  },
+  "progress": {
+    "completion_status": "COMPLETED",
+    "streams_total": 2,
+    "streams_completed": 2,
+    "pages_completed": 9,
+    "checked_count": 214,
+    "blocked_count": 0
+  },
+  "migration_revision": "20261022_3670",
+  "coverage_version": 2,
+  "nonempty_programme_rubric_reconciled": true,
+  "worker_processes_observed": 2,
+  "actual_restricted_login": true,
+  "actual_broker_interruption": true,
+  "evidence_directory": "catalogue-broker-c589ebe36098420d8b1199e1423dccd9",
+  "private_broker_removed": true
+}

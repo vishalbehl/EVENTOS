@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="3" failures="0" errors="0" time="1.4017876">
+    <testsuite name="test/category-a/scoped-form-conflict-recovery.test.tsx" timestamp="2026-10-17T15:04:08.170Z" hostname="Vishal" tests="3" failures="0" errors="0" skipped="0" time="1.4017876">
+        <testcase classname="test/category-a/scoped-form-conflict-recovery.test.tsx" name="scoped form reconciliation conflicts &gt; retains draft, version and receipt for explicit retry after FORM_TEMPLATE_RECONCILIATION_REQUIRED" time="1.0659547">
+        </testcase>
+        <testcase classname="test/category-a/scoped-form-conflict-recovery.test.tsx" name="scoped form reconciliation conflicts &gt; retains draft, version and receipt for explicit retry after ABSTRACT_TEMPLATE_RECONCILIATION_REQUIRED" time="0.1675613">
+        </testcase>
+        <testcase classname="test/category-a/scoped-form-conflict-recovery.test.tsx" name="scoped form reconciliation conflicts &gt; uses a new receipt when the operator changes the rejected document" time="0.159716">
+        </testcase>
+    </testsuite>
+</testsuites>

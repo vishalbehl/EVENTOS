@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Iterable
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
@@ -12,7 +12,7 @@ from app.modules.speakers.infrastructure.repositories import (
     SessionRepository,
     SpeakerRepository,
 )
-from app.modules.agenda.models import Session, SessionPerson as SessionSpeaker, Track
+from app.modules.agenda.models import Room, Session, SessionPerson as SessionSpeaker, Track
 from app.modules.events.models.speaker import Speaker
 from app.modules.events.models.speaker_profile import SpeakerProfile
 from app.modules.events.models.event import Event
@@ -34,7 +34,7 @@ class SpeakerQueryService:
             select(Speaker).options(selectinload(Speaker.event)).where(
                 Speaker.id == speaker_id,
                 Speaker.event_id == event_id,
-                (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper()),
+                Speaker.upload_token == token,
                 Speaker.deleted_at.is_(None),
             )
         )
@@ -173,6 +173,71 @@ class SpeakerQueryService:
             )
         )
         return result.one_or_none()
+
+    async def list_talks_for_speaker(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        event_id: uuid.UUID,
+        speaker_id: uuid.UUID,
+        assigned_session_ids: Iterable[uuid.UUID] = (),
+        assigned_room_ids: Iterable[uuid.UUID] = (),
+        event_wide_access: bool = True,
+    ) -> tuple[Speaker | None, list[tuple[SessionSpeaker, Session, Room | None]]]:
+        """Return one speaker's merged talks through a scoped read boundary."""
+        speaker = await self.get_for_event(
+            organization_id=organization_id,
+            event_id=event_id,
+            speaker_id=speaker_id,
+        )
+        if speaker is None:
+            return None, []
+
+        normalized_first_name = (speaker.first_name or "").strip().lower()
+        normalized_last_name = (speaker.last_name or "").strip().lower()
+        normalized_email = (speaker.email or "").strip().lower()
+        identity = select(Speaker.id).where(
+            Speaker.event_id == event_id,
+            Speaker.deleted_at.is_(None),
+            or_(
+                and_(
+                    func.trim(func.lower(Speaker.first_name)) == normalized_first_name,
+                    func.trim(func.lower(Speaker.last_name)) == normalized_last_name,
+                    func.trim(func.lower(Speaker.email)) == normalized_email,
+                ),
+                and_(
+                    Speaker.email.is_not(None),
+                    func.lower(Speaker.email) == normalized_email,
+                ),
+            ),
+        )
+        speaker_ids = tuple((await self.db.scalars(identity)).all()) or (speaker.id,)
+        query = (
+            select(SessionSpeaker, Session, Room)
+            .join(Session, Session.id == SessionSpeaker.session_id)
+            .join(Event, Event.id == Session.event_id)
+            .outerjoin(Room, Room.id == Session.room_id)
+            .options(selectinload(SessionSpeaker.presentation_files))
+            .where(
+                Event.organization_id == organization_id,
+                Session.event_id == event_id,
+                Session.deleted_at.is_(None),
+                SessionSpeaker.speaker_id.in_(speaker_ids),
+            )
+        )
+        if not event_wide_access:
+            session_ids = tuple(assigned_session_ids)
+            room_ids = tuple(assigned_room_ids)
+            if not session_ids and not room_ids:
+                return speaker, []
+            query = query.where(
+                or_(
+                    Session.id.in_(session_ids) if session_ids else False,
+                    Session.room_id.in_(room_ids) if room_ids else False,
+                )
+            )
+        query = query.order_by(Session.start_time.asc(), Session.id.asc()).limit(500)
+        return speaker, list((await self.db.execute(query)).all())
 
     async def get_profile_for_event(
         self,
@@ -320,7 +385,6 @@ class SpeakerQueryService:
                     Speaker.designation,
                     Speaker.affiliation,
                     Speaker.country,
-                    Speaker.speaker_code,
                     Speaker.upload_status,
                     Speaker.qr_code_url,
                     Speaker.checked_in_at,
@@ -441,6 +505,40 @@ class SessionQueryService:
                 Event.organization_id == organization_id, Session.deleted_at.is_(None),
             )
         )
+
+    async def list_for_export(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        event_id: uuid.UUID,
+        maximum: int = 10_000,
+    ) -> list[Session]:
+        """Load a bounded, fully eager schedule projection for DOCX export.
+
+        Exports are intentionally not cursor-paginated because one document
+        must contain a coherent schedule snapshot.  The upper bound protects
+        the application from an unbounded router-owned materialization while
+        preserving the legacy document contents and ordering.
+        """
+        bound = max(1, min(int(maximum), 10_000))
+        rows = await self.db.scalars(
+            select(Session)
+            .join(Event, Event.id == Session.event_id)
+            .options(
+                selectinload(Session.room),
+                selectinload(Session.session_speakers).selectinload(
+                    SessionSpeaker.speaker
+                ),
+            )
+            .where(
+                Event.organization_id == organization_id,
+                Session.event_id == event_id,
+                Session.deleted_at.is_(None),
+            )
+            .order_by(Session.start_time.asc(), Session.id.asc())
+            .limit(bound)
+        )
+        return list(rows.all())
 
     async def list_legacy(
         self,

@@ -275,7 +275,7 @@ export function SignupWizardForm({ onToggleFlip }: { onToggleFlip?: (flip: boole
         timezone: "Asia/Kolkata",
       });
 
-      setAuth(result.user, result.access_token);
+      setAuth(result.user, result.access_token, result.refresh_token);
       toast.success("Profile initialized. Starting workspace setup...");
       router.push("/onboarding");
     } catch (error: any) {
@@ -673,49 +673,4 @@ export function SignupWizard() {
   return <UnifiedAuthContainer initialFlipped={true} />;
 }
 
-export function AcceptInviteForm() {
-  const router = useRouter();
-  const search = useSearchParams();
-  const token = search.get("token") || "";
-  const setAuth = useAuthStore((state) => state.setAuth);
-  const [form, setForm] = useState({ first_name: "", last_name: "", password: "", confirm_password: "" });
-  const [loading, setLoading] = useState(false);
-
-  const submit = async () => {
-    if (!token || form.password.length < 8 || form.password !== form.confirm_password) {
-      toast.error("Check the invite link and password fields.");
-      return;
-    }
-    setLoading(true);
-    try {
-      const result = await orgApi.acceptInvite({ token, first_name: form.first_name, last_name: form.last_name, password: form.password });
-      setAuth(result.user, result.access_token);
-      router.push("/dashboard");
-    } catch (error: any) {
-      toast.error(error.message || "Could not accept invitation.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="grid min-h-screen place-items-center bg-[var(--color-bg)] p-6 text-[var(--color-text-primary)]">
-      <div className="w-full max-w-lg rounded-[28px] border border-[var(--color-border)] bg-[var(--color-surface-2)] p-8 shadow-modal backdrop-blur-2xl">
-        <div className="space-y-6">
-          <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Accept Invitation</h2>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <input type="text" placeholder="First Name" className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-placeholder)]" value={form.first_name} onChange={e => setForm({ ...form, first_name: e.target.value })} />
-              <input type="text" placeholder="Last Name" className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-placeholder)]" value={form.last_name} onChange={e => setForm({ ...form, last_name: e.target.value })} />
-            </div>
-            <input type="password" placeholder="Password" className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-placeholder)]" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
-            <input type="password" placeholder="Confirm Password" className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-placeholder)]" value={form.confirm_password} onChange={e => setForm({ ...form, confirm_password: e.target.value })} />
-            <Button onClick={submit} className="h-11 w-full rounded-xl bg-gradient-to-r from-[var(--color-primary-start)] via-[var(--color-primary-mid)] to-[var(--color-primary-end)] font-black uppercase tracking-wider text-[var(--color-text-inverse)]">
-              {loading ? <Loader2 className="animate-spin" /> : "Accept"}
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+export { AcceptInviteForm } from "./AcceptInviteForm";

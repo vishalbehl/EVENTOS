@@ -32,15 +32,18 @@ export function useBulkReorderSessions(eventId: string) {
   const queryClient = useQueryClient();
   const markSaved = useSessionBuilderStore((s) => s.markSaved);
   const setIsSaving = useSessionBuilderStore((s) => s.setIsSaving);
+  const setServerConflicts = useSessionBuilderStore((s) => s.setServerConflicts);
 
   return useMutation({
-    mutationFn: (items: Array<{ session_id: string; room_id: string | null; start_time: string; end_time: string; sort_order?: number }>) => {
+    mutationFn: (items: Array<{ session_id: string; room_id: string | null; start_time: string; end_time: string; sort_order?: number; expected_version?: number }>) => {
       setIsSaving(true);
       return apiPatch(`/events/${eventId}/sessions/bulk-reorder`, { items });
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
+      if (Array.isArray(data?.conflicts)) setServerConflicts(data.conflicts);
       markSaved();
       queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", eventId] });
     },
     onError: (err: any) => {
       setIsSaving(false);
@@ -53,12 +56,12 @@ export function useDuplicateSession(eventId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ sessionId, offsetMinutes = 0, newRoomId = null, includeSpeakers = true }: { sessionId: string; offsetMinutes?: number; newRoomId?: string | null; includeSpeakers?: boolean }) =>
+    mutationFn: ({ sessionId, offsetMinutes = 0, newRoomId = null, includeSpeakers = true, idempotencyKey }: { sessionId: string; offsetMinutes?: number; newRoomId?: string | null; includeSpeakers?: boolean; idempotencyKey?: string }) =>
       apiPost(`/events/${eventId}/sessions/${sessionId}/duplicate`, {
         offset_minutes: offsetMinutes,
         new_room_id: newRoomId,
         include_speakers: includeSpeakers,
-      }),
+      }, idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", eventId] });
       queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
@@ -93,6 +96,7 @@ export function useAutoSaveSessionBuilder(eventId: string) {
           start_time: s.start_time,
           end_time: s.end_time,
           sort_order: s.sort_order || 0,
+          expected_version: s.version,
         }));
 
       if (items.length > 0) {
@@ -162,7 +166,8 @@ export function usePublishSchedule(eventId: string) {
     mutationFn: async (sessionIds?: string[]) => {
       return apiPost<{ success: boolean; published_count: number; message: string }>(
         `/events/${eventId}/sessions/publish-schedule`,
-        sessionIds && sessionIds.length > 0 ? { session_ids: sessionIds } : {}
+        sessionIds && sessionIds.length > 0 ? { session_ids: sessionIds } : {},
+        { headers: { "Idempotency-Key": `session-builder-publish:${eventId}:${sessionIds?.join(",") || "all"}` } } as any,
       );
     },
     onSuccess: (data) => {
@@ -175,6 +180,87 @@ export function usePublishSchedule(eventId: string) {
     onError: (err: any) => {
       toast.error(err?.response?.data?.detail || "Failed to publish schedule");
     },
+  });
+}
+
+export function useMaterializeAbstractCandidate(eventId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ submissionId, durationMinutes = 30 }: { submissionId: string; durationMinutes?: number }) =>
+      apiPost(`/events/${eventId}/sessions/candidates/${submissionId}/materialize`, { duration_minutes: durationMinutes }, { headers: { "Idempotency-Key": `programme-candidate-materialize:${submissionId}:${durationMinutes}` } } as any),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
+      toast.success(data?.message || "Accepted content added to the schedule queue");
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.detail?.message || err?.response?.data?.detail || "Unable to add accepted content"),
+  });
+}
+
+export interface ScheduleRevision {
+  id: string;
+  revision_number: number;
+  label?: string | null;
+  reason?: string | null;
+  checksum: string;
+  created_at: string;
+}
+
+export function useScheduleRevisions(eventId: string) {
+  return useQuery({
+    queryKey: ["session-builder-revisions", eventId],
+    queryFn: () => apiGet<ScheduleRevision[]>(`/events/${eventId}/sessions/revisions`),
+    enabled: !!eventId && eventId !== "undefined",
+    staleTime: 15_000,
+  });
+}
+
+export function useSchedulePreview(eventId: string, enabled = false) {
+  return useQuery({
+    queryKey: ["schedule-preview", eventId],
+    queryFn: () => apiGet<{ publication_status: string; publication_ready: boolean; sessions: Array<{ id: string; code: string; title: string; type: string; starts_at: string; ends_at: string; room?: string | null; track?: string | null; published: boolean; status: string }>; conflicts: Array<{ type: string; description: string; severity: string }> }>(`/events/${eventId}/sessions/schedule-preview`),
+    enabled: Boolean(eventId) && enabled,
+  });
+}
+
+export interface ScheduleAnnouncementRequest {
+  template_id: string;
+  recipient_filter?: "all" | "paid" | "pending";
+  target_type?: "participant" | "speaker";
+  scheduled_at?: string | null;
+}
+
+export function useScheduleAnnouncement(eventId: string) {
+  return useMutation({
+    mutationFn: (payload: ScheduleAnnouncementRequest) => apiPost<{ campaign_id: string; status: string }>(
+      `/events/${eventId}/sessions/schedule-announcement`,
+      payload,
+      { headers: { "Idempotency-Key": `programme-schedule-announcement:${eventId}:${payload.template_id}:${payload.scheduled_at || "immediate"}` } } as any,
+    ),
+    onSuccess: () => toast.success("Schedule announcement queued through the durable campaign outbox."),
+    onError: (err: any) => toast.error(err?.response?.data?.detail?.message || err?.response?.data?.detail || "Unable to queue schedule announcement"),
+  });
+}
+
+export function useCreateScheduleCheckpoint(eventId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ label, reason }: { label?: string; reason?: string }) => apiPost<ScheduleRevision>(`/events/${eventId}/sessions/revisions`, { label, reason }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["session-builder-revisions", eventId] }); toast.success("Schedule checkpoint saved"); },
+    onError: () => toast.error("Unable to save schedule checkpoint"),
+  });
+}
+
+export function useRestoreScheduleRevision(eventId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (revisionId: string) => apiPost<ScheduleRevision>(`/events/${eventId}/sessions/revisions/${revisionId}/restore`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["session-builder-revisions", eventId] });
+      toast.success("Schedule restored. A safety checkpoint was saved first.");
+    },
+    onError: () => toast.error("Unable to restore this checkpoint"),
   });
 }
 

@@ -20,6 +20,9 @@ from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_registration import ParticipantRegistration
 from app.modules.registration.models.badge_models import Badge, BadgeScan, BadgePrintJob
 from app.modules.registration.models.print_template import PrintTemplate
+from app.modules.registration.models.ticket_type import TicketType
+from app.modules.registration.models.promo_code import PromoCode
+from app.modules.registration.models.payment_transaction import PaymentTransaction
 from app.modules.agenda.models import Room
 from app.modules.events.models.capacity_rule import CapacityRule
 from app.modules.registration.models.participant_role import ParticipantRole
@@ -564,13 +567,23 @@ async def _fetch_sync_queue(db: AsyncSession, event_id: uuid.UUID) -> dict:
         "email": p.email,
         "phone": p.phone,
         "role": p.role,
+        "role_id": str(p.role_id) if getattr(p, "role_id", None) else None,
+        "roles": getattr(p, "roles", []) or [],
+        "track_id": str(p.track_id) if getattr(p, "track_id", None) else None,
         "company": p.company,
         "designation": p.designation,
         "country": p.country,
+        "state": getattr(p, "state", None),
+        "approval_status": getattr(p, "approval_status", "Approved"),
         "paid_status": p.paid_status,
+        "badge_status": getattr(p, "badge_status", "Unprinted"),
+        "checkin_status": getattr(p, "checkin_status", "Pending"),
         "source": p.source,
+        "qr_code_url": getattr(p, "qr_code_url", None),
         "custom_fields": p.custom_fields,
-        "registered_at": p.registered_at.isoformat() if p.registered_at else None
+        "version": getattr(p, "version", 1),
+        "registered_at": p.registered_at.isoformat() if p.registered_at else None,
+        "updated_at": p.updated_at.isoformat() if getattr(p, "updated_at", None) else None,
     } for p in participants]
 
     # 3. Fetch badges for the participants of this event. Prefer the final
@@ -950,7 +963,6 @@ async def _fetch_sync_queue(db: AsyncSession, event_id: uuid.UUID) -> dict:
         "bio": getattr(sp, "bio", None),
         "photo_url": getattr(sp, "photo_url", None),
         "upload_token": getattr(sp, "upload_token", None),
-        "speaker_code": getattr(sp, "speaker_code", None),
         "upload_status": getattr(sp, "upload_status", "pending"),
         "qr_code_url": getattr(sp, "qr_code_url", None),
         "checked_in_at": sp.checked_in_at.isoformat() if getattr(sp, "checked_in_at", None) else None,
@@ -1053,6 +1065,47 @@ async def _fetch_sync_queue(db: AsyncSession, event_id: uuid.UUID) -> dict:
             "title": getattr(a, "title", None),
         } for a in assets_res.scalars().all()]
 
+    # 17. Fetch Ticket Types, Promo Codes, and Payment Transactions
+    ticket_types_res = await db.execute(select(TicketType).where(TicketType.event_id == event_id))
+    ticket_types_list = [{
+        "id": str(tt.id),
+        "event_id": str(tt.event_id),
+        "role_name": tt.role_name,
+        "tier_name": tt.tier_name,
+        "price": tt.price,
+        "available_from": tt.available_from.isoformat() if tt.available_from else None,
+        "available_until": tt.available_until.isoformat() if tt.available_until else None,
+    } for tt in ticket_types_res.scalars().all()]
+
+    promo_codes_res = await db.execute(select(PromoCode).where(PromoCode.event_id == event_id))
+    promo_codes_list = [{
+        "id": str(pc.id),
+        "event_id": str(pc.event_id),
+        "code": pc.code,
+        "discount_type": pc.discount_type,
+        "discount_value": pc.discount_value,
+        "max_uses": pc.max_uses,
+        "used_count": pc.used_count,
+        "expiry_date": pc.expiry_date.isoformat() if pc.expiry_date else None,
+        "is_active": pc.is_active,
+    } for pc in promo_codes_res.scalars().all()]
+
+    payment_tx_res = await db.execute(select(PaymentTransaction).where(PaymentTransaction.event_id == event_id))
+    payment_tx_list = [{
+        "id": str(pt.id),
+        "event_id": str(pt.event_id),
+        "registration_id": str(pt.registration_id) if pt.registration_id else None,
+        "amount": pt.amount,
+        "currency": pt.currency,
+        "status": pt.status,
+        "payment_method": pt.payment_method,
+        "gateway_order_id": pt.gateway_order_id,
+        "gateway_payment_id": pt.gateway_payment_id,
+        "promo_code_id": str(pt.promo_code_id) if pt.promo_code_id else None,
+        "discount_applied": pt.discount_applied,
+        "created_at": pt.created_at.isoformat() if pt.created_at else None,
+    } for pt in payment_tx_res.scalars().all()]
+
     return {
         "event_id": str(event_id),
         "event": event_dict,
@@ -1077,6 +1130,9 @@ async def _fetch_sync_queue(db: AsyncSession, event_id: uuid.UUID) -> dict:
         "print_templates": templates_list,
         "capacity_rules": rules_list,
         "participant_roles": roles_list,
+        "ticket_types": ticket_types_list,
+        "promo_codes": promo_codes_list,
+        "payment_transactions": payment_tx_list,
         "venue_checkins": venue_checkins_list,
         "venue_scan_events": scan_events_list,
         "kits": kits_list,
@@ -1086,10 +1142,6 @@ async def _fetch_sync_queue(db: AsyncSession, event_id: uuid.UUID) -> dict:
         "node_assignments": assignments_list,
     }
 
-
-@organizer_router.get("/queue")
-async def get_organizer_sync_payload(event: CurrentEvent, db: AsyncSession = Depends(get_db)):
-    return await _fetch_sync_queue(db, event.id)
 
 @router.post("/events/{event_id}/push")
 async def push_sync_payload(

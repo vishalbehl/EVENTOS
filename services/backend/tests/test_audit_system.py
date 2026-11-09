@@ -88,38 +88,35 @@ def test_make_json_diff():
 @pytest.mark.asyncio
 async def test_audit_middleware_captures_post(
     client: AsyncClient,
-    super_admin,
+    organizer,
     db: AsyncSession,
     event,
 ):
-    await activate_event_for_test(db, event)
     headers = {
-        **auth_headers(super_admin),
-        "Idempotency-Key": f"audit-event-create-{uuid.uuid4()}",
+        **auth_headers(organizer),
+        "Idempotency-Key": f"audit-workspace-create-{uuid.uuid4()}",
     }
     
     # We mock write_log to intercept context
     mock_write = AsyncMock()
     with patch("app.modules.audit.services.audit_service.AuditService.write_log", mock_write):
         payload = {
-            "name": f"Test Event {uuid.uuid4().hex[:6]}",
-            "short_code": f"T{uuid.uuid4().hex[:5].upper()}",
-            "location": "Virtual",
-            "start_date": "2026-12-01",
-            "end_date": "2026-12-05",
-            "timezone": "UTC",
-            "speaker_settings": {"enabled": True},
-            "registration_settings": {"enabled": True}
+            "name": f"Audit Workspace {uuid.uuid4().hex[:6]}",
+            "reason": "Verify installed audit middleware",
         }
-        response = await client.post("/api/v1/events", json=payload, headers=headers)
-        assert response.status_code == 201
+        response = await client.post(
+            f"/organizations/{event.organization_id}/workspaces",
+            json=payload,
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
         
         # Check that middleware captured the context
         assert mock_write.called
         ctx: AuditContext = mock_write.call_args[0][0]
         assert ctx.action_type == "created"
-        assert ctx.resource_type == "event"
-        assert ctx.actor_user_id == super_admin.id
+        assert ctx.resource_type == "workspace"
+        assert ctx.actor_user_id == organizer.id
         assert ctx.new_state is not None
         assert ctx.new_state["name"] == payload["name"]
 

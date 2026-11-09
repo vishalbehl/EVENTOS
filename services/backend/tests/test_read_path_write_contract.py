@@ -332,14 +332,14 @@ def test_organiser_dashboard_reuses_aggregate_event_projection():
     assert "select(Event)" not in region
 
 
-def test_organiser_addon_status_uses_explicit_query_service():
+def test_organiser_effective_features_use_explicit_query_service():
     router = (_backend_app_root() / "modules/organiser/router.py").read_text(
         encoding="utf-8-sig"
     )
-    region = router.split("async def organiser_addon_status", 1)[1].split(
+    region = router.split("async def organiser_effective_features", 1)[1].split(
         "@router.", 1
     )[0]
-    assert "OrganiserAddonQueryService(db).get_status_data" in region
+    assert "OrganiserEntitlementQueryService(db).list_effective_features" in region
     assert "await db.scalars" not in region
 
 
@@ -514,18 +514,14 @@ def test_abstract_publication_and_export_reads_use_explicit_query_service():
 def test_platform_commercial_catalog_reads_use_explicit_query_service():
     router = (
         Path(__file__).resolve().parents[1]
-        / "app/modules/platform/router.py"
+        / "app/modules/billing/routers/cloud_commercial.py"
     ).read_text(encoding="utf-8-sig")
     for route_name, method_name in (
-        ("list_subscription_plans", "list_subscription_plans"),
-        ("get_features_matrix", "features_matrix"),
+        ("get_admin_cloud_catalog", "catalog"),
+        ("preview_admin_cloud_pricing", "pricing_preview"),
     ):
-        region = router.split(f"async def {route_name}", 1)[1]
-        if route_name == "get_features_matrix":
-            region = region.split("async def calculate_addon_final_price", 1)[0]
-        else:
-            region = region.split("@router.", 1)[0]
-        assert f"PlatformCommercialCatalogQueryService(db).{method_name}" in region
+        region = router.split(f"async def {route_name}", 1)[1].split("@admin_router.", 1)[0]
+        assert f"CloudCommercialService(db).{method_name}" in region
         assert "await db.execute" not in region
 
 

@@ -316,10 +316,12 @@ async def parse_cv(
             data=content,
             content_type=file.content_type,
         )
-        if settings.STORAGE_MODE == "local":
-            url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
-        else:
-            url = f"{settings.S3_ENDPOINT_URL}/{bucket}/{storage_path}"
+        url = await asyncio.to_thread(
+            upload_service.create_presigned_download,
+            bucket=bucket,
+            storage_path=storage_path,
+            inline=True,
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -501,10 +503,12 @@ async def parse_profile_template(
             data=content,
             content_type=file.content_type,
         )
-        if settings.STORAGE_MODE == "local":
-            url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
-        else:
-            url = f"{settings.S3_ENDPOINT_URL}/{bucket}/{storage_path}"
+        url = await asyncio.to_thread(
+            upload_service.create_presigned_download,
+            bucket=bucket,
+            storage_path=storage_path,
+            inline=True,
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

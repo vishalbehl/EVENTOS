@@ -27,6 +27,7 @@ from app.modules.billing.services.usage_reservation_service import UsageReservat
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.notifications.application.commands import WebhookCommandService
 from app.modules.notifications.application.queries import WebhookQueryService
+from app.core.concurrency import raise_version_conflict
 
 router = APIRouter(prefix="/events/{event_id}/webhooks", tags=["webhooks"], dependencies=[require_event_operation("developer.webhooks.manage")])
 
@@ -173,7 +174,7 @@ async def test_webhook(
     if wh is None:
         raise HTTPException(status_code=404, detail="Webhook not found.")
     if wh.version != if_match:
-        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": wh.version})
+        raise_version_conflict(wh.version)
     test_payload = {
         "event_type": payload.event_type,
         "test": True,

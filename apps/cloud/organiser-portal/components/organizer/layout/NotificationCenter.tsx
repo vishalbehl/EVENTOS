@@ -51,7 +51,7 @@ export function NotificationCenter() {
         <button
           type="button"
           aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}
-          className="relative grid size-9 place-items-center rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          className="organisation-notification-button relative grid place-items-center text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
         >
           <Bell aria-hidden className="size-4" />
           {unread > 0 && (

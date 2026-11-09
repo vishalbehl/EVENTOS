@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, Boolean, Index, text
+from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, String, Text, Boolean, Index, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -34,6 +34,9 @@ class EmailLog(Base):
     event_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    # NULL is legacy/unattributed, never inferred from the current campaign intent.
+    send_dispatch_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    current_attempt_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
     speaker_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("speakers.speakers.id", ondelete="CASCADE"),
@@ -50,7 +53,7 @@ class EmailLog(Base):
     to_email: Mapped[str] = mapped_column(String(320), nullable=False)
     subject: Mapped[str] = mapped_column(String(500), nullable=False)
 
-    # queued | sent | delivered | bounced | failed
+    # queued | sending | sent | delivered | bounced | failed | delivery_unknown
     status: Mapped[str] = mapped_column(
         String(30), nullable=False, default="queued", index=True
     )
@@ -82,6 +85,10 @@ class EmailLog(Base):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(["current_attempt_id", "event_id", "campaign_id"],
+            ["communications.campaign_attempts.id", "communications.campaign_attempts.event_id",
+             "communications.campaign_attempts.campaign_id"], name="fk_email_log_attempt_owner"),
+        Index("ix_email_logs_dispatch_outcome", "event_id", "campaign_id", "send_dispatch_id", "status"),
         # System-triggered emails have a NULL campaign_id and are intentionally
         # outside campaign-recipient idempotency.
         Index(

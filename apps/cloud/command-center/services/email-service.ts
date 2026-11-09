@@ -5,7 +5,10 @@ import { apiClient, saveDownloadedFile } from "@/lib/api-client"
 // ================= TYPES =================
 
 export type Campaign = {
+  /** Recorded dispatch intent only; the worker rechecks live authority. */
+  dispatch_authorized?: boolean
   id: string
+  version: number
   event_id: string
   name: string
   status: "draft" | "scheduled" | "sending" | "sent" | "failed"
@@ -37,7 +40,7 @@ export type EmailLog = {
   id: string
   to_email: string
   subject: string
-  status: "sent" | "failed" | "queued" | "bounced" | "delivered"
+  status: "sent" | "failed" | "queued" | "bounced" | "delivered" | "sending" | "delivery_unknown"
   sent_at: string
   opened_at?: string
   error_message?: string
@@ -80,23 +83,22 @@ export const createCampaign = async (
   return apiClient.post(`/events/${eventId}/notifications/campaigns`, payload)
 }
 
-export const sendCampaign = async (eventId: string, campaignId: string) => {
-  return apiClient.post(
-    `/events/${eventId}/notifications/campaigns/${campaignId}/send`
-  )
-}
+export interface CampaignActionOptions { version: number; reason: string; idempotencyKey: string }
+export interface CampaignActionResult { campaign_id: string; version: number; status: string; message: string }
+const actionConfig = (options: CampaignActionOptions) => ({
+  headers: { "If-Match": String(options.version), "Idempotency-Key": options.idempotencyKey },
+});
+export const sendCampaign = (eventId: string, campaignId: string, options: CampaignActionOptions) =>
+  apiClient.post<CampaignActionResult>(`/events/${eventId}/notifications/campaigns/${campaignId}/send`,
+    { reason: options.reason }, actionConfig(options));
 
-export const resendFailed = async (eventId: string, campaignId: string) => {
-  return apiClient.post(
-    `/events/${eventId}/notifications/campaigns/${campaignId}/resend-failed`
-  )
-}
+export const resendFailed = (eventId: string, campaignId: string, options: CampaignActionOptions) =>
+  apiClient.post<CampaignActionResult>(`/events/${eventId}/notifications/campaigns/${campaignId}/resend-failed`,
+    { reason: options.reason }, actionConfig(options));
 
-export const deleteCampaign = async (eventId: string, campaignId: string): Promise<{ message: string }> => {
-  return apiClient.delete(
-    `/events/${eventId}/notifications/campaigns/${campaignId}`
-  )
-}
+export const deleteCampaign = (eventId: string, campaignId: string, options: CampaignActionOptions) =>
+  apiClient.delete<CampaignActionResult>(`/events/${eventId}/notifications/campaigns/${campaignId}`,
+    { ...actionConfig(options), data: { reason: options.reason } });
 
 // ================= TEMPLATES =================
 

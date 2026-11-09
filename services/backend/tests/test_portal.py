@@ -15,7 +15,7 @@ from app.modules.speakers.routers.portal import speaker_portal_auth, download_sp
 from tests.conftest import activate_event_for_test
 
 
-async def test_speaker_portal_auth_by_code(
+async def test_speaker_portal_auth_by_token(
     db: AsyncSession,
     speaker: Speaker,
 ):
@@ -25,13 +25,12 @@ async def test_speaker_portal_auth_by_code(
     await activate_event_for_test(db, speaker.event)
     await db.commit()
 
-    # Authenticate via access code directly
-    res = await speaker_portal_auth(event_id=speaker.event_id, token_or_code=speaker.speaker_code, db=db)
+    # Authenticate via upload token
+    res = await speaker_portal_auth(event_id=speaker.event_id, token_or_code=speaker.upload_token, db=db)
     
     # Assert return fields
     assert res.speaker_id == speaker.id
     assert res.first_name == speaker.first_name
-    assert res.speaker_code == speaker.speaker_code
     assert res.qr_code_url == speaker.qr_code_url
 
 

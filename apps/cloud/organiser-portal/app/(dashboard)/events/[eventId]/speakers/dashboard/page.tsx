@@ -41,7 +41,6 @@ import {
   useDashboardStats,
   useActivity,
   useMainDashboardStats,
-  useUpdateEvent,
 } from "@/hooks/useEvents";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useAuthStore } from "@/store/use-auth-store";
@@ -65,7 +64,6 @@ export default function EventOverviewPage() {
   const setToolbarActions = useFloatingToolbarStore((state) => state.setActions);
   const [isImportOpen, setIsImportOpen] = useState(false);
 
-  const updateEvent = useUpdateEvent(eventId);
 
   // Data fetching
   const { data: event, isLoading: eventLoading } = useEvent(eventId);

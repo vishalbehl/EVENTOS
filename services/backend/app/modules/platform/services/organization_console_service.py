@@ -8,10 +8,8 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-
 from app.modules.analytics.models.usage import OrganizationUsage, UsageEvent
-from app.modules.billing.models.subscription import OrganizationSubscription
+from app.modules.billing.models.cloud_commercial import CommercialAccount, CommercialContract, CommercialContractItem, CommercialOffer
 from app.modules.events.models.event import Event
 from app.modules.communications.models.channel_delivery import (
     CommunicationDeliveryBatch,
@@ -64,13 +62,35 @@ class OrganizationConsoleService:
 
         usage = await self.db.get(OrganizationUsage, organization_id)
         stored_health = await self.db.get(OrganizationHealth, organization_id)
-        subscription = await self.db.scalar(
-            select(OrganizationSubscription)
-            .where(OrganizationSubscription.organization_id == organization_id)
-            .options(selectinload(OrganizationSubscription.plan))
-            .order_by(OrganizationSubscription.created_at.desc())
-            .limit(1)
+        account = await self.db.scalar(
+            select(CommercialAccount).where(CommercialAccount.owner_organization_id == organization_id)
         )
+        contract = None
+        contract_offer = None
+        if account:
+            contract = await self.db.scalar(
+                select(CommercialContract)
+                .where(
+                    CommercialContract.commercial_account_id == account.id,
+                    CommercialContract.status.in_(["ACTIVE", "PENDING_PAYMENT"]),
+                )
+                .order_by(CommercialContract.created_at.desc())
+                .limit(1)
+            )
+            if contract:
+                contract_offer = await self.db.scalar(
+                    select(CommercialOffer.display_name)
+                    .join(CommercialContractItem, CommercialContractItem.offer_id == CommercialOffer.id)
+                    .where(CommercialContractItem.contract_id == contract.id)
+                    .order_by(CommercialContractItem.created_at)
+                    .limit(1)
+                )
+        commercial_summary = {
+            "id": str(contract.id),
+            "status": contract.status,
+            "offer_name": contract_offer or contract.contract_type,
+            "ends_at": contract.ends_at,
+        } if contract else None
         counts = await OrganizationConsoleQueryService(self.db).counts(organization_id=organization_id)
         member_count = counts.member_count
         team_count = counts.team_count
@@ -116,16 +136,16 @@ class OrganizationConsoleService:
             attention.append(AttentionItem(key="mfa-gap", severity="WARNING", title="MFA coverage incomplete", detail=f"{active_user_count - mfa_user_count} active users do not have MFA enabled.", destination=f"/organizations/{organization_id}?view=security"))
         if open_security_events:
             attention.append(AttentionItem(key="security-events", severity="CRITICAL", title="Security events require review", detail=f"{open_security_events} high or critical events are recorded.", destination=f"/organizations/{organization_id}?view=security"))
-        if not subscription and not org.is_internal_unrestricted:
-            attention.append(AttentionItem(key="subscription", severity="WARNING", title="No subscription is recorded", detail="Commercial entitlements cannot be resolved without a subscription record.", destination=f"/organizations/{organization_id}?view=billing"))
+        if not contract and not org.is_internal_unrestricted:
+            attention.append(AttentionItem(key="commercial-contract", severity="WARNING", title="No commercial contract is recorded", detail="Commercial entitlements cannot be resolved without an active versioned contract.", destination=f"/organizations/{organization_id}?view=billing"))
 
-        executive_summary = self._executive_summary(org.name, active_event_count, active_user_count, mfa_score, connection_count, open_security_events, subscription)
+        executive_summary = self._executive_summary(org.name, active_event_count, active_user_count, mfa_score, connection_count, open_security_events, commercial_summary)
         availability = {
             "overview": DomainAvailability(available=True, configured=True, freshness_at=now),
             "members": DomainAvailability(available=True, configured=member_count > 0, freshness_at=now),
             "security": DomainAvailability(available=True, configured=active_user_count > 0, freshness_at=now),
             "branding": DomainAvailability(available=True, configured=counts.branding_profile_count > 0, freshness_at=now),
-            "billing": DomainAvailability(available=True, configured=subscription is not None, freshness_at=now),
+            "billing": DomainAvailability(available=True, configured=contract is not None, freshness_at=now),
             "locations": DomainAvailability(available=True, configured=location_count > 0, freshness_at=now),
             "integrations": DomainAvailability(available=True, configured=connection_count > 0, freshness_at=now),
             "api-webhooks": DomainAvailability(available=True, configured=api_key_count > 0, freshness_at=now),
@@ -138,8 +158,8 @@ class OrganizationConsoleService:
         }
         return OrganizationConsoleSummary(
             generated_at=now,
-            organization={"id": str(org.id), "name": org.name, "slug": org.slug, "logo_url": org.logo_url, "is_active": org.is_active, "is_internal_unrestricted": org.is_internal_unrestricted, "created_at": org.created_at, "country": org.country, "timezone": org.timezone, "currency": org.currency},
-            subscription={"id": str(subscription.id), "status": subscription.status, "plan_id": str(subscription.plan_id), "plan_name": subscription.plan.name if subscription.plan else "Unknown", "current_period_end": subscription.current_period_end} if subscription else None,
+            organization={"id": str(org.id), "name": org.name, "slug": org.slug, "logo_url": org.logo_url, "is_active": org.is_active, "organization_kind": org.organization_kind, "lifecycle_state": org.lifecycle_state, "archived_at": org.archived_at, "profile_version": org.profile_version, "is_internal_unrestricted": org.is_internal_unrestricted, "created_at": org.created_at, "country": org.country, "timezone": org.timezone, "currency": org.currency},
+            contract=commercial_summary,
             metrics=metrics, health_score=health_score, health_status=health_status,
             health_factors=factors, attention=attention, availability=availability,
             executive_summary=executive_summary,
@@ -207,16 +227,28 @@ class OrganizationConsoleService:
 
     async def _legacy_domain_snapshot(self, organization_id: uuid.UUID, domain: str, now: datetime):
         if domain == "members":
-            rows = (await self.db.execute(text("""SELECT m.id, m.user_id, COALESCE(u.email, m.invite_email) email, u.first_name, u.last_name, u.role, m.is_active, COALESCE(u.is_2fa_enabled, false) is_2fa_enabled, u.last_login_at, m.org_role, m.accepted_at, m.invited_at, COALESCE((SELECT jsonb_agg(a.event_id::text ORDER BY a.event_id::text) FROM access.user_event_assignments a JOIN events.events e ON e.id=a.event_id WHERE a.user_id=m.user_id AND e.organization_id=m.organization_id), '[]'::jsonb) event_ids FROM organizer_access.organization_members m LEFT JOIN identity.users u ON u.id=m.user_id WHERE m.organization_id=:org_id ORDER BY m.invited_at DESC LIMIT 100"""), {"org_id": organization_id})).mappings().all()
-            return {"items": [dict(row) for row in rows], "total": len(rows)}, DomainAvailability(available=True, configured=bool(rows), freshness_at=now)
+            from app.modules.organiser.application.queries import OrganiserMemberQueryService
+            page = await OrganiserMemberQueryService(self.db).list_members_cursor(
+                organization_id=organization_id, cursor=None, limit=100, search=None, member_status=None)
+            total = int(await self.db.scalar(text(
+                "SELECT count(*) FROM organizer_access.organization_members WHERE organization_id=:org_id"),
+                {"org_id": organization_id}) or 0)
+            return {"items": page.items, "total": total, "next_cursor": page.next_cursor,
+                "has_next": page.has_next}, DomainAvailability(available=True, configured=bool(total), freshness_at=now)
         if domain == "billing":
-            rows = (await self.db.execute(text("SELECT id, status, plan_id, trial_ends_at, current_period_end, cancel_at_period_end, created_at FROM commerce.organization_subscriptions WHERE organization_id=:org_id ORDER BY created_at DESC"), {"org_id": organization_id})).mappings().all()
+            rows = (await self.db.execute(text("""
+                SELECT cc.id, cc.status, cc.contract_type, cc.billing_interval,
+                       cc.starts_at, cc.ends_at, cc.cancel_at_period_end, cc.created_at
+                FROM commerce.plan_contracts cc
+                JOIN commerce.billing_accounts ca ON ca.id = cc.commercial_account_id
+                WHERE ca.owner_organization_id=:org_id ORDER BY cc.created_at DESC
+            """), {"org_id": organization_id})).mappings().all()
             invoices = (await self.db.execute(text("SELECT COUNT(*) count, COALESCE(SUM(amount),0) total FROM commerce.invoices WHERE organization_id=:org_id"), {"org_id": organization_id})).mappings().one()
             invoice_rows = (await self.db.execute(text("""SELECT i.id, i.event_id, i.invoice_number, i.amount, i.gst_amount, i.total_amount_inr, i.currency, i.status, i.due_date, i.paid_at, i.issued_at, i.version, COALESCE((SELECT jsonb_agg(jsonb_build_object('id', li.id, 'description', li.description, 'amount', li.amount, 'quantity', li.quantity) ORDER BY li.id) FROM commerce.invoice_items li WHERE li.invoice_id=i.id), '[]'::jsonb) items FROM commerce.invoices i WHERE i.organization_id=:org_id ORDER BY i.issued_at DESC LIMIT 100"""), {"org_id": organization_id})).mappings().all()
-            payments = (await self.db.execute(text("""SELECT id, invoice_id, subscription_id, plan_name, amount, refunded_amount, currency, status, provider, provider_transaction_id, reconciliation_status, reconciled_at, created_at, version FROM commerce.subscription_transactions WHERE organization_id=:org_id ORDER BY created_at DESC LIMIT 100"""), {"org_id": organization_id})).mappings().all()
+            payments = []
             methods = (await self.db.execute(text("""SELECT id, provider, card_brand, card_last4, is_default, created_at FROM commerce.payment_methods WHERE organization_id=:org_id ORDER BY is_default DESC, created_at DESC LIMIT 25"""), {"org_id": organization_id})).mappings().all()
             freshness = max([row["issued_at"] for row in invoice_rows if row["issued_at"]] + [row["created_at"] for row in payments if row["created_at"]] + [now])
-            return {"subscriptions": [dict(row) for row in rows], "invoices": {**dict(invoices), "items": [dict(row) for row in invoice_rows]}, "payments": [dict(row) for row in payments], "payment_methods": [dict(row) for row in methods], "global_policy_owner": "Revenue Console"}, DomainAvailability(available=True, configured=bool(rows or invoice_rows or payments), freshness_at=freshness)
+            return {"contracts": [dict(row) for row in rows], "invoices": {**dict(invoices), "items": [dict(row) for row in invoice_rows]}, "payments": [], "payment_methods": [dict(row) for row in methods], "global_policy_owner": "Revenue Console"}, DomainAvailability(available=True, configured=bool(rows or invoice_rows), freshness_at=freshness)
         if domain == "integrations":
             rows = (await self.db.execute(text("SELECT c.id, c.provider_id, c.is_active, c.version, p.name provider_name FROM integrations.connections c JOIN integrations.providers p ON p.id=c.provider_id WHERE c.organization_id=:org_id"), {"org_id": organization_id})).mappings().all()
             providers = (await self.db.execute(text("SELECT id, name, description FROM integrations.providers ORDER BY name"))).mappings().all()
@@ -261,10 +293,10 @@ class OrganizationConsoleService:
         return cls._factor_status(score)
 
     @staticmethod
-    def _executive_summary(name: str, active_events: int, active_users: int, mfa_score: int | None, integrations: int, security_events: int, subscription) -> str:
+    def _executive_summary(name: str, active_events: int, active_users: int, mfa_score: int | None, integrations: int, security_events: int, contract) -> str:
         event_text = f"{active_events} active event{'s' if active_events != 1 else ''}"
         user_text = f"{active_users} active user{'s' if active_users != 1 else ''}"
         mfa_text = f"MFA coverage is {mfa_score}%" if mfa_score is not None else "MFA coverage is not measurable"
-        plan_text = f"the {subscription.plan.name} plan" if subscription and subscription.plan else "no recorded subscription"
+        offer_text = f"the {contract.get('offer_name')} contract" if contract else "no recorded commercial contract"
         risk_text = f"{security_events} high-priority security event{'s' if security_events != 1 else ''} require review" if security_events else "no high-priority security events are recorded"
-        return f"{name} currently has {event_text}, {user_text}, and {integrations} connected integration{'s' if integrations != 1 else ''}. It is operating on {plan_text}. {mfa_text}, and {risk_text}."
+        return f"{name} currently has {event_text}, {user_text}, and {integrations} connected integration{'s' if integrations != 1 else ''}. It is operating on {offer_text}. {mfa_text}, and {risk_text}."

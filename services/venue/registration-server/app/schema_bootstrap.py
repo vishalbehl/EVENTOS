@@ -27,6 +27,9 @@ REGISTRATION_SHARED_TABLES = {
     "registration.participant_registrations",
     "registration.participant_roles",
     "registration.participants",
+    "registration.payment_transactions",
+    "registration.promo_codes",
+    "registration.ticket_types",
     "venue.badge_history",
     "venue.badge_print_jobs",
     "venue.badges",
@@ -93,6 +96,32 @@ async def ensure_registration_shared_schema() -> None:
         for schema_name in schemas:
             await connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema_name}"'))
         await connection.run_sync(lambda sync_connection: Base.metadata.create_all(sync_connection, tables=tables))
+        await connection.execute(text("ALTER TABLE registration.participants ADD COLUMN IF NOT EXISTS state VARCHAR(150)"))
+        await connection.execute(text("ALTER TABLE registration.participants ADD COLUMN IF NOT EXISTS role_id UUID"))
+        await connection.execute(text("ALTER TABLE registration.participants ADD COLUMN IF NOT EXISTS roles JSONB DEFAULT '[]'::jsonb"))
+        await connection.execute(text("ALTER TABLE registration.participants ADD COLUMN IF NOT EXISTS track_id UUID"))
+        await connection.execute(text("ALTER TABLE registration.participants ADD COLUMN IF NOT EXISTS approval_status VARCHAR(50) DEFAULT 'Approved'"))
+        await connection.execute(text("ALTER TABLE registration.participants ADD COLUMN IF NOT EXISTS badge_status VARCHAR(50) DEFAULT 'Unprinted'"))
+        await connection.execute(text("ALTER TABLE registration.participants ADD COLUMN IF NOT EXISTS checkin_status VARCHAR(50) DEFAULT 'Pending'"))
+        await connection.execute(text("ALTER TABLE registration.participants ADD COLUMN IF NOT EXISTS qr_code_url VARCHAR(1024)"))
+        await connection.execute(text("ALTER TABLE registration.participants ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1"))
+        await connection.execute(text("ALTER TABLE registration.participants ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ"))
+        await connection.execute(text("ALTER TABLE registration.participants ADD COLUMN IF NOT EXISTS deleted_by UUID"))
+        await connection.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_schema = 'registration' 
+                    AND table_name = 'participants' 
+                    AND column_name = 'name'
+                ) THEN
+                    ALTER TABLE registration.participants ALTER COLUMN name DROP NOT NULL;
+                END IF;
+            END $$;
+        """))
+        await connection.execute(text("ALTER TABLE venue.print_templates ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now()"))
+        await connection.execute(text("ALTER TABLE registration.participant_roles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ"))
         await connection.execute(text("ALTER TABLE registration.companions ADD COLUMN IF NOT EXISTS event_id UUID"))
         await connection.execute(text("ALTER TABLE registration.companions ADD COLUMN IF NOT EXISTS badge_code VARCHAR(100)"))
         await connection.execute(text("ALTER TABLE venue.registration_source_api_keys ADD COLUMN IF NOT EXISTS api_key_encrypted TEXT"))

@@ -22,6 +22,9 @@ class SpeakerCreate(BaseModel):
     track_id: Optional[uuid.UUID] = None
     participant_id: Optional[uuid.UUID] = None
     role: Optional[str] = "Speaker"
+    programme_availability: Optional[dict] = Field(default_factory=dict)
+    programme_custom_fields: Optional[dict] = Field(default_factory=dict)
+    programme_travel_details: Optional[dict] = Field(default_factory=dict)
 
 
 class SpeakerUpdate(BaseModel):
@@ -38,6 +41,9 @@ class SpeakerUpdate(BaseModel):
     track_id: Optional[uuid.UUID] = None
     participant_id: Optional[uuid.UUID] = None
     role: Optional[str] = None
+    programme_availability: Optional[dict] = None
+    programme_custom_fields: Optional[dict] = None
+    programme_travel_details: Optional[dict] = None
 
 
 class SpeakerResponse(BaseModel):
@@ -56,7 +62,6 @@ class SpeakerResponse(BaseModel):
     bio: Optional[str] = None
     photo_url: Optional[str] = None
     upload_status: str
-    speaker_code: str
     qr_code_url: Optional[str] = None
     checked_in_at: Optional[datetime] = None
     token_expires_at: Optional[datetime] = None
@@ -71,6 +76,10 @@ class SpeakerResponse(BaseModel):
     participant_id: Optional[uuid.UUID] = None
     role: Optional[str] = "Speaker"
     roles: Optional[List[str]] = []
+    programme_availability: Optional[dict] = None
+    programme_custom_fields: Optional[dict] = None
+    programme_travel_details: Optional[dict] = None
+    programme_readiness: int = 0
 
 
 class SpeakerSummary(BaseModel):
@@ -87,7 +96,6 @@ class SpeakerSummary(BaseModel):
     country: Optional[str] = None
     affiliation: Optional[str] = None
     upload_status: str
-    speaker_code: Optional[str] = None
     qr_code_url: Optional[str] = None
     checked_in_at: Optional[datetime] = None
     is_checked_in: bool = False
@@ -105,6 +113,10 @@ class SpeakerSummary(BaseModel):
     participant_id: Optional[uuid.UUID] = None
     role: Optional[str] = "Speaker"
     roles: Optional[List[str]] = []
+    programme_availability: Optional[dict] = None
+    programme_custom_fields: Optional[dict] = None
+    programme_travel_details: Optional[dict] = None
+    programme_readiness: int = 0
 
 
 class SpeakerBulkInviteRequest(BaseModel):
@@ -184,5 +196,3 @@ class ManualRegisterRequest(BaseModel):
     # Quick invite flag
     send_invite: bool = False
     template_id: Optional[uuid.UUID] = None
-
-

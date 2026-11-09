@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
-from typing import Optional, List, Dict, Any, Union
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Optional, List, Dict, Any, Union, Literal
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
+from app.modules.registration.catalogue_limits import MAX_CATEGORY_KEY_LENGTH
 
 
 class FormFieldOptionSchema(BaseModel):
@@ -66,19 +67,32 @@ class FormSettingsSchema(BaseModel):
 # ── Category Schemas ──────────────────────────────────────────
 
 class FormCategoryCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str = Field(..., min_length=2, max_length=100)
-    slug: Optional[str] = None
-    description: Optional[str] = None
-    icon: Optional[str] = "ClipboardList"
-    sort_order: Optional[int] = 0
+    slug: Optional[str] = Field(None, min_length=1, max_length=100, pattern="^[a-z0-9_-]+$")
+    description: Optional[str] = Field(None, max_length=255)
+    icon: Optional[str] = Field("ClipboardList", max_length=50)
+    sort_order: int = Field(0, ge=0, le=100000, strict=True)
 
 
 class FormCategoryUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: Optional[str] = Field(None, min_length=2, max_length=100)
-    description: Optional[str] = None
-    icon: Optional[str] = None
-    sort_order: Optional[int] = None
-    is_active: Optional[bool] = None
+    description: Optional[str] = Field(None, max_length=255)
+    icon: Optional[str] = Field(None, max_length=50)
+    sort_order: Optional[int] = Field(None, ge=0, le=100000, strict=True)
+    is_active: Optional[StrictBool] = None
+
+    @model_validator(mode="after")
+    def validate_patch(self):
+        for field in ("name", "sort_order", "is_active"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError("Required category fields cannot be null.")
+        if self.name is not None:
+            self.name = self.name.strip()
+            if len(self.name) < 2:
+                raise ValueError("Category name is too short.")
+        return self
 
 
 class FormCategoryResponse(BaseModel):
@@ -100,29 +114,61 @@ class FormCategoryResponse(BaseModel):
 # ── Template Schemas ──────────────────────────────────────────
 
 class FormTemplateCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     category_id: Optional[uuid.UUID] = None
-    category_key: str = "registration"
+    category_key: str = Field("registration", min_length=1, max_length=MAX_CATEGORY_KEY_LENGTH)
     name: str = Field(..., min_length=2, max_length=150)
-    slug: Optional[str] = None
-    description: Optional[str] = None
+    slug: Optional[str] = Field(None, min_length=1, max_length=150, pattern="^[a-z0-9_-]+$")
+    description: Optional[str] = Field(None, max_length=2000)
     organization_id: Optional[uuid.UUID] = None
     event_id: Optional[uuid.UUID] = None
-    scope_type: Optional[str] = "GLOBAL" # GLOBAL | ORGANIZATION | EVENT
-    is_default: Optional[bool] = False
-    fields: List[FormFieldSchema] = Field(default_factory=list)
+    scope_type: Literal["GLOBAL", "ORGANIZATION", "EVENT"] = "ORGANIZATION"
+    is_default: StrictBool = False
+    fields: List[FormFieldSchema] = Field(default_factory=list, max_length=100)
     settings: Optional[Union[FormSettingsSchema, Dict[str, Any]]] = Field(default_factory=FormSettingsSchema)
 
 
 class FormTemplateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     category_id: Optional[uuid.UUID] = None
-    category_key: Optional[str] = None
+    category_key: Optional[str] = Field(None, min_length=1, max_length=MAX_CATEGORY_KEY_LENGTH)
     name: Optional[str] = Field(None, min_length=2, max_length=150)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=2000)
     event_id: Optional[uuid.UUID] = None
-    is_default: Optional[bool] = None
-    is_active: Optional[bool] = None
-    fields: Optional[List[FormFieldSchema]] = None
+    is_default: Optional[StrictBool] = None
+    is_active: Optional[StrictBool] = None
+    fields: Optional[List[FormFieldSchema]] = Field(None, max_length=100)
     settings: Optional[Union[FormSettingsSchema, Dict[str, Any]]] = None
+
+    @model_validator(mode="after")
+    def validate_patch(self):
+        for field in ("name", "category_key", "is_active", "is_default", "fields", "settings"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError("Required template fields cannot be null.")
+        if self.name is not None:
+            self.name = self.name.strip()
+            if len(self.name) < 2:
+                raise ValueError("Template name is too short.")
+        return self
+
+
+class FormTemplateSaveEventCopy(BaseModel):
+    """Payload for saving a template customisation scoped to a specific event."""
+    model_config = ConfigDict(extra="forbid")
+    event_id: uuid.UUID
+    name: Optional[str] = Field(None, min_length=2, max_length=150)
+    fields: List[FormFieldSchema] = Field(default_factory=list, max_length=100)
+    settings: Dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def live_document(cls, value):
+        from .event_form_contracts import form_document
+        if not isinstance(value, dict):
+            return value
+        settings = value.get("settings", {})
+        document = form_document(value.get("fields", []), {} if settings is None else settings)
+        return {**value, **document}
 
 
 class FormTemplateResponse(BaseModel):

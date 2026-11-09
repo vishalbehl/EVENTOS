@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="12" failures="0" errors="0" time="0.9395301">
+    <testsuite name="test/category-a/portal-access-failure.test.tsx" timestamp="2026-10-19T13:19:58.853Z" hostname="Vishal" tests="12" failures="0" errors="0" skipped="0" time="0.9395301">
+        <testcase classname="test/category-a/portal-access-failure.test.tsx" name="identifies a concealed/expired link for 401 without a retry loop" time="0.0171842">
+        </testcase>
+        <testcase classname="test/category-a/portal-access-failure.test.tsx" name="identifies a concealed/expired link for 404 without a retry loop" time="0.0024906">
+        </testcase>
+        <testcase classname="test/category-a/portal-access-failure.test.tsx" name="never labels an unavailable workspace as an invalid credential (503)" time="0.0031316">
+        </testcase>
+        <testcase classname="test/category-a/portal-access-failure.test.tsx" name="never labels an unavailable workspace as an invalid credential (500)" time="0.0019594">
+        </testcase>
+        <testcase classname="test/category-a/portal-access-failure.test.tsx" name="never labels an unavailable workspace as an invalid credential (undefined)" time="0.0018245">
+        </testcase>
+        <testcase classname="test/category-a/portal-access-failure.test.tsx" name="distinguishes denied access and never renders incidental response bodies" time="0.7320859">
+        </testcase>
+        <testcase classname="test/category-a/portal-access-failure.test.tsx" name="honours a bounded Retry-After countdown and retries only after an explicit click" time="0.153866">
+        </testcase>
+        <testcase classname="test/category-a/portal-access-failure.test.tsx" name="bounds malformed retry delays: untrusted" time="0.0011127">
+        </testcase>
+        <testcase classname="test/category-a/portal-access-failure.test.tsx" name="bounds malformed retry delays: 9999999999999999999999" time="0.0023498">
+        </testcase>
+        <testcase classname="test/category-a/portal-access-failure.test.tsx" name="bounds malformed retry delays: -1" time="0.000823">
+        </testcase>
+        <testcase classname="test/category-a/portal-access-failure.test.tsx" name="bounds malformed retry delays: Infinity" time="0.0008042">
+        </testcase>
+        <testcase classname="test/category-a/portal-access-failure.test.tsx" name="shows only bounded tracing references, never URLs or incidental error text" time="0.0146729">
+        </testcase>
+    </testsuite>
+</testsuites>

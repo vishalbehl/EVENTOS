@@ -42,6 +42,8 @@ import { apiGet, apiPatch, apiPost } from "@/lib/api-client";
 import { formatApiError, cn } from "@/lib/utils";
 import { CapabilityAction, useOperationAccess } from "@/lib/capabilities";
 import { useSessions } from "@/hooks/useSessions";
+import { TablePagination } from "@/components/organizer/common/TablePagination";
+import { useTablePagination } from "@/hooks/useTablePagination";
 import {
   OrganiserPage,
   Panel,
@@ -220,6 +222,14 @@ export default function CapacityAndApprovalPage() {
     });
   }, [registrations, activeTab, searchQuery]);
 
+  const {
+    currentPage,
+    setCurrentPage,
+    pageSize,
+    setPageSize,
+    paginatedItems: paginatedRegistrations,
+  } = useTablePagination(filteredRegistrations, 10);
+
   const handleSelectToggle = (id: string) => {
     const newSelected = new Set(selectedIds);
     if (newSelected.has(id)) {
@@ -231,11 +241,17 @@ export default function CapacityAndApprovalPage() {
   };
 
   const handleSelectAllToggle = () => {
-    if (selectedIds.size === filteredRegistrations.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(filteredRegistrations.map((r) => r.id)));
-    }
+    const pageIds = paginatedRegistrations.map((r) => r.id);
+    const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allPageSelected) {
+        pageIds.forEach((id) => next.delete(id));
+      } else {
+        pageIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
   };
 
   const openReviewModal = (reg: ParticipantRegistration, action: "approve" | "reject") => {
@@ -801,7 +817,8 @@ export default function CapacityAndApprovalPage() {
                 </p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+                <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface-2)] text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
@@ -812,7 +829,7 @@ export default function CapacityAndApprovalPage() {
                             onClick={handleSelectAllToggle}
                             className="cursor-pointer text-[var(--text-secondary)] hover:text-[var(--pri)]"
                           >
-                            {selectedIds.size === filteredRegistrations.length && filteredRegistrations.length > 0 ? (
+                            {paginatedRegistrations.length > 0 && paginatedRegistrations.every((r) => selectedIds.has(r.id)) ? (
                               <CheckSquare className="size-4 text-[var(--pri)]" />
                             ) : (
                               <Square className="size-4" />
@@ -829,7 +846,7 @@ export default function CapacityAndApprovalPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border-subtle)]">
-                    {filteredRegistrations.map((reg) => {
+                    {paginatedRegistrations.map((reg) => {
                       const data = reg.registration_data || {};
                       const fullName = data.name || `${data.first_name || ""} ${data.last_name || ""}`.trim() || "Anonymous";
                       const isSelected = selectedIds.has(reg.id);
@@ -1057,6 +1074,15 @@ export default function CapacityAndApprovalPage() {
                   </tbody>
                 </table>
               </div>
+                <TablePagination
+                  currentPage={currentPage}
+                  totalItems={filteredRegistrations.length}
+                  pageSize={pageSize}
+                  onPageChange={setCurrentPage}
+                  onPageSizeChange={setPageSize}
+                  itemLabel="registrations"
+                />
+              </>
             )}
           </Panel>
         </div>

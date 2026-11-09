@@ -1,0 +1,17 @@
+{
+  "status": "FAILED",
+  "run_id": "3b8addfc3473494391cb7c063595cd77",
+  "environment": "local_isolated_rehearsal",
+  "scope": "actual_restricted_login_direct_accepted_owner",
+  "started_at": "2026-10-20T11:01:44.884011+00:00",
+  "delegated_http_browser_concurrency_acceptance": "NOT_RUN",
+  "database": "category_a_restore_20261020_e9f8f5eda7c4",
+  "organization_id": "0a306de0-0a98-4e14-9a8f-4355d9f4d796",
+  "event_id": "125c81eb-1d3d-4fa8-ae3c-fed01478c282",
+  "migration_revision": "20261019_3640",
+  "error_type": "EntitlementRequiredException",
+  "denial_code": "NOT_ENTITLED",
+  "independent_original_state_and_receipts_restored": true,
+  "completed_at": "2026-10-20T11:01:53.299509+00:00",
+  "probe_sha256": "dde3b774cdb8e9dccd2ba64ee075faa9b51dfbd6cceaa7d8ddac6c9d1ae51292"
+}

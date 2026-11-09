@@ -20,7 +20,11 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/lib/api-client";
-import { useEvent, useUpdateEvent } from "@/hooks/useEvents";
+import { useUpdateEvent } from "@/hooks/useEvents";
+import { useEventEditSession } from "@/hooks/useEventEditSession";
+import { useScopedCommand } from "@/hooks/useScopedCommand";
+import { ScopedEventEditor } from "@/components/organizer/events/ScopedEventEditor";
+import { ScopedCommandFeedback } from "@/components/organizer/events/ScopedCommandFeedback";
 import { useLimitAccess, useOperationAccess } from "@/lib/capabilities";
 import { cn } from "@/lib/utils";
 
@@ -166,6 +170,8 @@ interface Role {
   role_code: string;
   is_active: boolean;
   is_default: boolean;
+  version: number;
+  event_version: number;
 }
 
 interface PrintTemplate {
@@ -215,6 +221,11 @@ function ToggleSwitch({
 
 export default function RoleCategoriesPage() {
   const params = useParams();
+  return <ScopedEventEditor eventId={String(params?.eventId || "")}><RoleCategoriesEditor /></ScopedEventEditor>;
+}
+
+function RoleCategoriesEditor() {
+  const params = useParams();
   const router = useRouter();
   const eventId = params?.eventId as string;
 
@@ -224,8 +235,12 @@ export default function RoleCategoriesPage() {
   const formAccess = useOperationAccess("registration.forms.manage");
   const badgeTemplateAccess = useOperationAccess("badges.templates.read");
 
-  const { data: event } = useEvent(eventId);
-  const updateEvent = useUpdateEvent(eventId);
+  const edit = useEventEditSession(eventId);
+  const event = edit.event;
+  const updateEvent = useUpdateEvent(eventId, edit.version);
+  const command = useScopedCommand(eventId);
+  const [rolesEventVersion, setRolesEventVersion] = useState<number | null>(null);
+  const [roleLoadError, setRoleLoadError] = useState<string | null>(null);
 
   const [roles, setRoles] = useState<Role[]>([]);
   const [templates, setTemplates] = useState<PrintTemplate[]>([]);
@@ -266,22 +281,26 @@ export default function RoleCategoriesPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const roleData = roleReadAccess.enabled
-        ? await apiClient.get<Role[]>(`/events/${eventId}/registration/roles`)
-        : [];
-      const templateData = badgeTemplateAccess.enabled
-        ? await apiClient.get<PrintTemplate[]>(`/events/${eventId}/print-templates`)
-        : [];
+      const [roleData, templateData] = await Promise.all([
+        roleReadAccess.enabled ? apiClient.get<Role[]>(`/events/${eventId}/registration/roles`) : Promise.resolve([]),
+        badgeTemplateAccess.enabled ? apiClient.get<PrintTemplate[]>(`/events/${eventId}/print-templates`) : Promise.resolve([]),
+      ]);
       const badgeTemplates = (templateData || []).filter(
         (t) => (t as any).template_type !== "certificate"
       );
+      if (!command.isCurrent()) return;
       setRoles(roleData || []);
+      setRolesEventVersion(roleData[0]?.event_version || edit.version);
+      setRoleLoadError(null);
       setTemplates(badgeTemplates);
       setPendingCodes({});
-    } catch {
-      toast.error("Failed to load roles catalogue from database.");
+    } catch (error: any) {
+      if (command.isCurrent()) {
+        setRoleLoadError(error.message || "Failed to load roles catalogue from database.");
+        setRolesEventVersion(null);
+      }
     } finally {
-      setLoading(false);
+      if (command.isCurrent()) setLoading(false);
     }
   };
 
@@ -329,17 +348,22 @@ export default function RoleCategoriesPage() {
     );
 
     try {
-      await apiClient.patch(`/events/${eventId}/registration/roles/${roleId}`, {
+      const saved = await command.execute<Role>("patch", `/events/${eventId}/registration/roles/${roleId}`, {
         is_active: nextActive,
-      });
+      }, roles.find(role => role.id === roleId)?.version || null);
+      if (!saved) return;
+      setRolesEventVersion(saved.event_version);
+      setRoles(previous => previous.map(role => role.id === roleId
+        ? { ...saved, role_code: pendingCodes[role.id] ?? saved.role_code } : role));
       toast.success(
         `Role ${nextActive ? "enabled on" : "hidden from"} public registration portal.`
       );
-    } catch {
+    } catch (error: any) {
+      if (!command.isCurrent()) return;
       setRoles((prev) =>
         prev.map((r) => (r.id === roleId ? { ...r, is_active: currentActive } : r))
       );
-      toast.error("Failed to update role portal visibility.");
+      toast.error(error.message || "Failed to update role portal visibility. Reload if its version has changed.");
     }
   };
 
@@ -353,16 +377,17 @@ export default function RoleCategoriesPage() {
     setDisabledCategories(nextDisabled);
 
     try {
-      await updateEvent.mutateAsync({
+      const saved = await updateEvent.mutateAsync({
         registration_settings: {
-          ...((event?.registration_settings as Record<string, any>) || {}),
           disabled_categories: nextDisabled,
         } as any,
       });
+      if (!edit.complete(saved, true)) return;
       toast.success(
         `Category "${cat}" ${isCurrentlyLive ? "hidden from" : "enabled on"} the registration portal.`
       );
     } catch {
+      if (!edit.isCurrent()) return;
       setDisabledCategories(disabledCategories); // Rollback
       toast.error("Failed to update category visibility in database.");
     }
@@ -383,9 +408,8 @@ export default function RoleCategoriesPage() {
 
     setTemplateSaving(true);
     try {
-      await updateEvent.mutateAsync({
+      const saved = await updateEvent.mutateAsync({
         registration_settings: {
-          ...currentRS,
           badge_design: {
             ...currentBadgeDesign,
             use_same_design_for_all_users: nextUseSameDesign,
@@ -394,9 +418,10 @@ export default function RoleCategoriesPage() {
           },
         } as any,
       });
+      if (!edit.complete(saved)) return;
       toast.success("Badge design configuration saved to database.");
     } catch {
-      toast.error("Failed to save badge design settings.");
+      if (edit.isCurrent()) toast.error("Failed to save badge design settings. Your edits are retained.");
     } finally {
       setTemplateSaving(false);
     }
@@ -417,18 +442,25 @@ export default function RoleCategoriesPage() {
     }
     setSaving(true);
     try {
+      const byId = new Map(roles.map(role => [role.id, role]));
       const updates = Object.entries(pendingCodes).map(([id, code]) => ({
         id,
+        version: byId.get(id)?.version,
         role_code: code,
-        is_active: roles.find((r) => r.id === id)?.is_active ?? true,
+        is_active: byId.get(id)?.is_active ?? true,
       }));
-      await apiClient.patch(`/events/${eventId}/registration/roles/bulk-toggle`, { updates });
+      const saved = await command.execute<{ roles: Role[]; event_version: number }>("patch",
+        `/events/${eventId}/registration/roles/bulk-toggle`, { updates }, rolesEventVersion);
+      if (!saved) return;
+      const updated = new Map(saved.roles.map(role => [role.id, role]));
+      setRoles(previous => previous.map(role => updated.get(role.id) || role));
+      setRolesEventVersion(saved.event_version);
       toast.success(`${updates.length} role code update${updates.length === 1 ? "" : "s"} saved to database.`);
       setPendingCodes({});
-    } catch {
-      toast.error("Failed to save role updates to database.");
+    } catch (error: any) {
+      if (command.isCurrent()) toast.error(error.message || "Failed to save role updates. Your draft is retained.");
     } finally {
-      setSaving(false);
+      if (command.isCurrent()) setSaving(false);
     }
   };
 
@@ -444,7 +476,7 @@ export default function RoleCategoriesPage() {
 
     setAdding(true);
     try {
-      await apiClient.post(
+      const created = await command.execute<Role>("post",
         `/events/${eventId}/registration/roles`,
         {
           category: modalCategory,
@@ -452,15 +484,17 @@ export default function RoleCategoriesPage() {
           role_code: codeToUse,
           is_active: true,
           sort_order: 99,
-        },
-        { headers: { "Idempotency-Key": crypto.randomUUID() } }
+        }
       );
+      if (!created) return;
+      setRoles(previous => [...previous, created]);
+      setRolesEventVersion(created.event_version);
       toast.success(`Role "${nameToAdd}" added to this event.`);
       setIsAddModalOpen(false);
       setModalCustomName("");
       setModalRoleCode("");
-      await load();
     } catch (err: any) {
+      if (!command.isCurrent()) return;
       const errorMsg =
         err?.response?.data?.detail ||
         err?.detail ||
@@ -468,20 +502,22 @@ export default function RoleCategoriesPage() {
         "Failed to add role to database.";
       toast.error(typeof errorMsg === "string" ? errorMsg : "Failed to add role to database.");
     } finally {
-      setAdding(false);
+      if (command.isCurrent()) setAdding(false);
     }
   };
 
   // Remove role from this event (deletes from DB for this event, returning it to catalog)
   const removeRoleFromEvent = async (id: string, name: string) => {
     try {
-      await apiClient.delete(`/events/${eventId}/registration/roles/${id}`);
+      const deleted = await command.execute<{ event_version: number }>("delete",
+        `/events/${eventId}/registration/roles/${id}`, undefined, roles.find(role => role.id === id)?.version || null);
+      if (!deleted) return;
+      setRolesEventVersion(deleted.event_version);
       setRoles((prev) => prev.filter((x) => x.id !== id));
+      setPendingCodes(previous => { const next = { ...previous }; delete next[id]; return next; });
       toast.success(`"${name}" disabled for this event and returned to available roles.`);
-    } catch {
-      // Optimistic client remove fallback if standard seed
-      setRoles((prev) => prev.filter((x) => x.id !== id));
-      toast.success(`"${name}" removed from this event.`);
+    } catch (error: any) {
+      if (command.isCurrent()) toast.error(error.message || "Role was not deleted. Disable default or in-use roles instead.");
     }
   };
 
@@ -502,8 +538,12 @@ export default function RoleCategoriesPage() {
     return matchesSearch && matchesCategory;
   });
 
+  if (!edit.ready) return <p role="status">{edit.error || "Loading event settings…"}</p>;
+  if (roleLoadError) return <div role="alert">{roleLoadError}<button type="button" onClick={() => void load()}>Reload current roles</button></div>;
   return (
-    <div className="w-full space-y-6 p-6">
+    <fieldset disabled={updateEvent.isPending || command.pending || saving || adding || loading || templateSaving || edit.reloading} onChangeCapture={edit.markDirty} onClickCapture={edit.markDirty} className="w-full space-y-6 p-6">
+      <ScopedCommandFeedback failure={command.failure} retryAt={command.retryAt} />
+      <button type="button" onClick={() => { void edit.reload(); void load(); }}>Discard changes and reload current settings and roles</button>
       {/* ── Top Header & Action Controls ── */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
@@ -935,6 +975,6 @@ export default function RoleCategoriesPage() {
           </div>
         )}
       </AnimatePresence>
-    </div>
+    </fieldset>
   );
 }

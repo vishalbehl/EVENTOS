@@ -1,10 +1,3 @@
-import { redirect } from "next/navigation";
+import { LegacyBuilderRedirect } from "@/components/organizer/sessions/builder/LegacyBuilderRedirect";
 
-type SessionAgendaPageProps = {
-  params: Promise<{ eventId: string }>;
-};
-
-export default async function SessionAgendaPage({ params }: SessionAgendaPageProps) {
-  const { eventId } = await params;
-  redirect(`/events/${eventId}/sessions/builder`);
-}
+export default function SessionAgendaPage() { return <LegacyBuilderRedirect />; }

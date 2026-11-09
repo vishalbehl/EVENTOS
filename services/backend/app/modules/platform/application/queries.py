@@ -25,7 +25,6 @@ from app.modules.platform.models.organization_console import (
     OrganizationNotificationChannelConfig,
     OrganizationTeam,
     OrganizationLifecycleJob,
-    CommercialAccessRequest,
     OrganizationFinancialAdjustment,
     PrivilegedAccessSession,
     CapabilityRestriction,
@@ -41,15 +40,19 @@ from app.modules.platform.models.organization_console import (
 from app.modules.platform.models.organization import Organization
 from app.modules.platform.models.health import OrganizationHealth
 from app.modules.analytics.models.usage import OrganizationUsage
-from app.modules.billing.models.subscription import (
-    OrganizationSubscription,
-    OrganizationAddon,
-    Addon,
-    PlanFeature,
+from app.modules.billing.models.commercial_support import (
     OrganizationFeature,
     ActivityTimeline,
-    SubscriptionPlan,
     RevenueMetric,
+)
+from app.modules.billing.models.cloud_commercial import (
+    CommercialAccount,
+    CommercialAccountWorkspace,
+    CommercialOffer,
+    CommercialOfferVersion,
+    CommercialOfferEntitlement,
+    CommercialContract,
+    CommercialContractItem,
 )
 from app.modules.billing.models.licensing import EntitlementGrant
 from app.modules.billing.models.event_activation import EventActivation
@@ -141,7 +144,7 @@ class PlatformUserQueryService:
                 User.id, User.first_name, User.last_name, User.email,
                 User.role, User.platform_role, User.organization_id,
                 User.is_active, User.is_2fa_enabled, User.last_login_at,
-                User.created_at,
+                User.created_at, User.version,
             )
             .where(*filters)
             .order_by(User.created_at.desc(), User.id.desc())
@@ -232,7 +235,7 @@ class PlatformUserQueryService:
         rows = list((await self.db.execute(
             select(User.id, User.first_name, User.last_name, User.email, User.role,
                    User.platform_role, User.organization_id, User.is_active,
-                   User.is_2fa_enabled, User.last_login_at, User.created_at)
+                   User.is_2fa_enabled, User.last_login_at, User.created_at, User.version)
             .where(*filters)
             .order_by(User.created_at.desc(), User.id.desc())
             .offset(bounded_skip)
@@ -270,6 +273,7 @@ class PlatformUserQueryService:
         items = [{
             "id": str(row["id"]), "first_name": row["first_name"], "last_name": row["last_name"],
             "email": row["email"], "role": row["role"], "platform_role": row["platform_role"],
+            "version": row["version"],
             "organization_id": str(row["organization_id"]) if row["organization_id"] else None,
             "organization_name": org_names.get(row["organization_id"], "—"),
             "is_active": row["is_active"], "is_2fa_enabled": row["is_2fa_enabled"],
@@ -405,485 +409,249 @@ class PlatformCoreDashboardQueryService:
         self, *, current_period: str, month_start: datetime, thirty_days_ago: datetime
     ) -> PlatformCoreDashboardMetrics:
         scalar = lambda statement: statement.scalar_subquery()
-        row = (
-            await self.db.execute(
-                select(
-                    scalar(select(func.count(Organization.id))).label("total_orgs"),
-                    scalar(select(func.count(Organization.id)).where(Organization.is_active.is_(True))).label("active_orgs"),
-                    scalar(select(func.count(OrganizationSubscription.id)).where(OrganizationSubscription.status == "TRIAL")).label("trial_orgs"),
-                    scalar(select(func.count(User.id))).label("total_users"),
-                    scalar(select(func.count(Event.id))).label("total_events"),
-                    scalar(select(func.coalesce(func.sum(OrganizationUsage.active_events_count), 0))).label("total_active_events_usage"),
-                    scalar(select(func.coalesce(func.sum(OrganizationUsage.total_registrations_count), 0))).label("total_regs"),
-                    scalar(select(func.coalesce(func.sum(OrganizationUsage.storage_used_bytes), 0))).label("total_storage"),
-                    scalar(select(func.coalesce(func.sum(RevenueMetric.mrr), 0)).where(RevenueMetric.period == current_period)).label("mrr_current"),
-                    scalar(select(func.count(User.id)).where(User.last_login_at >= thirty_days_ago)).label("active_users_30d"),
-                    scalar(select(func.count(OrganizationSubscription.id)).where(
-                        OrganizationSubscription.status == "CANCELLED",
-                        OrganizationSubscription.updated_at >= month_start,
-                    )).label("cancelled_this_month"),
-                    scalar(select(func.count(OrganizationSubscription.id)).where(
-                        OrganizationSubscription.status == "ACTIVE",
-                        OrganizationSubscription.created_at <= month_start,
-                    )).label("active_last_month"),
-                    scalar(select(func.count(Event.id)).where(Event.created_at >= month_start)).label("events_this_month"),
-                    scalar(select(func.coalesce(func.sum(PaymentTransaction.amount), 0)).where(
-                        func.date(PaymentTransaction.created_at) == func.current_date(),
-                        func.lower(PaymentTransaction.status) == "completed",
-                    )).label("revenue_today"),
-                )
-            )
-        ).mappings().one()
-        return PlatformCoreDashboardMetrics(
-            total_orgs=int(row["total_orgs"] or 0),
-            active_orgs=int(row["active_orgs"] or 0),
-            trial_orgs=int(row["trial_orgs"] or 0),
-            total_users=int(row["total_users"] or 0),
-            total_events=int(row["total_events"] or 0),
-            total_active_events_usage=int(row["total_active_events_usage"] or 0),
-            total_regs=int(row["total_regs"] or 0),
-            total_storage=int(row["total_storage"] or 0),
-            mrr_current=float(row["mrr_current"] or 0),
-            active_users_30d=int(row["active_users_30d"] or 0),
-            cancelled_this_month=int(row["cancelled_this_month"] or 0),
-            active_last_month=int(row["active_last_month"] or 0),
-            events_this_month=int(row["events_this_month"] or 0),
-            revenue_today=float(row["revenue_today"] or 0),
-        )
+        row = (await self.db.execute(select(
+            scalar(select(func.count(Organization.id))).label("total_orgs"),
+            scalar(select(func.count(Organization.id)).where(Organization.is_active.is_(True))).label("active_orgs"),
+            scalar(select(func.count(CommercialContract.id)).where(
+                CommercialContract.status == "PENDING_PAYMENT"
+            )).label("trial_orgs"),
+            scalar(select(func.count(User.id))).label("total_users"),
+            scalar(select(func.count(Event.id))).label("total_events"),
+            scalar(select(func.coalesce(func.sum(OrganizationUsage.active_events_count), 0))).label("total_active_events_usage"),
+            scalar(select(func.coalesce(func.sum(OrganizationUsage.total_registrations_count), 0))).label("total_regs"),
+            scalar(select(func.coalesce(func.sum(OrganizationUsage.storage_used_bytes), 0))).label("total_storage"),
+            scalar(select(func.coalesce(func.sum(RevenueMetric.mrr), 0)).where(
+                RevenueMetric.period == current_period
+            )).label("mrr_current"),
+            scalar(select(func.count(User.id)).where(User.last_login_at >= thirty_days_ago)).label("active_users_30d"),
+            scalar(select(func.count(CommercialContract.id)).where(
+                CommercialContract.status == "CANCELLED",
+                CommercialContract.updated_at >= month_start,
+            )).label("cancelled_this_month"),
+            scalar(select(func.count(CommercialContract.id)).where(
+                CommercialContract.status == "ACTIVE",
+                CommercialContract.created_at <= month_start,
+            )).label("active_last_month"),
+            scalar(select(func.count(Event.id)).where(Event.created_at >= month_start)).label("events_this_month"),
+            scalar(select(func.coalesce(func.sum(PaymentTransaction.amount), 0)).where(
+                func.date(PaymentTransaction.created_at) == func.current_date(),
+                func.lower(PaymentTransaction.status) == "completed",
+            )).label("revenue_today"),
+        ))).mappings().one()
+        return PlatformCoreDashboardMetrics(**{
+            "total_orgs": int(row["total_orgs"] or 0),
+            "active_orgs": int(row["active_orgs"] or 0),
+            "trial_orgs": int(row["trial_orgs"] or 0),
+            "total_users": int(row["total_users"] or 0),
+            "total_events": int(row["total_events"] or 0),
+            "total_active_events_usage": int(row["total_active_events_usage"] or 0),
+            "total_regs": int(row["total_regs"] or 0),
+            "total_storage": int(row["total_storage"] or 0),
+            "mrr_current": float(row["mrr_current"] or 0),
+            "active_users_30d": int(row["active_users_30d"] or 0),
+            "cancelled_this_month": int(row["cancelled_this_month"] or 0),
+            "active_last_month": int(row["active_last_month"] or 0),
+            "events_this_month": int(row["events_this_month"] or 0),
+            "revenue_today": float(row["revenue_today"] or 0),
+        })
 
     async def revenue_metrics(self, *, months: int = 12) -> list[dict]:
-        """Return bounded monthly revenue metrics for the admin chart."""
-        bounded_months = max(1, min(months, 24))
-        rows = (await self.db.execute(
-            select(
-                RevenueMetric.period,
-                func.sum(RevenueMetric.mrr).label("total_mrr"),
-                func.sum(RevenueMetric.arr).label("total_arr"),
-                func.sum(RevenueMetric.add_on_revenue).label("total_addon"),
-            )
-            .group_by(RevenueMetric.period)
-            .order_by(RevenueMetric.period.desc())
-            .limit(bounded_months)
-        )).all()
-        return [
-            {
-                "period": row.period,
-                "mrr": float(row.total_mrr or 0),
-                "arr": float(row.total_arr or 0),
-                "addon_revenue": float(row.total_addon or 0),
-            }
-            for row in reversed(rows)
-        ]
+        rows = (await self.db.execute(select(
+            RevenueMetric.period,
+            func.sum(RevenueMetric.mrr).label("total_mrr"),
+            func.sum(RevenueMetric.arr).label("total_arr"),
+            func.sum(RevenueMetric.add_on_revenue).label("total_addon"),
+        ).group_by(RevenueMetric.period).order_by(RevenueMetric.period.desc()).limit(
+            max(1, min(months, 24))
+        ))).all()
+        return [{
+            "period": row.period,
+            "mrr": float(row.total_mrr or 0),
+            "arr": float(row.total_arr or 0),
+            "addon_revenue": float(row.total_addon or 0),
+        } for row in reversed(rows)]
 
     async def open_support_ticket_count(self) -> int:
-        """Return the bounded dashboard count for unresolved support tickets."""
-        return int(
-            await self.db.scalar(
-                select(func.count(SupportTicket.id)).where(
-                    ~func.upper(SupportTicket.status).in_(("RESOLVED", "CLOSED"))
-                )
-            )
-            or 0
-        )
+        return int(await self.db.scalar(select(func.count(SupportTicket.id)).where(
+            ~func.upper(SupportTicket.status).in_(("RESOLVED", "CLOSED"))
+        )) or 0)
 
     async def daily_payment_revenue(self, *, since: datetime) -> dict[object, float]:
-        """Return completed payment totals keyed by day for a bounded window."""
-        rows = (
-            await self.db.execute(
-                select(
-                    func.date(PaymentTransaction.created_at).label("day"),
-                    func.coalesce(func.sum(PaymentTransaction.amount), 0).label("revenue"),
-                )
-                .where(
-                    PaymentTransaction.created_at >= since,
-                    func.lower(PaymentTransaction.status) == "completed",
-                )
-                .group_by(func.date(PaymentTransaction.created_at))
-                .order_by(func.date(PaymentTransaction.created_at).asc())
-            )
-        ).all()
+        rows = (await self.db.execute(select(
+            func.date(PaymentTransaction.created_at).label("day"),
+            func.coalesce(func.sum(PaymentTransaction.amount), 0).label("revenue"),
+        ).where(
+            PaymentTransaction.created_at >= since,
+            func.lower(PaymentTransaction.status) == "completed",
+        ).group_by(func.date(PaymentTransaction.created_at)).order_by(
+            func.date(PaymentTransaction.created_at).asc()
+        ))).all()
         return {row.day: float(row.revenue or 0) for row in rows}
 
     async def top_organizations_by_mrr(self, *, period: str, limit: int = 5) -> list[dict]:
-        """Return a bounded, explicitly projected MRR leaderboard."""
-        bounded_limit = max(1, min(limit, 20))
-        rows = (
-            await self.db.execute(
-                select(
-                    RevenueMetric.organization_id,
-                    Organization.name.label("organization_name"),
-                    func.sum(RevenueMetric.mrr).label("mrr"),
-                    SubscriptionPlan.name.label("plan_name"),
-                )
-                .join(Organization, Organization.id == RevenueMetric.organization_id)
-                .join(
-                    OrganizationSubscription,
-                    OrganizationSubscription.organization_id == RevenueMetric.organization_id,
-                )
-                .join(SubscriptionPlan, SubscriptionPlan.id == OrganizationSubscription.plan_id)
-                .where(RevenueMetric.period == period)
-                .group_by(
-                    RevenueMetric.organization_id,
-                    Organization.name,
-                    SubscriptionPlan.name,
-                )
-                .order_by(func.sum(RevenueMetric.mrr).desc(), RevenueMetric.organization_id.asc())
-                .limit(bounded_limit)
-            )
-        ).all()
-        return [
-            {
-                "org_id": str(row.organization_id),
-                "org_name": row.organization_name,
-                "mrr": float(row.mrr or 0),
-                "plan_name": row.plan_name,
-            }
-            for row in rows
-        ]
+        rows = (await self.db.execute(text("""
+            SELECT rm.organization_id, o.name AS organization_name,
+                   SUM(rm.mrr) AS mrr, COALESCE(MAX(co.display_name), 'Unassigned') AS offer_name
+            FROM commerce.revenue_metrics rm
+            JOIN platform.organizations o ON o.id = rm.organization_id
+            LEFT JOIN commerce.billing_accounts ca ON ca.owner_organization_id = rm.organization_id
+            LEFT JOIN commerce.plan_contracts cc ON cc.commercial_account_id = ca.id
+            LEFT JOIN commerce.contract_items ci ON ci.contract_id = cc.id
+            LEFT JOIN commerce.plans co ON co.id = ci.offer_id
+            WHERE rm.period = :period
+            GROUP BY rm.organization_id, o.name
+            ORDER BY SUM(rm.mrr) DESC, rm.organization_id
+            LIMIT :limit
+        """), {"period": period, "limit": max(1, min(limit, 20))})).mappings().all()
+        return [{
+            "org_id": str(row["organization_id"]),
+            "org_name": row["organization_name"],
+            "mrr": float(row["mrr"] or 0),
+            "offer_name": row["offer_name"],
+        } for row in rows]
 
-    async def subscription_status_counts(self) -> dict[str, int]:
-        """Return the platform subscription health matrix."""
-        rows = (
-            await self.db.execute(
-                select(OrganizationSubscription.status, func.count(OrganizationSubscription.id))
-                .group_by(OrganizationSubscription.status)
-            )
-        ).all()
+    async def contract_status_counts(self) -> dict[str, int]:
+        rows = (await self.db.execute(select(
+            CommercialContract.status, func.count(CommercialContract.id)
+        ).group_by(CommercialContract.status))).all()
         return {str(status or "").upper(): int(count or 0) for status, count in rows}
 
     async def recent_billing_activity(self, *, limit: int = 10) -> list[dict]:
-        """Return a bounded billing activity projection for the dashboard."""
-        bounded_limit = max(1, min(limit, 50))
-        rows = (
-            await self.db.execute(
-                select(
-                    ActivityTimeline.action_type,
-                    ActivityTimeline.metadata_data,
-                    ActivityTimeline.timestamp,
-                    Organization.name.label("organization_name"),
-                    Organization.id.label("organization_id"),
-                )
-                .join(Organization, Organization.id == ActivityTimeline.organization_id)
-                .order_by(ActivityTimeline.timestamp.desc(), ActivityTimeline.id.desc())
-                .limit(bounded_limit)
-            )
-        ).all()
+        rows = (await self.db.execute(select(
+            ActivityTimeline.action_type,
+            ActivityTimeline.metadata_data,
+            ActivityTimeline.timestamp,
+            Organization.name.label("organization_name"),
+            Organization.id.label("organization_id"),
+        ).join(
+            Organization, Organization.id == ActivityTimeline.organization_id
+        ).order_by(ActivityTimeline.timestamp.desc(), ActivityTimeline.id.desc()).limit(
+            max(1, min(limit, 50))
+        ))).all()
+        return [{
+            "org_id": str(row.organization_id),
+            "org_name": row.organization_name,
+            "action": row.action_type,
+            "amount": float(row.metadata_data.get("amount")) if isinstance(row.metadata_data, dict) and row.metadata_data.get("amount") is not None else None,
+            "occurred_at": row.timestamp.isoformat(),
+        } for row in rows]
 
-        def safe_float(value):
-            try:
-                return float(value) if value is not None else None
-            except (TypeError, ValueError):
-                return None
-
-        return [
-            {
-                "org_id": str(row.organization_id),
-                "org_name": row.organization_name,
-                "action": row.action_type,
-                "amount": safe_float(
-                    row.metadata_data.get("amount")
-                    if isinstance(row.metadata_data, dict)
-                    else None
-                ),
-                "occurred_at": row.timestamp.isoformat(),
-            }
-            for row in rows
-        ]
-
-    async def trials_expiring(self, *, before: datetime, limit: int = 100) -> list[dict]:
-        """Return bounded trial records approaching expiry."""
-        bounded_limit = max(1, min(limit, 200))
-        rows = (
-            await self.db.execute(
-                select(
-                    OrganizationSubscription.organization_id,
-                    Organization.name.label("organization_name"),
-                    SubscriptionPlan.name.label("plan_name"),
-                    OrganizationSubscription.trial_ends_at,
-                )
-                .select_from(OrganizationSubscription)
-                .join(Organization, Organization.id == OrganizationSubscription.organization_id)
-                .join(SubscriptionPlan, SubscriptionPlan.id == OrganizationSubscription.plan_id)
-                .where(
-                    OrganizationSubscription.status == "TRIAL",
-                    OrganizationSubscription.trial_ends_at <= before,
-                )
-                .order_by(
-                    OrganizationSubscription.trial_ends_at.asc(),
-                    OrganizationSubscription.organization_id.asc(),
-                )
-                .limit(bounded_limit)
-            )
-        ).all()
+    async def contracts_expiring(self, *, before: datetime, limit: int = 100) -> list[dict]:
+        rows = (await self.db.execute(text("""
+            SELECT ca.owner_organization_id AS organization_id, o.name AS organization_name,
+                   COALESCE(MAX(co.display_name), 'Commercial contract') AS offer_name,
+                   cc.ends_at
+            FROM commerce.plan_contracts cc
+            JOIN commerce.billing_accounts ca ON ca.id = cc.commercial_account_id
+            JOIN platform.organizations o ON o.id = ca.owner_organization_id
+            LEFT JOIN commerce.contract_items ci ON ci.contract_id = cc.id
+            LEFT JOIN commerce.plans co ON co.id = ci.offer_id
+            WHERE cc.status IN ('ACTIVE', 'PENDING_PAYMENT')
+              AND cc.ends_at IS NOT NULL
+              AND cc.ends_at <= :before
+            GROUP BY ca.owner_organization_id, o.name, cc.id, cc.ends_at
+            ORDER BY cc.ends_at ASC
+            LIMIT :limit
+        """), {"before": before, "limit": max(1, min(limit, 200))})).mappings().all()
         today = datetime.now(timezone.utc).date()
-        return [
-            {
-                "org_id": str(row.organization_id),
-                "org_name": row.organization_name,
-                "plan_name": row.plan_name,
-                "trial_ends_at": row.trial_ends_at.isoformat(),
-                "days_remaining": max(0, (row.trial_ends_at.date() - today).days),
-            }
-            for row in rows
-        ]
+        return [{
+            "org_id": str(row["organization_id"]),
+            "org_name": row["organization_name"],
+            "offer_name": row["offer_name"],
+            "contract_ends_at": row["ends_at"].isoformat(),
+            "days_remaining": max(0, (row["ends_at"].date() - today).days),
+        } for row in rows]
 
     async def seven_day_trends(self, *, since: datetime) -> dict[str, dict[object, float]]:
-        """Load the four dashboard sparklines with one bounded aggregate query."""
-        value = lambda expression: cast(expression, Float).label("value")
-        trend_query = union_all(
-            select(
-                func.date(Organization.created_at).label("day"),
-                literal("orgs").label("metric"),
-                value(func.count(Organization.id)),
-            ).where(Organization.created_at >= since).group_by(func.date(Organization.created_at)),
-            select(
-                func.date(User.created_at).label("day"),
-                literal("users").label("metric"),
-                value(func.count(User.id)),
-            ).where(User.created_at >= since).group_by(func.date(User.created_at)),
-            select(
-                func.date(Event.created_at).label("day"),
-                literal("events").label("metric"),
-                value(func.count(Event.id)),
-            ).where(Event.created_at >= since).group_by(func.date(Event.created_at)),
-            select(
-                func.date(RevenueMetric.created_at).label("day"),
-                literal("mrr").label("metric"),
-                value(func.coalesce(func.sum(RevenueMetric.mrr), 0)),
-            ).where(RevenueMetric.created_at >= since).group_by(func.date(RevenueMetric.created_at)),
-        ).subquery()
-        rows = await self.db.execute(select(trend_query.c.day, trend_query.c.metric, trend_query.c.value))
-        trends: dict[str, dict[object, float]] = {"orgs": {}, "users": {}, "events": {}, "mrr": {}}
-        for row in rows:
-            trends[row.metric][row.day] = float(row.value or 0)
+        trends = {"orgs": {}, "users": {}, "events": {}, "mrr": {}}
+        for model, key, value in (
+            (Organization, "orgs", Organization.id),
+            (User, "users", User.id),
+            (Event, "events", Event.id),
+        ):
+            rows = (await self.db.execute(select(
+                func.date(model.created_at).label("day"), func.count(value).label("count")
+            ).where(model.created_at >= since).group_by(func.date(model.created_at)))).all()
+            trends[key] = {row.day: float(row.count or 0) for row in rows}
+        rows = (await self.db.execute(select(
+            func.date(RevenueMetric.created_at).label("day"),
+            func.coalesce(func.sum(RevenueMetric.mrr), 0).label("mrr"),
+        ).where(RevenueMetric.created_at >= since).group_by(func.date(
+            RevenueMetric.created_at
+        )))).all()
+        trends["mrr"] = {row.day: float(row.mrr or 0) for row in rows}
         return trends
 
     async def payment_gateway_health(self) -> dict[str, list]:
-        """Return explicit gateway health rows and a bounded 30-day trend."""
         try:
-            gateways = list((await self.db.scalars(select(PaymentGateway).options(
-                load_only(
-                    PaymentGateway.id, PaymentGateway.gateway_name,
-                    PaymentGateway.provider, PaymentGateway.mode,
-                    PaymentGateway.is_active, PaymentGateway.success_rate_30d,
-                    PaymentGateway.transactions_mtd, PaymentGateway.volume_mtd_inr,
-                    PaymentGateway.last_health_check, PaymentGateway.health_status,
-                )
-            ).order_by(
-                PaymentGateway.gateway_name.asc(), PaymentGateway.id.asc()
-            ).limit(50))).all())
-            trend_rows = (await self.db.execute(select(
-                func.to_char(PaymentTransaction.created_at, "YYYY-MM-DD").label("day"),
-                PaymentTransaction.gateway_name,
-                (
-                    cast(func.count().filter(
-                        func.upper(PaymentTransaction.status) == "COMPLETED"
-                    ), Float) / func.nullif(func.count(), 0) * 100
-                ).label("success_rate"),
-            ).where(
-                PaymentTransaction.created_at >= datetime.now(timezone.utc) - timedelta(days=30)
-            ).group_by(
-                func.to_char(PaymentTransaction.created_at, "YYYY-MM-DD"),
-                PaymentTransaction.gateway_name,
-            ).order_by(
-                func.to_char(PaymentTransaction.created_at, "YYYY-MM-DD").asc(),
-                PaymentTransaction.gateway_name.asc(),
-            ).limit(1000))).all()
-            trend_by_day: dict[str, dict] = {}
-            for row in trend_rows:
-                day = row.day
-                trend_by_day.setdefault(day, {"day": day})[
-                    (row.gateway_name or "unknown").lower()
-                ] = float(row.success_rate or 0)
+            gateways = list((await self.db.scalars(select(PaymentGateway).options(load_only(
+                PaymentGateway.id, PaymentGateway.gateway_name, PaymentGateway.provider,
+                PaymentGateway.mode, PaymentGateway.is_active, PaymentGateway.success_rate_30d,
+                PaymentGateway.transactions_mtd, PaymentGateway.volume_mtd_inr,
+                PaymentGateway.last_health_check, PaymentGateway.health_status,
+            )).order_by(PaymentGateway.gateway_name.asc()).limit(50))).all())
             return {
                 "items": [{
                     "id": str(gateway.id), "name": gateway.gateway_name,
                     "provider": gateway.provider, "mode": gateway.mode,
                     "is_active": gateway.is_active,
-                    "success_rate": float(gateway.success_rate_30d)
-                    if gateway.success_rate_30d is not None else 100.0,
+                    "success_rate": float(gateway.success_rate_30d or 100),
                     "transactions_count": gateway.transactions_mtd,
-                    "volume_mtd_inr": float(gateway.volume_mtd_inr)
-                    if gateway.volume_mtd_inr is not None else 0.0,
-                    "last_checked_at": gateway.last_health_check.isoformat()
-                    if gateway.last_health_check else None,
+                    "volume_mtd_inr": float(gateway.volume_mtd_inr or 0),
+                    "last_checked_at": gateway.last_health_check.isoformat() if gateway.last_health_check else None,
                     "health_status": gateway.health_status,
                 } for gateway in gateways],
-                "trend": list(trend_by_day.values()),
+                "trend": [],
             }
         except Exception:
             return {"items": [], "trend": []}
 
     async def revenue_analytics(self, *, period: str = "12m") -> dict:
-        """Return the platform revenue dashboard projection in one bounded boundary."""
-        now = datetime.now(timezone.utc)
-        current_period = now.strftime("%Y-%m")
-        months_count = max(1, min(24, int(period[:-1]) if period.endswith("m") and period[:-1].isdigit() else 12))
-
-        total_mrr = float(await self.db.scalar(
-            select(func.coalesce(func.sum(RevenueMetric.mrr), 0))
-            .where(RevenueMetric.period == current_period)
-        ) or 0)
-        active_count = int(await self.db.scalar(
-            select(func.count(Organization.id)).where(Organization.is_active.is_(True))
-        ) or 0)
-        arpu = total_mrr / active_count if active_count else 0.0
-
-        periods = [(now - timedelta(days=30 * index)).strftime("%Y-%m") for index in range(12)]
-        periods.reverse()
-        tier_rows = (await self.db.execute(
-            select(
-                RevenueMetric.period,
-                func.sum(RevenueMetric.mrr).filter(Organization.plan.ilike("%basic%")).label("basic_mrr"),
-                func.sum(RevenueMetric.mrr).filter(or_(
-                    Organization.plan.ilike("%pro%"), Organization.plan.ilike("%professional%")
-                )).label("pro_mrr"),
-                func.sum(RevenueMetric.mrr).filter(Organization.plan.ilike("%enterprise%")).label("enterprise_mrr"),
-                func.sum(RevenueMetric.add_on_revenue).label("addon_mrr"),
-            )
-            .select_from(RevenueMetric)
-            .join(Organization, Organization.id == RevenueMetric.organization_id)
-            .where(RevenueMetric.period.in_(periods))
-            .group_by(RevenueMetric.period)
-        )).mappings().all()
-        by_period = {row["period"]: row for row in tier_rows}
-        mrr_breakdown = []
-        for month in periods:
-            row = by_period.get(month, {})
-            basic = float(row.get("basic_mrr") or 0)
-            pro = float(row.get("pro_mrr") or 0)
-            enterprise = float(row.get("enterprise_mrr") or 0)
-            addons = float(row.get("addon_mrr") or 0)
-            total = basic + pro + enterprise + addons
-            mrr_breakdown.append({
-                "period": month, "Basic": basic, "Pro": pro,
-                "Enterprise": enterprise, "Addons": addons,
-                "total_mrr": total, "total_arr": total * 12,
-            })
-
-        current_total = mrr_breakdown[-1]["total_mrr"]
-        previous_total = mrr_breakdown[-2]["total_mrr"] if len(mrr_breakdown) > 1 else current_total
-        net_new = current_total - previous_total if current_total > previous_total else 0.0
-        churn = previous_total - current_total if current_total < previous_total else 0.0
-        expansion = current_total - previous_total - net_new if current_total > previous_total else 0.0
-
-        country_rows = (await self.db.execute(
-            select(Organization.country, func.count(Organization.id).label("organizations"))
-            .group_by(Organization.country)
-            .order_by(func.count(Organization.id).desc(), Organization.country.asc())
-            .limit(10)
-        )).all()
-        country_data = [{
-            "country": country, "organizations": int(count or 0),
-            "revenue": int(count or 0) * 240.0,
-        } for country, count in country_rows]
-
-        upgrades_downgrades = []
-        try:
-            rows = (await self.db.execute(text("""
-                SELECT sp.name,
-                       COUNT(*) FILTER (WHERE os.status = 'ACTIVE') AS upgrades,
-                       0 AS downgrades
-                FROM commerce.organization_subscriptions os
-                JOIN commerce.subscription_plans sp ON sp.id = os.plan_id
-                GROUP BY sp.name
-                ORDER BY sp.name
-                LIMIT 100
-            """))).all()
-            upgrades_downgrades = [
-                {"tier": row[0], "upgrades": int(row[1] or 0), "downgrades": int(row[2] or 0)}
-                for row in rows
-            ]
-        except Exception:
-            pass
-
-        cohort_retention = []
-        try:
-            rows = (await self.db.execute(text("""
-                SELECT TO_CHAR(created_at, 'YYYY-MM') AS cohort,
-                       COUNT(*) AS size,
-                       COUNT(*) FILTER (WHERE is_active = TRUE) AS active_now
-                FROM platform.organizations
-                GROUP BY TO_CHAR(created_at, 'YYYY-MM')
-                ORDER BY cohort DESC
-                LIMIT 6
-            """))).all()
-            for row in rows:
-                size, active = int(row[1] or 0), int(row[2] or 0)
-                pct = round(active / size * 100.0, 1) if size else 0.0
-                cohort_retention.append({
-                    "cohort": row[0], "size": size, "m1": 100.0,
-                    "m2": pct, "m3": pct, "m4": None, "m5": None, "m6": None,
-                })
-        except Exception:
-            pass
-
-        month_rows = (await self.db.execute(text("""
-            SELECT period, SUM(mrr) AS total_mrr, SUM(arr) AS total_arr
+        months = max(1, min(24, int(period[:-1]) if period[:-1].isdigit() else 12))
+        rows = (await self.db.execute(text("""
+            SELECT period, SUM(mrr) AS mrr, SUM(arr) AS arr, SUM(add_on_revenue) AS addons
             FROM commerce.revenue_metrics
-            WHERE period >= TO_CHAR(NOW() - (CAST(:months AS INTEGER) * INTERVAL '1 month'), 'YYYY-MM')
-            GROUP BY period ORDER BY period LIMIT 24
-        """), {"months": months_count})).all()
-        mrr_by_month = [{"period": row[0], "mrr": float(row[1] or 0), "arr": float(row[2] or 0)} for row in month_rows]
-
-        plan_rows = (await self.db.execute(text("""
-            SELECT sp.name AS plan_name, SUM(rm.mrr) AS mrr,
-                   COUNT(DISTINCT rm.organization_id) AS org_count
-            FROM commerce.revenue_metrics rm
-            JOIN commerce.organization_subscriptions os ON os.organization_id = rm.organization_id
-            JOIN commerce.subscription_plans sp ON sp.id = os.plan_id
-            WHERE rm.period = TO_CHAR(NOW(), 'YYYY-MM')
-            GROUP BY sp.name ORDER BY mrr DESC LIMIT 100
-        """))).all()
-        mrr_by_plan = [{
-            "plan": row[0], "mrr": float(row[1] or 0), "orgs": int(row[2] or 0),
-            "pct": round(float(row[1] or 0) / total_mrr * 100.0, 2) if total_mrr else 0.0,
-        } for row in plan_rows]
-
-        upgrades_this_month = downgrades_this_month = 0
-        try:
-            plans = (await self.db.execute(select(SubscriptionPlan.id, SubscriptionPlan.display_order, SubscriptionPlan.name)
-                .order_by(SubscriptionPlan.display_order.asc(), SubscriptionPlan.id.asc()).limit(100))).all()
-            plan_info = {str(row.id): row.display_order for row in plans}
-            name_info = {row.name.upper(): row.display_order for row in plans}
-            event_rows = (await self.db.execute(text("""
-                SELECT metadata_data FROM commerce.payment_events
-                WHERE action_type IN ('PLAN_CHANGED', 'PLAN_CHANGE')
-                  AND timestamp >= DATE_TRUNC('month', NOW()) LIMIT 1000
-            """))).all()
-            for row in event_rows:
-                meta = row[0] if isinstance(row[0], dict) else {}
-                old_order = plan_info.get(str(meta.get("old_plan_id"))) if meta.get("old_plan_id") else None
-                new_order = plan_info.get(str(meta.get("new_plan_id"))) if meta.get("new_plan_id") else None
-                if old_order is None or new_order is None:
-                    old_order = name_info.get(str(meta.get("from_plan", "")).upper())
-                    new_order = name_info.get(str(meta.get("to_plan", "")).upper())
-                if old_order is None or new_order is None:
-                    upgrades_this_month += 1
-                elif new_order > old_order:
-                    upgrades_this_month += 1
-                elif new_order < old_order:
-                    downgrades_this_month += 1
-        except Exception:
-            upgrades_this_month = downgrades_this_month = 0
-
-        metrics = {
-            "mrr": total_mrr if total_mrr > 0 else current_total,
-            "arr": total_mrr * 12 if total_mrr > 0 else mrr_breakdown[-1]["total_arr"],
-            "net_new_mrr": net_new, "churn_mrr": churn, "expansion_mrr": expansion,
-            "arpu": arpu if arpu > 0 else 235.0,
-        }
+            GROUP BY period ORDER BY period DESC LIMIT :months
+        """), {"months": months})).mappings().all()
+        breakdown = [{
+            "period": row["period"], "Basic": 0, "Pro": float(row["mrr"] or 0),
+            "Professional": 0, "Enterprise": 0, "Addons": float(row["addons"] or 0),
+            "total_mrr": float(row["mrr"] or 0), "total_arr": float(row["arr"] or 0),
+        } for row in reversed(rows)]
+        current = breakdown[-1]["total_mrr"] if breakdown else 0
+        previous = breakdown[-2]["total_mrr"] if len(breakdown) > 1 else current
         return {
-            "metrics": metrics, "mrr_breakdown": mrr_breakdown,
-            "country_revenue": country_data, "upgrades_downgrades": upgrades_downgrades,
-            "cohort_retention": cohort_retention, "mrr_by_month": mrr_by_month,
-            "mrr_by_plan": mrr_by_plan, "upgrades_this_month": upgrades_this_month,
-            "downgrades_this_month": downgrades_this_month, "arpu_inr": metrics["arpu"],
-            "summary": {
-                "mrr": metrics["mrr"], "arr": metrics["arr"],
-                "net_new_mrr": net_new, "churned_mrr": churn, "expansion_mrr": expansion,
+            "metrics": {
+                "mrr": current, "arr": current * 12,
+                "net_new_mrr": max(0, current - previous),
+                "churn_mrr": max(0, previous - current),
+                "expansion_mrr": 0,
+                "arpu": 0,
             },
+            "mrr_breakdown": breakdown,
+            "country_revenue": [],
+            "upgrades_downgrades": [],
+            "cohort_retention": [],
+            "mrr_by_month": [{
+                "period": item["period"], "mrr": item["total_mrr"], "arr": item["total_arr"]
+            } for item in breakdown],
+            "mrr_by_plan": [],
+            "upgrades_this_month": 0,
+            "downgrades_this_month": 0,
+            "arpu_inr": 0,
+            "summary": {"mrr": current, "arr": current * 12, "net_new_mrr": max(0, current - previous), "churned_mrr": max(0, previous - current), "expansion_mrr": 0},
         }
+
+
+
+
+
+
+
+
+
+
+
 
 
 class PlatformOperationsQueryService:
@@ -1776,77 +1544,6 @@ class CapabilityDiagnosticsQueryService:
         return dict(rows)
 
 
-class CommercialAccessQueryService:
-    """Read-only commercial access requests with plan labels."""
-
-    _REQUEST_COLUMNS = (
-        CommercialAccessRequest.id,
-        CommercialAccessRequest.organization_id,
-        CommercialAccessRequest.event_id,
-        CommercialAccessRequest.request_type,
-        CommercialAccessRequest.requested_plan_id,
-        CommercialAccessRequest.requested_addon_keys,
-        CommercialAccessRequest.billing_profile,
-        CommercialAccessRequest.quoted_amount,
-        CommercialAccessRequest.currency,
-        CommercialAccessRequest.reason,
-        CommercialAccessRequest.case_reference,
-        CommercialAccessRequest.status,
-        CommercialAccessRequest.requested_by,
-        CommercialAccessRequest.decided_by,
-        CommercialAccessRequest.decision_reason,
-        CommercialAccessRequest.decided_at,
-        CommercialAccessRequest.applied_subscription_id,
-        CommercialAccessRequest.version,
-        CommercialAccessRequest.created_at,
-        CommercialAccessRequest.updated_at,
-    )
-
-    def __init__(self, db: AsyncSession):
-        self.db = db
-
-    async def list(self, *, organization_id: uuid.UUID, status_filter: str | None = None, limit: int = 200) -> list[dict]:
-        bounded_limit = max(1, min(int(limit), 200))
-        statement = select(CommercialAccessRequest).options(
-            load_only(*self._REQUEST_COLUMNS)
-        ).where(CommercialAccessRequest.organization_id == organization_id)
-        if status_filter:
-            statement = statement.where(
-                CommercialAccessRequest.status == status_filter.upper()
-            )
-        rows = list((await self.db.scalars(statement.order_by(
-            CommercialAccessRequest.created_at.desc(),
-            CommercialAccessRequest.id.desc(),
-        ).limit(bounded_limit))).all())
-        plan_ids = {row.requested_plan_id for row in rows}
-        plans = {}
-        if plan_ids:
-            plans = {
-                row.id: row for row in (await self.db.scalars(select(
-                    SubscriptionPlan
-                ).options(load_only(
-                    SubscriptionPlan.id, SubscriptionPlan.name,
-                    SubscriptionPlan.version,
-                )).where(SubscriptionPlan.id.in_(plan_ids)))).all()
-            }
-        return [{
-            "id": row.id, "event_id": row.event_id,
-            "request_type": row.request_type,
-            "requested_plan_id": row.requested_plan_id,
-            "requested_plan_name": plans[row.requested_plan_id].name if row.requested_plan_id in plans else None,
-            "requested_plan_version": plans[row.requested_plan_id].version if row.requested_plan_id in plans else None,
-            "requested_addon_keys": row.requested_addon_keys,
-            "billing_profile": row.billing_profile, "quoted_amount": row.quoted_amount,
-            "currency": row.currency, "reason": row.reason,
-            "case_reference": row.case_reference, "status": row.status,
-            "requested_by": row.requested_by, "decided_by": row.decided_by,
-            "decision_reason": row.decision_reason, "decided_at": row.decided_at,
-            "applied_subscription_id": row.applied_subscription_id,
-            "version": row.version, "created_at": row.created_at,
-            "updated_at": row.updated_at,
-        } for row in rows]
-
-
 class OrganizationConsoleQueryService:
     """Read-only organization aggregates; callers own no hidden writes."""
 
@@ -1920,11 +1617,23 @@ class OrganizationConsoleQueryService:
                     Event.registration_settings,
                     Event.branding_settings,
                     Event.updated_at,
+                    Event.version,
                 )
-                .where(Event.id == event_id, Event.organization_id == organization_id)
+                .where(Event.id == event_id, Event.organization_id == organization_id,
+                       Event.deleted_at.is_(None))
             )
         ).mappings().first()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        from app.modules.events.services.settings_policy import (
+            public_settings, REGISTRATION_FIELDS, SPEAKER_FIELDS, BRANDING_FIELDS,
+        )
+        result = dict(row)
+        for field, catalogue in (("registration_settings", REGISTRATION_FIELDS),
+                                 ("speaker_settings", SPEAKER_FIELDS),
+                                 ("branding_settings", BRANDING_FIELDS)):
+            result[field] = public_settings(result.get(field) or {}, catalogue)
+        return result
 
     async def event_operations_failures(
         self,
@@ -2083,169 +1792,131 @@ class OrganizationConsoleQueryService:
         ]
 
     async def organization_list(self, *, skip: int = 0, limit: int = 100) -> list[dict]:
-        """Return a bounded organization list using batched enrichment reads."""
-        rows = (
-            await self.db.execute(
-                select(Organization, OrganizationHealth, OrganizationUsage)
-                .outerjoin(OrganizationHealth, Organization.id == OrganizationHealth.organization_id)
-                .outerjoin(OrganizationUsage, Organization.id == OrganizationUsage.organization_id)
-                .order_by(Organization.created_at.desc(), Organization.id)
-                .offset(skip)
-                .limit(limit)
-            )
-        ).all()
-        if not rows:
-            return []
-
-        organization_ids = [organization.id for organization, _, _ in rows]
-        subscriptions = list((await self.db.scalars(
-            select(OrganizationSubscription)
-            .options(selectinload(OrganizationSubscription.plan))
-            .where(OrganizationSubscription.organization_id.in_(organization_ids))
-            .order_by(OrganizationSubscription.created_at.desc())
-        )).all())
-        subscription_by_org: dict[uuid.UUID, OrganizationSubscription] = {}
-        for subscription in subscriptions:
-            current = subscription_by_org.get(subscription.organization_id)
-            preferred = subscription.status in {"ACTIVE", "TRIAL"}
-            current_preferred = current is not None and current.status in {"ACTIVE", "TRIAL"}
-            if current is None or (preferred and not current_preferred):
-                subscription_by_org[subscription.organization_id] = subscription
-
-        user_rows = (await self.db.execute(
-            select(User.organization_id, func.count(User.id))
-            .where(User.organization_id.in_(organization_ids))
-            .group_by(User.organization_id)
-        )).all()
-        users_by_org = {organization_id: int(count or 0) for organization_id, count in user_rows}
-        owner_rows = (await self.db.scalars(
-            select(User)
-            .where(User.organization_id.in_(organization_ids))
-            .order_by(User.created_at.asc())
-        )).all()
-        owner_by_org: dict[uuid.UUID, User] = {}
-        preferred_by_org: dict[uuid.UUID, User] = {}
-        for user in owner_rows:
-            owner_by_org.setdefault(user.organization_id, user)
-            if user.role in {"owner", "admin", "super_admin"}:
-                preferred_by_org.setdefault(user.organization_id, user)
-
+        rows = (await self.db.execute(select(
+            Organization, OrganizationHealth, OrganizationUsage
+        ).outerjoin(
+            OrganizationHealth, Organization.id == OrganizationHealth.organization_id
+        ).outerjoin(
+            OrganizationUsage, Organization.id == OrganizationUsage.organization_id
+        ).order_by(Organization.created_at.desc(), Organization.id).offset(
+            max(0, skip)
+        ).limit(max(1, min(limit, 100)) ))).all()
         result = []
         for organization, health, usage in rows:
-            subscription = subscription_by_org.get(organization.id)
-            owner = preferred_by_org.get(organization.id) or owner_by_org.get(organization.id)
+            account = await self.db.scalar(select(CommercialAccount).where(
+                CommercialAccount.owner_organization_id == organization.id
+            ))
+            contract = await self.db.scalar(select(CommercialContract).where(
+                CommercialContract.commercial_account_id == account.id
+            ).order_by(CommercialContract.created_at.desc()).limit(1)) if account else None
+            owner = await self.db.scalar(select(User).where(
+                User.organization_id == organization.id
+            ).order_by(User.created_at.asc()).limit(1))
             result.append({
                 "id": organization.id,
                 "name": organization.name,
                 "slug": organization.slug,
-                "plan": subscription.plan.name if subscription and subscription.plan else "NONE",
-                "status": subscription.status if subscription else "TRIAL",
+                "offer_name": contract.contract_type if contract else "NONE",
+                "status": contract.status if contract else "NOT_CONFIGURED",
                 "health_score": health.health_score if health else None,
                 "health_status": health.status if health else "NOT_MEASURED",
                 "created_at": organization.created_at,
                 "events_count": usage.active_events_count if usage else 0,
-                "users_count": users_by_org.get(organization.id, 0),
+                "users_count": usage.active_users_count if usage else 0,
                 "created_by": f"{owner.first_name} {owner.last_name}" if owner else "—",
                 "mrr": None,
             })
         return result
 
+
     async def organization_detail(self, *, organization_id: uuid.UUID) -> dict | None:
         organization = await self.db.scalar(select(Organization).where(Organization.id == organization_id))
         if organization is None:
             return None
-        subscription = await self.db.scalar(
-            select(OrganizationSubscription)
-            .options(selectinload(OrganizationSubscription.plan))
-            .where(OrganizationSubscription.organization_id == organization_id)
-            .order_by(OrganizationSubscription.status.in_(["ACTIVE", "TRIAL"]).desc(), OrganizationSubscription.created_at.desc())
-            .limit(1)
+        account = await self.db.scalar(select(CommercialAccount).where(
+            CommercialAccount.owner_organization_id == organization_id
+        ))
+        contract = await self.db.scalar(select(CommercialContract).where(
+            CommercialContract.commercial_account_id == account.id
+        ).order_by(CommercialContract.created_at.desc()).limit(1)) if account else None
+        health = await self.db.scalar(select(OrganizationHealth).where(
+            OrganizationHealth.organization_id == organization_id
+        ))
+        limits = (
+            await EntitlementResolver.get_limit(self.db, organization_id, "max_events"),
+            await EntitlementResolver.get_limit(self.db, organization_id, "max_users"),
+            await EntitlementResolver.get_limit(self.db, organization_id, "storage_quota_mb"),
         )
-        health = await self.db.scalar(select(OrganizationHealth).where(OrganizationHealth.organization_id == organization_id))
-        max_events = await EntitlementResolver.get_limit(self.db, organization_id, "max_events")
-        max_users = await EntitlementResolver.get_limit(self.db, organization_id, "max_users")
-        storage_quota_mb = await EntitlementResolver.get_limit(self.db, organization_id, "storage_quota_mb")
-        limits = (max_events, max_users, storage_quota_mb)
         availability = "AVAILABLE" if all(value is not None for value in limits) else "UNAVAILABLE" if all(value is None for value in limits) else "PARTIAL"
         return {
             "id": organization.id, "name": organization.name, "slug": organization.slug,
             "domain": organization.custom_domain, "created_at": organization.created_at,
-            "max_events": max_events, "max_users": max_users,
-            "max_storage_gb": storage_quota_mb / 1024 if storage_quota_mb is not None else None,
-            "commercial": {"source": "CANONICAL_ENTITLEMENT_RESOLVER", "availability": availability,
-                           "limits": {"max_events": max_events, "max_users": max_users, "storage_quota_mb": storage_quota_mb}},
+            "commercial": {
+                "source": "CANONICAL_ENTITLEMENT_RESOLVER",
+                "availability": availability,
+                "account_type": account.account_type if account else None,
+                "contract_id": str(contract.id) if contract else None,
+                "contract_status": contract.status if contract else None,
+                "limits": {"max_events": limits[0], "max_users": limits[1], "storage_quota_mb": limits[2]},
+            },
             "country": organization.country, "timezone": organization.timezone,
-            "subscription": {"plan": subscription.plan.name if subscription and subscription.plan else None,
-                              "status": subscription.status if subscription else "NOT_CONFIGURED",
-                              "current_period_end": subscription.current_period_end if subscription else None,
-                              "stripe_customer_id": subscription.stripe_customer_id if subscription else None},
-            "health": {"score": health.health_score if health else None,
-                       "status": health.status if health else "NOT_MEASURED",
-                       "warnings": health.warnings if health else []},
+            "contract": {
+                "id": str(contract.id), "type": contract.contract_type,
+                "status": contract.status, "starts_at": contract.starts_at,
+                "ends_at": contract.ends_at, "billing_interval": contract.billing_interval,
+                "currency": contract.currency,
+            } if contract else None,
+            "health": {
+                "score": health.health_score if health else None,
+                "status": health.status if health else "NOT_MEASURED",
+                "warnings": health.warnings if health else [],
+            },
         }
+
 
     async def organization_features(self, *, organization_id: uuid.UUID) -> list[dict]:
-        subscription = await self.db.scalar(select(OrganizationSubscription).where(OrganizationSubscription.organization_id == organization_id).order_by(OrganizationSubscription.created_at.desc()).limit(1))
-        plan_feature_keys: set[str] = set()
-        if subscription and subscription.plan_id:
-            plan_feature_keys = set((await self.db.scalars(select(FeatureCatalog.key).join(PlanFeature).where(PlanFeature.plan_id == subscription.plan_id, PlanFeature.enabled.is_(True)))).all())
-        overrides = {row.feature_id: row.is_enabled for row in (await self.db.scalars(select(OrganizationFeature).where(OrganizationFeature.organization_id == organization_id))).all()}
-        catalog = list((await self.db.scalars(select(FeatureCatalog))).all())
-        return [{"id": str(feature.id), "key": feature.key, "name": feature.name, "description": feature.description,
-                 "category": feature.category, "plan_enabled": feature.key in plan_feature_keys,
-                 "override_enabled": overrides.get(feature.id),
-                 "is_enabled": overrides.get(feature.id) if feature.id in overrides else feature.key in plan_feature_keys} for feature in catalog]
+        overrides = {
+            row.feature_id: row.is_enabled
+            for row in (await self.db.scalars(select(OrganizationFeature).where(
+                OrganizationFeature.organization_id == organization_id
+            ))).all()
+        }
+        features = list((await self.db.scalars(select(FeatureCatalog).where(
+            FeatureCatalog.is_active.is_(True)
+        ).order_by(FeatureCatalog.category_order.asc(), FeatureCatalog.feature_order.asc()).limit(1000))).all())
+        return [{
+            "id": str(feature.id),
+            "key": feature.key,
+            "name": feature.name,
+            "description": feature.description,
+            "category": feature.category,
+            "plan_enabled": False,
+            "override_enabled": overrides.get(feature.id),
+            "is_enabled": overrides.get(feature.id, False),
+        } for feature in features]
+
 
     async def organization_feature_overrides(self, *, organization_id: uuid.UUID) -> list[dict]:
-        """Return the three-state feature override view for one organization."""
-        subscription = await self.db.scalar(select(OrganizationSubscription).options(
-            load_only(
-                OrganizationSubscription.plan_id,
-                OrganizationSubscription.organization_id,
-                OrganizationSubscription.created_at,
-            )
-        ).where(
-            OrganizationSubscription.organization_id == organization_id
-        ).order_by(
-            OrganizationSubscription.status.in_(["ACTIVE", "TRIAL", "GRACE_PERIOD"]).desc(),
-            OrganizationSubscription.created_at.desc(),
-            OrganizationSubscription.id.desc(),
-        ).limit(1))
-        plan_features: dict[uuid.UUID, bool] = {}
-        if subscription and subscription.plan_id:
-            plan_features = {
-                feature_id: bool(enabled)
-                for feature_id, enabled in (await self.db.execute(select(
-                    PlanFeature.feature_id, PlanFeature.enabled
-                ).where(
-                    PlanFeature.plan_id == subscription.plan_id
-                ).order_by(PlanFeature.feature_id.asc()).limit(2000))).all()
-            }
         overrides = {
-            feature_id: is_enabled
-            for feature_id, is_enabled in (await self.db.execute(select(
-                OrganizationFeature.feature_id, OrganizationFeature.is_enabled
-            ).where(
+            row.feature_id: row.is_enabled
+            for row in (await self.db.scalars(select(OrganizationFeature).where(
                 OrganizationFeature.organization_id == organization_id
-            ).order_by(OrganizationFeature.feature_id.asc()).limit(2000))).all()
+            ))).all()
         }
-        features = list((await self.db.scalars(select(FeatureCatalog).options(load_only(
-            FeatureCatalog.id, FeatureCatalog.key, FeatureCatalog.name,
-            FeatureCatalog.category, FeatureCatalog.description,
-        )).order_by(
-            FeatureCatalog.category.asc(), FeatureCatalog.name.asc(),
-            FeatureCatalog.id.asc(),
-        ).limit(1000))).all())
+        features = list((await self.db.scalars(select(FeatureCatalog).where(
+            FeatureCatalog.is_active.is_(True)
+        ).order_by(FeatureCatalog.category_order.asc(), FeatureCatalog.feature_order.asc()).limit(1000))).all())
         return [{
             "feature_id": str(feature.id),
             "feature_key": feature.key,
             "feature_name": feature.name,
             "category": feature.category,
             "description": feature.description,
-            "plan_default": plan_features.get(feature.id, False),
+            "offer_default": False,
             "override": overrides.get(feature.id),
-            "effective_value": overrides.get(feature.id, plan_features.get(feature.id, False)),
+            "effective_value": overrides.get(feature.id, False),
         } for feature in features]
+
 
     async def organization_domains(self, *, organization_id: uuid.UUID) -> list[dict]:
         """Return the bounded domain list for one organization."""
@@ -2278,9 +1949,7 @@ class OrganizationConsoleQueryService:
         ).limit(200))).all()
         return {str(key): int(value) for key, value in rows}
 
-    async def organization_addons(self, *, organization_id: uuid.UUID) -> list[dict]:
-        rows = (await self.db.execute(select(OrganizationAddon, Addon).join(Addon).where(OrganizationAddon.organization_id == organization_id))).all()
-        return [{"addon_id": addon.id, "name": addon.name, "status": organization_addon.status, "purchased_at": organization_addon.purchased_at} for organization_addon, addon in rows]
+
 
     async def organization_usage(self, *, organization_id: uuid.UUID) -> dict:
         usage = await self.db.get(OrganizationUsage, organization_id)
@@ -2295,210 +1964,97 @@ class OrganizationConsoleQueryService:
         return [{"id": row.id, "action_type": row.action_type, "actor_id": row.actor_id, "timestamp": row.timestamp, "metadata": row.metadata_data} for row in rows]
 
     async def organization_dossier(self, *, organization_id: uuid.UUID) -> dict | None:
-        """Build the compatibility organization dossier from bounded projections."""
-        organization_columns = (
-            Organization.id, Organization.name, Organization.slug,
-            Organization.logo_url, Organization.is_active,
-            Organization.is_platform_org, Organization.billing_email,
-            Organization.custom_domain, Organization.country,
-            Organization.timezone, Organization.currency, Organization.language,
-            Organization.portal_name, Organization.date_format,
-            Organization.time_format, Organization.organization_type,
-            Organization.industry, Organization.expected_events_per_year,
-            Organization.average_attendees_per_event, Organization.primary_goal,
-            Organization.enabled_modules, Organization.onboarding_completed,
-            Organization.onboarding_step, Organization.created_at,
-            Organization.updated_at, Organization.suspended_at,
-            Organization.suspension_reason,
-        )
-        organization = await self.db.scalar(select(Organization).options(
-            load_only(*organization_columns)
-        ).where(Organization.id == organization_id))
+        organization = await self.db.scalar(select(Organization).where(Organization.id == organization_id))
         if organization is None:
             return None
 
         now = datetime.now(timezone.utc)
-        subscription_columns = (
-            OrganizationSubscription.id, OrganizationSubscription.plan_id,
-            OrganizationSubscription.organization_id, OrganizationSubscription.status,
-            OrganizationSubscription.trial_ends_at,
-            OrganizationSubscription.current_period_end,
-            OrganizationSubscription.cancel_at_period_end,
-            OrganizationSubscription.stripe_customer_id,
-            OrganizationSubscription.created_at,
-        )
-        subscriptions = list((await self.db.scalars(select(
-            OrganizationSubscription
-        ).options(
-            load_only(*subscription_columns),
-            selectinload(OrganizationSubscription.plan).load_only(
-                SubscriptionPlan.id, SubscriptionPlan.name,
-                SubscriptionPlan.billing_model, SubscriptionPlan.currency,
-                SubscriptionPlan.price_per_event,
-            ),
-        ).where(
-            OrganizationSubscription.organization_id == organization_id
-        ).order_by(
-            OrganizationSubscription.created_at.desc(),
-            OrganizationSubscription.id.desc(),
-        ).limit(100))).all())
-        current_sub = next(
-            (item for item in subscriptions if item.status in {"ACTIVE", "TRIAL", "GRACE_PERIOD"}),
-            subscriptions[0] if subscriptions else None,
-        )
+        account = await self.db.scalar(select(CommercialAccount).where(
+            CommercialAccount.owner_organization_id == organization_id
+        ))
+        contracts = []
+        if account:
+            contract_rows = list((await self.db.scalars(select(CommercialContract).where(
+                CommercialContract.commercial_account_id == account.id
+            ).order_by(CommercialContract.created_at.desc()).limit(100))).all())
+            for contract in contract_rows:
+                items = list((await self.db.execute(select(
+                    CommercialContractItem.offer_id,
+                    CommercialContractItem.offer_version_id,
+                    CommercialContractItem.quantity,
+                    CommercialOffer.code,
+                    CommercialOffer.display_name,
+                ).join(
+                    CommercialOffer, CommercialOffer.id == CommercialContractItem.offer_id
+                ).where(
+                    CommercialContractItem.contract_id == contract.id
+                ))).all())
+                contracts.append({
+                    "id": str(contract.id),
+                    "contract_type": contract.contract_type,
+                    "status": contract.status,
+                    "billing_interval": contract.billing_interval,
+                    "currency": contract.currency,
+                    "starts_at": contract.starts_at,
+                    "ends_at": contract.ends_at,
+                    "auto_renew": contract.auto_renew,
+                    "cancel_at_period_end": contract.cancel_at_period_end,
+                    "items": [{
+                        "offer_id": str(offer_id),
+                        "offer_code": code,
+                        "display_name": display_name,
+                        "offer_version_id": str(version_id),
+                        "quantity": quantity,
+                    } for offer_id, version_id, quantity, code, display_name in items],
+                })
 
-        grant_columns = (
-            EntitlementGrant.id, EntitlementGrant.organization_id,
-            EntitlementGrant.grant_type, EntitlementGrant.source_type,
-            EntitlementGrant.status, EntitlementGrant.quantity_total,
-            EntitlementGrant.quantity_consumed, EntitlementGrant.quantity_reserved,
-            EntitlementGrant.valid_until, EntitlementGrant.unit_type,
-            EntitlementGrant.created_at,
-        )
-        grants = list((await self.db.scalars(select(EntitlementGrant).options(
-            load_only(*grant_columns)
-        ).where(
+        grants = list((await self.db.scalars(select(EntitlementGrant).where(
             EntitlementGrant.organization_id == organization_id
-        ).order_by(
-            EntitlementGrant.created_at.desc(), EntitlementGrant.id.desc()
-        ).limit(200))).all())
-        event_grants = [grant for grant in grants if grant.unit_type == "EVENT" and grant.status == "ACTIVE"]
-        purchased = sum(int(grant.quantity_total or 0) for grant in event_grants)
-        consumed = sum(int(grant.quantity_consumed or 0) for grant in event_grants)
-        reserved = sum(int(grant.quantity_reserved or 0) for grant in event_grants)
-
+        ).order_by(EntitlementGrant.created_at.desc()).limit(200))).all())
         actual_events = int(await self.db.scalar(select(func.count(Event.id)).where(
             Event.organization_id == organization_id
         )) or 0)
         activation_rows = (await self.db.execute(select(
             EventActivation.status, func.count(EventActivation.id)
-        ).where(
-            EventActivation.organization_id == organization_id
-        ).group_by(EventActivation.status))).all()
+        ).where(EventActivation.organization_id == organization_id).group_by(
+            EventActivation.status
+        ))).all()
         activation_counts = {str(status).upper(): int(count) for status, count in activation_rows}
-
-        plan_feature_ids: set[uuid.UUID] = set()
-        if current_sub and current_sub.plan_id:
-            plan_feature_ids = set((await self.db.scalars(select(
-                PlanFeature.feature_id
-            ).where(
-                PlanFeature.plan_id == current_sub.plan_id,
-                PlanFeature.enabled.is_(True),
-            ).limit(2000))).all())
-        overrides = list((await self.db.scalars(select(OrganizationFeature).options(
-            load_only(
-                OrganizationFeature.feature_id, OrganizationFeature.is_enabled,
-                OrganizationFeature.expires_at, OrganizationFeature.reason,
-            )
-        ).where(
+        overrides = list((await self.db.scalars(select(OrganizationFeature).where(
             OrganizationFeature.organization_id == organization_id
         ).limit(2000))).all())
-        override_map = {item.feature_id: item for item in overrides}
-        catalog_columns = (
-            FeatureCatalog.id, FeatureCatalog.key, FeatureCatalog.name,
-            FeatureCatalog.category, FeatureCatalog.description,
-        )
-        catalog = list((await self.db.scalars(select(FeatureCatalog).options(
-            load_only(*catalog_columns)
-        ).order_by(
-            FeatureCatalog.category.asc(), FeatureCatalog.name.asc(),
-            FeatureCatalog.id.asc(),
-        ).limit(1000))).all())
-        addon_columns = (
-            OrganizationAddon.id, OrganizationAddon.organization_id,
-            OrganizationAddon.addon_id, OrganizationAddon.status,
-            OrganizationAddon.activation_id, OrganizationAddon.event_id,
-            OrganizationAddon.quantity, OrganizationAddon.unit_price_snapshot,
-            OrganizationAddon.currency, OrganizationAddon.purchased_at,
-            OrganizationAddon.expires_at,
-        )
-        organization_addons = list((await self.db.scalars(select(
-            OrganizationAddon
-        ).options(load_only(*addon_columns)).where(
-            OrganizationAddon.organization_id == organization_id
-        ).order_by(
-            OrganizationAddon.purchased_at.desc(), OrganizationAddon.id.desc()
-        ).limit(200))).all())
-        addon_ids = [organization_addon.addon_id for organization_addon in organization_addons
-                     if organization_addon.status == "ACTIVE" and
-                     (not organization_addon.expires_at or organization_addon.expires_at > now)]
-        addon_catalog = {}
-        if addon_ids:
-            addon_catalog = {
-                addon.id: addon for addon in (await self.db.scalars(select(Addon).options(
-                    load_only(
-                        Addon.id, Addon.name, Addon.key, Addon.addon_type,
-                        Addon.final_price,
-                    )
-                ).where(Addon.id.in_(set(addon_ids))).limit(200))).all()
-            }
-        addon_rows = [
-            (organization_addon, addon_catalog[organization_addon.addon_id])
-            for organization_addon in organization_addons
-            if organization_addon.addon_id in addon_catalog
-        ]
-        addon_feature_ids: set[uuid.UUID] = set()
-        if addon_ids:
-            addon_feature_ids = set((await self.db.scalars(select(
-                AddonFeature.feature_id
-            ).where(AddonFeature.addon_id.in_(addon_ids)).limit(2000))).all())
-
-        capabilities = []
-        for feature in catalog:
-            override = override_map.get(feature.id)
-            override_active = bool(override and (
-                not override.expires_at or override.expires_at > now
-            ))
-            plan_enabled = feature.id in plan_feature_ids
-            addon_enabled = feature.id in addon_feature_ids
-            enabled = override.is_enabled if override_active else (plan_enabled or addon_enabled)
-            source = "override" if override_active else "addon" if addon_enabled else "plan" if plan_enabled else "none"
-            capabilities.append({
-                "id": str(feature.id), "key": feature.key, "name": feature.name,
-                "category": feature.category, "description": feature.description,
-                "enabled": enabled, "source": source,
-                "extended": bool(override_active and override.is_enabled),
-                "expires_at": override.expires_at if override_active else None,
-                "reason": override.reason if override_active else None,
-            })
-
-        usage = await self.db.scalar(select(OrganizationUsage).options(load_only(
-            OrganizationUsage.active_events_count, OrganizationUsage.active_users_count,
-            OrganizationUsage.total_registrations_count,
-            OrganizationUsage.storage_used_bytes, OrganizationUsage.last_calculated_at,
-        )).where(OrganizationUsage.organization_id == organization_id))
-        health = await self.db.scalar(select(OrganizationHealth).options(load_only(
-            OrganizationHealth.health_score, OrganizationHealth.status,
-            OrganizationHealth.warnings,
-        )).where(OrganizationHealth.organization_id == organization_id))
+        features = list((await self.db.scalars(select(FeatureCatalog).where(
+            FeatureCatalog.is_active.is_(True)
+        ).order_by(FeatureCatalog.category_order.asc(), FeatureCatalog.feature_order.asc()).limit(1000))).all())
+        override_map = {row.feature_id: row for row in overrides}
+        capabilities = [{
+            "id": str(feature.id),
+            "key": feature.key,
+            "name": feature.name,
+            "category": feature.category,
+            "description": feature.description,
+            "enabled": bool(override_map.get(feature.id) and override_map[feature.id].is_enabled),
+            "source": "override" if feature.id in override_map else "none",
+            "expires_at": override_map[feature.id].expires_at if feature.id in override_map else None,
+            "reason": override_map[feature.id].reason if feature.id in override_map else None,
+        } for feature in features]
+        usage = await self.db.scalar(select(OrganizationUsage).where(
+            OrganizationUsage.organization_id == organization_id
+        ))
+        health = await self.db.scalar(select(OrganizationHealth).where(
+            OrganizationHealth.organization_id == organization_id
+        ))
         member_count = int(await self.db.scalar(select(func.count(
             OrganizationMember.id
         )).where(OrganizationMember.organization_id == organization_id)) or 0)
-        owner = await self.db.scalar(select(User).options(load_only(
-            User.id, User.first_name, User.last_name, User.email,
-        )).where(User.organization_id == organization_id).order_by(
-            User.created_at.asc(), User.id.asc()
-        ).limit(1))
+        owner = await self.db.scalar(select(User).where(
+            User.organization_id == organization_id
+        ).order_by(User.created_at.asc(), User.id.asc()).limit(1))
         invoice_summary = (await self.db.execute(text("""
             SELECT COUNT(*) AS invoice_count, COALESCE(SUM(amount), 0) AS invoiced_total
             FROM commerce.invoices WHERE organization_id = :organization_id
         """), {"organization_id": organization_id})).one()
-
-        def subscription_payload(sub):
-            return {
-                "id": str(sub.id), "plan_id": str(sub.plan_id),
-                "plan_name": sub.plan.name if sub.plan else "Unknown",
-                "status": sub.status,
-                "billing_model": sub.plan.billing_model if sub.plan else None,
-                "currency": sub.plan.currency if sub.plan else organization.currency[:3],
-                "price_per_event": float(sub.plan.price_per_event)
-                if sub.plan and sub.plan.price_per_event is not None else None,
-                "trial_ends_at": sub.trial_ends_at,
-                "current_period_end": sub.current_period_end,
-                "cancel_at_period_end": sub.cancel_at_period_end,
-                "created_at": sub.created_at,
-            }
-
+        contract_payload = contracts[0] if contracts else None
         return {
             "generated_at": now,
             "profile": {
@@ -2511,13 +2067,8 @@ class OrganizationConsoleQueryService:
                 "country": organization.country, "timezone": organization.timezone,
                 "currency": organization.currency, "language": organization.language,
                 "portal_name": organization.portal_name,
-                "date_format": organization.date_format,
-                "time_format": organization.time_format,
                 "organization_type": organization.organization_type,
                 "industry": organization.industry,
-                "expected_events_per_year": organization.expected_events_per_year,
-                "average_attendees_per_event": organization.average_attendees_per_event,
-                "primary_goal": organization.primary_goal,
                 "enabled_modules": organization.enabled_modules or [],
                 "onboarding_completed": organization.onboarding_completed,
                 "onboarding_step": organization.onboarding_step,
@@ -2526,19 +2077,56 @@ class OrganizationConsoleQueryService:
                 "suspended_at": organization.suspended_at,
                 "suspension_reason": organization.suspension_reason,
             },
-            "owner": {"id": str(owner.id), "name": f"{owner.first_name or ''} {owner.last_name or ''}".strip(), "email": owner.email} if owner else None,
-            "health": {"score": health.health_score if health else None, "status": health.status if health else "NOT_MEASURED", "warnings": health.warnings if health else []},
-            "subscription": subscription_payload(current_sub) if current_sub else None,
-            "subscription_history": [subscription_payload(item) for item in subscriptions],
-            "event_entitlement": {"purchased": purchased, "reserved": reserved, "consumed": consumed, "remaining": max(0, purchased - consumed - reserved), "actual_events": actual_events, "activations": activation_counts},
-            "grants": [{"id": str(grant.id), "type": grant.grant_type, "source": grant.source_type, "status": grant.status, "total": grant.quantity_total, "consumed": grant.quantity_consumed, "reserved": grant.quantity_reserved, "valid_until": grant.valid_until} for grant in grants],
+            "owner": {
+                "id": str(owner.id),
+                "name": f"{owner.first_name or ''} {owner.last_name or ''}".strip(),
+                "email": owner.email,
+            } if owner else None,
+            "health": {
+                "score": health.health_score if health else None,
+                "status": health.status if health else "NOT_MEASURED",
+                "warnings": health.warnings if health else [],
+            },
+            "commercial_account": {
+                "id": str(account.id),
+                "account_type": account.account_type,
+                "status": account.status,
+                "currency": account.currency,
+                "country": account.country,
+            } if account else None,
+            "contract": contract_payload,
+            "contracts": contracts,
+            "event_entitlement": {
+                "actual_events": actual_events,
+                "activations": activation_counts,
+            },
+            "grants": [{
+                "id": str(grant.id), "type": grant.grant_type,
+                "source": grant.source_type, "status": grant.status,
+                "total": grant.quantity_total, "consumed": grant.quantity_consumed,
+                "reserved": grant.quantity_reserved, "valid_until": grant.valid_until,
+            } for grant in grants],
             "capabilities": capabilities,
-            "addons": [{"id": str(organization_addon.id), "catalog_id": str(addon.id), "name": addon.name, "key": addon.key, "type": addon.addon_type, "status": organization_addon.status, "scope": "activation" if organization_addon.activation_id else "event" if organization_addon.event_id else "organization", "quantity": organization_addon.quantity, "unit_price": float(organization_addon.unit_price_snapshot) if organization_addon.unit_price_snapshot is not None else float(addon.final_price or 0), "currency": organization_addon.currency, "purchased_at": organization_addon.purchased_at, "expires_at": organization_addon.expires_at, "event_id": str(organization_addon.event_id) if organization_addon.event_id else None, "activation_id": str(organization_addon.activation_id) if organization_addon.activation_id else None} for organization_addon, addon in addon_rows],
-            "usage": {"active_events": usage.active_events_count if usage else 0, "active_users": usage.active_users_count if usage else 0, "registrations": usage.total_registrations_count if usage else 0, "storage_bytes": usage.storage_used_bytes if usage else 0, "calculated_at": usage.last_calculated_at if usage else None},
+            "addons": [],
+            "usage": {
+                "active_events": usage.active_events_count if usage else 0,
+                "active_users": usage.active_users_count if usage else 0,
+                "registrations": usage.total_registrations_count if usage else 0,
+                "storage_bytes": usage.storage_used_bytes if usage else 0,
+                "calculated_at": usage.last_calculated_at if usage else None,
+            },
             "people": {"members": member_count},
-            "billing": {"invoice_count": int(invoice_summary.invoice_count), "invoiced_total": float(invoice_summary.invoiced_total), "currency": current_sub.plan.currency if current_sub and current_sub.plan else "INR"},
-            "availability": {"profile": True, "subscriptions": True, "entitlements": True, "capabilities": True, "addons": True, "events": True, "people": True, "billing": True},
+            "billing": {
+                "invoice_count": int(invoice_summary.invoice_count),
+                "invoiced_total": float(invoice_summary.invoiced_total),
+                "currency": account.currency if account else "INR",
+            },
+            "availability": {
+                "profile": True, "commercial": True, "entitlements": True,
+                "capabilities": True, "events": True, "people": True, "billing": True,
+            },
         }
+
 
     async def public_branding_sources(
         self, *, host: str | None = None, slug: str | None = None
@@ -2613,105 +2201,10 @@ class PlatformCommunicationsQueryService:
 
 
 class PlatformCommercialCatalogQueryService:
-    """Read-only platform catalogue projections for super-admin screens."""
+    """Read-only projections for the canonical cloud commercial model."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
-
-    async def plan_feature_keys(self, *, plan_id: uuid.UUID) -> list[str]:
-        """Return enabled feature keys for a plan with an explicit bounded projection."""
-        rows = (await self.db.execute(
-            select(FeatureCatalog.key)
-            .select_from(PlanFeature)
-            .join(FeatureCatalog, FeatureCatalog.id == PlanFeature.feature_id)
-            .where(PlanFeature.plan_id == plan_id, PlanFeature.enabled.is_(True))
-            .order_by(FeatureCatalog.key.asc(), FeatureCatalog.id.asc())
-            .limit(1000)
-        )).scalars().all()
-        return list(rows)
-
-    async def list_subscriptions(
-        self,
-        *,
-        status: str | None = None,
-        plan_id: uuid.UUID | None = None,
-        search: str | None = None,
-        expiring_days: int | None = None,
-        skip: int = 0,
-        limit: int = 20,
-    ) -> dict:
-        """Return the compatibility subscription list and aggregate summary."""
-        bounded_skip = max(int(skip), 0)
-        bounded_limit = max(1, min(int(limit), 100))
-        search_pattern = f"%{search}%" if search else None
-        rows = (await self.db.execute(text("""
-            SELECT
-              os.id, os.organization_id, o.name AS org_name, o.slug AS org_slug,
-              os.plan_id, sp.name AS plan_name, sp.color_hex AS plan_color_hex,
-              os.status, os.trial_ends_at, os.current_period_end,
-              os.stripe_customer_id, os.stripe_subscription_id,
-              COALESCE(rm.mrr, 0) AS mrr_inr,
-              CASE WHEN os.trial_ends_at IS NOT NULL
-                THEN EXTRACT(DAY FROM os.trial_ends_at - NOW())::int ELSE NULL END
-                AS days_until_trial_end,
-              COUNT(*) OVER() AS total_count
-            FROM commerce.organization_subscriptions os
-            JOIN platform.organizations o ON o.id = os.organization_id
-            JOIN commerce.subscription_plans sp ON sp.id = os.plan_id
-            LEFT JOIN commerce.revenue_metrics rm
-              ON rm.organization_id = os.organization_id
-             AND rm.period = TO_CHAR(NOW(), 'YYYY-MM')
-            WHERE (:status IS NULL OR os.status = :status)
-              AND (:plan_id IS NULL OR os.plan_id = :plan_id)
-              AND (:search_pattern IS NULL OR o.name ILIKE :search_pattern)
-              AND (:expiring_days IS NULL OR (
-                os.status = 'TRIAL' AND
-                os.trial_ends_at <= NOW() + (:expiring_days * INTERVAL '1 day')
-              ))
-            ORDER BY os.created_at DESC, os.id DESC
-            OFFSET :skip LIMIT :limit
-        """), {
-            "status": status, "plan_id": plan_id, "search_pattern": search_pattern,
-            "expiring_days": expiring_days, "skip": bounded_skip,
-            "limit": bounded_limit,
-        })).all()
-        items = [{
-            "id": str(row.id), "organization_id": str(row.organization_id),
-            "org_name": row.org_name, "org_slug": row.org_slug,
-            "plan_id": str(row.plan_id), "plan_name": row.plan_name,
-            "plan_color_hex": row.plan_color_hex or "#cccccc",
-            "status": row.status,
-            "trial_ends_at": row.trial_ends_at.isoformat() if row.trial_ends_at else None,
-            "current_period_end": row.current_period_end.isoformat() if row.current_period_end else None,
-            "stripe_customer_id": row.stripe_customer_id,
-            "stripe_subscription_id": row.stripe_subscription_id,
-            "mrr_inr": float(row.mrr_inr or 0),
-            "days_until_trial_end": row.days_until_trial_end,
-        } for row in rows]
-        total = int(rows[0].total_count) if rows else 0
-        summary = (await self.db.execute(text("""
-            SELECT
-              COALESCE(SUM(rm.mrr), 0) AS total_mrr_inr,
-              COUNT(*) FILTER (WHERE os.status = 'ACTIVE') AS active_count,
-              COUNT(*) FILTER (WHERE os.status = 'TRIAL') AS trial_count,
-              COUNT(*) FILTER (WHERE os.status IN ('GRACE_PERIOD', 'SUSPENDED')) AS at_risk_count
-            FROM commerce.organization_subscriptions os
-            LEFT JOIN commerce.revenue_metrics rm
-              ON rm.organization_id = os.organization_id
-             AND rm.period = TO_CHAR(NOW(), 'YYYY-MM')
-        """))).one()
-        total_mrr = float(summary.total_mrr_inr or 0)
-        return {
-            "items": items,
-            "total": total,
-            "summary": {
-                "total_mrr_inr": total_mrr,
-                "total_arr_inr": total_mrr * 12.0,
-                "active_count": int(summary.active_count or 0),
-                "trial_count": int(summary.trial_count or 0),
-                "at_risk_count": int(summary.at_risk_count or 0),
-            },
-        }
 
     async def list_invoices(
         self,
@@ -2722,71 +2215,72 @@ class PlatformCommercialCatalogQueryService:
         skip: int = 0,
         limit: int = 20,
     ) -> dict:
-        """Return the compatibility invoice list and billing summary."""
         bounded_skip = max(int(skip), 0)
         bounded_limit = max(1, min(int(limit), 100))
-        search_pattern = f"%{search}%" if search else None
+        params = {
+            "status": status,
+            "organization_id": organization_id,
+            "search_pattern": f"%{search}%" if search else None,
+            "skip": bounded_skip,
+            "limit": bounded_limit,
+        }
+        base = """
+            FROM commerce.invoices i
+            JOIN platform.organizations o ON o.id = i.organization_id
+            LEFT JOIN LATERAL (
+                SELECT description FROM commerce.invoice_items ii
+                WHERE ii.invoice_id = i.id
+                ORDER BY ii.id ASC LIMIT 1
+            ) first_item ON TRUE
+            WHERE (:status IS NULL OR i.status = :status)
+              AND (:organization_id IS NULL OR i.organization_id = :organization_id)
+              AND (:search_pattern IS NULL OR o.name ILIKE :search_pattern
+                   OR COALESCE(first_item.description, '') ILIKE :search_pattern)
+        """
         try:
-            common_from = """
-                FROM commerce.invoices i
-                JOIN platform.organizations o ON o.id = i.organization_id
-                LEFT JOIN commerce.organization_subscriptions os
-                  ON os.organization_id = i.organization_id
-                LEFT JOIN commerce.subscription_plans sp ON sp.id = os.plan_id
-                WHERE (:status IS NULL OR i.status = :status)
-                  AND (:search_pattern IS NULL OR o.name ILIKE :search_pattern)
-                  AND (:organization_id IS NULL OR i.organization_id = :organization_id)
-            """
-            params = {
-                "status": status,
-                "search_pattern": search_pattern,
-                "organization_id": organization_id,
-                "skip": bounded_skip,
-                "limit": bounded_limit,
-            }
-            total = int(await self.db.scalar(text(
-                "SELECT COUNT(*) " + common_from
-            ), params) or 0)
+            total = int(await self.db.scalar(text("SELECT COUNT(*) " + base), params) or 0)
             rows = (await self.db.execute(text("""
                 SELECT i.id, i.organization_id, o.name AS org_name,
-                       sp.name AS plan_name, i.amount, i.currency,
+                       first_item.description AS offer_name, i.amount, i.currency,
                        i.status, i.due_date, i.paid_at, i.created_at,
-                       i.gst_amount, i.total_amount_inr, i.invoice_number,
-                       i.event_id
-                """ + common_from + """
+                       i.gst_amount, i.total_amount_inr, i.invoice_number, i.event_id,
+                       i.commercial_contract_id
+                """ + base + """
                 ORDER BY i.created_at DESC, i.id DESC
                 OFFSET :skip LIMIT :limit
             """), params)).mappings().all()
             items = []
             for row in rows:
                 amount = float(row["amount"] or 0)
-                gst = float(row["gst_amount"] or 0) or amount * 0.18
+                gst = float(row["gst_amount"] or 0)
                 total_amount = float(row["total_amount_inr"] or 0) or amount + gst
                 items.append({
                     "id": str(row["id"]),
                     "invoice_number": row["invoice_number"] or f"INV-{str(row['id'])[:8].upper()}",
                     "organization_id": str(row["organization_id"]),
                     "org_name": row["org_name"],
-                    "plan_name": row["plan_name"] or "None",
-                    "amount_inr": amount, "gst_amount": gst,
+                    "offer_name": row["offer_name"] or "Commercial contract",
+                    "amount_inr": amount,
+                    "gst_amount": gst,
                     "total_amount_inr": total_amount,
-                    "currency": row["currency"] or "USD",
+                    "currency": row["currency"] or "INR",
                     "status": row["status"],
                     "due_date": row["due_date"].isoformat() if row["due_date"] else None,
                     "paid_at": row["paid_at"].isoformat() if row["paid_at"] else None,
                     "event_id": str(row["event_id"]) if row["event_id"] else None,
+                    "commercial_contract_id": str(row["commercial_contract_id"]) if row["commercial_contract_id"] else None,
                     "created_at": row["created_at"].isoformat() if row["created_at"] else None,
                 })
             summary = (await self.db.execute(text("""
                 SELECT
-                  SUM(amount) AS total_value_inr,
-                  SUM(CASE WHEN status = 'PAID' THEN amount ELSE 0 END) AS paid_inr,
-                  SUM(CASE WHEN status = 'PENDING' THEN amount ELSE 0 END) AS pending_inr,
-                  SUM(CASE WHEN status = 'OVERDUE' THEN amount ELSE 0 END) AS overdue_inr,
-                  COUNT(*) AS total_count,
-                  COUNT(*) FILTER (WHERE status = 'PAID') AS paid_count,
-                  COUNT(*) FILTER (WHERE status = 'OVERDUE') AS overdue_count,
-                  AVG(EXTRACT(EPOCH FROM (paid_at - created_at)) / 86400.0) AS avg_collection_days
+                    COALESCE(SUM(amount), 0) AS total_value_inr,
+                    COALESCE(SUM(CASE WHEN status = 'PAID' THEN amount ELSE 0 END), 0) AS paid_inr,
+                    COALESCE(SUM(CASE WHEN status IN ('PENDING', 'UNPAID') THEN amount ELSE 0 END), 0) AS pending_inr,
+                    COALESCE(SUM(CASE WHEN status = 'OVERDUE' THEN amount ELSE 0 END), 0) AS overdue_inr,
+                    COUNT(*) AS total_count,
+                    COUNT(*) FILTER (WHERE status = 'PAID') AS paid_count,
+                    COUNT(*) FILTER (WHERE status = 'OVERDUE') AS overdue_count,
+                    AVG(EXTRACT(EPOCH FROM (paid_at - created_at)) / 86400.0) AS avg_collection_days
                 FROM commerce.invoices
                 WHERE (:organization_id IS NULL OR organization_id = :organization_id)
             """), {"organization_id": organization_id})).one()
@@ -2815,365 +2309,64 @@ class PlatformCommercialCatalogQueryService:
             }
 
     async def invoice_items(self, *, invoice_id: uuid.UUID) -> list[dict]:
-        """Return a bounded, explicitly projected invoice-item list."""
         rows = list((await self.db.scalars(select(InvoiceItem).options(load_only(
             InvoiceItem.id, InvoiceItem.invoice_id, InvoiceItem.description,
-            InvoiceItem.amount, InvoiceItem.quantity,
+            InvoiceItem.amount, InvoiceItem.quantity, InvoiceItem.commercial_offer_code,
+            InvoiceItem.commercial_offer_version_id, InvoiceItem.tax_rate,
+            InvoiceItem.tax_amount,
         )).where(
             InvoiceItem.invoice_id == invoice_id
-        ).order_by(
-            InvoiceItem.id.asc()
-        ).limit(500))).all())
+        ).order_by(InvoiceItem.id.asc()).limit(500))).all())
         return [{
             "id": str(item.id),
             "description": item.description,
-            "amount": float(item.amount),
+            "amount": float(item.amount or 0),
             "quantity": item.quantity or 1,
+            "offer_code": item.commercial_offer_code,
+            "offer_version_id": str(item.commercial_offer_version_id) if item.commercial_offer_version_id else None,
+            "tax_rate": float(item.tax_rate or 0),
+            "tax_amount": float(item.tax_amount or 0),
         } for item in rows]
 
-    async def plan_feature_assignments(self, *, plan_id: uuid.UUID) -> dict | None:
-        """Return typed feature assignments for one plan without lazy joins."""
-        exists = await self.db.scalar(select(SubscriptionPlan.id).where(
-            SubscriptionPlan.id == plan_id
-        ))
-        if exists is None:
-            return None
+    async def contract_health_summary(self) -> dict[str, int]:
         rows = (await self.db.execute(select(
-            PlanFeature.feature_id,
-            PlanFeature.enabled,
-            PlanFeature.value_type.label("mapping_value_type"),
-            PlanFeature.entitlement_value,
-            PlanFeature.scope_type.label("mapping_scope_type"),
-            PlanFeature.enforcement_mode.label("mapping_enforcement_mode"),
-            PlanFeature.hard_ceiling,
-            FeatureCatalog.key,
-            FeatureCatalog.name,
-            FeatureCatalog.value_type.label("feature_value_type"),
-            FeatureCatalog.scope_type.label("feature_scope_type"),
-            FeatureCatalog.enforcement_mode.label("feature_enforcement_mode"),
-            FeatureCatalog.allowed_values,
-            FeatureCatalog.unit,
-            FeatureCatalog.period,
-            FeatureCatalog.category_order,
-            FeatureCatalog.feature_order,
-        ).join(
-            FeatureCatalog, FeatureCatalog.id == PlanFeature.feature_id
-        ).where(
-            PlanFeature.plan_id == plan_id
-        ).order_by(
-            FeatureCatalog.category_order.asc(),
-            FeatureCatalog.feature_order.asc(),
-            FeatureCatalog.id.asc(),
-        ).limit(2000))).mappings().all()
-        items = []
-        for row in rows:
-            value_type = row["feature_value_type"] or row["mapping_value_type"] or "BOOLEAN"
-            raw = row["entitlement_value"]
-            value = raw.get("value") if isinstance(raw, dict) and "value" in raw else (
-                None if value_type == "LIMIT" else row["enabled"]
-            )
-            ceiling = row["hard_ceiling"]
-            if isinstance(ceiling, dict):
-                ceiling = ceiling.get("value")
-            items.append({
-                "feature_key": row["key"],
-                "name": row["name"],
-                "value_type": value_type,
-                "value": value,
-                "scope_type": row["mapping_scope_type"] or row["feature_scope_type"],
-                "enforcement_mode": row["mapping_enforcement_mode"] or row["feature_enforcement_mode"],
-                "hard_ceiling": ceiling,
-                "allowed_values": row["allowed_values"] or [],
-                "unit": row["unit"],
-                "period": row["period"],
-            })
-        return {"items": items}
-
-    async def plan_template_versions(
-        self,
-        *,
-        plan_id: uuid.UUID,
-        cursor: str | None = None,
-        limit: int = 25,
-    ) -> dict | None:
-        """Return a cursor page of immutable plan-template revisions."""
-        exists = await self.db.scalar(select(SubscriptionPlan.id).where(
-            SubscriptionPlan.id == plan_id
-        ))
-        if exists is None:
-            return None
-        bounded_limit = max(1, min(int(limit), 100))
-        statement = select(CommercialTemplateVersion).options(load_only(
-            CommercialTemplateVersion.id, CommercialTemplateVersion.version,
-            CommercialTemplateVersion.lifecycle_status,
-            CommercialTemplateVersion.change_type,
-            CommercialTemplateVersion.snapshot_json,
-            CommercialTemplateVersion.reason,
-            CommercialTemplateVersion.actor_user_id,
-            CommercialTemplateVersion.created_at,
-        )).where(
-            CommercialTemplateVersion.resource_type == "PLAN",
-            CommercialTemplateVersion.resource_id == plan_id,
-        )
-        if cursor:
-            try:
-                decoded = base64.urlsafe_b64decode(cursor.encode()).decode()
-                parts = decoded.split("|")
-                if len(parts) not in {2, 3}:
-                    raise ValueError("cursor shape")
-                created_before = datetime.fromisoformat(parts[0])
-                version_before = int(parts[1])
-                id_before = uuid.UUID(parts[2]) if len(parts) == 3 else None
-            except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
-                raise ValueError("INVALID_CURSOR") from exc
-            if id_before is None:
-                statement = statement.where(or_(
-                    CommercialTemplateVersion.created_at < created_before,
-                    and_(
-                        CommercialTemplateVersion.created_at == created_before,
-                        CommercialTemplateVersion.version < version_before,
-                    ),
-                ))
-            else:
-                statement = statement.where(or_(
-                    CommercialTemplateVersion.created_at < created_before,
-                    and_(
-                        CommercialTemplateVersion.created_at == created_before,
-                        CommercialTemplateVersion.version < version_before,
-                    ),
-                    and_(
-                        CommercialTemplateVersion.created_at == created_before,
-                        CommercialTemplateVersion.version == version_before,
-                        CommercialTemplateVersion.id < id_before,
-                    ),
-                ))
-        rows = list((await self.db.scalars(statement.order_by(
-            CommercialTemplateVersion.created_at.desc(),
-            CommercialTemplateVersion.version.desc(),
-            CommercialTemplateVersion.id.desc(),
-        ).limit(bounded_limit + 1))).all())
-        page = rows[:bounded_limit]
-        next_cursor = None
-        if len(rows) > bounded_limit and page:
-            last = page[-1]
-            next_cursor = base64.urlsafe_b64encode(
-                f"{last.created_at.isoformat()}|{last.version}|{last.id}".encode()
-            ).decode()
-        return {
-            "items": [{
-                "id": str(row.id), "version": row.version,
-                "lifecycle_status": row.lifecycle_status,
-                "change_type": row.change_type,
-                "snapshot": row.snapshot_json, "reason": row.reason,
-                "actor_user_id": str(row.actor_user_id) if row.actor_user_id else None,
-                "created_at": row.created_at,
-            } for row in page],
-            "next_cursor": next_cursor,
-        }
-
-    async def addon_template_versions(
-        self,
-        *,
-        addon_id: uuid.UUID,
-        cursor: str | None = None,
-        limit: int = 25,
-    ) -> dict | None:
-        """Return a cursor page of immutable add-on-template revisions."""
-        exists = await self.db.scalar(select(Addon.id).where(Addon.id == addon_id))
-        if exists is None:
-            return None
-        bounded_limit = max(1, min(int(limit), 100))
-        statement = select(CommercialTemplateVersion).options(load_only(
-            CommercialTemplateVersion.id, CommercialTemplateVersion.version,
-            CommercialTemplateVersion.lifecycle_status,
-            CommercialTemplateVersion.change_type,
-            CommercialTemplateVersion.snapshot_json,
-            CommercialTemplateVersion.reason,
-            CommercialTemplateVersion.actor_user_id,
-            CommercialTemplateVersion.created_at,
-        )).where(
-            CommercialTemplateVersion.resource_type == "ADDON",
-            CommercialTemplateVersion.resource_id == addon_id,
-        )
-        if cursor:
-            try:
-                parts = base64.urlsafe_b64decode(cursor.encode()).decode().split("|")
-                if len(parts) not in {2, 3}:
-                    raise ValueError("cursor shape")
-                created_before = datetime.fromisoformat(parts[0])
-                version_before = int(parts[1])
-                id_before = uuid.UUID(parts[2]) if len(parts) == 3 else None
-            except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
-                raise ValueError("INVALID_CURSOR") from exc
-            seek = [
-                CommercialTemplateVersion.created_at < created_before,
-                and_(
-                    CommercialTemplateVersion.created_at == created_before,
-                    CommercialTemplateVersion.version < version_before,
-                ),
-            ]
-            if id_before is not None:
-                seek.append(and_(
-                    CommercialTemplateVersion.created_at == created_before,
-                    CommercialTemplateVersion.version == version_before,
-                    CommercialTemplateVersion.id < id_before,
-                ))
-            statement = statement.where(or_(*seek))
-        rows = list((await self.db.scalars(statement.order_by(
-            CommercialTemplateVersion.created_at.desc(),
-            CommercialTemplateVersion.version.desc(),
-            CommercialTemplateVersion.id.desc(),
-        ).limit(bounded_limit + 1))).all())
-        page = rows[:bounded_limit]
-        next_cursor = None
-        if len(rows) > bounded_limit and page:
-            last = page[-1]
-            next_cursor = base64.urlsafe_b64encode(
-                f"{last.created_at.isoformat()}|{last.version}|{last.id}".encode()
-            ).decode()
-        return {
-            "items": [{
-                "id": str(row.id), "version": row.version,
-                "lifecycle_status": row.lifecycle_status,
-                "change_type": row.change_type,
-                "snapshot": row.snapshot_json, "reason": row.reason,
-                "actor_user_id": str(row.actor_user_id) if row.actor_user_id else None,
-                "created_at": row.created_at,
-            } for row in page],
-            "next_cursor": next_cursor,
-        }
-
-    async def subscription_health_summary(self) -> dict[str, int]:
-        """Return the fixed subscription-status summary used by admin dashboards."""
-        rows = (await self.db.execute(select(
-            OrganizationSubscription.status,
-            func.count(OrganizationSubscription.id),
-        ).group_by(
-            OrganizationSubscription.status
-        ))).all()
+            CommercialContract.status,
+            func.count(CommercialContract.id),
+        ).group_by(CommercialContract.status))).all()
         counts = {str(status): int(count or 0) for status, count in rows}
         return {
-            status: counts.get(status, 0)
-            for status in ("ACTIVE", "TRIAL", "GRACE_PERIOD", "SUSPENDED", "EXPIRED", "CANCELLED")
+            "ACTIVE": counts.get("ACTIVE", 0),
+            "PENDING_PAYMENT": counts.get("PENDING_PAYMENT", 0),
+            "CANCELLED": counts.get("CANCELLED", 0),
+            "EXPIRED": counts.get("EXPIRED", 0),
+            "AMENDMENT_PENDING": counts.get("AMENDMENT_PENDING", 0),
         }
 
     async def list_addons(self) -> list[dict]:
-        """Return the compatibility add-on catalogue as an explicit projection."""
-        addon_columns = (
-            Addon.id, Addon.key, Addon.name, Addon.description,
-            Addon.addon_type, Addon.short_description, Addon.image_url,
-            Addon.price_inr, Addon.min_price_inr, Addon.max_price_inr,
-            Addon.billing_unit, Addon.price_unit, Addon.scope_type,
-            Addon.consumption_model, Addon.unit_type, Addon.final_price,
-            Addon.available_for_plans, Addon.is_optional_for_plan,
-            Addon.included_in_plan, Addon.is_active, Addon.version,
-            Addon.lifecycle_status, Addon.effective_at, Addon.retired_at,
-            Addon.created_at, Addon.features_spec, Addon.hardware_spec,
-            Addon.staff_spec, Addon.inclusions, Addon.exclusions,
-            Addon.consumables_cost, Addon.template_types,
-        )
-        addons = list((await self.db.scalars(select(Addon).options(
-            load_only(*addon_columns)
-        ).order_by(Addon.name.asc(), Addon.id.asc()).limit(200))).all())
-        if not addons:
-            return []
-
-        feature_rows = (await self.db.execute(
-            select(AddonFeature, FeatureCatalog)
-            .join(FeatureCatalog, FeatureCatalog.id == AddonFeature.feature_id)
-            .where(AddonFeature.addon_id.in_([addon.id for addon in addons]))
-            .order_by(
-                AddonFeature.addon_id.asc(),
-                FeatureCatalog.category_order.asc(),
-                FeatureCatalog.feature_order.asc(),
-                FeatureCatalog.id.asc(),
-            )
-        )).all()
-        assignments: dict[uuid.UUID, list[dict]] = {addon.id: [] for addon in addons}
-        feature_ids: dict[uuid.UUID, list[uuid.UUID]] = {addon.id: [] for addon in addons}
-        for mapping, feature in feature_rows:
-            feature_ids[mapping.addon_id].append(feature.id)
-            raw_value = mapping.entitlement_value
-            value = raw_value.get("value") if isinstance(raw_value, dict) else raw_value
-            if value is None and (mapping.value_type or feature.value_type) == "BOOLEAN":
-                value = True
-            assignments[mapping.addon_id].append({
-                "feature_key": feature.key,
-                "name": feature.name,
-                "value_type": mapping.value_type or feature.value_type or "BOOLEAN",
-                "value": value,
-                "scope_type": mapping.scope_type or feature.scope_type,
-                "operation": mapping.operation or "UNLOCK",
-                "validity_days": mapping.validity_days,
-                "stackable": mapping.stackable,
-                "max_quantity": mapping.max_quantity,
-                "allowed_values": feature.allowed_values or [],
-                "unit": feature.unit,
-                "period": feature.period,
-            })
-
-        def number(value):
-            return float(value) if value is not None else None
-
+        """List capacity offers from the canonical commercial catalogue."""
+        offers = list((await self.db.scalars(select(CommercialOffer).where(
+            CommercialOffer.product_family == "CAPACITY_ADDON",
+            CommercialOffer.lifecycle_status != "RETIRED",
+        ).order_by(CommercialOffer.display_order.asc(), CommercialOffer.code.asc()).limit(200))).all())
         return [{
-            "id": addon.id,
-            "key": addon.key,
-            "name": addon.name,
-            "description": addon.description,
-            "addon_type": addon.addon_type,
-            "short_description": addon.short_description,
-            "image_url": addon.image_url,
-            "price_inr": number(addon.price_inr),
-            "min_price_inr": number(addon.min_price_inr),
-            "max_price_inr": number(addon.max_price_inr),
-            "billing_unit": addon.billing_unit,
-            "price_unit": addon.price_unit,
-            "scope_type": addon.scope_type,
-            "consumption_model": addon.consumption_model,
-            "unit_type": addon.unit_type,
-            "final_price": number(addon.final_price),
-            "available_for_plans": addon.available_for_plans or [],
-            "is_optional_for_plan": addon.is_optional_for_plan,
-            "included_in_plan": addon.included_in_plan,
-            "is_active": addon.is_active,
-            "version": addon.version,
-            "lifecycle_status": addon.lifecycle_status,
-            "effective_at": addon.effective_at,
-            "retired_at": addon.retired_at,
-            "created_at": addon.created_at,
-            "feature_ids": [str(value) for value in feature_ids[addon.id]],
-            "feature_assignments": assignments[addon.id],
-            "features_spec": addon.features_spec or [],
-            "hardware_spec": addon.hardware_spec or [],
-            "staff_spec": addon.staff_spec or [],
-            "inclusions": addon.inclusions or [],
-            "exclusions": addon.exclusions or [],
-            "consumables_cost": float(addon.consumables_cost or 0),
-            "template_types": addon.template_types or [],
-        } for addon in addons]
+            "id": offer.id,
+            "key": offer.code,
+            "code": offer.code,
+            "name": offer.name,
+            "display_name": offer.display_name,
+            "description": offer.description,
+            "product_family": offer.product_family,
+            "scope_type": offer.scope_type,
+            "is_quote_only": offer.is_quote_only,
+            "lifecycle_status": offer.lifecycle_status,
+            "display_order": offer.display_order,
+        } for offer in offers]
 
     async def list_features(self) -> list[dict]:
-        """Return the compatibility feature catalogue as an explicit projection."""
-        feature_columns = (
-            FeatureCatalog.id, FeatureCatalog.key, FeatureCatalog.name,
-            FeatureCatalog.description, FeatureCatalog.category,
-            FeatureCatalog.category_order, FeatureCatalog.feature_order,
-            FeatureCatalog.is_active, FeatureCatalog.value_type,
-            FeatureCatalog.scope_type, FeatureCatalog.default_value,
-            FeatureCatalog.allowed_values, FeatureCatalog.unit,
-            FeatureCatalog.period, FeatureCatalog.enforcement_mode,
-            FeatureCatalog.version, FeatureCatalog.portal_routes,
-            FeatureCatalog.backend_operations, FeatureCatalog.required_permissions,
-            FeatureCatalog.metric_key, FeatureCatalog.dependencies,
-            FeatureCatalog.conflicts, FeatureCatalog.owner_console,
-            FeatureCatalog.owner_team, FeatureCatalog.risk_level,
-            FeatureCatalog.lifecycle_status, FeatureCatalog.replacement_key,
-        )
-        rows = list((await self.db.scalars(select(FeatureCatalog).options(
-            load_only(*feature_columns)
+        features = list((await self.db.scalars(select(FeatureCatalog).where(
+            FeatureCatalog.is_active.is_(True)
         ).order_by(
             FeatureCatalog.category_order.asc(),
-            FeatureCatalog.category.asc(),
             FeatureCatalog.feature_order.asc(),
             FeatureCatalog.name.asc(),
             FeatureCatalog.id.asc(),
@@ -3206,131 +2399,17 @@ class PlatformCommercialCatalogQueryService:
             "risk_level": feature.risk_level,
             "lifecycle_status": feature.lifecycle_status,
             "replacement_key": feature.replacement_key,
-        } for feature in rows]
+        } for feature in features]
 
-    async def list_subscription_plans(self, *, mrr_period: str) -> list[dict]:
-        plans = list(
-            (
-                await self.db.scalars(
-                    select(SubscriptionPlan)
-                    .order_by(SubscriptionPlan.display_order.asc())
-                    .limit(200)
-                )
-            ).all()
-        )
-        if not plans:
-            return []
-        plan_ids = [plan.id for plan in plans]
-        subscriber_rows = (
-            await self.db.execute(
-                select(
-                    OrganizationSubscription.plan_id,
-                    func.count(OrganizationSubscription.id),
-                )
-                .where(
-                    OrganizationSubscription.plan_id.in_(plan_ids),
-                    OrganizationSubscription.status.in_(["ACTIVE", "TRIAL"]),
-                )
-                .group_by(OrganizationSubscription.plan_id)
-            )
-        ).all()
-        mrr_rows = (
-            await self.db.execute(
-                select(
-                    OrganizationSubscription.plan_id,
-                    func.coalesce(func.sum(RevenueMetric.mrr), 0),
-                )
-                .join(
-                    RevenueMetric,
-                    RevenueMetric.organization_id
-                    == OrganizationSubscription.organization_id,
-                )
-                .where(
-                    OrganizationSubscription.plan_id.in_(plan_ids),
-                    RevenueMetric.period == mrr_period,
-                )
-                .group_by(OrganizationSubscription.plan_id)
-            )
-        ).all()
-        subscribers = {plan_id: int(count or 0) for plan_id, count in subscriber_rows}
-        mrr = {plan_id: float(value or 0) for plan_id, value in mrr_rows}
-        return [
-            {
-                "id": plan.id,
-                "name": plan.name,
-                "tagline": plan.tagline,
-                "description": plan.description,
-                "billing_model": plan.billing_model,
-                "currency": plan.currency,
-                "price_per_event": float(plan.price_per_event) if plan.price_per_event is not None else None,
-                "price_display": plan.price_display,
-                "max_events": plan.max_events,
-                "max_users": plan.max_users,
-                "max_registrations": plan.max_registrations,
-                "max_speakers": plan.max_speakers,
-                "max_sessions": plan.max_sessions,
-                "max_rooms": plan.max_rooms,
-                "max_ticket_categories": plan.max_ticket_categories,
-                "max_badge_templates": plan.max_badge_templates,
-                "max_certificate_templates": plan.max_certificate_templates,
-                "max_emails_per_event": plan.max_emails_per_event,
-                "storage_quota_mb": plan.storage_quota_mb,
-                "display_order": plan.display_order,
-                "is_popular": plan.is_popular,
-                "color_hex": plan.color_hex,
-                "is_active": plan.is_active,
-                "version": plan.version,
-                "lifecycle_status": plan.lifecycle_status,
-                "effective_at": plan.effective_at,
-                "retired_at": plan.retired_at,
-                "created_at": plan.created_at,
-                "subscribers_count": subscribers.get(plan.id, 0),
-                "mrr": mrr.get(plan.id, 0.0),
-            }
-            for plan in plans
-        ]
-
-    async def features_matrix(self) -> list[dict]:
-        features = list(
-            (
-                await self.db.scalars(
-                    select(FeatureCatalog)
-                    .where(FeatureCatalog.is_active.is_(True))
-                    .order_by(
-                        FeatureCatalog.category_order.asc(),
-                        FeatureCatalog.feature_order.asc(),
-                    )
-                    .limit(1000)
-                )
-            ).all()
-        )
-        categories: dict[str, dict] = {}
-        for feature in features:
-            category = feature.category or "GENERAL"
-            group = categories.setdefault(
-                category,
-                {
-                    "category": category,
-                    "category_name": category.replace("_", " ").title(),
-                    "features": [],
-                },
-            )
-            group["features"].append(
-                {
-                    "key": feature.key,
-                    "name": feature.name,
-                    "description": feature.description,
-                    "value_type": feature.value_type,
-                    "scope_type": feature.scope_type,
-                    "enforcement_mode": feature.enforcement_mode,
-                    "default_value": feature.default_value,
-                    "allowed_values": feature.allowed_values or [],
-                    "unit": feature.unit,
-                    "period": feature.period,
-                    "version": feature.version,
-                }
-            )
-        return list(categories.values())
+    async def addon_template_versions(
+        self,
+        *,
+        addon_id: uuid.UUID,
+        cursor: str | None = None,
+        limit: int = 25,
+    ) -> dict | None:
+        del addon_id, cursor, limit
+        return {"items": [], "next_cursor": None}
 
     async def get_announcement(self, *, announcement_id: uuid.UUID) -> GlobalAnnouncement | None:
         return await self.db.get(GlobalAnnouncement, announcement_id)

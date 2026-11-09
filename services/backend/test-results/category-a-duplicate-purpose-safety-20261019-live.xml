@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="17" time="44.412" timestamp="2026-10-19T10:44:04.345016+05:30" hostname="Vishal"><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[purpose]" time="19.373" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[scope]" time="1.251" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[event]" time="1.081" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[conflicting_markers]" time="1.166" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[missing_markers]" time="1.214" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[malformed_marker]" time="1.246" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[foreign_event_owner]" time="1.272" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[retired_parent]" time="0.945" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[owned_parent_for_global]" time="1.222" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[valid_global]" time="1.266"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.DataError'&gt;: invalid input for query argument $1: UUID('745ff320-6fd3-4347-9157-669d59026b... (expected str, got UUID)&#10;[SQL: &#10;        UPDATE abstract.abstract_forms&#10;        SET schema=jsonb_set(schema, '{template_id}', to_jsonb(CAST($1 AS text)), true),&#10;            version=version+1, updated_at=now()&#10;        WHERE schema-&gt;&gt;'template_id'=CAST($2 AS text)&#10;        RETURNING id, version - 1 AS previous_version, version AS resource_version&#10;    ]&#10;[parameters: (UUID('745ff320-6fd3-4347-9157-669d59026bb5'), UUID('891d1659-ba13-45c6-9ff1-ba53b6d2d702'))]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">asyncpg/protocol/prepared_stmt.pyx:175: in asyncpg.protocol.protocol.PreparedStatementState._encode_bind_msg
+    ???
+asyncpg/protocol/codecs/base.pyx:251: in asyncpg.protocol.protocol.Codec.encode
+    return self.encoder(self, settings, buf, obj)
+asyncpg/protocol/codecs/base.pyx:153: in asyncpg.protocol.protocol.Codec.encode_scalar
+    self.c_encoder(settings, buf, obj)
+asyncpg/pgproto/codecs/text.pyx:29: in asyncpg.pgproto.pgproto.text_encode
+    as_pg_string_and_size(settings, obj, &amp;str, &amp;size)
+asyncpg/pgproto/codecs/text.pyx:12: in asyncpg.pgproto.pgproto.as_pg_string_and_size
+    raise TypeError('expected str, got {}'.format(type(obj).__name__))
+E   TypeError: expected str, got UUID
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:184: in bind_execute
+    ???
+asyncpg/protocol/prepared_stmt.pyx:204: in asyncpg.protocol.protocol.PreparedStatementState._encode_bind_msg
+    ???
+E   asyncpg.exceptions.DataError: invalid input for query argument $1: UUID('745ff320-6fd3-4347-9157-669d59026b... (expected str, got UUID)
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.DataError'&gt;: invalid input for query argument $1: UUID('745ff320-6fd3-4347-9157-669d59026b... (expected str, got UUID)
+
+The above exception was the direct cause of the following exception:
+tests\test_duplicate_catalogue_purpose_safety.py:73: in test_duplicate_mapping_preserves_operational_identity
+    result = await conn.run_sync(reconcile)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\engine.py:888: in run_sync
+    return await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_duplicate_catalogue_purpose_safety.py:60: in reconcile
+    return _reconcile_template(connection, source_id, replacement_id, actor_id,
+scripts\reconcile_catalogue_duplicates.py:193: in _reconcile_template
+    abstract_rows = connection.execute(text("""
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.DataError'&gt;: invalid input for query argument $1: UUID('745ff320-6fd3-4347-9157-669d59026b... (expected str, got UUID)
+E   [SQL: 
+E           UPDATE abstract.abstract_forms
+E           SET schema=jsonb_set(schema, '{template_id}', to_jsonb(CAST($1 AS text)), true),
+E               version=version+1, updated_at=now()
+E           WHERE schema-&gt;&gt;'template_id'=CAST($2 AS text)
+E           RETURNING id, version - 1 AS previous_version, version AS resource_version
+E       ]
+E   [parameters: (UUID('745ff320-6fd3-4347-9157-669d59026bb5'), UUID('891d1659-ba13-45c6-9ff1-ba53b6d2d702'))]
+E   (Background on this error at: https://sqlalche.me/e/20/dbapi)</failure></testcase><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_duplicate_mapping_preserves_operational_identity[valid_event]" time="1.277"><failure message="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.DataError'&gt;: invalid input for query argument $1: UUID('c2b91d01-3519-47ca-b3d4-f09ca0cce5... (expected str, got UUID)&#10;[SQL: &#10;        UPDATE abstract.abstract_forms&#10;        SET schema=jsonb_set(schema, '{template_id}', to_jsonb(CAST($1 AS text)), true),&#10;            version=version+1, updated_at=now()&#10;        WHERE schema-&gt;&gt;'template_id'=CAST($2 AS text)&#10;        RETURNING id, version - 1 AS previous_version, version AS resource_version&#10;    ]&#10;[parameters: (UUID('c2b91d01-3519-47ca-b3d4-f09ca0cce51a'), UUID('713c1e1b-6490-401d-84d9-a917a185e738'))]&#10;(Background on this error at: https://sqlalche.me/e/20/dbapi)">asyncpg/protocol/prepared_stmt.pyx:175: in asyncpg.protocol.protocol.PreparedStatementState._encode_bind_msg
+    ???
+asyncpg/protocol/codecs/base.pyx:251: in asyncpg.protocol.protocol.Codec.encode
+    return self.encoder(self, settings, buf, obj)
+asyncpg/protocol/codecs/base.pyx:153: in asyncpg.protocol.protocol.Codec.encode_scalar
+    self.c_encoder(settings, buf, obj)
+asyncpg/pgproto/codecs/text.pyx:29: in asyncpg.pgproto.pgproto.text_encode
+    as_pg_string_and_size(settings, obj, &amp;str, &amp;size)
+asyncpg/pgproto/codecs/text.pyx:12: in asyncpg.pgproto.pgproto.as_pg_string_and_size
+    raise TypeError('expected str, got {}'.format(type(obj).__name__))
+E   TypeError: expected str, got UUID
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv\Lib\site-packages\asyncpg\prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:184: in bind_execute
+    ???
+asyncpg/protocol/prepared_stmt.pyx:204: in asyncpg.protocol.protocol.PreparedStatementState._encode_bind_msg
+    ???
+E   asyncpg.exceptions.DataError: invalid input for query argument $1: UUID('c2b91d01-3519-47ca-b3d4-f09ca0cce5... (expected str, got UUID)
+
+The above exception was the direct cause of the following exception:
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: &lt;class 'asyncpg.exceptions.DataError'&gt;: invalid input for query argument $1: UUID('c2b91d01-3519-47ca-b3d4-f09ca0cce5... (expected str, got UUID)
+
+The above exception was the direct cause of the following exception:
+tests\test_duplicate_catalogue_purpose_safety.py:73: in test_duplicate_mapping_preserves_operational_identity
+    result = await conn.run_sync(reconcile)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\ext\asyncio\engine.py:888: in run_sync
+    return await greenlet_spawn(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_duplicate_catalogue_purpose_safety.py:60: in reconcile
+    return _reconcile_template(connection, source_id, replacement_id, actor_id,
+scripts\reconcile_catalogue_duplicates.py:193: in _reconcile_template
+    abstract_rows = connection.execute(text("""
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+.venv\Lib\site-packages\sqlalchemy\sql\elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) &lt;class 'asyncpg.exceptions.DataError'&gt;: invalid input for query argument $1: UUID('c2b91d01-3519-47ca-b3d4-f09ca0cce5... (expected str, got UUID)
+E   [SQL: 
+E           UPDATE abstract.abstract_forms
+E           SET schema=jsonb_set(schema, '{template_id}', to_jsonb(CAST($1 AS text)), true),
+E               version=version+1, updated_at=now()
+E           WHERE schema-&gt;&gt;'template_id'=CAST($2 AS text)
+E           RETURNING id, version - 1 AS previous_version, version AS resource_version
+E       ]
+E   [parameters: (UUID('c2b91d01-3519-47ca-b3d4-f09ca0cce51a'), UUID('713c1e1b-6490-401d-84d9-a917a185e738'))]
+E   (Background on this error at: https://sqlalche.me/e/20/dbapi)</failure></testcase><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_category_mapping_rejects_invalid_owned_references[global_template]" time="1.310" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_category_mapping_rejects_invalid_owned_references[foreign_event]" time="1.253" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_category_mapping_rejects_invalid_owned_references[valid_owned]" time="1.220" /><testcase classname="tests.test_duplicate_catalogue_purpose_safety" name="test_category_mapping_rejects_invalid_owned_references[valid_global]" time="1.280" /><testcase classname="tests.test_legacy_support_retirement" name="test_retirement_is_exact_idempotent_and_audited" time="0.253" /><testcase classname="tests.test_legacy_support_retirement" name="test_audit_failure_rolls_back_retirement" time="2.605" /></testsuite></testsuites>

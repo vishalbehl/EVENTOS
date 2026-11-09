@@ -1,0 +1,18 @@
+{
+  "status": "FAILED",
+  "run_id": "288f5b30670046f081f3eacea3c9fefb",
+  "database": "category_a_restore_20261020_288f5b306700",
+  "environment": "local_fresh_rehearsal",
+  "applied_history_rewritten": false,
+  "applications_workers_providers": "NOT_STARTED",
+  "production_acceptance": "NOT_RUN",
+  "checks": [],
+  "child_failure": {
+    "returncode": 1,
+    "output_sha256": "24181bdbb5d10959acb1db0ae03754aec8bca46618752adcd84c2c2b99fed9d9",
+    "diagnostic": "sqlalchemy.exc.IntegrityError: (psycopg2.errors.UniqueViolation) could not create unique index \"uq_agenda_room_types_global_code\""
+  },
+  "error_type": "RuntimeError",
+  "database_quarantined": true,
+  "completed_at": "2026-10-20T16:56:01.287857+00:00"
+}

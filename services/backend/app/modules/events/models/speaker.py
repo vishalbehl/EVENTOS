@@ -81,15 +81,20 @@ class Speaker(Base, SoftDeleteMixin):
     photo_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     social_links: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     research_interests: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True)
+    programme_availability: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    programme_custom_fields: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    programme_travel_details: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
 
     # ── Upload Token (the heart of speaker auth) ──────────
     # Unique token embedded in speaker's email link
     upload_token: Mapped[str] = mapped_column(
         String(128), unique=True, nullable=False, index=True
-    )
-    # Human-readable code for kiosk access (e.g. 8-char hex)
-    speaker_code: Mapped[str] = mapped_column(
-        String(20), unique=True, nullable=False, index=True
     )
     token_expires_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True

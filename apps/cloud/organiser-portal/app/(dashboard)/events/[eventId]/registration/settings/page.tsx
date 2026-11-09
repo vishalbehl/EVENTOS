@@ -1,21 +1,29 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   SlidersHorizontal, Globe, Clock, ShieldCheck, Mail, Phone, 
   MessageSquare, FileText, CheckCircle2, AlertCircle, Save, 
   ExternalLink, Copy, Check, Plus, Trash2, Upload, Loader2,
-  Bell, FileCheck, Tag, Info, HelpCircle, UserCheck, Lock
+  Bell, FileCheck, Tag, Info, HelpCircle, UserCheck, Lock,
+  Download, Eye, ArrowRight, X, Edit3, Layers
 } from 'lucide-react'
 import Link from 'next/link'
-import { useEvent, useUpdateEvent } from '@/hooks/useEvents'
+import { useUpdateEvent } from '@/hooks/useEvents'
+import { useEventEditSession } from '@/hooks/useEventEditSession'
+import { ScopedEventEditor } from '@/components/organizer/events/ScopedEventEditor'
 import { apiClient } from '@/lib/api-client'
 import { toast } from 'sonner'
 import { useOperationAccess } from '@/lib/capabilities'
+import { organiserFormService } from '@/services/form-template-service'
+import { useFormConfigSave } from '@/hooks/useFormConfigSave'
+import { FormTemplate, FormRenderer } from '@eventos/form-builder-studio'
+import { uploadAndWaitForScan, requiresNewUploadAttempt } from '@/services/scan-gated-upload-service'
 
 const SETTINGS_TABS = [
+  { id: 'form-blueprint', label: 'Default Form Blueprint', icon: FileCheck },
   { id: 'intake',        label: 'Intake & Timeline',    icon: Clock },
   { id: 'policies',      label: 'Approval & Policies',  icon: UserCheck },
   { id: 'support',       label: 'Support & Help Desk',  icon: Phone },
@@ -25,16 +33,40 @@ const SETTINGS_TABS = [
 
 export default function RegistrationSettingsPage() {
   const { eventId } = useParams()
+  return <ScopedEventEditor eventId={String(eventId)}><RegistrationSettingsEditor /></ScopedEventEditor>
+}
+
+function RegistrationSettingsEditor() {
+  const { eventId } = useParams()
   const eid = eventId as string
   const formAccess = useOperationAccess('registration.forms.manage')
-  const { data: event, isLoading: eventLoading } = useEvent(eid)
-  const updateEvent = useUpdateEvent(eid)
+  const paymentAccess = useOperationAccess('registration.payments.manage')
+  const edit = useEventEditSession(eid)
+  const event = edit.event
+  const [loadedEvent, setLoadedEvent] = useState<typeof event>()
+  const eventLoading = !edit.ready
+  const updateEvent = useUpdateEvent(eid, edit.version)
+  const formSave = useFormConfigSave(eid)
 
-  const [activeTab, setActiveTab] = useState('intake')
+  const [activeTab, setActiveTab] = useState('form-blueprint')
   const [isLive, setIsLive] = useState(false)
+  const [formVersion, setFormVersion] = useState<number | null>(null)
+  const publicationReceipt = useRef<{ fingerprint: string; key: string } | null>(null)
   const [togglingLive, setTogglingLive] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
   const [saving, setSaving] = useState(false)
+
+  // 0. Default Form Blueprint
+  const [activeTemplateId, setActiveTemplateId] = useState<string>('')
+  const [activeFormFieldsCount, setActiveFormFieldsCount] = useState<number>(0)
+  const [availableTemplates, setAvailableTemplates] = useState<FormTemplate[]>([])
+  const [nextBlueprintCursor, setNextBlueprintCursor] = useState<string | null>(null)
+  const [loadingBlueprints, setLoadingBlueprints] = useState(false)
+  const [loadingMoreBlueprints, setLoadingMoreBlueprints] = useState(false)
+  const [blueprintLoadError, setBlueprintLoadError] = useState<string | null>(null)
+  const [previewBlueprint, setPreviewBlueprint] = useState<FormTemplate | null>(null)
+  const [applyingBlueprintId, setApplyingBlueprintId] = useState<string | null>(null)
+  const [isLibraryOpen, setIsLibraryOpen] = useState(false)
 
   // 1. Intake & Timeline
   const [regCutoffDate, setRegCutoffDate] = useState('')
@@ -74,6 +106,7 @@ export default function RegistrationSettingsPage() {
   const [uploadingProgram, setUploadingProgram] = useState(false)
   const [uploadingGuidelines, setUploadingGuidelines] = useState(false)
   const [uploadingTemplate, setUploadingTemplate] = useState(false)
+  const uploadRetryReceipts = useRef(new Map<string, { fingerprint: string; key: string }>())
 
   // Load Event Settings
   useEffect(() => {
@@ -109,36 +142,122 @@ export default function RegistrationSettingsPage() {
       setProgramUrl(rs.program_url || '')
       setSpeakerGuidelinesUrl(rs.speaker_guidelines_url || '')
       setPresentationTemplateUrl(rs.presentation_template_url || '')
+      setLoadedEvent(event)
     }
   }, [event])
 
-  // Load Live Portal Status
+  // Load Live Portal Status & Blueprint Templates
   useEffect(() => {
+    const controller = new AbortController()
     const fetchPortalStatus = async () => {
       try {
-        const res = await apiClient.get<any>(`/events/${eid}/registration/form-config?t=${Date.now()}`)
+        const res = await apiClient.get<any>(`/events/${eid}/registration/form-config`, { signal: controller.signal })
+        if (!edit.isCurrent() || controller.signal.aborted) return
         setIsLive(res.is_live || false)
+        setFormVersion(Number.isInteger(res.version) && res.version > 0 ? res.version : null)
+        if (res.template_id) {
+          setActiveTemplateId(String(res.template_id))
+        }
+        if (Array.isArray(res.fields)) {
+          setActiveFormFieldsCount(res.fields.length)
+        }
       } catch (err) {
         console.error('Failed to fetch portal status:', err)
       }
     }
+
+    const loadBlueprints = async () => {
+      setLoadingBlueprints(true)
+      setBlueprintLoadError(null)
+      try {
+        const page = await organiserFormService.listTemplatePage({
+          category_key: 'registration', event_id: eid, page_size: '50',
+        })
+        setAvailableTemplates(page.items || [])
+        setNextBlueprintCursor(page.has_next ? page.next_cursor || null : null)
+      } catch (err) {
+        setAvailableTemplates([])
+        setNextBlueprintCursor(null)
+        setBlueprintLoadError('The registration template catalogue is unavailable. Reload before selecting a form.')
+        console.error('Failed to load form blueprints:', err)
+      } finally {
+        setLoadingBlueprints(false)
+      }
+    }
+
     if (eid) {
       fetchPortalStatus()
+      loadBlueprints()
     }
+    return () => controller.abort()
   }, [eid])
+
+  const loadMoreBlueprints = async () => {
+    if (!nextBlueprintCursor || loadingMoreBlueprints) return
+    setLoadingMoreBlueprints(true)
+    try {
+      const page = await organiserFormService.listTemplatePage({
+        category_key: 'registration', event_id: eid,
+        cursor: nextBlueprintCursor, page_size: '50',
+      })
+      if (!edit.isCurrent()) return
+      setAvailableTemplates((current) => {
+        const seen = new Set(current.map((template) => template.id))
+        return [...current, ...page.items.filter((template) => !seen.has(template.id))]
+      })
+      setNextBlueprintCursor(page.has_next ? page.next_cursor || null : null)
+    } catch (err) {
+      if (edit.isCurrent()) {
+        setBlueprintLoadError('More templates could not be loaded. Your current selection is unchanged.')
+      }
+    } finally {
+      if (edit.isCurrent()) setLoadingMoreBlueprints(false)
+    }
+  }
+
+  const handleSelectDefaultForm = async (tpl: FormTemplate) => {
+    if (!eid || applyingBlueprintId || togglingLive || !formAccess.enabled) return
+    setApplyingBlueprintId(tpl.id)
+    try {
+      const saved = await formSave.save(formVersion, {
+        template_id: tpl.id.startsWith('tpl_') ? tpl.slug : tpl.id,
+        fields: tpl.fields || [],
+        settings: tpl.settings || {},
+      })
+      if (!saved || !edit.isCurrent()) return
+      setFormVersion(saved.version)
+      setIsLive(saved.is_live)
+      setActiveTemplateId(saved.template_id || '')
+      setActiveFormFieldsCount(saved.fields?.length || 0)
+      toast.success(`"${tpl.name}" is now the active default registration form! Reflected on event portal. 🚀`)
+    } catch (err: any) {
+      if (edit.isCurrent()) toast.error(err.message || 'Failed to apply default registration form. Reload if its version has changed.')
+    } finally {
+      if (edit.isCurrent()) setApplyingBlueprintId(null)
+    }
+  }
 
   const portalUrl = `${process.env.NEXT_PUBLIC_REGISTRATION_URL || 'http://localhost:3003'}/${eid}`
 
   const handleToggleLive = async () => {
+    if (!formVersion || togglingLive || formSave.pending || applyingBlueprintId || !formAccess.enabled) {
+      toast.error('Reload the current portal state before changing publication.')
+      return
+    }
     setTogglingLive(true)
     try {
-      const res = await apiClient.post<any>(`/events/${eid}/registration/form-config`, {
-        is_live: !isLive
-      })
+      const fingerprint = JSON.stringify([edit.scope, formVersion, !isLive])
+      if (publicationReceipt.current?.fingerprint !== fingerprint) publicationReceipt.current = { fingerprint, key: crypto.randomUUID() }
+      const res = await apiClient.post<any>(`/events/${eid}/registration/portal-status`, {
+        is_live: !isLive,
+      }, { headers: { 'If-Match': String(formVersion), 'Idempotency-Key': publicationReceipt.current.key } })
+      if (!edit.isCurrent()) return
+      publicationReceipt.current = null
       setIsLive(res.is_live)
+      setFormVersion(res.version)
       toast.success(res.is_live ? 'Registration portal is now LIVE 🚀' : 'Registration portal set to Draft (Offline)')
-    } catch {
-      toast.error('Failed to update registration portal live status.')
+    } catch (error: any) {
+      if (edit.isCurrent()) toast.error(error.message || 'Failed to update registration portal live status.')
     } finally {
       setTogglingLive(false)
     }
@@ -190,36 +309,43 @@ export default function RegistrationSettingsPage() {
   const handleFileUpload = async (file: File, type: 'program' | 'guidelines' | 'template') => {
     const setter = type === 'program' ? setUploadingProgram : type === 'guidelines' ? setUploadingGuidelines : setUploadingTemplate
     setter(true)
+    let requestReceiptKey: string | undefined
     try {
-      const uploadForm = new FormData()
-      uploadForm.append('file', file)
-      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
-      const res = await fetch(`${apiBase}/api/v1/portal/registration/${eid}/upload`, {
-        method: 'POST',
-        body: uploadForm
-      })
-      if (!res.ok) throw new Error('Upload failed')
-      const data = await res.json()
-      if (data.status === 'success' && data.url) {
-        if (type === 'program') setProgramUrl(data.url)
-        else if (type === 'guidelines') setSpeakerGuidelinesUrl(data.url)
-        else if (type === 'template') setPresentationTemplateUrl(data.url)
-        toast.success(`${type.toUpperCase()} file uploaded successfully!`)
+      const fingerprint = [eid, type, file.name, file.size, file.lastModified, file.type].join(':')
+      let receipt = uploadRetryReceipts.current.get(type)
+      if (!receipt || receipt.fingerprint !== fingerprint) {
+        receipt = { fingerprint, key: crypto.randomUUID() }
+        uploadRetryReceipts.current.set(type, receipt)
       }
-    } catch {
-      toast.error(`Failed to upload ${type} document.`)
+      requestReceiptKey = receipt.key
+      const data = await uploadAndWaitForScan({
+        eventId: eid,
+        file,
+        staffProgram: true,
+        idempotencyKey: receipt.key,
+      })
+      if (!edit.isCurrent()) return
+      if (type === 'program') setProgramUrl(data.managed_url)
+      else if (type === 'guidelines') setSpeakerGuidelinesUrl(data.managed_url)
+      else setPresentationTemplateUrl(data.managed_url)
+      uploadRetryReceipts.current.delete(type)
+      toast.success(`${type.toUpperCase()} file uploaded and security checked.`)
+    } catch (error: any) {
+      if (edit.isCurrent()) {
+        if (requiresNewUploadAttempt(error) && uploadRetryReceipts.current.get(type)?.key === requestReceiptKey) uploadRetryReceipts.current.delete(type)
+        toast.error(error?.message || `Failed to upload ${type} document.`)
+      }
     } finally {
-      setter(false)
+      if (edit.isCurrent()) setter(false)
     }
   }
 
   const handleSaveAllSettings = async () => {
+    if (!edit.ready || saving || updateEvent.isPending || !formAccess.enabled || !paymentAccess.enabled) return
     setSaving(true)
     try {
-      const currentSettings = event?.registration_settings || {}
-      await updateEvent.mutateAsync({
+      const saved = await updateEvent.mutateAsync({
         registration_settings: {
-          ...currentSettings,
           registration_cutoff_date: regCutoffDate,
           edit_cutoff_days: Number(editCutoffDays),
           edit_cutoff_date: editCutoffDate,
@@ -243,16 +369,19 @@ export default function RegistrationSettingsPage() {
           presentation_template_url: presentationTemplateUrl,
         }
       })
+      if (!edit.complete(saved)) return
       toast.success('Registration settings saved successfully! ⚙️')
-    } catch {
-      toast.error('Failed to save registration settings.')
+    } catch (error: any) {
+      if (edit.isCurrent()) toast.error(error.message || 'Failed to save registration settings. Your edits are retained.')
     } finally {
       setSaving(false)
     }
   }
 
+  if (!edit.ready || (!edit.dirty && loadedEvent !== event)) return <p role="status">{edit.error || 'Loading event settings…'}</p>
   return (
-    <div className="w-full max-w-full overflow-x-hidden p-6 space-y-6">
+    <fieldset disabled={saving || updateEvent.isPending || edit.reloading || formSave.pending || togglingLive} className="w-full max-w-full overflow-x-hidden p-6 space-y-6" onChangeCapture={edit.markDirty} onClickCapture={edit.markDirty}>
+      <button type="button" disabled={saving || edit.reloading} onClick={() => void edit.reload()}>Discard changes and reload current settings</button>
       {/* ── Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
@@ -279,7 +408,7 @@ export default function RegistrationSettingsPage() {
           <button
             type="button"
             onClick={handleSaveAllSettings}
-            disabled={saving}
+            disabled={saving || !formAccess.enabled || !paymentAccess.enabled || !edit.ready}
             className="inline-flex items-center gap-2 rounded-lg bg-[var(--pri)] px-4 py-2 text-xs font-bold text-[var(--primary-contrast)] shadow-md shadow-[var(--pri)]/20 hover:opacity-95 transition-all cursor-pointer disabled:opacity-50"
           >
             {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
@@ -370,6 +499,303 @@ export default function RegistrationSettingsPage() {
       {/* ── Settings Tab Panels ── */}
       <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--card)] p-6 shadow-sm">
         
+        {/* ── TAB 0: DEFAULT FORM BLUEPRINT ── */}
+        {activeTab === 'form-blueprint' && (
+          <div className="space-y-6">
+            {blueprintLoadError ? (
+              <div role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+                {blueprintLoadError}
+              </div>
+            ) : null}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-[var(--border-default)]">
+              <div>
+                <h2 className="text-sm font-bold uppercase tracking-wider text-[var(--text-primary)] flex items-center gap-2">
+                  <FileCheck className="h-4 w-4 text-indigo-400" />
+                  Default Registration Form Blueprint
+                </h2>
+                <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                  Select which questionnaire layout serves as the default registration form for attendees on your event portal.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2.5 shrink-0">
+                <Link
+                  href={`/events/${eid}/registration/form-builder${activeTemplateId ? `?templateId=${activeTemplateId}` : ''}`}
+                  className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/30 transition cursor-pointer"
+                >
+                  <Edit3 className="size-3.5" />
+                  <span>Edit in Designer</span>
+                  <ArrowRight className="size-3.5" />
+                </Link>
+
+                <button
+                  type="button"
+                  onClick={() => setIsLibraryOpen(true)}
+                  className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[var(--bg-surface-2)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-xs font-bold text-[var(--text-primary)] transition cursor-pointer"
+                >
+                  <Layers className="size-3.5 text-indigo-400" />
+                  <span>Show Form Templates</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Active Template Status Card */}
+            {(() => {
+              const activeTpl = activeTemplateId
+                ? availableTemplates.find(
+                    (t) =>
+                      t.id === activeTemplateId ||
+                      t.slug === activeTemplateId ||
+                      (t.settings as any)?._source_template_id === activeTemplateId
+                  ) || null
+                : null;
+
+              return activeTpl ? (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                  {/* Left Column (5 cols): Template Details & Actions */}
+                  <div className="lg:col-span-5 space-y-6">
+                    <div className="p-6 rounded-2xl border border-zinc-800 bg-zinc-900/60 backdrop-blur-sm shadow-xl space-y-6">
+                      <div className="space-y-3 pb-5 border-b border-zinc-800">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-md bg-zinc-800 text-zinc-300 border border-zinc-700">
+                            {activeTpl.category_name || "Registration Form"}
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+                            <CheckCircle2 className="size-3" />
+                            Active Default on Event Portal
+                          </span>
+                        </div>
+
+                        <h3 className="text-xl font-bold text-white tracking-tight">
+                          {activeTpl.name}
+                        </h3>
+                        <p className="text-xs text-zinc-400 leading-relaxed">
+                          {activeTpl.description || "Active registration questionnaire layout applied to this event."}
+                        </p>
+
+                        <div className="flex items-center gap-2.5 pt-2">
+                          <Link
+                            href={`/events/${eid}/registration/form-builder${activeTemplateId ? `?templateId=${activeTemplateId}` : ''}`}
+                            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/30 transition cursor-pointer"
+                          >
+                            <Edit3 className="size-3.5" />
+                            <span>Edit in Designer</span>
+                            <ArrowRight className="size-3.5" />
+                          </Link>
+
+                          <button
+                            type="button"
+                            onClick={() => setIsLibraryOpen(true)}
+                            className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-xl border border-zinc-700 bg-zinc-800/80 hover:bg-zinc-750 text-zinc-200 hover:text-white text-xs font-semibold cursor-pointer transition"
+                          >
+                            <Layers className="size-3.5 text-indigo-400" />
+                            <span>Change Template</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Attributes */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="p-3.5 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-1">
+                          <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">Total Questions</span>
+                          <p className="text-lg font-black text-white">
+                            {activeFormFieldsCount || activeTpl.fields?.length || 0}
+                          </p>
+                        </div>
+
+                        <div className="p-3.5 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-1">
+                          <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">Required Questions</span>
+                          <p className="text-lg font-black text-indigo-400">
+                            {activeTpl.fields?.filter((f) => f.is_required).length || 0}
+                          </p>
+                        </div>
+
+                        <div className="p-3.5 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-1">
+                          <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">Form Scope</span>
+                          <p className="text-xs font-bold text-zinc-300 mt-1">
+                            Event &amp; Organisation Copy
+                          </p>
+                        </div>
+
+                        <div className="p-3.5 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-1">
+                          <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">Attendee Portal</span>
+                          <p className="text-xs font-bold text-emerald-400 mt-1 flex items-center gap-1">
+                            <CheckCircle2 className="size-3" /> Live &amp; Reflected
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column (7 cols): Live Form Interactive Preview Window */}
+                  <div className="lg:col-span-7">
+                    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 backdrop-blur-sm shadow-xl overflow-hidden">
+                      <div className="px-5 py-3.5 border-b border-zinc-800 bg-zinc-950/50 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                          <span className="text-xs font-bold uppercase tracking-wider text-zinc-300 flex items-center gap-1.5">
+                            <Eye className="size-3.5 text-indigo-400" />
+                            Live Form Preview
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-zinc-500 font-medium">
+                          Attendee Registration View
+                        </span>
+                      </div>
+                      <div className="p-6 max-h-[750px] overflow-y-auto bg-zinc-950/30">
+                        <FormRenderer
+                          fields={activeTpl.fields || []}
+                          settings={activeTpl.settings || {}}
+                          previewMode={true}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-16 border-2 border-dashed border-zinc-800 rounded-2xl text-center space-y-4 bg-zinc-900/40">
+                  <Layers className="size-12 text-indigo-500/60 mx-auto" />
+                  <div>
+                    <h4 className="text-base font-bold text-white">No registration form selected</h4>
+                    <p className="text-xs text-zinc-400 max-w-sm mx-auto mt-1">
+                      No versioned registration-form configuration is bound to this event. Open the catalogue to choose one.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsLibraryOpen(true)}
+                    className="h-9 px-4 rounded-xl text-xs font-bold gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm shadow-indigo-600/30 cursor-pointer inline-flex items-center"
+                  >
+                    <Layers className="size-3.5" />
+                    Show Form Templates
+                  </button>
+                </div>
+              );
+            })()}
+
+            {/* ── Dialogue Pop-up Window: Template Library Modal ── */}
+            {isLibraryOpen && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-sm animate-in fade-in">
+                <div className="w-full max-w-5xl max-h-[90vh] bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+                  <div className="h-16 border-b border-zinc-800 px-6 flex items-center justify-between shrink-0 bg-zinc-900/90">
+                    <div className="flex items-center gap-3">
+                      <div className="h-9 w-9 rounded-xl bg-indigo-600/10 border border-indigo-600/20 flex items-center justify-center">
+                        <Layers className="size-5 text-indigo-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-white">Select Default Registration Blueprint</h3>
+                        <p className="text-xs text-zinc-400">
+                          Fetching a template copies the design for this event and activates it immediately on the attendee portal.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsLibraryOpen(false)}
+                      className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition cursor-pointer"
+                    >
+                      <X className="size-5" />
+                    </button>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-6 bg-zinc-950/40">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {availableTemplates.map((template) => {
+                        const isSelected =
+                          template.id === activeTemplateId ||
+                          template.slug === activeTemplateId ||
+                          (template.settings as any)?._source_template_id === activeTemplateId;
+                        const isApplying = applyingBlueprintId === template.id;
+
+                        return (
+                          <div
+                            key={template.id}
+                            className={`rounded-xl border p-4.5 flex flex-col justify-between transition-all ${
+                              isSelected
+                                ? 'border-indigo-500/60 bg-indigo-500/[0.04] shadow-sm ring-1 ring-indigo-500/30'
+                                : 'border-zinc-800 bg-zinc-900/60 hover:border-zinc-700'
+                            }`}
+                          >
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-300 border border-zinc-700">
+                                  {template.category_name || "Registration"}
+                                </span>
+                                {isSelected && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                                    <CheckCircle2 className="size-3" />
+                                    Active Default
+                                  </span>
+                                )}
+                              </div>
+
+                              <div>
+                                <h4 className="text-sm font-bold text-white">
+                                  {template.name}
+                                </h4>
+                                <p className="text-xs text-zinc-400 mt-1 line-clamp-2 leading-relaxed">
+                                  {template.description || "Questionnaire layout tailored for event registration."}
+                                </p>
+                              </div>
+
+                              <div className="text-[11px] text-zinc-500 flex items-center gap-2 pt-2 border-t border-zinc-800">
+                                <span>{template.fields?.length || 0} Questions</span>
+                                <span>•</span>
+                                <span>{template.fields?.filter(f => f.is_required).length || 0} Required</span>
+                              </div>
+                            </div>
+
+                            <div className="pt-4 mt-4 border-t border-zinc-800 flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setPreviewBlueprint(template)}
+                                className="h-8 px-3 rounded-lg border border-zinc-700 bg-zinc-800/80 hover:bg-zinc-700 text-xs font-semibold text-zinc-300 hover:text-white flex items-center gap-1.5 transition cursor-pointer"
+                              >
+                                <Eye className="size-3.5 text-indigo-400" />
+                                <span>Preview</span>
+                              </button>
+
+                              {isSelected ? (
+                                <div className="h-8 px-3 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-bold flex items-center gap-1.5 select-none">
+                                  <Check className="size-3.5" />
+                                  <span>Selected</span>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSelectDefaultForm(template)}
+                                  disabled={isApplying}
+                                  className="h-8 px-3.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm shadow-indigo-600/30 transition cursor-pointer disabled:opacity-50"
+                                >
+                                  {isApplying ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+                                  <span>Fetch &amp; Set Default</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {nextBlueprintCursor && (
+                      <div className="pt-6 flex justify-center">
+                        <button
+                          type="button"
+                          onClick={loadMoreBlueprints}
+                          disabled={loadingMoreBlueprints}
+                          className="h-9 px-4 rounded-xl border border-zinc-700 bg-zinc-900 text-xs font-bold text-zinc-200 hover:bg-zinc-800 disabled:opacity-50 inline-flex items-center gap-2"
+                        >
+                          {loadingMoreBlueprints && <Loader2 className="size-3.5 animate-spin" />}
+                          Load more templates
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── TAB 1: INTAKE & TIMELINE ── */}
         {activeTab === 'intake' && (
           <div className="space-y-6 max-w-3xl">
@@ -925,6 +1351,60 @@ export default function RegistrationSettingsPage() {
         )}
 
       </div>
-    </div>
+
+      {/* ── Blueprint Preview Modal ── */}
+      {previewBlueprint && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-2xl max-h-[90vh] bg-[var(--bg-surface-2,#18181b)] border border-[var(--border-default)] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+            <div className="h-14 border-b border-[var(--border-default)] px-5 flex items-center justify-between shrink-0">
+              <div>
+                <h3 className="text-sm font-bold text-[var(--text-primary,#ffffff)]">{previewBlueprint.name}</h3>
+                <span className="text-[10px] text-[var(--pri)] font-semibold">
+                  {previewBlueprint.category_name || "Registration Form"} Blueprint
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewBlueprint(null)}
+                className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-surface-3)] cursor-pointer"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              <FormRenderer fields={previewBlueprint.fields} settings={previewBlueprint.settings} previewMode={true} />
+            </div>
+
+            <div className="h-14 border-t border-[var(--border-default)] px-5 flex items-center justify-between shrink-0 bg-[var(--bg-surface-3,#1b1b1d)]">
+              <span className="text-xs text-[var(--text-secondary)]">
+                {previewBlueprint.fields?.length || 0} questions in this template
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPreviewBlueprint(null)}
+                  className="h-8 px-3.5 text-xs font-semibold rounded-xl border border-[var(--border-default)] hover:bg-[var(--bg-surface-2)] text-[var(--text-secondary)] cursor-pointer"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const t = previewBlueprint;
+                    setPreviewBlueprint(null);
+                    handleSelectDefaultForm(t);
+                  }}
+                  className="h-8 px-4 text-xs font-bold rounded-xl bg-[var(--pri)] text-[var(--primary-contrast)] hover:opacity-90 cursor-pointer shadow-sm flex items-center gap-1.5"
+                >
+                  <Download className="size-3.5" />
+                  <span>Select as Default Form</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </fieldset>
   )
 }

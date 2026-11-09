@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="5" time="18.805" timestamp="2026-10-20T22:49:56.172899+05:30" hostname="Vishal"><testcase classname="tests.test_catalogue_legacy_slug_scope" name="test_customer_legacy_slug_never_picks_an_arbitrary_or_unavailable_source[exact_and_legacy]" time="11.683"><failure message="assert 200 == 409&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001CE93356120&gt;
+event = &lt;Event id=0fae12bf-5b44-4f4a-b0af-f29a155aba80 short_code=TCB3E7 status=active&gt;
+organizer = &lt;User id=462bccb1-0092-4409-b862-6c55733e1132 email=organizer-a18570@test.com role=organiser&gt;
+case = 'exact_and_legacy'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("case", ["exact_and_legacy", "global_and_owned", "retired", "wrong_event", "conflicting_event"])
+    async def test_customer_legacy_slug_never_picks_an_arbitrary_or_unavailable_source(db, event, organizer, case):
+        await activate_event_for_test(db, event)
+        slug = f"legacy-source-{uuid.uuid4().hex}"
+        requested = f"tpl_{slug.replace('-', '_')}" if case == "exact_and_legacy" else slug
+        source = FormTemplate(organization_id=event.organization_id if case in {"wrong_event", "conflicting_event"} else None,
+            scope_type="EVENT" if case in {"wrong_event", "conflicting_event"} else "GLOBAL",
+            name="Legacy selector fixture", slug=slug, category_key="registration", fields=[],
+            settings={"_event_id": str(uuid.uuid4())} if case == "wrong_event" else
+                {"_event_id": str(event.id), "event_id": str(uuid.uuid4())} if case == "conflicting_event" else {},
+            is_active=case != "retired")
+        db.add(source)
+        if case in {"exact_and_legacy", "global_and_owned"}:
+            db.add(FormTemplate(organization_id=event.organization_id if case == "global_and_owned" else None,
+                scope_type="ORGANIZATION" if case == "global_and_owned" else "GLOBAL",
+                name="Other legitimate selector match", slug=requested, category_key="registration", fields=[], settings={}))
+        await db.commit()
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+    
+        async def identity():
+            return organizer
+    
+        async def database():
+            async with TenantContextGuard.scoped(db, event.organization_id):
+                yield db
+    
+        app.dependency_overrides[get_current_user] = identity
+        app.dependency_overrides[get_db] = database
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            result = await client.get(f"/api/v1/forms/templates/{requested}", params={"event_id": str(event.id)})
+&gt;           assert result.status_code == (409 if case in {"exact_and_legacy", "global_and_owned"} else 404)
+E           assert 200 == 409
+E            +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests\test_catalogue_legacy_slug_scope.py:47: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_legacy_slug_scope" name="test_customer_legacy_slug_never_picks_an_arbitrary_or_unavailable_source[global_and_owned]" time="1.310"><failure message="assert 200 == 409&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001CE93DA7390&gt;
+event = &lt;Event id=ffad0b61-89fd-448d-ade4-924da9c99650 short_code=TC2843 status=active&gt;
+organizer = &lt;User id=d555e3e5-ff54-497b-bce4-c6f2429a5a9c email=organizer-ebf110@test.com role=organiser&gt;
+case = 'global_and_owned'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("case", ["exact_and_legacy", "global_and_owned", "retired", "wrong_event", "conflicting_event"])
+    async def test_customer_legacy_slug_never_picks_an_arbitrary_or_unavailable_source(db, event, organizer, case):
+        await activate_event_for_test(db, event)
+        slug = f"legacy-source-{uuid.uuid4().hex}"
+        requested = f"tpl_{slug.replace('-', '_')}" if case == "exact_and_legacy" else slug
+        source = FormTemplate(organization_id=event.organization_id if case in {"wrong_event", "conflicting_event"} else None,
+            scope_type="EVENT" if case in {"wrong_event", "conflicting_event"} else "GLOBAL",
+            name="Legacy selector fixture", slug=slug, category_key="registration", fields=[],
+            settings={"_event_id": str(uuid.uuid4())} if case == "wrong_event" else
+                {"_event_id": str(event.id), "event_id": str(uuid.uuid4())} if case == "conflicting_event" else {},
+            is_active=case != "retired")
+        db.add(source)
+        if case in {"exact_and_legacy", "global_and_owned"}:
+            db.add(FormTemplate(organization_id=event.organization_id if case == "global_and_owned" else None,
+                scope_type="ORGANIZATION" if case == "global_and_owned" else "GLOBAL",
+                name="Other legitimate selector match", slug=requested, category_key="registration", fields=[], settings={}))
+        await db.commit()
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+    
+        async def identity():
+            return organizer
+    
+        async def database():
+            async with TenantContextGuard.scoped(db, event.organization_id):
+                yield db
+    
+        app.dependency_overrides[get_current_user] = identity
+        app.dependency_overrides[get_db] = database
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            result = await client.get(f"/api/v1/forms/templates/{requested}", params={"event_id": str(event.id)})
+&gt;           assert result.status_code == (409 if case in {"exact_and_legacy", "global_and_owned"} else 404)
+E           assert 200 == 409
+E            +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests\test_catalogue_legacy_slug_scope.py:47: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_legacy_slug_scope" name="test_customer_legacy_slug_never_picks_an_arbitrary_or_unavailable_source[retired]" time="1.330"><failure message="assert 200 == 404&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001CE93DA6D50&gt;
+event = &lt;Event id=1d471410-19a7-4f31-997e-e5bb4cfc4fdc short_code=TC331E status=active&gt;
+organizer = &lt;User id=17288821-9b21-4cdd-ba27-cae0c9a4f4e7 email=organizer-a7242b@test.com role=organiser&gt;
+case = 'retired'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("case", ["exact_and_legacy", "global_and_owned", "retired", "wrong_event", "conflicting_event"])
+    async def test_customer_legacy_slug_never_picks_an_arbitrary_or_unavailable_source(db, event, organizer, case):
+        await activate_event_for_test(db, event)
+        slug = f"legacy-source-{uuid.uuid4().hex}"
+        requested = f"tpl_{slug.replace('-', '_')}" if case == "exact_and_legacy" else slug
+        source = FormTemplate(organization_id=event.organization_id if case in {"wrong_event", "conflicting_event"} else None,
+            scope_type="EVENT" if case in {"wrong_event", "conflicting_event"} else "GLOBAL",
+            name="Legacy selector fixture", slug=slug, category_key="registration", fields=[],
+            settings={"_event_id": str(uuid.uuid4())} if case == "wrong_event" else
+                {"_event_id": str(event.id), "event_id": str(uuid.uuid4())} if case == "conflicting_event" else {},
+            is_active=case != "retired")
+        db.add(source)
+        if case in {"exact_and_legacy", "global_and_owned"}:
+            db.add(FormTemplate(organization_id=event.organization_id if case == "global_and_owned" else None,
+                scope_type="ORGANIZATION" if case == "global_and_owned" else "GLOBAL",
+                name="Other legitimate selector match", slug=requested, category_key="registration", fields=[], settings={}))
+        await db.commit()
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+    
+        async def identity():
+            return organizer
+    
+        async def database():
+            async with TenantContextGuard.scoped(db, event.organization_id):
+                yield db
+    
+        app.dependency_overrides[get_current_user] = identity
+        app.dependency_overrides[get_db] = database
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            result = await client.get(f"/api/v1/forms/templates/{requested}", params={"event_id": str(event.id)})
+&gt;           assert result.status_code == (409 if case in {"exact_and_legacy", "global_and_owned"} else 404)
+E           assert 200 == 404
+E            +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests\test_catalogue_legacy_slug_scope.py:47: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_legacy_slug_scope" name="test_customer_legacy_slug_never_picks_an_arbitrary_or_unavailable_source[wrong_event]" time="0.614" /><testcase classname="tests.test_catalogue_legacy_slug_scope" name="test_customer_legacy_slug_never_picks_an_arbitrary_or_unavailable_source[conflicting_event]" time="3.110"><failure message="assert 409 == 404&#10; +  where 409 = &lt;Response [409 Conflict]&gt;.status_code">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001CE95F1EC40&gt;
+event = &lt;Event id=2e7217be-e94f-4b83-9620-8fa3ec46cd93 short_code=TCEA59 status=active&gt;
+organizer = &lt;User id=93da3c35-9b6a-4e85-9c3b-bb771db66db7 email=organizer-b5126f@test.com role=organiser&gt;
+case = 'conflicting_event'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("case", ["exact_and_legacy", "global_and_owned", "retired", "wrong_event", "conflicting_event"])
+    async def test_customer_legacy_slug_never_picks_an_arbitrary_or_unavailable_source(db, event, organizer, case):
+        await activate_event_for_test(db, event)
+        slug = f"legacy-source-{uuid.uuid4().hex}"
+        requested = f"tpl_{slug.replace('-', '_')}" if case == "exact_and_legacy" else slug
+        source = FormTemplate(organization_id=event.organization_id if case in {"wrong_event", "conflicting_event"} else None,
+            scope_type="EVENT" if case in {"wrong_event", "conflicting_event"} else "GLOBAL",
+            name="Legacy selector fixture", slug=slug, category_key="registration", fields=[],
+            settings={"_event_id": str(uuid.uuid4())} if case == "wrong_event" else
+                {"_event_id": str(event.id), "event_id": str(uuid.uuid4())} if case == "conflicting_event" else {},
+            is_active=case != "retired")
+        db.add(source)
+        if case in {"exact_and_legacy", "global_and_owned"}:
+            db.add(FormTemplate(organization_id=event.organization_id if case == "global_and_owned" else None,
+                scope_type="ORGANIZATION" if case == "global_and_owned" else "GLOBAL",
+                name="Other legitimate selector match", slug=requested, category_key="registration", fields=[], settings={}))
+        await db.commit()
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+    
+        async def identity():
+            return organizer
+    
+        async def database():
+            async with TenantContextGuard.scoped(db, event.organization_id):
+                yield db
+    
+        app.dependency_overrides[get_current_user] = identity
+        app.dependency_overrides[get_db] = database
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            result = await client.get(f"/api/v1/forms/templates/{requested}", params={"event_id": str(event.id)})
+&gt;           assert result.status_code == (409 if case in {"exact_and_legacy", "global_and_owned"} else 404)
+E           assert 409 == 404
+E            +  where 409 = &lt;Response [409 Conflict]&gt;.status_code
+
+tests\test_catalogue_legacy_slug_scope.py:47: AssertionError</failure></testcase></testsuite></testsuites>

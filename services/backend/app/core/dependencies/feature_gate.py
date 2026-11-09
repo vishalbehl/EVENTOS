@@ -10,7 +10,10 @@ from app.modules.billing.capability_registry import OPERATION_PERMISSIONS, featu
 from app.modules.identity.models.user import User
 from app.modules.events.models.event import Event
 from app.modules.platform.models.organization import Organization
-from app.modules.rbac.services.permission_service import get_user_permissions
+from app.modules.rbac.services.access_contexts import actor_request_context
+from app.modules.rbac.services.platform_operation_authority import authorize_platform_operation
+from app.database import tenant_org_id
+from app.core.tenant_context import TenantContextGuard
 
 
 class EntitlementRequiredException(HTTPException):
@@ -39,46 +42,43 @@ class EntitlementRequiredException(HTTPException):
         )
 
 
-def _is_platform_bypass(user) -> bool:
-    return bool(
-        getattr(user, "is_platform_admin", False)
-        or user.role == "super_admin"
-        or getattr(user, "platform_role", None) == "SUPER_ADMIN"
-    )
-
-
 async def _enforce_actor_permission(
     db,
     user_id: uuid.UUID | None,
     operation: str,
     *,
     event_id: uuid.UUID | None = None,
+    organization_id: uuid.UUID | None = None,
+    audience: str = "CUSTOMER",
 ) -> None:
     permission = OPERATION_PERMISSIONS[operation]
-    if permission is None or user_id is None:
+    if audience == "PLATFORM":
+        if user_id is None or organization_id is None:
+            raise HTTPException(403, detail={"code": "PLATFORM_PERMISSION_DENIED"})
+        await authorize_platform_operation(db, user_id, organization_id, operation)
         return
-    user = await db.get(User, user_id)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "PERMISSION_DENIED", "permission": permission},
-        )
-    if _is_platform_bypass(user) or user.role in {"admin", "organiser", "organizer"}:
+    if audience != "CUSTOMER":
+        raise HTTPException(403, detail={"code": "PERMISSION_DENIED"})
+    # Actor-less calls evaluate commercial policy only. Workers/machine/public
+    # paths must establish their own registered authority before this call.
+    if user_id is None:
         return
-    permissions = await get_user_permissions(db, user_id, event_id)
-    if "*" not in permissions and permission not in permissions:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "PERMISSION_DENIED", "permission": permission},
-        )
+    org = organization_id or tenant_org_id.get()
+    if org is None:
+        raise HTTPException(403, detail={"code": "TENANT_CONTEXT_REQUIRED"})
+    async with actor_request_context(
+        db, user_id, org, event_id=event_id, action=permission
+    ):
+        pass
 
 
 def require_org_feature(feature_key: str):
     async def dependency(user: ActiveUser, db: DB):
-        org_id = user.organization_id
+        org_id = tenant_org_id.get()
         if not org_id:
             raise EntitlementRequiredException(feature_key)
-        await enforce_org_feature(db, org_id, feature_key, user_id=user.id)
+        async with actor_request_context(db, user.id, org_id):
+            await enforce_org_feature(db, org_id, feature_key, user_id=user.id)
         return user
 
     return Depends(dependency)
@@ -88,10 +88,10 @@ def require_org_operation(operation: str):
     feature_key = feature_for_operation(operation)
 
     async def dependency(user: ActiveUser, db: DB):
-        org_id = user.organization_id
+        org_id = tenant_org_id.get()
         if not org_id:
             raise EntitlementRequiredException(feature_key)
-        await _enforce_actor_permission(db, user.id, operation)
+        await _enforce_actor_permission(db, user.id, operation, organization_id=org_id)
         await enforce_org_feature(db, org_id, feature_key, user_id=user.id)
         return user
 
@@ -129,8 +129,9 @@ async def enforce_org_operation(
     operation: str,
     *,
     user_id: uuid.UUID | None = None,
+    _audience: str = "CUSTOMER",
 ):
-    await _enforce_actor_permission(db, user_id, operation)
+    await _enforce_actor_permission(db, user_id, operation, organization_id=organization_id, audience=_audience)
     feature_key = feature_for_operation(operation)
     try:
         return await enforce_org_feature(
@@ -142,6 +143,15 @@ async def enforce_org_operation(
     except EntitlementRequiredException as exc:
         exc.operation = operation
         raise
+
+
+async def enforce_platform_org_operation(db, organization_id, operation, *, user_id):
+    return await enforce_org_operation(db, organization_id, operation, user_id=user_id, _audience="PLATFORM")
+
+
+async def enforce_platform_event_operation(db, organization_id, event_id, operation, *, user_id):
+    return await enforce_event_operation(db, organization_id, event_id, operation,
+                                         user_id=user_id, _audience="PLATFORM")
 
 
 async def resolve_org_operation(
@@ -204,7 +214,14 @@ def require_event_feature(feature_key: str):
     async def dependency(event: CurrentEvent, user: ActiveUser, db: DB):
         # Platform actors retain administrative APIs, but organizer-domain
         # operations always enforce the selected event's actual capability.
-        await enforce_event_feature(db, event.organization_id, event.id, feature_key, user_id=user.id)
+        await enforce_event_feature(
+            db,
+            event.organization_id,
+            event.id,
+            feature_key,
+            event=event,
+            user_id=user.id,
+        )
         return event
 
     return Depends(dependency)
@@ -214,8 +231,7 @@ def require_event_operation(operation: str):
     feature_key = feature_for_operation(operation)
 
     async def dependency(event: CurrentEvent, user: ActiveUser, db: DB):
-        await _enforce_actor_permission(db, user.id, operation, event_id=event.id)
-        await enforce_event_feature(db, event.organization_id, event.id, feature_key, user_id=user.id)
+        await enforce_event_operation(db, event.organization_id, event.id, operation, user_id=user.id)
         return event
 
     return Depends(dependency)
@@ -228,18 +244,17 @@ async def enforce_event_operation(
     operation: str,
     *,
     user_id: uuid.UUID | None = None,
+    _audience: str = "CUSTOMER",
 ):
-    await _enforce_actor_permission(db, user_id, operation, event_id=event_id)
-    actor = await db.get(User, user_id) if user_id else None
-    organization = await db.get(Organization, organization_id)
-    internal_unrestricted = bool(
-        organization and organization.has_unrestricted_capabilities
-    )
-    if (not actor or not _is_platform_bypass(actor)) and not internal_unrestricted:
+    await _enforce_actor_permission(db, user_id, operation, event_id=event_id,
+                                    organization_id=organization_id, audience=_audience)
+    async with TenantContextGuard.scoped(db, organization_id):
+        # Subscription exceptions and platform roles do not remove operational locks.
         event = await db.scalar(
             select(Event).where(
                 Event.id == event_id,
                 Event.organization_id == organization_id,
+                Event.deleted_at.is_(None),
             )
         )
         if event is None:
@@ -252,7 +267,8 @@ async def enforce_event_operation(
                     "message": "This event is temporarily in maintenance mode.",
                 },
             )
-        if event.is_read_only:
+        read_action = OPERATION_PERMISSIONS[operation]
+        if event.is_read_only and (read_action is None or read_action.split(":")[-1] not in {"VIEW", "VIEW_QUEUE", "REG_DASHBOARD", "HUB", "LOGS"}):
             raise HTTPException(
                 status_code=status.HTTP_423_LOCKED,
                 detail={
@@ -260,14 +276,15 @@ async def enforce_event_operation(
                     "message": "This event currently allows reads only.",
                 },
             )
-    return await enforce_event_feature(
-        db,
-        organization_id,
-        event_id,
-        feature_for_operation(operation),
-        user_id=user_id,
-        operation=operation,
-    )
+        return await enforce_event_feature(
+            db,
+            organization_id,
+            event_id,
+            feature_for_operation(operation),
+            event=event,
+            user_id=user_id,
+            operation=operation,
+        )
 
 
 async def enforce_event_feature(
@@ -276,6 +293,7 @@ async def enforce_event_feature(
     event_id: uuid.UUID,
     feature_key: str,
     *,
+    event: Event | None = None,
     user_id: uuid.UUID | None = None,
     operation: str | None = None,
 ):
@@ -283,12 +301,13 @@ async def enforce_event_feature(
     try:
         # Authorization needs feature state only; quota aggregation belongs to
         # capability/billing reads and is intentionally excluded from this hot path.
-        result = await CapabilityService.resolve_event(
+        feature = await CapabilityService.resolve_event_feature_for_enforcement(
             db,
             organization_id,
             event_id,
+            feature_key,
+            event=event,
             user_id=user_id,
-            include_usage=False,
         )
     except Exception as exc:
         raise EntitlementRequiredException(
@@ -299,7 +318,6 @@ async def enforce_event_feature(
             actor_user_id=user_id,
             operation=operation,
         ) from exc
-    feature = result["features"].get(feature_key)
     if not feature or not feature["enabled"]:
         from app.config import settings
         if settings.ALLOW_TEST_CAPABILITY_BYPASS:

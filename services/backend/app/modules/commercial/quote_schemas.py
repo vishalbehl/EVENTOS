@@ -14,6 +14,17 @@ class QuoteLineItemInput(BaseModel):
     quantity: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     duration_days: int = Field(default=1, ge=1, le=3650)
     unit_rate: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    # Cloud commercial quotes carry immutable offer/allocation identity through
+    # every revision. Generic venue quotes may leave these fields empty.
+    product_family: str | None = Field(default=None, max_length=40)
+    offer_code: str | None = Field(default=None, max_length=80)
+    offer_version_id: uuid.UUID | None = None
+    allocation_version_id: uuid.UUID | None = None
+    event_id: uuid.UUID | None = None
+    client_workspace_id: uuid.UUID | None = None
+    commercial_request_id: uuid.UUID | None = None
+    tax_rate: Decimal | None = Field(default=None, ge=0, le=100, max_digits=7, decimal_places=4)
+    source_snapshot_json: dict = Field(default_factory=dict)
 
 
 class QuotePricingInput(BaseModel):
@@ -64,6 +75,15 @@ class QuoteLineItemOut(BaseModel):
     unit_rate: Decimal
     line_subtotal: Decimal
     sort_order: int
+    product_family: str | None = None
+    offer_code: str | None = None
+    offer_version_id: uuid.UUID | None = None
+    allocation_version_id: uuid.UUID | None = None
+    event_id: uuid.UUID | None = None
+    client_workspace_id: uuid.UUID | None = None
+    commercial_request_id: uuid.UUID | None = None
+    tax_rate: Decimal | None = None
+    source_snapshot_json: dict = Field(default_factory=dict)
 
 
 class QuoteTotalsOut(BaseModel):
@@ -78,7 +98,7 @@ class QuoteOut(QuoteTotalsOut):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
     organization_id: uuid.UUID
-    event_id: uuid.UUID
+    event_id: uuid.UUID | None
     service_request_id: uuid.UUID | None
     quote_number: str
     title: str

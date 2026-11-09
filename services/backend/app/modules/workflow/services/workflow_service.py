@@ -4,6 +4,7 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy import select, delete, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from fastapi import HTTPException
 
 from app.modules.workflow.models.workflow import (
     Workflow, WorkflowStep, WorkflowInstance, WorkflowTask, WorkflowAssignment, WorkflowHistory
@@ -32,6 +33,7 @@ class WorkflowService:
 
     @staticmethod
     async def create_workflow(db: AsyncSession, org_id: uuid.UUID, data: WorkflowCreate) -> Workflow:
+        await WorkflowService.validate_assignees(db, org_id, data.steps)
         workflow = Workflow(
             id=uuid.uuid4(),
             organization_id=org_id,
@@ -58,6 +60,29 @@ class WorkflowService:
         return workflow
 
     @staticmethod
+    async def validate_assignees(db, org_id, steps):
+        from app.modules.rbac.models.organization_member import OrganizationMember
+        from app.modules.identity.models.user import User
+        assignees = set()
+        for step in steps:
+            value = (step.config or {}).get("assignee_id")
+            if value is not None:
+                try:
+                    assignees.add(uuid.UUID(str(value)))
+                except (ValueError, TypeError, AttributeError):
+                    raise HTTPException(422, detail={"code": "INVALID_WORKFLOW_ASSIGNEE"})
+        if not assignees:
+            return
+        accepted = set((await db.scalars(select(OrganizationMember.user_id).join(
+            User, User.id == OrganizationMember.user_id).where(
+            OrganizationMember.organization_id == org_id,
+            OrganizationMember.user_id.in_(assignees), OrganizationMember.is_active.is_(True),
+            OrganizationMember.accepted_at.is_not(None), User.is_active.is_(True),
+            User.deleted_at.is_(None)))).all())
+        if accepted != assignees:
+            raise HTTPException(404, detail={"code": "RESOURCE_NOT_FOUND"})
+
+    @staticmethod
     async def get_instance(db: AsyncSession, org_id: uuid.UUID, instance_id: uuid.UUID) -> Optional[WorkflowInstance]:
         stmt = select(WorkflowInstance).where(
             WorkflowInstance.organization_id == org_id,
@@ -81,6 +106,7 @@ class WorkflowService:
         workflow = await WorkflowService.get_workflow(db, org_id, workflow_id)
         if not workflow or not workflow.is_active:
             return None
+        await WorkflowService.validate_assignees(db, org_id, workflow.steps)
             
         instance = WorkflowInstance(
             id=uuid.uuid4(),
@@ -117,7 +143,10 @@ class WorkflowService:
         instance_res = await db.execute(instance_stmt)
         instance = instance_res.scalar_one_or_none()
         
-        step_stmt = select(WorkflowStep).where(WorkflowStep.id == step_id)
+        if instance is None:
+            return
+        step_stmt = select(WorkflowStep).where(WorkflowStep.id == step_id,
+                                              WorkflowStep.workflow_id == instance.workflow_id)
         step_res = await db.execute(step_stmt)
         step = step_res.scalar_one_or_none()
         
@@ -236,13 +265,27 @@ class WorkflowService:
             await db.flush()
 
     @staticmethod
-    async def complete_task(db: AsyncSession, org_id: uuid.UUID, task_id: uuid.UUID, comment: Optional[str] = None) -> bool:
-        stmt = select(WorkflowTask).where(WorkflowTask.id == task_id).options(
+    async def complete_task(db: AsyncSession, org_id: uuid.UUID, task_id: uuid.UUID, comment: Optional[str] = None,
+                            *, expected_version: int | None = None) -> bool:
+        # Serialize the instance before its task: sibling approvals cannot race
+        # advancement. Ownership is filtered in SQL before acquiring any lock.
+        instance_id = await db.scalar(select(WorkflowTask.instance_id).join(WorkflowInstance,
+            WorkflowInstance.id == WorkflowTask.instance_id).where(
+            WorkflowTask.id == task_id, WorkflowInstance.organization_id == org_id))
+        if instance_id is None:
+            raise HTTPException(404, detail={"code": "RESOURCE_NOT_FOUND"})
+        await db.scalar(select(WorkflowInstance).where(WorkflowInstance.id == instance_id,
+            WorkflowInstance.organization_id == org_id).with_for_update())
+        stmt = select(WorkflowTask).where(WorkflowTask.id == task_id,
+            WorkflowTask.instance_id == instance_id).with_for_update().execution_options(populate_existing=True).options(
             selectinload(WorkflowTask.instance).selectinload(WorkflowInstance.workflow).selectinload(Workflow.steps),
             selectinload(WorkflowTask.step)
         )
         res = await db.execute(stmt)
         task = res.scalar_one_or_none()
+
+        if task is not None and expected_version is not None and task.version != expected_version:
+            raise HTTPException(412, detail={"code": "VERSION_CONFLICT"})
         
         if not task or task.status != "pending":
             return False
@@ -251,6 +294,7 @@ class WorkflowService:
             return False
             
         task.status = "completed"
+        task.version += 1
         
         history = WorkflowHistory(
             id=uuid.uuid4(),

@@ -27,13 +27,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.dependencies import get_db
 from app.modules.events.models.event import Event
+from app.modules.events.models.event_user import EventUser
+from app.modules.events.models.speaker import Speaker
+from app.modules.registration.models.participant import Participant
+from app.modules.abstracts.models import AbstractReviewer
 from app.modules.identity.models.portal_otp_token import PortalOtpToken
 from app.modules.notifications.services.email_service import send_email
 from app.core.dependencies.feature_gate import enforce_event_operation
+from app.modules.registration.dependencies.portal_auth import PortalUser, get_portal_user
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/portal/auth", tags=["portal-auth"])
+users_router = APIRouter(prefix="/portal/users", tags=["portal-users"])
 
 # ── Constants ─────────────────────────────────────────────────────────────
 _OTP_TTL_MINUTES = 10
@@ -59,11 +65,47 @@ class OtpVerifyBody(BaseModel):
     otp: str
 
 
+class EventUserProfileResponse(BaseModel):
+    id: uuid.UUID
+    event_id: uuid.UUID
+    email: str
+    phone: Optional[str] = None
+    full_name: Optional[str] = None
+    title: Optional[str] = None
+    affiliation: Optional[str] = None
+    designation: Optional[str] = None
+    country: Optional[str] = None
+    avatar_url: Optional[str] = None
+    bio: Optional[str] = None
+    roles: list[str] = []
+    is_registered: bool = False
+    is_speaker: bool = False
+    is_reviewer: bool = False
+    reviewer_status: str = "NONE"
+    profile_data: dict = {}
+
+    class Config:
+        from_attributes = True
+
+
+class EventUserUpdateBody(BaseModel):
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    title: Optional[str] = None
+    affiliation: Optional[str] = None
+    designation: Optional[str] = None
+    country: Optional[str] = None
+    bio: Optional[str] = None
+    avatar_url: Optional[str] = None
+    profile_data: Optional[dict] = None
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token: str
     token_type: str = "bearer"
     dev_otp: Optional[str] = None
+    user: Optional[EventUserProfileResponse] = None
 
 
 class MessageResponse(BaseModel):
@@ -95,6 +137,135 @@ def _email_sha256(email: str) -> str:
 async def _get_event(event_id: uuid.UUID, db: AsyncSession) -> Optional[Event]:
     result = await db.execute(select(Event).where(Event.id == event_id))
     return result.scalar_one_or_none()
+
+
+async def _upsert_event_user(
+    db: AsyncSession,
+    event_id: uuid.UUID,
+    email: str,
+    phone: Optional[str] = None,
+) -> EventUser:
+    normalized_email = email.strip().lower()
+    now = datetime.now(timezone.utc)
+
+    # Fetch event to get organization_id
+    event_stmt = select(Event).where(Event.id == event_id)
+    event_res = await db.execute(event_stmt)
+    event = event_res.scalar_one_or_none()
+    org_id = event.organization_id if event else None
+
+    # Find existing EventUser
+    user_stmt = select(EventUser).where(
+        EventUser.event_id == event_id,
+        EventUser.email == normalized_email,
+    )
+    user_res = await db.execute(user_stmt)
+    event_user = user_res.scalar_one_or_none()
+
+    if not event_user:
+        event_user = EventUser(
+            event_id=event_id,
+            organization_id=org_id,
+            email=normalized_email,
+            phone=phone,
+            roles=["DELEGATE"],
+            profile_data={},
+            last_login_at=now,
+        )
+        db.add(event_user)
+    else:
+        event_user.last_login_at = now
+        if phone and not event_user.phone:
+            event_user.phone = phone
+        if org_id and not event_user.organization_id:
+            event_user.organization_id = org_id
+
+    # Check participant record
+    part_stmt = (
+        select(Participant)
+        .where(
+            Participant.event_id == event_id,
+            func.lower(Participant.email) == normalized_email,
+        )
+        .order_by(Participant.registered_at.desc())
+        .limit(1)
+    )
+    part_res = await db.execute(part_stmt)
+    part = part_res.scalar_one_or_none()
+    if part:
+        event_user.is_registered = True
+        event_user.participant_id = part.id
+        p_name = f"{part.first_name or ''} {part.last_name or ''}".strip()
+        if not event_user.full_name and p_name:
+            event_user.full_name = p_name
+        if not event_user.phone and part.phone:
+            event_user.phone = part.phone
+        if not event_user.affiliation and (getattr(part, "company", None) or getattr(part, "affiliation", None)):
+            event_user.affiliation = getattr(part, "company", None) or getattr(part, "affiliation", None)
+        if not event_user.designation and getattr(part, "designation", None):
+            event_user.designation = getattr(part, "designation", None)
+        if not event_user.country and getattr(part, "country", None):
+            event_user.country = getattr(part, "country", None)
+
+    # Check speaker record
+    spk_stmt = (
+        select(Speaker)
+        .where(
+            Speaker.event_id == event_id,
+            func.lower(Speaker.email) == normalized_email,
+        )
+        .order_by(Speaker.id.desc())
+        .limit(1)
+    )
+    spk_res = await db.execute(spk_stmt)
+    spk = spk_res.scalar_one_or_none()
+    current_roles = list(event_user.roles or ["DELEGATE"])
+    if spk:
+        event_user.is_speaker = True
+        event_user.speaker_id = spk.id
+        if "SPEAKER" not in current_roles:
+            current_roles.append("SPEAKER")
+        spk_name = getattr(spk, "full_name", None) or f"{getattr(spk, 'first_name', '')} {getattr(spk, 'last_name', '')}".strip()
+        if not event_user.full_name and spk_name:
+            event_user.full_name = spk_name
+        if not event_user.bio and getattr(spk, "bio", None):
+            event_user.bio = spk.bio
+
+    # Check reviewer record
+    rev_stmt = (
+        select(AbstractReviewer)
+        .where(
+            AbstractReviewer.event_id == event_id,
+            func.lower(AbstractReviewer.email) == normalized_email,
+        )
+        .order_by(AbstractReviewer.id.desc())
+        .limit(1)
+    )
+    rev_res = await db.execute(rev_stmt)
+    rev = rev_res.scalar_one_or_none()
+    if rev:
+        event_user.is_reviewer = True
+        event_user.reviewer_id = rev.id
+        rev_status = rev.status.upper() if rev.status else "INVITED"
+        if rev_status in ("ACTIVE", "ACCEPTED") or rev.accepted_at is not None:
+            event_user.reviewer_status = "ACCEPTED"
+            if "REVIEWER" not in current_roles:
+                current_roles.append("REVIEWER")
+        else:
+            event_user.reviewer_status = rev_status
+            if "REVIEWER" in current_roles and rev_status != "ACCEPTED":
+                current_roles.remove("REVIEWER")
+        if not event_user.full_name and rev.full_name:
+            event_user.full_name = rev.full_name
+    else:
+        event_user.is_reviewer = False
+        event_user.reviewer_status = "NONE"
+        if "REVIEWER" in current_roles:
+            current_roles.remove("REVIEWER")
+
+    event_user.roles = current_roles
+    await db.flush()
+    return event_user
 
 
 async def _throttle_check(email: str, event_id: uuid.UUID, db: AsyncSession) -> None:
@@ -364,7 +535,14 @@ async def verify_otp(
 
     # ── Success ──────────────────────────────────────────────
     token_row.used = True
+    event_user = await _upsert_event_user(
+        db=db,
+        event_id=eff_event_id,
+        email=target_email,
+        phone=body.phone,
+    )
     await db.commit()
+    await db.refresh(event_user)
 
     access_token = _issue_portal_jwt(target_email, eff_event_id)
 
@@ -377,7 +555,27 @@ async def verify_otp(
         },
     )
 
-    return TokenResponse(access_token=access_token, token=access_token)
+    user_profile = EventUserProfileResponse(
+        id=event_user.id,
+        event_id=event_user.event_id,
+        email=event_user.email,
+        phone=event_user.phone,
+        full_name=event_user.full_name,
+        title=event_user.title,
+        affiliation=event_user.affiliation,
+        designation=event_user.designation,
+        country=event_user.country,
+        avatar_url=event_user.avatar_url,
+        bio=event_user.bio,
+        roles=event_user.roles or ["DELEGATE"],
+        is_registered=event_user.is_registered,
+        is_speaker=event_user.is_speaker,
+        is_reviewer=event_user.is_reviewer,
+        reviewer_status=event_user.reviewer_status,
+        profile_data=event_user.profile_data or {},
+    )
+
+    return TokenResponse(access_token=access_token, token=access_token, user=user_profile)
 
 
 @router.post("/resend-otp", response_model=MessageResponse)
@@ -459,4 +657,127 @@ async def resend_otp(
     return MessageResponse(
         message="OTP sent if account exists.",
         dev_otp=dev_otp_value if is_dev else None,
+    )
+
+
+# ── Profile Endpoints ──────────────────────────────────────────────────────
+
+@router.get("/{event_id}/me", response_model=EventUserProfileResponse)
+@users_router.get("/{event_id}/me", response_model=EventUserProfileResponse)
+async def get_my_event_profile(
+    event_id: uuid.UUID,
+    portal_user: PortalUser = Depends(get_portal_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Read a persisted profile with live status projections; GET never writes."""
+    if portal_user.event_id != event_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token does not match requested event.",
+        )
+    email = portal_user.email.strip().lower()
+    event_user = await db.scalar(select(EventUser).where(
+        EventUser.event_id == event_id, EventUser.email == email))
+    if event_user is None:
+        # Profile creation belongs to authenticated OTP verification / explicit
+        # mutations, not a GET side effect or an implicit legacy repair.
+        raise HTTPException(404, detail={"code": "EVENT_PROFILE_NOT_FOUND"})
+    registered = bool(await db.scalar(select(Participant.id).where(
+        Participant.event_id == event_id, func.lower(Participant.email) == email).limit(1)))
+    speaker = bool(await db.scalar(select(Speaker.id).where(
+        Speaker.event_id == event_id, func.lower(Speaker.email) == email).limit(1)))
+    reviewer = await db.scalar(select(AbstractReviewer).where(
+        AbstractReviewer.event_id == event_id, func.lower(AbstractReviewer.email) == email
+    ).order_by(AbstractReviewer.id.desc()).limit(1))
+    reviewer_status = "NONE"
+    if reviewer is not None:
+        reviewer_status = (reviewer.status or "INVITED").upper()
+        if reviewer_status in {"ACTIVE", "ACCEPTED"} or reviewer.accepted_at is not None:
+            reviewer_status = "ACCEPTED"
+    roles = set(event_user.roles or ["DELEGATE"]) - {"SPEAKER", "REVIEWER"}
+    if speaker:
+        roles.add("SPEAKER")
+    if reviewer_status == "ACCEPTED":
+        roles.add("REVIEWER")
+    return EventUserProfileResponse(
+        id=event_user.id,
+        event_id=event_user.event_id,
+        email=event_user.email,
+        phone=event_user.phone,
+        full_name=event_user.full_name,
+        title=event_user.title,
+        affiliation=event_user.affiliation,
+        designation=event_user.designation,
+        country=event_user.country,
+        avatar_url=event_user.avatar_url,
+        bio=event_user.bio,
+        roles=sorted(roles),
+        is_registered=registered,
+        is_speaker=speaker,
+        is_reviewer=reviewer is not None,
+        reviewer_status=reviewer_status,
+        profile_data=event_user.profile_data or {},
+    )
+
+
+@router.put("/{event_id}/me", response_model=EventUserProfileResponse)
+@users_router.put("/{event_id}/me", response_model=EventUserProfileResponse)
+async def update_my_event_profile(
+    event_id: uuid.UUID,
+    body: EventUserUpdateBody,
+    portal_user: PortalUser = Depends(get_portal_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update profile fields for the authenticated event user."""
+    if portal_user.event_id != event_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token does not match requested event.",
+        )
+    event_user = await _upsert_event_user(
+        db=db,
+        event_id=event_id,
+        email=portal_user.email,
+    )
+    if body.full_name is not None:
+        event_user.full_name = body.full_name
+    if body.phone is not None:
+        event_user.phone = body.phone
+    if body.title is not None:
+        event_user.title = body.title
+    if body.affiliation is not None:
+        event_user.affiliation = body.affiliation
+    if body.designation is not None:
+        event_user.designation = body.designation
+    if body.country is not None:
+        event_user.country = body.country
+    if body.bio is not None:
+        event_user.bio = body.bio
+    if body.avatar_url is not None:
+        event_user.avatar_url = body.avatar_url
+    if body.profile_data is not None:
+        merged = dict(event_user.profile_data or {})
+        merged.update(body.profile_data)
+        event_user.profile_data = merged
+
+    await db.commit()
+    await db.refresh(event_user)
+    return EventUserProfileResponse(
+        id=event_user.id,
+        event_id=event_user.event_id,
+        email=event_user.email,
+        phone=event_user.phone,
+        full_name=event_user.full_name,
+        title=event_user.title,
+        affiliation=event_user.affiliation,
+        designation=event_user.designation,
+        country=event_user.country,
+        avatar_url=event_user.avatar_url,
+        bio=event_user.bio,
+        roles=event_user.roles or ["DELEGATE"],
+        is_registered=event_user.is_registered,
+        is_speaker=event_user.is_speaker,
+        is_reviewer=event_user.is_reviewer,
+        reviewer_status=event_user.reviewer_status,
+        profile_data=event_user.profile_data or {},
     )

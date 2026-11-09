@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import pytest
@@ -16,6 +17,8 @@ async def test_terminal_upload_replay_is_read_only_and_idempotent(monkeypatch):
     commits = 0
 
     class Session:
+        info = {}
+
         async def __aenter__(self):
             return self
 
@@ -29,11 +32,22 @@ async def test_terminal_upload_replay_is_read_only_and_idempotent(monkeypatch):
             nonlocal commits
             commits += 1
 
-    class Factory:
-        def __call__(self):
-            return Session()
+    session = Session()
 
-    monkeypatch.setattr(upload_jobs, "AsyncSessionLocal", Factory())
+    @asynccontextmanager
+    async def tenant_session(_organization_id):
+        yield session
+
+    class Repository:
+        def __init__(self, _db):
+            pass
+
+        async def get_by_id(self, **_kwargs):
+            return row
+
+    from app.tasks import tenant_job_scope
+    monkeypatch.setattr(tenant_job_scope, "tenant_job_session", tenant_session)
+    monkeypatch.setattr(upload_jobs, "DurableUploadRepository", Repository)
     result = await upload_jobs._process(uuid.uuid4(), uuid.uuid4(), "replayed-task")
 
     assert result["status"] == "ready"
@@ -59,6 +73,9 @@ async def test_exhausted_import_retry_persists_upload_and_job_terminal_state(mon
     commits = 0
 
     class Session:
+        def __init__(self):
+            self.info = {}
+
         async def __aenter__(self):
             return self
 

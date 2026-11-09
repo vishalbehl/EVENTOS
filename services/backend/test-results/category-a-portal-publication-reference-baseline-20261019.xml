@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="6" skipped="0" tests="7" time="26.591" timestamp="2026-10-19T10:57:35.428735+05:30" hostname="Vishal"><testcase classname="tests.test_registration_portal_publication_reference_safety" name="test_publication_rechecks_retained_catalogue_scope[retired_template]" time="13.897"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">tests\test_registration_portal_publication_reference_safety.py:52: in test_publication_rechecks_retained_catalogue_scope
+    with pytest.raises(HTTPException) as denied:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;</failure></testcase><testcase classname="tests.test_registration_portal_publication_reference_safety" name="test_publication_rechecks_retained_catalogue_scope[retired_parent]" time="1.563"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">tests\test_registration_portal_publication_reference_safety.py:52: in test_publication_rechecks_retained_catalogue_scope
+    with pytest.raises(HTTPException) as denied:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;</failure></testcase><testcase classname="tests.test_registration_portal_publication_reference_safety" name="test_publication_rechecks_retained_catalogue_scope[foreign_parent]" time="1.342"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">tests\test_registration_portal_publication_reference_safety.py:52: in test_publication_rechecks_retained_catalogue_scope
+    with pytest.raises(HTTPException) as denied:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;</failure></testcase><testcase classname="tests.test_registration_portal_publication_reference_safety" name="test_publication_rechecks_retained_catalogue_scope[conflicting_events]" time="1.392"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">tests\test_registration_portal_publication_reference_safety.py:52: in test_publication_rechecks_retained_catalogue_scope
+    with pytest.raises(HTTPException) as denied:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;</failure></testcase><testcase classname="tests.test_registration_portal_publication_reference_safety" name="test_publication_rechecks_retained_catalogue_scope[invalid_document]" time="1.502"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">tests\test_registration_portal_publication_reference_safety.py:52: in test_publication_rechecks_retained_catalogue_scope
+    with pytest.raises(HTTPException) as denied:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;</failure></testcase><testcase classname="tests.test_registration_portal_publication_reference_safety" name="test_publication_rechecks_retained_catalogue_scope[foreign_document_event]" time="1.536"><failure message="Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;">tests\test_registration_portal_publication_reference_safety.py:52: in test_publication_rechecks_retained_catalogue_scope
+    with pytest.raises(HTTPException) as denied:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE &lt;class 'fastapi.exceptions.HTTPException'&gt;</failure></testcase><testcase classname="tests.test_registration_portal_publication_reference_safety" name="test_publication_rechecks_retained_catalogue_scope[valid]" time="4.523" /></testsuite></testsuites>

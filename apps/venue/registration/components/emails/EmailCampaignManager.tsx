@@ -544,7 +544,7 @@ export default function EmailCampaignManager({ eventId }: { eventId?: string | s
                       <div className="pt-6 border-t border-white/5 space-y-4">
                          <label className="text-[9px] font-black uppercase text-muted">Insert Variables</label>
                          <div className="grid grid-cols-2 gap-2">
-                            {['SpeakerName', 'SessionName', 'UploadLink', 'Deadline', 'AccessCode', 'RejectionReason', 'QR', 'RejectedPresentationTable'].map(v => (
+                            {['SpeakerName', 'SessionName', 'UploadLink', 'Deadline', 'RejectionReason', 'QR', 'RejectedPresentationTable'].map(v => (
                               <button key={v} onClick={() => insertVariable(v)} className="p-2.5 bg-white/5 border border-default rounded-xl text-[10px] font-mono text-[var(--pri)] hover:border-[var(--pri)]/50 transition-all">{"{{" + v + "}}"}</button>
                             ))}
                          </div>

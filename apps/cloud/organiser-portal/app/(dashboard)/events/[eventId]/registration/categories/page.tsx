@@ -34,10 +34,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { DateTimePickerWithTZ } from "@/components/organizer/common/DateTimePickerWithTZ";
-import { useEvent, useUpdateEvent } from "@/hooks/useEvents";
+import { useScopedCommand } from "@/hooks/useScopedCommand";
+import type { EventResponse } from "@/types/backend";
+import { useEventEditSession } from "@/hooks/useEventEditSession";
+import { ScopedEventEditor } from "@/components/organizer/events/ScopedEventEditor";
+import { ScopedCommandFeedback } from "@/components/organizer/events/ScopedCommandFeedback";
 import { apiClient, apiGet } from "@/lib/api-client";
 import { toast } from "sonner";
 import { cn, formatDateTimeInTZ } from "@/lib/utils";
+import { useOperationAccess } from "@/lib/capabilities";
 
 const CURRENCIES = [
   { code: "INR", symbol: "₹" },
@@ -78,16 +83,44 @@ interface Participant {
   [key: string]: any;
 }
 
+interface PricingConfiguration {
+  event: EventResponse;
+  version: number;
+  roles: Role[];
+  tiers: string[];
+  pricingData: Record<string, number>;
+  tierSchedules: Record<string, { available_from?: string | null; available_until?: string | null }>;
+  tierCutoffs: Record<string, string | null>;
+}
+
+function parseTicketPrice(value?: string): number | null {
+  if (!value?.trim()) return null;
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0 || amount > 1_000_000_000) throw new Error("Enter a valid, nonnegative ticket price.");
+  return amount;
+}
+
 export default function RegistrationCategoriesPage() {
   const params = useParams();
+  return <ScopedEventEditor eventId={String(params?.eventId || "")}><RegistrationCategoriesEditor /></ScopedEventEditor>;
+}
+
+function RegistrationCategoriesEditor() {
+  const params = useParams();
   const eventId = (params?.eventId as string) || "";
-  const { data: event, refetch: refetchEvent } = useEvent(eventId);
-  const updateEvent = useUpdateEvent(eventId);
+  const edit = useEventEditSession(eventId);
+  const event = edit.event;
+  const command = useScopedCommand(eventId);
+  const paymentAccess = useOperationAccess("registration.payments.manage");
+  const ticketAccess = useOperationAccess("registration.ticket_types.manage");
+  const [pricingVersion, setPricingVersion] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [roles, setRoles] = useState<Role[]>([]);
   const [tiers, setTiers] = useState<string[]>(["Early Bird", "Standard"]);
   const [pricing, setPricing] = useState<Record<string, string>>({});
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [participantCountsAvailable, setParticipantCountsAvailable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -138,17 +171,20 @@ export default function RegistrationCategoriesPage() {
     if (!eventId) return;
     setLoading(true);
     try {
-      const [rolesRes, tiersRes, pricingRes, participantsRes, schedulesRes] = await Promise.all([
-        apiClient.get<Role[]>(`/events/${eventId}/registration/roles`).catch(() => []),
-        apiClient.get<string[]>(`/events/${eventId}/pricing/tiers`).catch(() => ["Early Bird", "Standard"]),
-        apiClient.get<Record<string, number>>(`/events/${eventId}/pricing`).catch(() => ({})),
-        apiGet<Participant[]>(`/events/${eventId}/participants`).catch(() => []),
-        apiClient.get<Record<string, { available_from?: string | null; available_until?: string | null }>>(`/events/${eventId}/pricing/schedules`).catch(() => ({})),
+      const [config, participantsRes] = await Promise.all([
+        apiClient.get<PricingConfiguration>(`/events/${eventId}/pricing/configuration`),
+        apiGet<Participant[]>(`/events/${eventId}/participants`).catch(() => null),
       ]);
-
+      if (!command.isCurrent()) return;
+      if (!Number.isInteger(config.version) || config.version < 1) throw new Error("Pricing version unavailable.");
+      const rolesRes = config.roles, tiersRes = config.tiers, pricingRes = config.pricingData, schedulesRes = config.tierSchedules;
+      setPricingVersion(config.version);
+      setLoadError(null);
+      edit.complete(config.event);
       setRoles(rolesRes || []);
-      const loadedTiers = tiersRes?.length ? tiersRes : ["Early Bird", "Standard"];
-      setTiers(loadedTiers);
+      
+      // Tier identity comes from the authoritative snapshot, not split display keys.
+      setTiers(tiersRes);
 
       const formattedPricing: Record<string, string> = {};
       Object.entries(pricingRes || {}).forEach(([k, v]) => {
@@ -156,27 +192,40 @@ export default function RegistrationCategoriesPage() {
       });
       setPricing(formattedPricing);
       setParticipants(participantsRes || []);
+      setParticipantCountsAvailable(participantsRes !== null);
       setTierSchedules(schedulesRes || {});
-    } catch {
-      toast.error("Failed to load pass categories and pricing.");
+    } catch (error: any) {
+      if (command.isCurrent()) {
+        setPricingVersion(null);
+        setLoadError(error.message || "Failed to load pass categories and pricing.");
+      }
     } finally {
-      setLoading(false);
+      if (command.isCurrent()) setLoading(false);
     }
   };
 
   useEffect(() => {
     loadData();
-    const handleFocus = () => loadData();
-    window.addEventListener("focus", handleFocus);
-    return () => window.removeEventListener("focus", handleFocus);
   }, [eventId]);
+
+  const saveConfiguration = async (payload: Omit<PricingConfiguration, "event" | "version" | "roles" | "pricingData"> & { pricingData: Record<string, number | null> }) => {
+    if (!paymentAccess.enabled || !ticketAccess.enabled) throw new Error("Ticket management and payment permissions are required to change prices.");
+    const result = await command.execute<PricingConfiguration>("post",
+      `/events/${eventId}/pricing/configuration`, payload, pricingVersion);
+    if (!result || !edit.complete(result.event)) return false;
+    setPricingVersion(result.version);
+    setTiers(result.tiers);
+    setPricing(Object.fromEntries(Object.entries(result.pricingData).map(([key, value]) => [key, String(value)])));
+    setTierSchedules(result.tierSchedules);
+    return true;
+  };
 
   const activeRoles = useMemo(() => roles.filter((r) => r.is_active !== false), [roles]);
 
   // Determine active tier based on schedules & cutoffs
   const activeTier = useMemo(() => {
     const cutoffs = (event as any)?.registration_settings?.tier_cutoffs || {};
-    if (!tiers || tiers.length === 0) return "Standard";
+    if (!tiers || tiers.length === 0) return "Not configured";
 
     const now = new Date();
 
@@ -267,33 +316,28 @@ export default function RegistrationCategoriesPage() {
 
     try {
       const nextTiers = tiers.filter((t) => t !== tierToDelete);
-      await apiClient.post(`/events/${eventId}/pricing/tiers`, { tiers: nextTiers });
 
       // Clean up cutoffs
       const currentCutoffs = { ...((event as any)?.registration_settings?.tier_cutoffs || {}) };
       delete currentCutoffs[tierToDelete];
-      await updateEvent.mutateAsync({
-        registration_settings: {
-          ...((event as any)?.registration_settings || {}),
-          tier_cutoffs: currentCutoffs,
-        },
-      });
 
       // Clean up pricing matrix
       const updatedPricing: Record<string, number | null> = {};
-      activeRoles.forEach((role) => {
+      roles.forEach((role) => {
         nextTiers.forEach((t) => {
           const key = `${role.name}_${t}`;
           const val = pricing[key];
-          updatedPricing[key] = val && val.trim() !== "" ? parseFloat(val) : null;
+          updatedPricing[key] = parseTicketPrice(val);
         });
       });
-      await apiClient.post(`/events/${eventId}/pricing`, { pricingData: updatedPricing });
+      const nextSchedules = { ...tierSchedules };
+      delete nextSchedules[tierToDelete];
+      if (!await saveConfiguration({ tiers: nextTiers, pricingData: updatedPricing,
+        tierSchedules: nextSchedules, tierCutoffs: currentCutoffs })) return;
 
       toast.success(`Tier "${tierToDelete}" deleted.`);
-      await Promise.all([loadData(), refetchEvent()]);
     } catch (err: any) {
-      toast.error(err.message || "Failed to delete tier.");
+      if (command.isCurrent()) toast.error(err.message || "Failed to delete tier.");
     }
   };
 
@@ -333,7 +377,6 @@ export default function RegistrationCategoriesPage() {
           nextTiers.push(finalTierName);
         }
       }
-      await apiClient.post(`/events/${eventId}/pricing/tiers`, { tiers: nextTiers });
 
       // 2. Update cutoffs
       const currentCutoffs = { ...((event as any)?.registration_settings?.tier_cutoffs || {}) };
@@ -346,24 +389,19 @@ export default function RegistrationCategoriesPage() {
         delete currentCutoffs[finalTierName];
       }
 
-      await updateEvent.mutateAsync({
-        registration_settings: {
-          ...((event as any)?.registration_settings || {}),
-          tier_cutoffs: currentCutoffs,
-        },
-      });
 
       // 3. Update Pricing Matrix
       const updatedPricing: Record<string, number | null> = {};
-      activeRoles.forEach((role) => {
+      roles.forEach((role) => {
         nextTiers.forEach((t) => {
           const key = `${role.name}_${t}`;
-          if (t === finalTierName) {
+          if (t === finalTierName && role.is_active !== false) {
             const val = tierRolePrices[role.name];
-            updatedPricing[key] = val && val.trim() !== "" ? parseFloat(val) : null;
+            updatedPricing[key] = parseTicketPrice(val);
           } else {
-            const existingVal = pricing[key];
-            updatedPricing[key] = existingVal && existingVal.trim() !== "" ? parseFloat(existingVal) : null;
+            const existingVal = t === finalTierName && editingTierOriginalName
+              ? pricing[`${role.name}_${editingTierOriginalName}`] : pricing[key];
+            updatedPricing[key] = parseTicketPrice(existingVal);
           }
         });
       });
@@ -377,18 +415,16 @@ export default function RegistrationCategoriesPage() {
         },
       };
 
-      await apiClient.post(`/events/${eventId}/pricing`, {
-        pricingData: updatedPricing,
-        tierSchedules: updatedSchedules,
-      });
+      if (editingTierOriginalName && editingTierOriginalName !== finalTierName) delete updatedSchedules[editingTierOriginalName];
+      if (!await saveConfiguration({ tiers: nextTiers, pricingData: updatedPricing,
+        tierSchedules: updatedSchedules, tierCutoffs: currentCutoffs })) return;
 
       toast.success(`Tier "${finalTierName}" and role pricing saved!`);
       setIsModalOpen(false);
-      await Promise.all([loadData(), refetchEvent()]);
     } catch (err: any) {
-      toast.error(err.message || "Failed to save tier pricing.");
+      if (command.isCurrent()) toast.error(err.message || "Failed to save tier pricing. Your draft is retained.");
     } finally {
-      setSaving(false);
+      if (command.isCurrent()) setSaving(false);
     }
   };
 
@@ -406,25 +442,29 @@ export default function RegistrationCategoriesPage() {
         role_code: newRoleCode.trim() || undefined,
         is_active: true,
       };
-      await apiClient.post(`/events/${eventId}/registration/roles`, payload, {
-        headers: { "Idempotency-Key": `participant-role-${Date.now()}` },
-      });
+      const created = await command.execute<Role>("post", `/events/${eventId}/registration/roles`, payload);
+      if (!created) return;
       toast.success(`Pass category "${newRoleName.trim()}" added successfully!`);
       setIsAddRoleModalOpen(false);
       setNewRoleName("");
       setNewRoleCode("");
       await loadData();
     } catch (err: any) {
-      toast.error(err.message || "Failed to create pass category.");
+      if (command.isCurrent()) toast.error(err.message || "Failed to create pass category.");
     } finally {
-      setAddingRole(false);
+      if (command.isCurrent()) setAddingRole(false);
     }
   };
 
   const totalRegistered = participants.length;
   const cutoffs = (event as any)?.registration_settings?.tier_cutoffs || {};
 
+  if (!edit.ready) return <p role="status">{edit.error || "Loading event settings…"}</p>;
+  if (loading || !pricingVersion) return <div role="status">{loadError || "Loading pricing…"}<button type="button" disabled={loading} onClick={() => void loadData()}>Reload current pricing</button></div>;
   return (
+    <fieldset disabled={saving || command.pending || addingRole || edit.reloading} onChangeCapture={edit.markDirty} onClickCapture={edit.markDirty}>
+    <ScopedCommandFeedback failure={command.failure} retryAt={command.retryAt} />
+    <button type="button" onClick={() => void loadData()}>Discard changes and reload current pricing</button>
     <OrganiserPage
       title="Pass Categories & Pricing Tiers"
       description={
@@ -486,9 +526,9 @@ export default function RegistrationCategoriesPage() {
           icon={<Tag className="size-5 text-[var(--sec)]" />}
         />
         <MetricCard
-          label="Registered Attendees"
-          value={totalRegistered.toLocaleString()}
-          hint={`Across ${activeRoles.length} pass categories`}
+          label="Loaded Attendees"
+          value={participantCountsAvailable ? totalRegistered.toLocaleString() : "Unavailable"}
+          hint="Current attendee result page, not the event total"
           tone="green"
           icon={<Users className="size-5 text-emerald-500" />}
         />
@@ -1022,7 +1062,7 @@ export default function RegistrationCategoriesPage() {
                     <Button
                       type="button"
                       onClick={handleSaveTierConfig}
-                      disabled={saving}
+                      disabled={saving || !paymentAccess.enabled || !ticketAccess.enabled}
                       className="h-9 px-4 bg-[var(--pri)] hover:opacity-90 text-[var(--primary-contrast)] font-bold text-xs rounded-lg shadow-sm border-0 cursor-pointer flex items-center gap-1.5"
                     >
                       {saving ? (
@@ -1199,5 +1239,6 @@ export default function RegistrationCategoriesPage() {
         )}
       </AnimatePresence>
     </OrganiserPage>
+    </fieldset>
   );
 }

@@ -1,0 +1,631 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="7" skipped="0" tests="7" time="24.497" timestamp="2026-10-21T18:23:38.066192+05:30" hostname="Vishal"><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[global_template]" time="14.723"><failure message="AssertionError: Page lookup materialized historical rows: [201]&#10;assert [201] == [1]&#10;  &#10;  At index 0 diff: 201 != 1&#10;  Use -v to get more diff">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000002341530A3C0&gt;
+organization = &lt;Organization id=1a81e433-f791-4416-9303-c870554ee804 slug=test-org-d72bf2d5&gt;
+super_admin = &lt;User id=459fc20a-94fa-4d2d-991f-81268204dad6 email=admin-f434e9@test.com role=super_admin&gt;
+event = &lt;Event id=eed15007-b9e1-46a7-8adc-d41ecc97860e short_code=TCDC3B status=draft&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x0000023417D07110&gt;
+entry = 'global_template'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("entry", ["global_template", "owned_template", "manual_template",
+        "global_category", "owned_category", "registration", "abstract"])
+    async def test_page_does_not_materialize_every_historical_evidence_version(
+            db, organization, super_admin, event, monkeypatch, entry):
+        version = 201
+        key = uuid.uuid4().hex
+        if "template" in entry:
+            row = FormTemplate(organization_id=organization.id if entry == "owned_template" else None,
+                scope_type="ORGANIZATION" if entry == "owned_template" else "GLOBAL", category_key="registration",
+                name="Historical evidence budget", slug=f"budget-{key}", fields=[], settings={}, version=version)
+            model, selector = FormTemplateReconciliation, FormTemplateReconciliation.template_id
+            keys = dict(template_id=row.id, template_version=None)
+        elif "category" in entry:
+            row = FormCategory(organization_id=None if entry == "global_category" else organization.id,
+                name="Historical taxonomy budget", slug=f"budget-{key}", version=version)
+            model = FormCategoryReconciliation if entry == "global_category" else CatalogueDocumentReconciliation
+            selector = model.category_id if entry == "global_category" else model.resource_id
+        elif entry == "registration":
+            row = RegistrationFormConfig(event_id=event.id, fields=[], settings={}, version=version)
+            model, selector = CatalogueDocumentReconciliation, CatalogueDocumentReconciliation.resource_id
+        else:
+            row = AbstractForm(organization_id=organization.id, event_id=event.id,
+                schema={"fields": [], "settings": {}}, version=version)
+            model, selector = CatalogueDocumentReconciliation, CatalogueDocumentReconciliation.resource_id
+        db.add(row)
+        await db.flush()
+        operation = "TAXONOMY_VALIDATION" if entry == "global_category" else "DOCUMENT_VALIDATION"
+        evidence = []
+        for old in range(1, version + 1):
+            values = dict(status="VALID" if old == version else "BLOCKED", operation=operation, actor_user_id=super_admin.id)
+            if model is FormTemplateReconciliation:
+                values.update(template_id=row.id, template_version=old)
+            elif model is FormCategoryReconciliation:
+                values.update(category_id=row.id, category_version=old)
+            else:
+                resource_type = {"owned_category": "FORM_CATEGORY", "registration": "REGISTRATION_FORM", "abstract": "ABSTRACT_FORM"}[entry]
+                values.update(organization_id=organization.id, resource_type=resource_type,
+                    resource_id=row.id, resource_version=old)
+            evidence.append(model(**values))
+        db.add_all(evidence)
+        await db.commit()
+        identity = row.id
+    
+        @asynccontextmanager
+        async def sessions():
+            yield db
+        monkeypatch.setattr(worker, "AsyncSessionLocal", sessions)
+        execute = db.execute
+        returned = []
+        selectors = {("template_id", "template_version", "status"),
+            ("category_id", "category_version", "status"), ("resource_id", "resource_version", "status")}
+    
+        async def observed(statement, *args, **kwargs):
+            result = await execute(statement, *args, **kwargs)
+            if getattr(statement, "is_select", False) and tuple(statement.selected_columns.keys()) in selectors:
+                # Freeze/return the same real DB rows; this is observation, not a
+                # query/result double. A LIMIT or application-side slicing cannot
+                # hide that the DB returned every old version.
+                frozen = result.freeze()
+                returned.append(len(frozen.data))
+                return frozen()
+            return result
+        monkeypatch.setattr(db, "execute", observed)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            if entry == "global_template":
+                result = await worker._global_template_page(super_admin.id, None)
+            elif entry == "global_category":
+                result = await worker._global_category_page(super_admin.id, None)
+            elif entry == "manual_template":
+                result = await reconcile_catalogue_documents(db, actor=super_admin, page_size=100,
+                    idempotency_key=f"evidence-budget-{key}")
+            else:
+                stage = {"owned_template": "FORM_TEMPLATE", "owned_category": "FORM_CATEGORY",
+                    "registration": "REGISTRATION_FORM", "abstract": "ABSTRACT_FORM"}[entry]
+                result = await worker._process_page(organization.id, super_admin.id, stage, None)
+&gt;       assert returned == [1], f"Page lookup materialized historical rows: {returned}"
+E       AssertionError: Page lookup materialized historical rows: [201]
+E       assert [201] == [1]
+E         
+E         At index 0 diff: 201 != 1
+E         Use -v to get more diff
+
+tests\test_catalogue_evidence_history_budget.py:94: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[owned_template]" time="1.376"><failure message="AssertionError: Page lookup materialized historical rows: [201]&#10;assert [201] == [1]&#10;  &#10;  At index 0 diff: 201 != 1&#10;  Use -v to get more diff">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023415DD0190&gt;
+organization = &lt;Organization id=9de39bae-ce8f-476f-9dd1-07a2a764857f slug=test-org-1185009d&gt;
+super_admin = &lt;User id=00119558-23cc-400c-9b7d-d6672bd9bddd email=admin-c14d8b@test.com role=super_admin&gt;
+event = &lt;Event id=107dd908-35e9-456f-9cbe-746c17183d6c short_code=TCC27F status=draft&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x00000234179BD650&gt;
+entry = 'owned_template'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("entry", ["global_template", "owned_template", "manual_template",
+        "global_category", "owned_category", "registration", "abstract"])
+    async def test_page_does_not_materialize_every_historical_evidence_version(
+            db, organization, super_admin, event, monkeypatch, entry):
+        version = 201
+        key = uuid.uuid4().hex
+        if "template" in entry:
+            row = FormTemplate(organization_id=organization.id if entry == "owned_template" else None,
+                scope_type="ORGANIZATION" if entry == "owned_template" else "GLOBAL", category_key="registration",
+                name="Historical evidence budget", slug=f"budget-{key}", fields=[], settings={}, version=version)
+            model, selector = FormTemplateReconciliation, FormTemplateReconciliation.template_id
+            keys = dict(template_id=row.id, template_version=None)
+        elif "category" in entry:
+            row = FormCategory(organization_id=None if entry == "global_category" else organization.id,
+                name="Historical taxonomy budget", slug=f"budget-{key}", version=version)
+            model = FormCategoryReconciliation if entry == "global_category" else CatalogueDocumentReconciliation
+            selector = model.category_id if entry == "global_category" else model.resource_id
+        elif entry == "registration":
+            row = RegistrationFormConfig(event_id=event.id, fields=[], settings={}, version=version)
+            model, selector = CatalogueDocumentReconciliation, CatalogueDocumentReconciliation.resource_id
+        else:
+            row = AbstractForm(organization_id=organization.id, event_id=event.id,
+                schema={"fields": [], "settings": {}}, version=version)
+            model, selector = CatalogueDocumentReconciliation, CatalogueDocumentReconciliation.resource_id
+        db.add(row)
+        await db.flush()
+        operation = "TAXONOMY_VALIDATION" if entry == "global_category" else "DOCUMENT_VALIDATION"
+        evidence = []
+        for old in range(1, version + 1):
+            values = dict(status="VALID" if old == version else "BLOCKED", operation=operation, actor_user_id=super_admin.id)
+            if model is FormTemplateReconciliation:
+                values.update(template_id=row.id, template_version=old)
+            elif model is FormCategoryReconciliation:
+                values.update(category_id=row.id, category_version=old)
+            else:
+                resource_type = {"owned_category": "FORM_CATEGORY", "registration": "REGISTRATION_FORM", "abstract": "ABSTRACT_FORM"}[entry]
+                values.update(organization_id=organization.id, resource_type=resource_type,
+                    resource_id=row.id, resource_version=old)
+            evidence.append(model(**values))
+        db.add_all(evidence)
+        await db.commit()
+        identity = row.id
+    
+        @asynccontextmanager
+        async def sessions():
+            yield db
+        monkeypatch.setattr(worker, "AsyncSessionLocal", sessions)
+        execute = db.execute
+        returned = []
+        selectors = {("template_id", "template_version", "status"),
+            ("category_id", "category_version", "status"), ("resource_id", "resource_version", "status")}
+    
+        async def observed(statement, *args, **kwargs):
+            result = await execute(statement, *args, **kwargs)
+            if getattr(statement, "is_select", False) and tuple(statement.selected_columns.keys()) in selectors:
+                # Freeze/return the same real DB rows; this is observation, not a
+                # query/result double. A LIMIT or application-side slicing cannot
+                # hide that the DB returned every old version.
+                frozen = result.freeze()
+                returned.append(len(frozen.data))
+                return frozen()
+            return result
+        monkeypatch.setattr(db, "execute", observed)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            if entry == "global_template":
+                result = await worker._global_template_page(super_admin.id, None)
+            elif entry == "global_category":
+                result = await worker._global_category_page(super_admin.id, None)
+            elif entry == "manual_template":
+                result = await reconcile_catalogue_documents(db, actor=super_admin, page_size=100,
+                    idempotency_key=f"evidence-budget-{key}")
+            else:
+                stage = {"owned_template": "FORM_TEMPLATE", "owned_category": "FORM_CATEGORY",
+                    "registration": "REGISTRATION_FORM", "abstract": "ABSTRACT_FORM"}[entry]
+                result = await worker._process_page(organization.id, super_admin.id, stage, None)
+&gt;       assert returned == [1], f"Page lookup materialized historical rows: {returned}"
+E       AssertionError: Page lookup materialized historical rows: [201]
+E       assert [201] == [1]
+E         
+E         At index 0 diff: 201 != 1
+E         Use -v to get more diff
+
+tests\test_catalogue_evidence_history_budget.py:94: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[manual_template]" time="1.134"><failure message="AssertionError: Page lookup materialized historical rows: [201]&#10;assert [201] == [1]&#10;  &#10;  At index 0 diff: 201 != 1&#10;  Use -v to get more diff">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023415DD0550&gt;
+organization = &lt;Organization id=267136f2-a711-4c08-94fd-b0df203e4b8f slug=test-org-e64b5e78&gt;
+super_admin = &lt;User id=0353a0aa-48b3-41f9-9739-edad9c8e738e email=admin-95976c@test.com role=super_admin&gt;
+event = &lt;Event id=446ea114-c35b-45a1-a4a8-e694f185a097 short_code=TC26D7 status=draft&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x0000023418213A10&gt;
+entry = 'manual_template'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("entry", ["global_template", "owned_template", "manual_template",
+        "global_category", "owned_category", "registration", "abstract"])
+    async def test_page_does_not_materialize_every_historical_evidence_version(
+            db, organization, super_admin, event, monkeypatch, entry):
+        version = 201
+        key = uuid.uuid4().hex
+        if "template" in entry:
+            row = FormTemplate(organization_id=organization.id if entry == "owned_template" else None,
+                scope_type="ORGANIZATION" if entry == "owned_template" else "GLOBAL", category_key="registration",
+                name="Historical evidence budget", slug=f"budget-{key}", fields=[], settings={}, version=version)
+            model, selector = FormTemplateReconciliation, FormTemplateReconciliation.template_id
+            keys = dict(template_id=row.id, template_version=None)
+        elif "category" in entry:
+            row = FormCategory(organization_id=None if entry == "global_category" else organization.id,
+                name="Historical taxonomy budget", slug=f"budget-{key}", version=version)
+            model = FormCategoryReconciliation if entry == "global_category" else CatalogueDocumentReconciliation
+            selector = model.category_id if entry == "global_category" else model.resource_id
+        elif entry == "registration":
+            row = RegistrationFormConfig(event_id=event.id, fields=[], settings={}, version=version)
+            model, selector = CatalogueDocumentReconciliation, CatalogueDocumentReconciliation.resource_id
+        else:
+            row = AbstractForm(organization_id=organization.id, event_id=event.id,
+                schema={"fields": [], "settings": {}}, version=version)
+            model, selector = CatalogueDocumentReconciliation, CatalogueDocumentReconciliation.resource_id
+        db.add(row)
+        await db.flush()
+        operation = "TAXONOMY_VALIDATION" if entry == "global_category" else "DOCUMENT_VALIDATION"
+        evidence = []
+        for old in range(1, version + 1):
+            values = dict(status="VALID" if old == version else "BLOCKED", operation=operation, actor_user_id=super_admin.id)
+            if model is FormTemplateReconciliation:
+                values.update(template_id=row.id, template_version=old)
+            elif model is FormCategoryReconciliation:
+                values.update(category_id=row.id, category_version=old)
+            else:
+                resource_type = {"owned_category": "FORM_CATEGORY", "registration": "REGISTRATION_FORM", "abstract": "ABSTRACT_FORM"}[entry]
+                values.update(organization_id=organization.id, resource_type=resource_type,
+                    resource_id=row.id, resource_version=old)
+            evidence.append(model(**values))
+        db.add_all(evidence)
+        await db.commit()
+        identity = row.id
+    
+        @asynccontextmanager
+        async def sessions():
+            yield db
+        monkeypatch.setattr(worker, "AsyncSessionLocal", sessions)
+        execute = db.execute
+        returned = []
+        selectors = {("template_id", "template_version", "status"),
+            ("category_id", "category_version", "status"), ("resource_id", "resource_version", "status")}
+    
+        async def observed(statement, *args, **kwargs):
+            result = await execute(statement, *args, **kwargs)
+            if getattr(statement, "is_select", False) and tuple(statement.selected_columns.keys()) in selectors:
+                # Freeze/return the same real DB rows; this is observation, not a
+                # query/result double. A LIMIT or application-side slicing cannot
+                # hide that the DB returned every old version.
+                frozen = result.freeze()
+                returned.append(len(frozen.data))
+                return frozen()
+            return result
+        monkeypatch.setattr(db, "execute", observed)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            if entry == "global_template":
+                result = await worker._global_template_page(super_admin.id, None)
+            elif entry == "global_category":
+                result = await worker._global_category_page(super_admin.id, None)
+            elif entry == "manual_template":
+                result = await reconcile_catalogue_documents(db, actor=super_admin, page_size=100,
+                    idempotency_key=f"evidence-budget-{key}")
+            else:
+                stage = {"owned_template": "FORM_TEMPLATE", "owned_category": "FORM_CATEGORY",
+                    "registration": "REGISTRATION_FORM", "abstract": "ABSTRACT_FORM"}[entry]
+                result = await worker._process_page(organization.id, super_admin.id, stage, None)
+&gt;       assert returned == [1], f"Page lookup materialized historical rows: {returned}"
+E       AssertionError: Page lookup materialized historical rows: [201]
+E       assert [201] == [1]
+E         
+E         At index 0 diff: 201 != 1
+E         Use -v to get more diff
+
+tests\test_catalogue_evidence_history_budget.py:94: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[global_category]" time="0.918"><failure message="AssertionError: Page lookup materialized historical rows: [201]&#10;assert [201] == [1]&#10;  &#10;  At index 0 diff: 201 != 1&#10;  Use -v to get more diff">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023417DFA520&gt;
+organization = &lt;Organization id=da5609ca-a9de-4442-b156-a0572be30bd5 slug=test-org-8d673a62&gt;
+super_admin = &lt;User id=db312dc0-d4d9-4d75-88f5-c10bca45a3d2 email=admin-0a04a3@test.com role=super_admin&gt;
+event = &lt;Event id=365a0430-8da5-4dca-a7a0-45d45e5d9aa9 short_code=TC148D status=draft&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x0000023415D77E70&gt;
+entry = 'global_category'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("entry", ["global_template", "owned_template", "manual_template",
+        "global_category", "owned_category", "registration", "abstract"])
+    async def test_page_does_not_materialize_every_historical_evidence_version(
+            db, organization, super_admin, event, monkeypatch, entry):
+        version = 201
+        key = uuid.uuid4().hex
+        if "template" in entry:
+            row = FormTemplate(organization_id=organization.id if entry == "owned_template" else None,
+                scope_type="ORGANIZATION" if entry == "owned_template" else "GLOBAL", category_key="registration",
+                name="Historical evidence budget", slug=f"budget-{key}", fields=[], settings={}, version=version)
+            model, selector = FormTemplateReconciliation, FormTemplateReconciliation.template_id
+            keys = dict(template_id=row.id, template_version=None)
+        elif "category" in entry:
+            row = FormCategory(organization_id=None if entry == "global_category" else organization.id,
+                name="Historical taxonomy budget", slug=f"budget-{key}", version=version)
+            model = FormCategoryReconciliation if entry == "global_category" else CatalogueDocumentReconciliation
+            selector = model.category_id if entry == "global_category" else model.resource_id
+        elif entry == "registration":
+            row = RegistrationFormConfig(event_id=event.id, fields=[], settings={}, version=version)
+            model, selector = CatalogueDocumentReconciliation, CatalogueDocumentReconciliation.resource_id
+        else:
+            row = AbstractForm(organization_id=organization.id, event_id=event.id,
+                schema={"fields": [], "settings": {}}, version=version)
+            model, selector = CatalogueDocumentReconciliation, CatalogueDocumentReconciliation.resource_id
+        db.add(row)
+        await db.flush()
+        operation = "TAXONOMY_VALIDATION" if entry == "global_category" else "DOCUMENT_VALIDATION"
+        evidence = []
+        for old in range(1, version + 1):
+            values = dict(status="VALID" if old == version else "BLOCKED", operation=operation, actor_user_id=super_admin.id)
+            if model is FormTemplateReconciliation:
+                values.update(template_id=row.id, template_version=old)
+            elif model is FormCategoryReconciliation:
+                values.update(category_id=row.id, category_version=old)
+            else:
+                resource_type = {"owned_category": "FORM_CATEGORY", "registration": "REGISTRATION_FORM", "abstract": "ABSTRACT_FORM"}[entry]
+                values.update(organization_id=organization.id, resource_type=resource_type,
+                    resource_id=row.id, resource_version=old)
+            evidence.append(model(**values))
+        db.add_all(evidence)
+        await db.commit()
+        identity = row.id
+    
+        @asynccontextmanager
+        async def sessions():
+            yield db
+        monkeypatch.setattr(worker, "AsyncSessionLocal", sessions)
+        execute = db.execute
+        returned = []
+        selectors = {("template_id", "template_version", "status"),
+            ("category_id", "category_version", "status"), ("resource_id", "resource_version", "status")}
+    
+        async def observed(statement, *args, **kwargs):
+            result = await execute(statement, *args, **kwargs)
+            if getattr(statement, "is_select", False) and tuple(statement.selected_columns.keys()) in selectors:
+                # Freeze/return the same real DB rows; this is observation, not a
+                # query/result double. A LIMIT or application-side slicing cannot
+                # hide that the DB returned every old version.
+                frozen = result.freeze()
+                returned.append(len(frozen.data))
+                return frozen()
+            return result
+        monkeypatch.setattr(db, "execute", observed)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            if entry == "global_template":
+                result = await worker._global_template_page(super_admin.id, None)
+            elif entry == "global_category":
+                result = await worker._global_category_page(super_admin.id, None)
+            elif entry == "manual_template":
+                result = await reconcile_catalogue_documents(db, actor=super_admin, page_size=100,
+                    idempotency_key=f"evidence-budget-{key}")
+            else:
+                stage = {"owned_template": "FORM_TEMPLATE", "owned_category": "FORM_CATEGORY",
+                    "registration": "REGISTRATION_FORM", "abstract": "ABSTRACT_FORM"}[entry]
+                result = await worker._process_page(organization.id, super_admin.id, stage, None)
+&gt;       assert returned == [1], f"Page lookup materialized historical rows: {returned}"
+E       AssertionError: Page lookup materialized historical rows: [201]
+E       assert [201] == [1]
+E         
+E         At index 0 diff: 201 != 1
+E         Use -v to get more diff
+
+tests\test_catalogue_evidence_history_budget.py:94: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[owned_category]" time="0.999"><failure message="AssertionError: Page lookup materialized historical rows: [201]&#10;assert [201] == [1]&#10;  &#10;  At index 0 diff: 201 != 1&#10;  Use -v to get more diff">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x0000023417DFBBB0&gt;
+organization = &lt;Organization id=295d3a53-a740-4151-ae5d-15e92e884bdb slug=test-org-dad58466&gt;
+super_admin = &lt;User id=6a53fb80-e57b-46f4-8ebf-7cd645192c47 email=admin-5f5b0e@test.com role=super_admin&gt;
+event = &lt;Event id=386b6677-c023-443b-8399-71f006e32d4e short_code=TC7507 status=draft&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002341842E890&gt;
+entry = 'owned_category'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("entry", ["global_template", "owned_template", "manual_template",
+        "global_category", "owned_category", "registration", "abstract"])
+    async def test_page_does_not_materialize_every_historical_evidence_version(
+            db, organization, super_admin, event, monkeypatch, entry):
+        version = 201
+        key = uuid.uuid4().hex
+        if "template" in entry:
+            row = FormTemplate(organization_id=organization.id if entry == "owned_template" else None,
+                scope_type="ORGANIZATION" if entry == "owned_template" else "GLOBAL", category_key="registration",
+                name="Historical evidence budget", slug=f"budget-{key}", fields=[], settings={}, version=version)
+            model, selector = FormTemplateReconciliation, FormTemplateReconciliation.template_id
+            keys = dict(template_id=row.id, template_version=None)
+        elif "category" in entry:
+            row = FormCategory(organization_id=None if entry == "global_category" else organization.id,
+                name="Historical taxonomy budget", slug=f"budget-{key}", version=version)
+            model = FormCategoryReconciliation if entry == "global_category" else CatalogueDocumentReconciliation
+            selector = model.category_id if entry == "global_category" else model.resource_id
+        elif entry == "registration":
+            row = RegistrationFormConfig(event_id=event.id, fields=[], settings={}, version=version)
+            model, selector = CatalogueDocumentReconciliation, CatalogueDocumentReconciliation.resource_id
+        else:
+            row = AbstractForm(organization_id=organization.id, event_id=event.id,
+                schema={"fields": [], "settings": {}}, version=version)
+            model, selector = CatalogueDocumentReconciliation, CatalogueDocumentReconciliation.resource_id
+        db.add(row)
+        await db.flush()
+        operation = "TAXONOMY_VALIDATION" if entry == "global_category" else "DOCUMENT_VALIDATION"
+        evidence = []
+        for old in range(1, version + 1):
+            values = dict(status="VALID" if old == version else "BLOCKED", operation=operation, actor_user_id=super_admin.id)
+            if model is FormTemplateReconciliation:
+                values.update(template_id=row.id, template_version=old)
+            elif model is FormCategoryReconciliation:
+                values.update(category_id=row.id, category_version=old)
+            else:
+                resource_type = {"owned_category": "FORM_CATEGORY", "registration": "REGISTRATION_FORM", "abstract": "ABSTRACT_FORM"}[entry]
+                values.update(organization_id=organization.id, resource_type=resource_type,
+                    resource_id=row.id, resource_version=old)
+            evidence.append(model(**values))
+        db.add_all(evidence)
+        await db.commit()
+        identity = row.id
+    
+        @asynccontextmanager
+        async def sessions():
+            yield db
+        monkeypatch.setattr(worker, "AsyncSessionLocal", sessions)
+        execute = db.execute
+        returned = []
+        selectors = {("template_id", "template_version", "status"),
+            ("category_id", "category_version", "status"), ("resource_id", "resource_version", "status")}
+    
+        async def observed(statement, *args, **kwargs):
+            result = await execute(statement, *args, **kwargs)
+            if getattr(statement, "is_select", False) and tuple(statement.selected_columns.keys()) in selectors:
+                # Freeze/return the same real DB rows; this is observation, not a
+                # query/result double. A LIMIT or application-side slicing cannot
+                # hide that the DB returned every old version.
+                frozen = result.freeze()
+                returned.append(len(frozen.data))
+                return frozen()
+            return result
+        monkeypatch.setattr(db, "execute", observed)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            if entry == "global_template":
+                result = await worker._global_template_page(super_admin.id, None)
+            elif entry == "global_category":
+                result = await worker._global_category_page(super_admin.id, None)
+            elif entry == "manual_template":
+                result = await reconcile_catalogue_documents(db, actor=super_admin, page_size=100,
+                    idempotency_key=f"evidence-budget-{key}")
+            else:
+                stage = {"owned_template": "FORM_TEMPLATE", "owned_category": "FORM_CATEGORY",
+                    "registration": "REGISTRATION_FORM", "abstract": "ABSTRACT_FORM"}[entry]
+                result = await worker._process_page(organization.id, super_admin.id, stage, None)
+&gt;       assert returned == [1], f"Page lookup materialized historical rows: {returned}"
+E       AssertionError: Page lookup materialized historical rows: [201]
+E       assert [201] == [1]
+E         
+E         At index 0 diff: 201 != 1
+E         Use -v to get more diff
+
+tests\test_catalogue_evidence_history_budget.py:94: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[registration]" time="1.003"><failure message="AssertionError: Page lookup materialized historical rows: [201]&#10;assert [201] == [1]&#10;  &#10;  At index 0 diff: 201 != 1&#10;  Use -v to get more diff">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x00000234184B9910&gt;
+organization = &lt;Organization id=068fa5c0-6738-4de0-b4e2-49369b860d3d slug=test-org-562dd4ac&gt;
+super_admin = &lt;User id=2a994156-62f8-4e71-ba00-213249fb1a33 email=admin-337897@test.com role=super_admin&gt;
+event = &lt;Event id=7057b7a5-81db-43e9-b5a7-6b883810b14e short_code=TCD97A status=draft&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x00000234186CC050&gt;
+entry = 'registration'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("entry", ["global_template", "owned_template", "manual_template",
+        "global_category", "owned_category", "registration", "abstract"])
+    async def test_page_does_not_materialize_every_historical_evidence_version(
+            db, organization, super_admin, event, monkeypatch, entry):
+        version = 201
+        key = uuid.uuid4().hex
+        if "template" in entry:
+            row = FormTemplate(organization_id=organization.id if entry == "owned_template" else None,
+                scope_type="ORGANIZATION" if entry == "owned_template" else "GLOBAL", category_key="registration",
+                name="Historical evidence budget", slug=f"budget-{key}", fields=[], settings={}, version=version)
+            model, selector = FormTemplateReconciliation, FormTemplateReconciliation.template_id
+            keys = dict(template_id=row.id, template_version=None)
+        elif "category" in entry:
+            row = FormCategory(organization_id=None if entry == "global_category" else organization.id,
+                name="Historical taxonomy budget", slug=f"budget-{key}", version=version)
+            model = FormCategoryReconciliation if entry == "global_category" else CatalogueDocumentReconciliation
+            selector = model.category_id if entry == "global_category" else model.resource_id
+        elif entry == "registration":
+            row = RegistrationFormConfig(event_id=event.id, fields=[], settings={}, version=version)
+            model, selector = CatalogueDocumentReconciliation, CatalogueDocumentReconciliation.resource_id
+        else:
+            row = AbstractForm(organization_id=organization.id, event_id=event.id,
+                schema={"fields": [], "settings": {}}, version=version)
+            model, selector = CatalogueDocumentReconciliation, CatalogueDocumentReconciliation.resource_id
+        db.add(row)
+        await db.flush()
+        operation = "TAXONOMY_VALIDATION" if entry == "global_category" else "DOCUMENT_VALIDATION"
+        evidence = []
+        for old in range(1, version + 1):
+            values = dict(status="VALID" if old == version else "BLOCKED", operation=operation, actor_user_id=super_admin.id)
+            if model is FormTemplateReconciliation:
+                values.update(template_id=row.id, template_version=old)
+            elif model is FormCategoryReconciliation:
+                values.update(category_id=row.id, category_version=old)
+            else:
+                resource_type = {"owned_category": "FORM_CATEGORY", "registration": "REGISTRATION_FORM", "abstract": "ABSTRACT_FORM"}[entry]
+                values.update(organization_id=organization.id, resource_type=resource_type,
+                    resource_id=row.id, resource_version=old)
+            evidence.append(model(**values))
+        db.add_all(evidence)
+        await db.commit()
+        identity = row.id
+    
+        @asynccontextmanager
+        async def sessions():
+            yield db
+        monkeypatch.setattr(worker, "AsyncSessionLocal", sessions)
+        execute = db.execute
+        returned = []
+        selectors = {("template_id", "template_version", "status"),
+            ("category_id", "category_version", "status"), ("resource_id", "resource_version", "status")}
+    
+        async def observed(statement, *args, **kwargs):
+            result = await execute(statement, *args, **kwargs)
+            if getattr(statement, "is_select", False) and tuple(statement.selected_columns.keys()) in selectors:
+                # Freeze/return the same real DB rows; this is observation, not a
+                # query/result double. A LIMIT or application-side slicing cannot
+                # hide that the DB returned every old version.
+                frozen = result.freeze()
+                returned.append(len(frozen.data))
+                return frozen()
+            return result
+        monkeypatch.setattr(db, "execute", observed)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            if entry == "global_template":
+                result = await worker._global_template_page(super_admin.id, None)
+            elif entry == "global_category":
+                result = await worker._global_category_page(super_admin.id, None)
+            elif entry == "manual_template":
+                result = await reconcile_catalogue_documents(db, actor=super_admin, page_size=100,
+                    idempotency_key=f"evidence-budget-{key}")
+            else:
+                stage = {"owned_template": "FORM_TEMPLATE", "owned_category": "FORM_CATEGORY",
+                    "registration": "REGISTRATION_FORM", "abstract": "ABSTRACT_FORM"}[entry]
+                result = await worker._process_page(organization.id, super_admin.id, stage, None)
+&gt;       assert returned == [1], f"Page lookup materialized historical rows: {returned}"
+E       AssertionError: Page lookup materialized historical rows: [201]
+E       assert [201] == [1]
+E         
+E         At index 0 diff: 201 != 1
+E         Use -v to get more diff
+
+tests\test_catalogue_evidence_history_budget.py:94: AssertionError</failure></testcase><testcase classname="tests.test_catalogue_evidence_history_budget" name="test_page_does_not_materialize_every_historical_evidence_version[abstract]" time="3.280"><failure message="AssertionError: Page lookup materialized historical rows: [201]&#10;assert [201] == [1]&#10;  &#10;  At index 0 diff: 201 != 1&#10;  Use -v to get more diff">db = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x00000234184929C0&gt;
+organization = &lt;Organization id=c1a4900d-4572-417a-af7c-baa02efa0634 slug=test-org-6361d218&gt;
+super_admin = &lt;User id=889082d6-9d52-4faa-b427-ecf60dc4d142 email=admin-1618be@test.com role=super_admin&gt;
+event = &lt;Event id=603385ec-e61d-41e9-b57c-fe156576d44d short_code=TC1946 status=draft&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x0000023418811B00&gt;
+entry = 'abstract'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("entry", ["global_template", "owned_template", "manual_template",
+        "global_category", "owned_category", "registration", "abstract"])
+    async def test_page_does_not_materialize_every_historical_evidence_version(
+            db, organization, super_admin, event, monkeypatch, entry):
+        version = 201
+        key = uuid.uuid4().hex
+        if "template" in entry:
+            row = FormTemplate(organization_id=organization.id if entry == "owned_template" else None,
+                scope_type="ORGANIZATION" if entry == "owned_template" else "GLOBAL", category_key="registration",
+                name="Historical evidence budget", slug=f"budget-{key}", fields=[], settings={}, version=version)
+            model, selector = FormTemplateReconciliation, FormTemplateReconciliation.template_id
+            keys = dict(template_id=row.id, template_version=None)
+        elif "category" in entry:
+            row = FormCategory(organization_id=None if entry == "global_category" else organization.id,
+                name="Historical taxonomy budget", slug=f"budget-{key}", version=version)
+            model = FormCategoryReconciliation if entry == "global_category" else CatalogueDocumentReconciliation
+            selector = model.category_id if entry == "global_category" else model.resource_id
+        elif entry == "registration":
+            row = RegistrationFormConfig(event_id=event.id, fields=[], settings={}, version=version)
+            model, selector = CatalogueDocumentReconciliation, CatalogueDocumentReconciliation.resource_id
+        else:
+            row = AbstractForm(organization_id=organization.id, event_id=event.id,
+                schema={"fields": [], "settings": {}}, version=version)
+            model, selector = CatalogueDocumentReconciliation, CatalogueDocumentReconciliation.resource_id
+        db.add(row)
+        await db.flush()
+        operation = "TAXONOMY_VALIDATION" if entry == "global_category" else "DOCUMENT_VALIDATION"
+        evidence = []
+        for old in range(1, version + 1):
+            values = dict(status="VALID" if old == version else "BLOCKED", operation=operation, actor_user_id=super_admin.id)
+            if model is FormTemplateReconciliation:
+                values.update(template_id=row.id, template_version=old)
+            elif model is FormCategoryReconciliation:
+                values.update(category_id=row.id, category_version=old)
+            else:
+                resource_type = {"owned_category": "FORM_CATEGORY", "registration": "REGISTRATION_FORM", "abstract": "ABSTRACT_FORM"}[entry]
+                values.update(organization_id=organization.id, resource_type=resource_type,
+                    resource_id=row.id, resource_version=old)
+            evidence.append(model(**values))
+        db.add_all(evidence)
+        await db.commit()
+        identity = row.id
+    
+        @asynccontextmanager
+        async def sessions():
+            yield db
+        monkeypatch.setattr(worker, "AsyncSessionLocal", sessions)
+        execute = db.execute
+        returned = []
+        selectors = {("template_id", "template_version", "status"),
+            ("category_id", "category_version", "status"), ("resource_id", "resource_version", "status")}
+    
+        async def observed(statement, *args, **kwargs):
+            result = await execute(statement, *args, **kwargs)
+            if getattr(statement, "is_select", False) and tuple(statement.selected_columns.keys()) in selectors:
+                # Freeze/return the same real DB rows; this is observation, not a
+                # query/result double. A LIMIT or application-side slicing cannot
+                # hide that the DB returned every old version.
+                frozen = result.freeze()
+                returned.append(len(frozen.data))
+                return frozen()
+            return result
+        monkeypatch.setattr(db, "execute", observed)
+        async with TenantContextGuard.scoped(db, super_admin.organization_id):
+            if entry == "global_template":
+                result = await worker._global_template_page(super_admin.id, None)
+            elif entry == "global_category":
+                result = await worker._global_category_page(super_admin.id, None)
+            elif entry == "manual_template":
+                result = await reconcile_catalogue_documents(db, actor=super_admin, page_size=100,
+                    idempotency_key=f"evidence-budget-{key}")
+            else:
+                stage = {"owned_template": "FORM_TEMPLATE", "owned_category": "FORM_CATEGORY",
+                    "registration": "REGISTRATION_FORM", "abstract": "ABSTRACT_FORM"}[entry]
+                result = await worker._process_page(organization.id, super_admin.id, stage, None)
+&gt;       assert returned == [1], f"Page lookup materialized historical rows: {returned}"
+E       AssertionError: Page lookup materialized historical rows: [201]
+E       assert [201] == [1]
+E         
+E         At index 0 diff: 201 != 1
+E         Use -v to get more diff
+
+tests\test_catalogue_evidence_history_budget.py:94: AssertionError</failure></testcase></testsuite></testsuites>

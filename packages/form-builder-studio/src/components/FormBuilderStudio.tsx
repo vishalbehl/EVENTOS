@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   DndContext,
   closestCenter,
@@ -56,6 +56,7 @@ import {
   Tablet,
   Smartphone,
   RefreshCw,
+  RotateCcw,
   Search,
   Sliders,
   Layers,
@@ -365,7 +366,7 @@ function SortableFieldCard({
         </span>
 
         <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[var(--pri,#4f46e5)]/10 text-[var(--pri,#4f46e5)] border border-[var(--pri,#4f46e5)]/20">
-          {field.type.replace(/_/g, " ")}
+          {field.type ? field.type.replace(/_/g, " ") : "TEXT"}
         </span>
 
         {field.is_default && (
@@ -518,7 +519,7 @@ function DragGhostCard({ field, index }: { field: FormField; index: number }) {
           {field.label || "Untitled field"}
         </span>
         <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-[var(--pri,#4f46e5)]/20 text-[var(--pri,#4f46e5)] ml-auto shrink-0">
-          {field.type.replace(/_/g, " ")}
+          {field.type ? field.type.replace(/_/g, " ") : "TEXT"}
         </span>
       </div>
     </div>
@@ -536,6 +537,7 @@ export interface FormBuilderStudioProps {
   onSave?: (data: { fields: FormField[]; settings: FormSettings; is_live: boolean }) => Promise<void> | void;
   onBack?: () => void;
   onBrowseTemplates?: () => void;
+  onResetToDefault?: () => void;
 }
 
 export function FormBuilderStudio({
@@ -548,6 +550,7 @@ export function FormBuilderStudio({
   onSave,
   onBack,
   onBrowseTemplates,
+  onResetToDefault,
 }: FormBuilderStudioProps) {
   const isRegistrationForm = categoryName.toLowerCase().includes("registration");
 
@@ -587,6 +590,34 @@ export function FormBuilderStudio({
     enable_payment: enablePayment,
     steps,
   });
+
+  // Sync canvas state when initialFields or initialSettings update asynchronously (e.g. from server fetch or reset)
+  useEffect(() => {
+    if (initialFields && initialFields.length > 0) {
+      setFields(
+        initialFields.map((f, idx) => ({
+          ...f,
+          sort_order: f.sort_order ?? idx,
+          step_index: f.step_index ?? 0,
+        }))
+      );
+    }
+    if (initialSettings) {
+      setSettings((prev) => ({ ...prev, ...initialSettings }));
+      if (initialSettings.steps && initialSettings.steps.length > 0) {
+        setSteps(initialSettings.steps);
+      }
+      if (initialSettings.enable_terms !== undefined) {
+        setEnableTerms(initialSettings.enable_terms);
+      }
+      if (initialSettings.enable_preview !== undefined) {
+        setEnablePreview(initialSettings.enable_preview);
+      }
+      if (initialSettings.enable_payment !== undefined) {
+        setEnablePayment(initialSettings.enable_payment);
+      }
+    }
+  }, [initialFields, initialSettings]);
 
   const [isLive, setIsLive] = useState(initialIsLive);
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
@@ -841,6 +872,18 @@ export function FormBuilderStudio({
             >
               <Layers className="size-3.5 text-[var(--pri,#4f46e5)]" />
               <span>Templates</span>
+            </button>
+          )}
+
+          {onResetToDefault && (
+            <button
+              type="button"
+              onClick={onResetToDefault}
+              className="h-8 px-3 text-xs font-semibold rounded-xl border border-[var(--border-subtle,#27272a)] hover:bg-rose-500/10 hover:text-rose-400 hover:border-rose-500/30 text-[var(--text-secondary,#a1a1aa)] flex items-center gap-1.5 cursor-pointer transition"
+              title="Reset form layout back to default blueprint"
+            >
+              <RotateCcw className="size-3.5" />
+              <span>Reset to Default</span>
             </button>
           )}
 
@@ -1154,7 +1197,7 @@ export function FormBuilderStudio({
                       <div className="space-y-3">
                         {currentStepFields.map((field, idx) => (
                           <SortableFieldCard
-                            key={field.id}
+                            key={field.id || `field-key-${idx}`}
                             field={field}
                             index={idx}
                             isSelected={selectedFieldId === field.id}
@@ -1195,7 +1238,7 @@ export function FormBuilderStudio({
                   Field Settings
                 </span>
                 <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-[var(--pri,#4f46e5)]/10 text-[var(--pri,#4f46e5)] border border-[var(--pri,#4f46e5)]/20">
-                  {selectedField.type.replace(/_/g, " ")}
+                  {selectedField.type ? selectedField.type.replace(/_/g, " ") : "TEXT"}
                 </span>
               </div>
               <button

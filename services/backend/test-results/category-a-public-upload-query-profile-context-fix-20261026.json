@@ -1,0 +1,160 @@
+{
+  "status": "PASSED",
+  "scope": "isolated_actual_restricted_login_real_http",
+  "storage_connection_failure_retained_and_same_attempt_retried": false,
+  "post_commit_broker_failure_recovered_by_real_worker": false,
+  "late_provider_write_rejected_after_missing_recovery": false,
+  "closed_attempt_refused_and_explicit_new_attempt_ready": false,
+  "fixture": {
+    "event_id": "7d9dfdcb-0a3a-4dd9-96d9-284b8d02a886",
+    "contract_id": "299a1064-fb35-4f59-9b78-2d9b75edf7b5",
+    "offer_id": "6df5cb2e-6e6a-4296-8e15-7c934a809bcf"
+  },
+  "upload_id": "48898503-93a7-466b-ba69-fc97cd6a880e",
+  "durable_commit_before_storage": true,
+  "unscanned_delivery_denied": true,
+  "private_bucket_verified": true,
+  "same_key_replayed": true,
+  "changed_payload_conflict": true,
+  "real_broker_and_dedicated_worker": true,
+  "real_antivirus": true,
+  "infected_upload_quarantined_and_delivery_denied": true,
+  "scan_ready_bytes_delivered": true,
+  "expired_and_foreign_capabilities_denied": true,
+  "initial_upload_admission_ms": 1501.838,
+  "initial_upload_profiled_statement_count": 98,
+  "initial_upload_query_shapes": [
+    {
+      "shape": "SELECT:tenant_context",
+      "count": 14
+    },
+    {
+      "shape": "SELECT:commerce.commercial_accounts,commerce.commercial_contract_items,commerce.commercial_contracts,commerce.commercial_offer_entitlements,commerce.commercial_offer_versions,commerce.commercial_offers",
+      "count": 6
+    },
+    {
+      "shape": "SELECT:commerce.entitlement_override_requests",
+      "count": 6
+    },
+    {
+      "shape": "SELECT:platform.organizations",
+      "count": 5
+    },
+    {
+      "shape": "SELECT:platform.usage_reservations",
+      "count": 5
+    },
+    {
+      "shape": "INSERT:commerce.capability_revisions,set",
+      "count": 5
+    },
+    {
+      "shape": "SELECT:design.portal_theme_settings,events.events",
+      "count": 4
+    },
+    {
+      "shape": "SELECT:commerce.organization_feature_overrides",
+      "count": 3
+    },
+    {
+      "shape": "SELECT:platform.tenant_limits",
+      "count": 3
+    },
+    {
+      "shape": "SELECT:commerce.event_activations",
+      "count": 3
+    },
+    {
+      "shape": "SELECT:commerce.event_commercial_contracts",
+      "count": 3
+    },
+    {
+      "shape": "SELECT:platform.feature_flags",
+      "count": 3
+    },
+    {
+      "shape": "SELECT:platform.usage_counter_epochs",
+      "count": 3
+    },
+    {
+      "shape": "UPDATE:platform.usage_reservations",
+      "count": 3
+    },
+    {
+      "shape": "SELECT:design.portal_theme_settings,events.events,platform.organizations",
+      "count": 2
+    },
+    {
+      "shape": "SELECT:commerce.capability_revisions",
+      "count": 2
+    },
+    {
+      "shape": "SELECT:commerce.feature_catalog",
+      "count": 2
+    },
+    {
+      "shape": "SELECT:platform.platform_flag_definitions",
+      "count": 2
+    },
+    {
+      "shape": "SELECT:commerce.capability_restrictions",
+      "count": 2
+    },
+    {
+      "shape": "SELECT:communications.organization_notification_channel_configs",
+      "count": 2
+    },
+    {
+      "shape": "SELECT:events.events,registration.registration_forms",
+      "count": 2
+    },
+    {
+      "shape": "UPDATE:content.durable_uploads",
+      "count": 2
+    },
+    {
+      "shape": "SELECT:platform.usage_ledger_entries",
+      "count": 2
+    },
+    {
+      "shape": "INSERT:command_center_audit.logs",
+      "count": 2
+    },
+    {
+      "shape": "SELECT:no_table",
+      "count": 1
+    },
+    {
+      "shape": "INSERT:content.durable_uploads",
+      "count": 1
+    },
+    {
+      "shape": "SELECT:design.portal_theme_settings,events.events,of",
+      "count": 1
+    },
+    {
+      "shape": "SELECT:presentations.files",
+      "count": 1
+    },
+    {
+      "shape": "SELECT:presentations.posters",
+      "count": 1
+    },
+    {
+      "shape": "INSERT:platform.usage_reservations",
+      "count": 1
+    }
+  ],
+  "upload_dispatch_waits_for_broker": false,
+  "field_revocation_denies_status_and_download": true,
+  "storage_to_finalisation_revocation_denied": true,
+  "abandoned_payload_removed_and_key_fenced_before_quota_release": true,
+  "released_attempt_has_one_mandatory_audit": true,
+  "finalized_clean_and_quarantined_usage_retained": true,
+  "accounting_excludes_capabilities_and_personal_filenames": true,
+  "signed_download_exposure_bound_seconds": 300,
+  "context_restored": true,
+  "migration_revision": "20261022_3670",
+  "disposable_storage_removed": true,
+  "database": "category_a_rehearsal_20261015"
+}

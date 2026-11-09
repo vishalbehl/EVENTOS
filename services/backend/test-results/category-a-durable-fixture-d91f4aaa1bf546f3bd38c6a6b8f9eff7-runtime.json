@@ -1,0 +1,18 @@
+{
+  "status": "PASSED",
+  "database": "category_a_restore_20261021_d91f4aaa1bf5",
+  "login": "category_a_checkpoint_d91f4aaa1bf5",
+  "stage": "independent_completion_read",
+  "runtime_role_is_safe": true,
+  "missing_canary_policies": [],
+  "completion_status": "COMPLETED",
+  "streams_total": 2,
+  "streams_completed": 2,
+  "pages_completed": 8,
+  "checked_count": 213,
+  "blocked_count": 0,
+  "page_transactions": 8,
+  "actual_restricted_login": true,
+  "default_platform_customer_flow": "NOT_RUN",
+  "provider_io": "NOT_RUN"
+}

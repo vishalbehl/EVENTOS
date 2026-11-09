@@ -27,6 +27,17 @@ class User(Base):
 
     __tablename__ = "users"
 
+    @property
+    def request_organization_id(self) -> uuid.UUID:
+        """Validated request selector with a safe home-tenant fallback.
+
+        The dependency layer attaches an immutable decoded TokenData object for
+        the lifetime of one request. Background jobs and non-request code have
+        no selector and therefore retain the persisted home organisation.
+        """
+        token = getattr(self, "_request_token_data", None)
+        return token.active_organization_id if token is not None else self.organization_id
+
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
@@ -82,6 +93,7 @@ class User(Base):
         index=True,
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    auth_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
     # ── Relationships ─────────────────────────────────────
     organization: Mapped["Organization"] = relationship(

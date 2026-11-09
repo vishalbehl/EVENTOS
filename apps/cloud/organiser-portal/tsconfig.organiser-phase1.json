@@ -7,7 +7,6 @@
     "app/(dashboard)/organisation/**/*.tsx",
     "app/(dashboard)/people-teams/**/*.tsx",
     "app/(dashboard)/access-roles/**/*.tsx",
-    "app/(dashboard)/plans-entitlements/**/*.tsx",
     "app/(dashboard)/billing/*/page.tsx",
     "app/(dashboard)/reports/**/*.tsx",
     "app/(dashboard)/settings/general/page.tsx",

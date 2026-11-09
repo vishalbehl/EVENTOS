@@ -1,0 +1,103 @@
+ 
+ -------------- catalogue-0-426046b01e2b4b06903b9b4380bf01e9@localhost v5.6.3 (recovery)
+--- ***** ----- 
+-- ******* ---- Windows-11-10.0.26300-SP0 2026-10-21 19:54:25
+- *** --- * --- 
+- ** ---------- [config]
+- ** ---------- .> app:         worker:0x1ccc3d886e0
+- ** ---------- .> transport:   redis://127.0.0.1:63073/0
+- ** ---------- .> results:     disabled://
+- *** --- * --- .> concurrency: 1 (solo)
+-- ******* ---- .> task events: OFF (enable -E to monitor tasks in this worker)
+--- ***** ----- 
+ -------------- [queues]
+                .> category-a-catalogue-426046b01e2b4b06903b9b4380bf01e9 exchange=tasks(direct) key=default
+                
+
+[2026-10-21 19:54:32,740: WARNING/MainProcess] consumer: Connection to broker lost. Trying to re-establish the connection...
+Traceback (most recent call last):
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\celery\worker\consumer\consumer.py", line 346, in start
+    blueprint.start(self)
+    ~~~~~~~~~~~~~~~^^^^^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\celery\bootsteps.py", line 116, in start
+    step.start(parent)
+    ~~~~~~~~~~^^^^^^^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\celery\worker\consumer\consumer.py", line 788, in start
+    c.loop(*c.loop_args())
+    ~~~~~~^^^^^^^^^^^^^^^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\celery\worker\loops.py", line 168, in synloop
+    _loop_cycle()
+    ~~~~~~~~~~~^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\celery\worker\loops.py", line 157, in _loop_cycle
+    connection.drain_events(timeout=2.0)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\kombu\connection.py", line 343, in drain_events
+    return self.transport.drain_events(self.connection, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\kombu\transport\virtual\base.py", line 997, in drain_events
+    get(self._deliver, timeout=timeout)
+    ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\kombu\transport\redis.py", line 601, in get
+    ret = self.handle_event(fileno, event)
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\kombu\transport\redis.py", line 583, in handle_event
+    return self.on_readable(fileno), self
+           ~~~~~~~~~~~~~~~~^^^^^^^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\kombu\transport\redis.py", line 579, in on_readable
+    chan.handlers[type]()
+    ~~~~~~~~~~~~~~~~~~~^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\kombu\transport\redis.py", line 931, in _receive
+    ret.append(self._receive_one(c))
+               ~~~~~~~~~~~~~~~~~^^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\kombu\transport\redis.py", line 941, in _receive_one
+    response = c.parse_response()
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\client.py", line 1252, in parse_response
+    response = self._execute(conn, try_read)
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\client.py", line 1164, in _execute
+    response = conn.retry.call_with_retry(
+        lambda: command(*args, **kwargs),
+        failure_callback,
+        with_failure_count=True,
+    )
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\retry.py", line 132, in call_with_retry
+    raise error
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\retry.py", line 120, in call_with_retry
+    return do()
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\client.py", line 1165, in <lambda>
+    lambda: command(*args, **kwargs),
+            ~~~~~~~^^^^^^^^^^^^^^^^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\client.py", line 1248, in try_read
+    return conn.read_response(
+           ~~~~~~~~~~~~~~~~~~^
+        disconnect_on_error=False, push_request=True, timeout=read_timeout
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\connection.py", line 1371, in read_response
+    response = self._parser.read_response(
+        disable_decoding=disable_decoding,
+        push_request=push_request,
+        timeout=timeout,
+    )
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\_parsers\resp3.py", line 40, in read_response
+    result = self._read_response(
+        disable_decoding=disable_decoding,
+        push_request=push_request,
+        timeout=timeout,
+    )
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\_parsers\resp3.py", line 65, in _read_response
+    raw = self._buffer.readline(timeout=timeout)
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\_parsers\socket.py", line 117, in readline
+    self._read_from_socket(timeout=timeout)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\redis\_parsers\socket.py", line 67, in _read_from_socket
+    raise ConnectionError(SERVER_CLOSED_CONNECTION_ERROR)
+redis.exceptions.ConnectionError: Connection closed by server.
+[2026-10-21 19:54:32,760: WARNING/MainProcess] D:\DEV\conf-platform\services\backend\.venv\Lib\site-packages\celery\worker\consumer\consumer.py:397: CPendingDeprecationWarning: 
+In Celery 5.1 we introduced an optional breaking change which
+on connection loss cancels all currently executed tasks with late acknowledgement enabled.
+These tasks cannot be acknowledged as the connection is gone, and the tasks are automatically redelivered
+back to the queue. You can enable this behavior using the worker_cancel_long_running_tasks_on_connection_loss
+setting. In Celery 5.1 it is set to False by default. The setting will be set to True by default in Celery 6.0.
+
+  warnings.warn(CANCEL_TASKS_BY_DEFAULT, CPendingDeprecationWarning)
+

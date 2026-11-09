@@ -1,0 +1,1 @@
+{"task": "app.tasks.catalogue_reconciliation.process_work", "task_id": "1ec44d4e-f258-433b-bb8d-6e231aa15ddf", "state": "SUCCESS", "pid": 14676, "result": {"status": "PENDING", "pages_completed": 1}}

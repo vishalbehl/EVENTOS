@@ -1,0 +1,40 @@
+{
+  "schema": "category-a-load-dataset-v1",
+  "environment": "local-isolated",
+  "database_name": "category_a_load_provision_20261028",
+  "database_role": "postgres",
+  "operator_privileges": {
+    "rolsuper": true,
+    "rolbypassrls": true,
+    "rolcreatedb": true,
+    "rolcreaterole": true
+  },
+  "slug_prefix": "category-a-load-enterprise-20261028-",
+  "platform_organization_included": false,
+  "snapshot": {
+    "tenants": 1000,
+    "memberships": 100000,
+    "accepted_memberships": 100000,
+    "events": 100000,
+    "largest_tenant_memberships": 10000,
+    "median_tenant_memberships": 90,
+    "largest_tenant_events": 10000,
+    "median_tenant_events": 90,
+    "workspace_ownership_conflicts": 0,
+    "workspace_bindings": 100000,
+    "workspace_binding_conflicts": 0,
+    "normal_organizations": 900,
+    "emc_organizations": 10,
+    "client_organizations": 90
+  },
+  "skewed_tenant_distribution": true,
+  "minimums": {
+    "tenants": 1000,
+    "memberships": 100000,
+    "events": 100000
+  },
+  "rehearsal": false,
+  "release_eligible": false,
+  "failures": [],
+  "verified_at": "2026-10-28T12:02:48.395147+00:00"
+}

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="2" failures="0" errors="0" time="1.6265244">
+    <testsuite name="test/gallery-taxonomy-filter.test.tsx" timestamp="2026-10-17T14:22:55.331Z" hostname="Vishal" tests="2" failures="0" errors="0" skipped="0" time="1.6265244">
+        <testcase classname="test/gallery-taxonomy-filter.test.tsx" name="purpose and display taxonomy &gt; filters owned taxonomy by exact category ID rather than shared purpose or display text" time="1.5128601">
+        </testcase>
+        <testcase classname="test/gallery-taxonomy-filter.test.tsx" name="purpose and display taxonomy &gt; keeps the facility&apos;s operational templates visible after taxonomy reassignment" time="0.0863471">
+        </testcase>
+    </testsuite>
+</testsuites>

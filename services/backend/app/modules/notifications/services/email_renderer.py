@@ -11,6 +11,10 @@ import bleach
 from loguru import logger
 # pyrefly: ignore [missing-import]
 from premailer import transform
+from app.modules.notifications.services.email_resource_policy import (
+    byte_size, bounded_substitute, TEMPLATE_BYTES, RENDERED_BYTES,
+    VARIABLE_BYTES, VARIABLE_TOTAL_BYTES,
+)
 
 
 REPEATER_REGISTRY: dict[str, tuple[int, frozenset[str]]] = {
@@ -43,6 +47,7 @@ def _strip_html(value: str) -> str:
 
 def _safe_value(key: str, value: Any) -> str:
     rendered = "" if value is None else str(value)
+    byte_size(rendered, VARIABLE_BYTES)
     if URL_FIELD_PATTERN.search(key):
         parsed = urlparse(rendered)
         if parsed.scheme and parsed.scheme.lower() not in {"http", "https", "mailto", "data"}:
@@ -53,6 +58,13 @@ def _safe_value(key: str, value: Any) -> str:
 def substitute_registered_context(source: str, variables: dict[str, Any]) -> str:
     """Expand bounded registered collections, then HTML-escape scalar variables."""
 
+    byte_size(source, TEMPLATE_BYTES)
+    if len(variables) > 128:
+        raise ValueError("Email context exceeds the variable limit")
+    scalar_total = sum(byte_size(str(value), VARIABLE_BYTES) for value in variables.values()
+        if value is not None and not isinstance(value, (list, dict)))
+    if scalar_total > VARIABLE_TOTAL_BYTES:
+        raise ValueError("Email context exceeds the byte limit")
     if source.count("{{#each") != source.count("{{/each}}"):
         raise ValueError("Malformed email repeater expression")
 
@@ -78,10 +90,12 @@ def substitute_registered_context(source: str, variables: dict[str, Any]) -> str
                     raise ValueError(f"Unsupported repeater field: {expression}")
                 return _safe_value(field, row.get(field, ""))
 
-            rendered_rows.append(VARIABLE_PATTERN.sub(replace_field, body))
+            rendered_rows.append(bounded_substitute(VARIABLE_PATTERN, replace_field, body))
+            if sum(len(piece) for piece in rendered_rows) > RENDERED_BYTES:
+                raise ValueError("Email repeater exceeds the render limit")
         return "".join(rendered_rows)
 
-    rendered = REPEATER_PATTERN.sub(expand, source)
+    rendered = bounded_substitute(REPEATER_PATTERN, expand, source)
     if "{{#each" in rendered or "{{/each}}" in rendered:
         raise ValueError("Unsupported or nested email repeater expression")
 
@@ -91,7 +105,7 @@ def substitute_registered_context(source: str, variables: dict[str, Any]) -> str
             raise ValueError(f"Repeater field outside collection: {key}")
         return _safe_value(key, variables.get(key, match.group(0)))
 
-    return VARIABLE_PATTERN.sub(replace_scalar, rendered)
+    return bounded_substitute(VARIABLE_PATTERN, replace_scalar, rendered)
 
 
 def apply_eventos_branding(source: str, policy: dict[str, Any] | None = None) -> str:
@@ -146,10 +160,20 @@ def render_template(
     rendered_html = apply_eventos_branding(
         substitute_registered_context(source, variables), branding_policy
     )
+    byte_size(rendered_html, RENDERED_BYTES)
+    if rendered_html.count("<") > 20_000:
+        raise ValueError("Email markup exceeds the element budget")
+    css_total = 0
+    for style in re.finditer(r"<style\b[^>]*>(.*?)</style\s*>", rendered_html, flags=re.I | re.S):
+        css_total += byte_size(style.group(1), 64 * 1024)
+        if css_total > 128 * 1024:
+            raise ValueError("Email stylesheet exceeds the byte budget")
     plain_text = _strip_html(rendered_html)
     try:
-        inlined_html = transform(rendered_html)
+        inlined_html = transform(rendered_html, allow_network=False, allow_loading_external_files=False)
     except Exception as exc:
-        logger.error(f"Premailer CSS inlining failed: {exc}. Falling back to original HTML.")
+        logger.error("Email CSS inlining unavailable: {}", type(exc).__name__)
         inlined_html = rendered_html
+    byte_size(inlined_html, RENDERED_BYTES)
+    byte_size(plain_text, RENDERED_BYTES)
     return inlined_html, plain_text

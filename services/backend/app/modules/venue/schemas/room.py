@@ -8,24 +8,6 @@ from typing import Optional, Any
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 
-ROOM_TYPES = (
-    "presentation",
-    "workshop",
-    "poster",
-    "plenary",
-    "open_area",
-    "dining",
-    "registration",
-    "virtual",
-    "hall",
-    "breakout",
-    "boardroom",
-    "auditorium",
-    "exhibition",
-    "other",
-)
-
-
 class RoomCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     code: Optional[str] = None
@@ -36,9 +18,13 @@ class RoomCreate(BaseModel):
     @field_validator("room_type")
     @classmethod
     def validate_room_type(cls, value: str) -> str:
-        if value not in ROOM_TYPES:
-            raise ValueError(f"Unsupported room type: {value}")
-        return value
+        normalized = value.strip().upper()
+        if not normalized:
+            raise ValueError("room_type cannot be empty")
+        # The command boundary resolves this code against agenda.room_types,
+        # scoped to the event organization.  Keeping the schema free of a
+        # second static catalogue prevents API/database drift.
+        return normalized
 
     @property
     def validated_room_type(self) -> str:
@@ -56,9 +42,12 @@ class RoomUpdate(BaseModel):
     @field_validator("room_type")
     @classmethod
     def validate_room_type(cls, value: Optional[str]) -> Optional[str]:
-        if value is not None and value not in ROOM_TYPES:
-            raise ValueError(f"Unsupported room type: {value}")
-        return value
+        if value is None:
+            return None
+        normalized = value.strip().upper()
+        if not normalized:
+            raise ValueError("room_type cannot be empty")
+        return normalized
 
 
 class RoomResponse(BaseModel):

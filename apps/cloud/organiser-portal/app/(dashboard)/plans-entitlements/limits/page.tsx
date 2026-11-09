@@ -1,5 +1,2 @@
-import { PlanLimitsTab } from "@/components/organizer/workspace/plans/PlanLimitsTab";
-
-export default function Page() {
-  return <PlanLimitsTab />;
-}
+import { CommercialCompatibilityTab } from "@/components/organizer/workspace/commercial/CommercialCompatibilityTab";
+export default function Page() { return <CommercialCompatibilityTab view="usage" />; }

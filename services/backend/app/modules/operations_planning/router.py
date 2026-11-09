@@ -57,21 +57,19 @@ def _project_out(
 
 
 async def _event_for_user(db: AsyncSession, event_id: uuid.UUID, user: OrganizerOrAbove) -> Event:
-    event = await ProjectQueryService(db).get_event_for_scope(
-        event_id=event_id,
-        organization_id=user.organization_id,
-        is_super_admin=getattr(user, "role", None) == "super_admin",
-    )
-    if event is None:
-        raise HTTPException(status_code=404, detail="Event not found.")
-    return event
+    from app.modules.rbac.services.event_scope import customer_event
+    token = getattr(user, "_request_token_data", None)
+    if token is None:
+        raise HTTPException(401, detail={"code": "SESSION_CONTEXT_REQUIRED"})
+    return await customer_event(db, user, event_id, token)
 
 
 @router.post("/projects")
 async def create_project(event_id: uuid.UUID, payload: ProjectCreate, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
+    await _event_for_user(db, event_id, user)
     row, task, milestone = await OperationsPlanningCommandService(db).create_project(
         event_id=event_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
         data=payload.model_dump(),
     )
     return _project_out(row, [task], [milestone])
@@ -92,7 +90,7 @@ async def list_projects(event_id: uuid.UUID, limit: int = Query(100, ge=1, le=20
 async def get_project(project_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     result = await ProjectQueryService(db).get_project(
         project_id=project_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
     )
     if result is None:
         raise HTTPException(status_code=404, detail="Project not found.")
@@ -106,7 +104,7 @@ async def get_project(project_id: uuid.UUID, db: AsyncSession = Depends(get_db),
 async def patch_project(project_id: uuid.UUID, payload: ProjectPatch, if_match: Optional[str] = Header(None, alias="If-Match"), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     row = await OperationsPlanningCommandService(db).update_project(
         project_id=project_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
         data=payload.model_dump(exclude_unset=True),
         expected_version=require_if_match(if_match) if if_match is not None else None,
     )
@@ -117,7 +115,7 @@ async def patch_project(project_id: uuid.UUID, payload: ProjectPatch, if_match: 
 async def create_milestones(project_id: uuid.UUID, payload: list[dict[str, Any]] = Body(..., max_items=50), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     result = await OperationsPlanningCommandService(db).create_milestones(
         project_id=project_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
         items=payload,
     )
     return [{"id": str(item.id), "project_id": str(item.project_id), "name": item.name, "description": item.description, "start_date": item.start_date, "due_date": item.due_date, "status": item.status} for item in result]
@@ -127,7 +125,7 @@ async def create_milestones(project_id: uuid.UUID, payload: list[dict[str, Any]]
 async def create_task(project_id: uuid.UUID, title: str = Query(..., min_length=2, max_length=255), priority: str = Query("NORMAL", max_length=20), status: str = Query("TODO", max_length=50), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     task = await OperationsPlanningCommandService(db).create_task(
         project_id=project_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
         title=title,
         priority=priority,
         status=status,
@@ -139,7 +137,7 @@ async def create_task(project_id: uuid.UUID, title: str = Query(..., min_length=
 async def list_tasks(project_id: uuid.UUID, limit: int = Query(200, ge=1, le=500), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     rows = await ProjectQueryService(db).list_tasks(
         project_id=project_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
         limit=limit,
     )
     if rows is None:
@@ -151,7 +149,7 @@ async def list_tasks(project_id: uuid.UUID, limit: int = Query(200, ge=1, le=500
 async def patch_task(task_id: uuid.UUID, payload: dict[str, Any] = Body(...), if_match: Optional[str] = Header(None, alias="If-Match"), db: AsyncSession = Depends(get_db), user: OrganizerOrAbove = None):
     task = await OperationsPlanningCommandService(db).update_task(
         task_id=task_id,
-        organization_id=user.organization_id,
+        organization_id=user.request_organization_id,
         data=payload,
         expected_version=require_if_match(if_match) if if_match is not None else None,
     )

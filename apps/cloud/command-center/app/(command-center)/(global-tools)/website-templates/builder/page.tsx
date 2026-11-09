@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { PageContainer } from '@/components/super-admin/ui/PageContainer';
 
 function RedirectInner() {
   const router = useRouter();
@@ -15,7 +16,7 @@ function RedirectInner() {
     router.replace(dest);
   }, [router, templateId]);
 
-  return null;
+  return <PageContainer className="p-0"><p className="p-6 text-sm text-secondary">Redirecting to the canonical website builder…</p></PageContainer>;
 }
 
 export default function WebsiteTemplatesBuilderGlobalRedirect() {

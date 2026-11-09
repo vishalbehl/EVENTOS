@@ -4,7 +4,7 @@ import uuid
 import hashlib
 from datetime import datetime, timezone
 from fastapi import HTTPException, status
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_service
@@ -19,6 +19,7 @@ from app.modules.registration.models.form_template import FormTemplate
 from app.modules.registration.models.promo_code import PromoCode
 from app.modules.registration.schemas.registration_form_config import (
     RegistrationFormConfigUpdate,
+    RegistrationFormConfigResponse,
 )
 from app.modules.registration.schemas.registration import (
     ParticipantRegistrationCreate,
@@ -28,6 +29,10 @@ from app.modules.registration.schemas.form_builder import (
     FormCategoryCreate,
     FormCategoryUpdate,
     FormCategoryResponse,
+    FormTemplateSaveEventCopy,
+    FormTemplateCreate,
+    FormTemplateUpdate,
+    FormTemplateResponse,
 )
 from app.modules.events.services import EventParticipantMutationService
 from app.modules.registration.models.participant import Participant
@@ -45,11 +50,153 @@ from app.core.encryption import encrypt as encrypt_credential
 from app.modules.analytics.services.projection_dispatch import (
     enqueue_event_registration_projection_refresh,
 )
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, raiseload
+
+# Private proof that an enclosing aggregate command already completed the same
+# authoritative event-operation admission in the current transaction. PostgreSQL
+# revision locks acquired by that admission remain held until commit/rollback.
+# A boolean flag would be too easy for an unrelated caller to set accidentally.
+_EVENT_COPY_AUTHORIZATION = object()
 
 
 class PricingCommandService:
     """Own pricing mutations and invalidate event reads after commit."""
+
+    @staticmethod
+    async def snapshot(db: AsyncSession, *, event: Event) -> dict:
+        from app.modules.rbac.schemas.event import EventResponse
+        from app.modules.registration.models.ticket_type import TicketType
+        roles = list((await db.scalars(select(ParticipantRole).where(
+            ParticipantRole.event_id == event.id).order_by(ParticipantRole.id).limit(101)
+            .with_for_update(read=True).execution_options(populate_existing=True))).all())
+        tickets = list((await db.scalars(select(TicketType).where(TicketType.event_id == event.id)
+            .order_by(TicketType.id).limit(10001).with_for_update(read=True)
+            .execution_options(populate_existing=True))).all())
+        if len(roles) > 100 or len(tickets) > 10000:
+            raise HTTPException(409, detail={"code": "PRICING_CONFIGURATION_EXCEEDS_BOUNDS"})
+        settings = event.registration_settings or {}
+        tiers = list(dict.fromkeys([*(settings.get("tiers") or []), *(row.tier_name for row in tickets)]))
+        if len(tiers) > 100:
+            raise HTTPException(409, detail={"code": "PRICING_CONFIGURATION_EXCEEDS_BOUNDS"})
+        prices = {f"{row.role_name}_{row.tier_name}": row.price for row in tickets}
+        if len(prices) != len(tickets):
+            raise HTTPException(409, detail={"code": "AMBIGUOUS_PRICING_KEY"})
+        return {"event": EventResponse.model_validate(event).model_dump(mode="json"),
+            "version": int(event.version or 1), "tiers": tiers,
+            "pricingData": prices,
+            "tierSchedules": settings.get("tier_schedules") or {},
+            "tierCutoffs": settings.get("tier_cutoffs") or {},
+            "roles": [{"id": str(role.id), "name": role.name, "category": role.category,
+                "role_code": role.role_code, "is_active": role.is_active,
+                "is_default": role.is_default, "sort_order": role.sort_order,
+                "version": int(role.version or 1), "event_version": int(event.version or 1)} for role in roles]}
+
+    @staticmethod
+    async def configure(db: AsyncSession, *, event: Event, changes: dict, actor,
+                        if_match: str | None, idempotency_key: str | None) -> dict:
+        from app.core.dependencies.feature_gate import enforce_event_operation
+        from app.modules.audit.models.audit_log import AuditLog
+        from app.modules.registration.schemas.pricing_configuration import PricingConfigurationUpdate
+        from pydantic import ValidationError
+        if actor is None:
+            raise HTTPException(401, detail={"code": "AUTHENTICATION_REQUIRED"})
+        version = require_if_match(if_match)
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 <= len(idempotency_key.strip()) <= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        organization_id, event_id = event.organization_id, event.id
+        try:
+            for action in ("registration.ticket_types.manage", "registration.payments.manage"):
+                await enforce_event_operation(db, organization_id, event_id, action, user_id=actor.id)
+            receipt = await begin_idempotent(db, organization_id=organization_id, actor_id=actor.id,
+                operation="registration.pricing.configuration.save", key=idempotency_key,
+                payload={"event_id": str(event_id), "version": version, "changes": changes})
+            replay = replay_response(receipt)
+            if replay is not None:
+                await db.commit()
+                return replay[1]
+            owned = await db.scalar(select(Event).where(Event.id == event_id,
+                Event.organization_id == organization_id, Event.deleted_at.is_(None))
+                .with_for_update().execution_options(populate_existing=True))
+            if owned is None:
+                raise HTTPException(404, detail={"code": "EVENT_NOT_FOUND"})
+            for action in ("registration.ticket_types.manage", "registration.payments.manage"):
+                await enforce_event_operation(db, organization_id, event_id, action, user_id=actor.id)
+            current_version = int(owned.version or 1)
+            if version != current_version:
+                raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": current_version})
+            previous = await PricingCommandService.snapshot(db, event=owned)
+            combined = {key: changes.get(key, previous[key]) for key in
+                ("tiers", "pricingData", "tierSchedules", "tierCutoffs")}
+            # Compatibility tier-only updates remove obsolete rows in the same transaction.
+            if "tiers" in changes:
+                retained = set(changes["tiers"])
+                for key in ("tierSchedules", "tierCutoffs"):
+                    if key not in changes:
+                        combined[key] = {tier: value for tier, value in combined[key].items() if tier in retained}
+                if "pricingData" not in changes:
+                    allowed_keys = {f"{role['name']}_{tier}" for role in previous["roles"] for tier in retained}
+                    combined["pricingData"] = {key: value for key, value in combined["pricingData"].items() if key in allowed_keys}
+            try:
+                config = PricingConfigurationUpdate.model_validate(combined)
+            except ValidationError as exc:
+                raise HTTPException(422, detail={"code": "INVALID_PRICING_CONFIGURATION"}) from exc
+            pairs = {}
+            for role in previous["roles"]:
+                for tier in config.tiers:
+                    key, pair = f"{role['name']}_{tier}", (role["name"], tier)
+                    if key in pairs and pairs[key] != pair:
+                        raise HTTPException(409, detail={"code": "AMBIGUOUS_PRICING_KEY"})
+                    pairs[key] = pair
+            if set(config.pricingData) - pairs.keys():
+                raise HTTPException(404, detail={"code": "PRICING_ROLE_OR_TIER_NOT_FOUND"})
+            schedules = {tier: config.tierSchedules[tier].model_dump(mode="json")
+                if tier in config.tierSchedules else {"available_from": None, "available_until": None}
+                for tier in config.tiers}
+            for tier, cutoff in config.tierCutoffs.items():
+                until = schedules[tier]["available_until"]
+                if until is not None and cutoff is not None:
+                    from dateutil.parser import isoparse
+                    if isoparse(until) != cutoff:
+                        raise HTTPException(422, detail={"code": "CONFLICTING_TIER_CUTOFF"})
+                if until is None and cutoff is not None:
+                    schedules[tier]["available_until"] = cutoff.isoformat()
+            # Validate the effective schedule after combining legacy cutoff inputs.
+            from app.modules.registration.schemas.pricing_configuration import TierSchedule
+            try:
+                for schedule in schedules.values():
+                    TierSchedule.model_validate(schedule)
+            except ValidationError as exc:
+                raise HTTPException(422, detail={"code": "INVALID_TIER_WINDOW"}) from exc
+            await TicketPricingService.set_tiers(db, owned, config.tiers)
+            normalized = await TicketPricingService.replace_matrix(db, owned, config.pricingData, schedules,
+                resolved_pairs=pairs, replace_configuration=True)
+            owned.version = current_version + 1
+            await db.flush()
+            from app.modules.rbac.schemas.event import EventResponse
+            result = {**previous, "event": EventResponse.model_validate(owned).model_dump(mode="json"),
+                "version": owned.version, "tiers": config.tiers, "pricingData": normalized,
+                "tierSchedules": schedules, "tierCutoffs": owned.registration_settings["tier_cutoffs"],
+                "roles": [{**role, "event_version": owned.version} for role in previous["roles"]]}
+            from app.modules.registration.schemas.pricing_configuration import PricingConfigurationResponse
+            result = PricingConfigurationResponse.model_validate(result).model_dump(mode="json")
+            selector = db.info.get("customer_request_selector")
+            db.add(AuditLog(organization_id=organization_id, actor_user_id=actor.id,
+                correlation_id=receipt.id, resource_type="event_pricing", resource_id=event_id,
+                action_type="EVENT_PRICING_CONFIGURATION_UPDATED", is_sensitive=True,
+                old_state={"version": current_version}, new_state={"version": owned.version,
+                    "workspace_id": str(owned.operational_workspace_id), "tier_count": len(config.tiers),
+                    "price_count": len(config.pricingData), "target_organization_id": str(organization_id),
+                    "acting_organization_id": str(getattr(selector, "acting_organization_id", None) or organization_id),
+                    "access_mode": getattr(selector, "access_mode", "DIRECT")}))
+            await complete_idempotent(db, receipt, response_status=200, response_body=result, resource_id=event_id)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+        await cache_service.invalidate_domain("registration_pricing", organization_id, event_id)
+        return result
 
     @staticmethod
     async def save_tiers(
@@ -61,30 +208,9 @@ class PricingCommandService:
         if_match: str | None = None,
         idempotency_key: str | None = None,
     ) -> list[str]:
-        try:
-            operation = None
-            if idempotency_key and actor is not None:
-                operation = await begin_idempotent(db, organization_id=event.organization_id, actor_id=actor.id,
-                    operation="registration.pricing.tiers.save", key=idempotency_key,
-                    payload={"event_id": str(event.id), "tiers": tiers, "if_match": if_match})
-                replay = replay_response(operation)
-                if replay:
-                    await db.rollback()
-                    return replay[1].get("tiers", [])
-            if if_match is not None and int(event.version or 1) != require_if_match(if_match):
-                raise_version_conflict(int(event.version or 1))
-            cleaned = await TicketPricingService.set_tiers(db, event, tiers)
-            event.version = int(event.version or 1) + 1
-            await db.commit()
-            await db.refresh(event)
-            await cache_service.invalidate_domain("registration_pricing", event.organization_id, event.id)
-            if operation is not None:
-                await complete_idempotent(db, operation, response_status=200, response_body={"tiers": cleaned}, resource_id=event.id)
-                await db.commit()
-            return cleaned
-        except Exception:
-            await db.rollback()
-            raise
+        result = await PricingCommandService.configure(db, event=event, changes={"tiers": tiers},
+            actor=actor, if_match=if_match, idempotency_key=idempotency_key)
+        return result["tiers"]
 
     @staticmethod
     async def save_matrix(
@@ -97,35 +223,12 @@ class PricingCommandService:
         if_match: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict:
-        try:
-            operation = None
-            if idempotency_key and actor is not None:
-                operation = await begin_idempotent(db, organization_id=event.organization_id, actor_id=actor.id,
-                    operation="registration.pricing.matrix.save", key=idempotency_key,
-                    payload={"event_id": str(event.id), "pricing_data": pricing_data, "tier_schedules": tier_schedules, "if_match": if_match})
-                replay = replay_response(operation)
-                if replay:
-                    await db.rollback()
-                    return replay[1].get("pricing_data", {})
-            if if_match is not None and int(event.version or 1) != require_if_match(if_match):
-                raise_version_conflict(int(event.version or 1))
-            result = await TicketPricingService.replace_matrix(
-                db,
-                event,
-                pricing_data,
-                tier_schedules,
-            )
-            event.version = int(event.version or 1) + 1
-            await db.commit()
-            await db.refresh(event)
-            await cache_service.invalidate_domain("registration_pricing", event.organization_id, event.id)
-            if operation is not None:
-                await complete_idempotent(db, operation, response_status=200, response_body={"pricing_data": result}, resource_id=event.id)
-                await db.commit()
-            return result
-        except Exception:
-            await db.rollback()
-            raise
+        changes = {"pricingData": pricing_data}
+        if tier_schedules is not None:
+            changes["tierSchedules"] = tier_schedules
+        result = await PricingCommandService.configure(db, event=event, changes=changes,
+            actor=actor, if_match=if_match, idempotency_key=idempotency_key)
+        return result["pricingData"]
 
 
 class RegistrationCommandService:
@@ -577,15 +680,19 @@ class PaymentCommandService:
         idempotency_key: str | None = None,
         expected_version: int | None = None,
     ) -> int:
+        from app.core.dependencies.feature_gate import enforce_event_operation
+        from app.modules.audit.models.audit_log import AuditLog
+        from app.config import settings as runtime_settings
+        if actor is None:
+            raise HTTPException(401, detail={"code": "AUTHENTICATION_REQUIRED"})
+        expected_version = require_if_match(expected_version)
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 <= len(idempotency_key.strip()) <= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
         try:
-            locked_event = await db.scalar(
-                select(Event)
-                .where(Event.id == event.id, Event.organization_id == event.organization_id)
-                .with_for_update(of=Event)
-            )
-            if locked_event is None:
-                raise HTTPException(status_code=404, detail="Event not found.")
-            event = locked_event
+            await enforce_event_operation(db, event.organization_id, event.id,
+                "registration.payments.manage", user_id=actor.id)
             idem = None
             if actor is not None and idempotency_key:
                 request_payload = payload.model_dump(mode="json")
@@ -606,11 +713,23 @@ class PaymentCommandService:
                     payload={"event_id": str(event.id), "expected_version": expected_version, "payload": request_payload},
                     ttl_seconds=30 * 24 * 60 * 60,
                 )
-                if replay_response(idem) is not None:
+                replay = replay_response(idem)
+                if replay is not None:
+                    if "version" not in replay[1]:
+                        raise HTTPException(409, detail={"code": "LEGACY_PAYMENT_RECEIPT_RELOAD_REQUIRED"})
                     await db.commit()
-                    return int(event.version or 1)
+                    return int(replay[1]["version"])
+            locked_event = await db.scalar(select(Event).where(Event.id == event.id,
+                Event.organization_id == event.organization_id, Event.deleted_at.is_(None))
+                .options(selectinload(Event.portal_theme_setting)).with_for_update(of=Event)
+                .execution_options(populate_existing=True))
+            if locked_event is None:
+                raise HTTPException(404, detail={"code": "EVENT_NOT_FOUND"})
+            event = locked_event
+            await enforce_event_operation(db, event.organization_id, event.id,
+                "registration.payments.manage", user_id=actor.id)
             if expected_version is not None and int(event.version or 1) != expected_version:
-                raise_version_conflict(int(event.version or 1))
+                raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT", "current_version": event.version})
             settings = dict(event.registration_settings or {})
 
             if payload.payment_enabled is not None:
@@ -649,24 +768,43 @@ class PaymentCommandService:
             if payload.auto_approve_paid is not None:
                 settings["auto_approve_paid"] = payload.auto_approve_paid
 
+            if hasattr(payload, "offline_instructions") and payload.offline_instructions is not None:
+                settings["offline_instructions"] = payload.offline_instructions
+                if event.portal_theme_setting:
+                    extra = dict(event.portal_theme_setting.extra_settings or {})
+                    extra["offline_instructions"] = payload.offline_instructions
+                    event.portal_theme_setting.extra_settings = extra
+
             event.registration_settings = settings
+            if runtime_settings.is_production and settings.get("payment_enabled") and settings.get("active_gateway", "simulated") == "simulated":
+                raise HTTPException(422, detail={"code": "SIMULATED_PAYMENT_DISABLED"})
             event.version = int(event.version or 1) + 1
             if actor is not None:
                 event.updated_by = actor.id
+            selector = db.info.get("customer_request_selector")
+            db.add(AuditLog(organization_id=event.organization_id, actor_user_id=actor.id,
+                correlation_id=idem.id, resource_type="event_payment_config", resource_id=event.id,
+                action_type="PAYMENT_CONFIGURATION_UPDATED", is_sensitive=True,
+                old_state={"version": expected_version}, new_state={"version": event.version,
+                    "changed_fields": sorted(payload.model_fields_set),
+                    "workspace_id": str(event.operational_workspace_id),
+                    "target_organization_id": str(event.organization_id),
+                    "acting_organization_id": str(getattr(selector, "acting_organization_id", None) or event.organization_id),
+                    "access_mode": getattr(selector, "access_mode", "DIRECT")}))
             if idem is not None:
                 await complete_idempotent(
                     db,
                     idem,
                     response_status=200,
-                    response_body={"message": "Payment configuration updated successfully."},
+                    response_body={"message": "Payment configuration updated successfully.", "version": int(event.version)},
                 )
+            organization_id, event_id, saved_version = event.organization_id, event.id, int(event.version)
             await db.commit()
-            await db.refresh(event)
-            await cache_service.invalidate_event(event.organization_id, event.id)
-            return int(event.version or 1)
         except Exception:
             await db.rollback()
             raise
+        await cache_service.invalidate_event(organization_id, event_id)
+        return saved_version
 
 
 class PromoCodeCommandService:
@@ -766,492 +904,353 @@ class PromoCodeCommandService:
 
 
 class FormCategoryCommandService:
-    """Own tenant-scoped form-category mutations."""
+    """Compatibility facade; the category command has one implementation."""
+    @staticmethod
+    async def create(db, *, payload, actor, idempotency_key=None, audience="CUSTOMER"):
+        from .category_commands import CategoryCommands
+        return await CategoryCommands.execute(db, operation="create", payload=payload,
+            actor=actor, idempotency_key=idempotency_key, audience=audience)
 
     @staticmethod
-    def _is_platform_admin(actor) -> bool:
-        return bool(
-            getattr(actor, "is_platform_admin", False)
-            or getattr(actor, "is_superuser", False)
-        )
+    async def update(db, *, category_id, payload, actor, if_match=None,
+                     idempotency_key=None, audience="CUSTOMER"):
+        from .category_commands import CategoryCommands
+        return await CategoryCommands.execute(db, operation="update", category_id=category_id,
+            payload=payload, actor=actor, if_match=if_match, idempotency_key=idempotency_key, audience=audience)
 
     @staticmethod
-    async def create(
-        db: AsyncSession,
-        *,
-        payload: FormCategoryCreate,
-        actor,
-        idempotency_key: str | None = None,
-    ) -> FormCategory:
-        organization_id = getattr(actor, "organization_id", None)
-        is_platform_admin = FormCategoryCommandService._is_platform_admin(actor)
-        if not is_platform_admin and organization_id is None:
-            raise HTTPException(status_code=403, detail="Organization context is required.")
-        try:
-            idem = None
-            if idempotency_key and organization_id is not None:
-                idem = await begin_idempotent(
-                    db,
-                    organization_id=organization_id,
-                    actor_id=actor.id,
-                    operation="registration.form_category.create",
-                    key=idempotency_key,
-                    payload=payload.model_dump(mode="json"),
-                )
-                replay = replay_response(idem)
-                if replay is not None:
-                    category = await db.scalar(
-                        select(FormCategory).where(FormCategory.id == idem.resource_id)
-                    )
-                    if category is None:
-                        raise RuntimeError("Completed category idempotency resource is missing.")
-                    await db.commit()
-                    return category
-
-            slug = payload.slug or payload.name.lower().replace(" ", "_").replace("-", "_")
-            category = FormCategory(
-                id=uuid.uuid4(),
-                organization_id=None if is_platform_admin else organization_id,
-                name=payload.name,
-                slug=slug,
-                description=payload.description,
-                icon=payload.icon or "ClipboardList",
-                is_system=is_platform_admin,
-                sort_order=payload.sort_order or 0,
-                is_active=True,
-            )
-            db.add(category)
-            await db.flush()
-            if idem is not None:
-                await complete_idempotent(
-                    db,
-                    idem,
-                    response_status=201,
-                    response_body=FormCategoryResponse.model_validate(category).model_dump(mode="json"),
-                    resource_id=category.id,
-                )
-            await db.commit()
-            await db.refresh(category)
-            return category
-        except Exception:
-            await db.rollback()
-            raise
-
-    @staticmethod
-    async def update(db: AsyncSession, *, category_id: uuid.UUID, payload: FormCategoryUpdate,
-                     actor, if_match: str | None = None, idempotency_key: str | None = None) -> FormCategory:
-        organization_id = getattr(actor, "organization_id", None)
-        try:
-            idem = None
-            if idempotency_key and organization_id is not None:
-                idem = await begin_idempotent(
-                    db, organization_id=organization_id, actor_id=actor.id,
-                    operation="registration.form_category.update", key=idempotency_key,
-                    payload={"category_id": str(category_id), "payload": payload.model_dump(mode="json"), "if_match": if_match},
-                )
-                replay = replay_response(idem)
-                if replay is not None:
-                    category = await db.scalar(select(FormCategory).where(FormCategory.id == idem.resource_id))
-                    if category is None:
-                        raise RuntimeError("Completed category idempotency resource is missing.")
-                    await db.commit()
-                    return category
-            category = await db.scalar(
-                select(FormCategory)
-                .where(FormCategory.id == category_id)
-                .with_for_update()
-            )
-            if category is None or (category.organization_id not in {None, organization_id}):
-                raise HTTPException(status_code=404, detail="Form category not found")
-            if category.is_system and not FormCategoryCommandService._is_platform_admin(actor):
-                raise HTTPException(status_code=403, detail="System categories are protected")
-            expected = require_if_match(if_match) if if_match is not None else None
-            if expected is not None and int(category.version or 1) != expected:
-                raise_version_conflict(int(category.version or 1))
-            for field, value in payload.model_dump(exclude_unset=True).items():
-                setattr(category, field, value)
-            category.version = int(category.version or 1) + 1
-            if idem is not None:
-                await complete_idempotent(
-                    db, idem, response_status=200,
-                    response_body=FormCategoryResponse.model_validate(category).model_dump(mode="json"),
-                    resource_id=category.id,
-                )
-            await db.commit()
-            await db.refresh(category)
-            return category
-        except Exception:
-            await db.rollback()
-            raise
-
-    @staticmethod
-    async def delete(db: AsyncSession, *, category_id: uuid.UUID, actor,
-                     if_match: str | None = None, idempotency_key: str | None = None) -> None:
-        organization_id = getattr(actor, "organization_id", None)
-        try:
-            idem = None
-            if idempotency_key and organization_id is not None:
-                idem = await begin_idempotent(
-                    db, organization_id=organization_id, actor_id=actor.id,
-                    operation="registration.form_category.delete", key=idempotency_key,
-                    payload={"category_id": str(category_id), "if_match": if_match},
-                )
-                replay = replay_response(idem)
-                if replay is not None:
-                    await db.commit()
-                    return None
-            category = await db.scalar(
-                select(FormCategory)
-                .where(FormCategory.id == category_id)
-                .with_for_update()
-            )
-            if category is None or category.organization_id != organization_id:
-                raise HTTPException(status_code=404, detail="Form category not found")
-            if category.is_system:
-                raise HTTPException(status_code=403, detail="System categories are protected")
-            expected = require_if_match(if_match) if if_match is not None else None
-            if expected is not None and int(category.version or 1) != expected:
-                raise_version_conflict(int(category.version or 1))
-            category.deleted_at = datetime.now(timezone.utc)
-            category.version = int(category.version or 1) + 1
-            if idem is not None:
-                await complete_idempotent(
-                    db, idem, response_status=204, response_body={}, resource_id=category.id
-                )
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            raise
+    async def delete(db, *, category_id, actor, if_match=None,
+                     idempotency_key=None, audience="CUSTOMER"):
+        from .category_commands import CategoryCommands
+        return await CategoryCommands.execute(db, operation="delete", category_id=category_id,
+            actor=actor, if_match=if_match, idempotency_key=idempotency_key, audience=audience)
 
 
 class FormTemplateCommandService:
     """Own tenant-scoped form-template mutations."""
 
     @staticmethod
-    def _is_platform_admin(actor) -> bool:
-        return bool(getattr(actor, "is_platform_admin", False) or getattr(actor, "is_superuser", False))
-
-    @staticmethod
     def _response(template: FormTemplate) -> FormTemplateResponse:
-        category = getattr(template, "category", None)
+        # Check __dict__ to avoid triggering async lazy-load IO on unloaded relationship
+        category = template.__dict__.get("category")
+        cat_name = getattr(category, "name", None) if category else None
+        if not cat_name and template.category_key:
+            cat_name = template.category_key.replace("_", " ").title()
+
+        # Recover event_id from settings JSONB if stored there (EVENT-scoped templates)
+        settings = template.settings or {}
+        if template.scope_type == "EVENT":
+            from app.modules.registration.schemas.event_form_contracts import form_document
+            try:
+                if not isinstance(settings, dict):
+                    raise ValueError("Invalid event form settings.")
+                event_id_val = uuid.UUID(str(settings.get("_event_id") or settings.get("event_id")))
+                document = form_document(template.fields or [], settings, stored=True, event_id=event_id_val)
+                fields, settings = document["fields"], document["settings"]
+            except ValueError:
+                raise HTTPException(409, detail={"code": "FORM_DOCUMENT_RECONCILIATION_REQUIRED"})
+        else:
+            fields = template.fields or []
+        if template.scope_type != "EVENT":
+            event_id_val = None
         return FormTemplateResponse(
             id=template.id,
             category_id=template.category_id,
             organization_id=template.organization_id,
-            event_id=None,
+            event_id=event_id_val,
             created_by=template.created_by,
             name=template.name,
             slug=template.slug,
             description=template.description,
             category_key=template.category_key,
-            category_name=category.name if category else template.category_key.replace("_", " ").title(),
+            category_name=cat_name or "Registration Form",
             scope_type=template.scope_type,
             is_default=template.is_default,
             is_system=template.is_system,
             version=template.version,
             is_active=template.is_active,
-            fields=template.fields or [],
-            settings=template.settings or {},
-            preview_image_url=template.preview_image_url,
+            fields=fields,
+            settings=settings,
+            preview_image_url=None if template.scope_type == "EVENT" else template.preview_image_url,
             created_at=template.created_at,
             updated_at=template.updated_at,
         )
 
     @staticmethod
-    async def create(db: AsyncSession, *, payload: FormTemplateCreate, actor, idempotency_key: str | None = None) -> FormTemplate:
-        is_admin = FormTemplateCommandService._is_platform_admin(actor)
-        organization_id = getattr(actor, "organization_id", None)
-        if organization_id is None and not is_admin:
-            raise HTTPException(status_code=403, detail="Organization context is required.")
-        try:
-            idem = None
-            if idempotency_key and organization_id is not None:
-                idem = await begin_idempotent(db, organization_id=organization_id, actor_id=actor.id, operation="registration.form_template.create", key=idempotency_key, payload=payload.model_dump(mode="json"))
-                replay = replay_response(idem)
-                if replay is not None:
-                    template = await db.scalar(select(FormTemplate).where(FormTemplate.id == idem.resource_id).options(selectinload(FormTemplate.category)))
-                    if template is None:
-                        raise RuntimeError("Completed template idempotency resource is missing.")
-                    await db.commit()
-                    return template
-            scope_type = payload.scope_type or ("GLOBAL" if is_admin else "ORGANIZATION")
-            template = FormTemplate(
-                id=uuid.uuid4(),
-                category_id=payload.category_id,
-                organization_id=None if is_admin and scope_type == "GLOBAL" else organization_id,
-                created_by=actor.id,
-                name=payload.name,
-                slug=payload.slug or payload.name.lower().replace(" ", "-").replace("_", "-"),
-                description=payload.description,
-                category_key=payload.category_key,
-                scope_type=scope_type,
-                is_default=payload.is_default if is_admin else False,
-                is_system=is_admin,
-                is_active=True,
-                version=1,
-                fields=[field.model_dump(mode="json") for field in payload.fields],
-                settings=payload.settings.model_dump(mode="json") if hasattr(payload.settings, "model_dump") else (payload.settings or {}),
-            )
-            db.add(template)
-            await db.flush()
-            if idem is not None:
-                await complete_idempotent(db, idem, response_status=201, response_body=FormTemplateCommandService._response(template).model_dump(mode="json"), resource_id=template.id)
-            await db.commit()
-            await db.refresh(template)
-            return template
-        except Exception:
-            await db.rollback()
-            raise
+    async def create(db, *, payload, actor, idempotency_key=None, audience="CUSTOMER"):
+        from .template_commands import TemplateCommands
+        return await TemplateCommands.execute(db, operation="create", payload=payload,
+            actor=actor, idempotency_key=idempotency_key, audience=audience)
 
     @staticmethod
-    async def update(db: AsyncSession, *, template_id: uuid.UUID, payload: FormTemplateUpdate, actor, if_match: str | None = None, idempotency_key: str | None = None) -> FormTemplate:
-        is_admin = FormTemplateCommandService._is_platform_admin(actor)
-        organization_id = getattr(actor, "organization_id", None)
-        try:
-            idem = None
-            if idempotency_key and organization_id is not None:
-                idem = await begin_idempotent(db, organization_id=organization_id, actor_id=actor.id, operation="registration.form_template.update", key=idempotency_key, payload={"template_id": str(template_id), "payload": payload.model_dump(mode="json"), "if_match": if_match})
-                replay = replay_response(idem)
-                if replay is not None:
-                    template = await db.scalar(select(FormTemplate).where(FormTemplate.id == idem.resource_id).options(selectinload(FormTemplate.category)))
-                    if template is None:
-                        raise RuntimeError("Completed template idempotency resource is missing.")
-                    await db.commit()
-                    return template
-            visibility = [FormTemplate.id == template_id, FormTemplate.deleted_at.is_(None)]
-            if not is_admin:
-                visibility.append(or_(FormTemplate.scope_type == "GLOBAL", FormTemplate.organization_id == organization_id))
-            template = await db.scalar(
-                select(FormTemplate)
-                .where(*visibility)
-                .options(selectinload(FormTemplate.category))
-                .with_for_update()
-            )
-            if template is None:
-                raise HTTPException(status_code=404, detail="Form template not found")
-            if template.is_system and not is_admin:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="System blueprints cannot be overwritten. Duplicate the template to customize it for your organization.")
-            if not is_admin and template.organization_id != organization_id:
-                raise HTTPException(status_code=403, detail="Not authorized to edit this template")
-            if if_match is not None:
-                expected_version = require_if_match(if_match)
-                current_version = int(template.version or 1)
-                if current_version != expected_version:
-                    raise_version_conflict(current_version)
-            for field in ("name", "description", "category_id", "category_key", "is_active"):
-                value = getattr(payload, field)
-                if value is not None:
-                    setattr(template, field, value)
-            if payload.is_default is not None and is_admin:
-                template.is_default = payload.is_default
-            if payload.fields is not None:
-                template.fields = [field.model_dump(mode="json") for field in payload.fields]
-            if payload.settings is not None:
-                template.settings = payload.settings if isinstance(payload.settings, dict) else payload.settings.model_dump(mode="json")
-            template.version = int(template.version or 1) + 1
-            template.updated_at = datetime.now(timezone.utc)
-            await db.flush()
-            if idem is not None:
-                await complete_idempotent(db, idem, response_status=200, response_body=FormTemplateCommandService._response(template).model_dump(mode="json"), resource_id=template.id)
-            await db.commit()
-            await db.refresh(template)
-            return template
-        except Exception:
-            await db.rollback()
-            raise
+    async def update(db, *, template_id, payload, actor, if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        from .template_commands import TemplateCommands
+        return await TemplateCommands.execute(db, operation="update", template_id=template_id, payload=payload,
+            actor=actor, if_match=if_match, idempotency_key=idempotency_key, audience=audience)
 
     @staticmethod
-    async def duplicate(db: AsyncSession, *, template_id: uuid.UUID, actor, idempotency_key: str | None = None) -> FormTemplate:
-        organization_id = getattr(actor, "organization_id", None)
+    async def duplicate(db, *, template_id, actor, if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        from .template_commands import TemplateCommands
+        return await TemplateCommands.execute(db, operation="duplicate", template_id=template_id,
+            actor=actor, if_match=if_match, idempotency_key=idempotency_key, audience=audience)
+
+    @staticmethod
+    async def save_event_copy(
+        db: AsyncSession, *, source_template_id: uuid.UUID,
+        payload: FormTemplateSaveEventCopy, actor,
+        if_match: str | None = None, idempotency_key: str | None = None,
+        _transaction_receipt=None, _organization_id=None,
+        _authorization_proof=None,
+    ) -> FormTemplateResponse:
+        """Versioned copy command; never silently overwrite an existing copy."""
+        from app.core.dependencies.feature_gate import enforce_event_operation
+        from app.modules.audit.models.audit_log import AuditLog
+        # Delegated EMC sessions act inside the selected client tenant; the
+        # user's home organisation is not the ownership authority.
+        selector = db.info.get("customer_request_selector")
+        organization_id = (_organization_id
+            or getattr(selector, "active_organization_id", None)
+            or getattr(actor, "request_organization_id", None)
+            or getattr(actor, "organization_id", None))
         if organization_id is None:
-            raise HTTPException(status_code=403, detail="Organization context is required.")
+            raise HTTPException(403, detail="Organization context is required.")
+        expected = require_if_match(if_match)
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 <= len(idempotency_key.strip()) <= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        if _authorization_proof is not None and _authorization_proof is not _EVENT_COPY_AUTHORIZATION:
+            raise RuntimeError("Invalid parent event-copy authorization proof")
         try:
-            idem = None
-            if idempotency_key:
-                idem = await begin_idempotent(db, organization_id=organization_id, actor_id=actor.id, operation="registration.form_template.duplicate", key=idempotency_key, payload={"template_id": str(template_id)})
-                replay = replay_response(idem)
-                if replay is not None:
-                    template = await db.scalar(select(FormTemplate).where(FormTemplate.id == idem.resource_id).options(selectinload(FormTemplate.category)))
-                    if template is None:
-                        raise RuntimeError("Completed template idempotency resource is missing.")
-                    await db.commit()
-                    return template
-            source = await db.scalar(select(FormTemplate).where(FormTemplate.id == template_id, FormTemplate.deleted_at.is_(None), or_(FormTemplate.scope_type == "GLOBAL", FormTemplate.organization_id == organization_id)))
+            if _authorization_proof is not _EVENT_COPY_AUTHORIZATION:
+                await enforce_event_operation(db, organization_id, payload.event_id,
+                    "registration.forms.manage", user_id=actor.id)
+            # Internal aggregate callers own the receipt and the final commit.
+            receipt = _transaction_receipt
+            if receipt is None:
+                receipt = await begin_idempotent(db, organization_id=organization_id,
+                    actor_id=actor.id, operation="registration.form_template.event_copy",
+                    key=idempotency_key, payload={"source": str(source_template_id),
+                        "version": expected, "changes": payload.model_dump(mode="json")})
+            replay = replay_response(receipt) if _transaction_receipt is None else None
+            if replay is not None:
+                response = FormTemplateResponse.model_validate(replay[1])
+                from app.modules.registration.schemas.event_form_contracts import form_document
+                document = form_document(response.fields, response.settings,
+                    stored=True, event_id=payload.event_id)
+                response.fields, response.settings = document["fields"], document["settings"]
+                response.preview_image_url = None
+                await db.commit()
+                return response
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            event = await db.scalar(select(Event).where(Event.id == payload.event_id,
+                Event.organization_id == organization_id, Event.deleted_at.is_(None))
+                .options(raiseload(Event.portal_theme_setting))
+                .with_for_update(of=Event).execution_options(populate_existing=True))
+            if event is None:
+                raise HTTPException(404, detail="Event not found.")
+            # The initial admission acquired transaction-scoped access-revision
+            # locks. Repeating the complete permission/capability graph here is
+            # redundant and cannot strengthen revocation ordering before commit.
+            source = await db.scalar(select(FormTemplate).where(
+                FormTemplate.id == source_template_id, FormTemplate.deleted_at.is_(None),
+                or_(and_(FormTemplate.scope_type == "GLOBAL", FormTemplate.organization_id.is_(None)),
+                    and_(FormTemplate.scope_type.in_(("ORGANIZATION", "EVENT")),
+                        FormTemplate.organization_id == organization_id)))
+                .options(selectinload(FormTemplate.category)).with_for_update(of=FormTemplate)
+                .execution_options(populate_existing=True, shared_form_catalogue=True))
             if source is None:
-                raise HTTPException(status_code=404, detail="Source template not found")
-            clone = FormTemplate(id=uuid.uuid4(), category_id=source.category_id, organization_id=organization_id, created_by=actor.id, name=f"{source.name} (Custom Copy)", slug=f"{source.slug}-copy-{uuid.uuid4().hex[:6]}", description=source.description, category_key=source.category_key, scope_type="ORGANIZATION", is_default=False, is_system=False, is_active=True, version=1, fields=source.fields or [], settings=source.settings or {})
-            db.add(clone)
+                raise HTTPException(404, detail="Source template not found.")
+            if not source.is_active:
+                raise HTTPException(409, detail={"code": "SOURCE_TEMPLATE_INACTIVE"})
+            if source.category_id is not None:
+                category = await db.scalar(select(FormCategory).where(
+                    FormCategory.id == source.category_id,
+                    FormCategory.deleted_at.is_(None), FormCategory.is_active.is_(True),
+                    or_(FormCategory.organization_id == source.organization_id,
+                        FormCategory.organization_id.is_(None)))
+                    .with_for_update(read=True, of=FormCategory)
+                    .execution_options(shared_form_catalogue=True))
+                if category is None:
+                    raise HTTPException(404, detail="Template category not found.")
+            if source.scope_type == "EVENT":
+                markers = [(source.settings or {}).get(key) for key in ("_event_id", "event_id")
+                    if (source.settings or {}).get(key) is not None]
+                if not markers or any(str(marker) != str(event.id) for marker in markers):
+                    raise HTTPException(404, detail="Source template not found.")
+            if int(source.version or 1) != expected:
+                raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT",
+                    "current_version": int(source.version or 1)})
+            # Registration binding has its own aggregate version and atomic command.
+            if source.category_key == "registration":
+                raise HTTPException(409, detail={"code": "USE_REGISTRATION_FORM_CONFIG_COMMAND"})
+            if source.category_key == "abstract" and _transaction_receipt is None:
+                raise HTTPException(409, detail={"code": "USE_ABSTRACT_FORM_CONFIGURATION_COMMAND"})
+            if source.scope_type == "EVENT":
+                # Validate stored provenance before carrying it into another revision.
+                FormTemplateCommandService._response(source)
+            else:
+                from .template_commands import catalogue_projection
+                catalogue_projection(source)
+            if source.scope_type == "EVENT":
+                from .template_lineage import require_historical_lineage
+                historical_root = await require_historical_lineage(db, source)
+                root = str(historical_root) if historical_root is not None else None
+            else:
+                root = str(source.id)
+            existing = source if source.scope_type == "EVENT" else await db.scalar(
+                select(FormTemplate).where(FormTemplate.scope_type == "EVENT",
+                    FormTemplate.organization_id == organization_id, FormTemplate.deleted_at.is_(None),
+                    or_(
+                        func.jsonb_extract_path_text(FormTemplate.settings, "_event_id") == str(event.id),
+                        func.jsonb_extract_path_text(FormTemplate.settings, "event_id") == str(event.id),
+                    ),
+                    func.jsonb_extract_path_text(FormTemplate.settings, "_source_template_id") == root)
+                .order_by(FormTemplate.id).limit(1))
+            if existing is not None and source.scope_type != "EVENT":
+                raise HTTPException(409, detail={"code": "EVENT_COPY_EXISTS_RELOAD_REQUIRED"})
+            from app.modules.registration.schemas.event_form_contracts import form_document
+            raw_settings = payload.settings.model_dump(mode="json") if hasattr(payload.settings, "model_dump") else dict(payload.settings or {})
+            document = form_document([field.model_dump(mode="json") for field in payload.fields], raw_settings)
+            raw_settings = document["settings"]
+            from app.modules.registration.services.managed_form_assets import require_form_assets
+            await require_form_assets(db, organization_id=organization_id,
+                settings=raw_settings, lock=True)
+            raw_settings["_event_id"] = str(event.id)
+            if root is not None:
+                raw_settings["_source_template_id"] = root
+            fields = document["fields"]
+            previous = int(existing.version or 1) if existing is not None else None
+            if existing is None:
+                existing = FormTemplate(id=uuid.uuid4(), category_id=source.category_id,
+                    organization_id=organization_id, created_by=actor.id,
+                    name=payload.name or source.name,
+                    slug=f"{source.slug}-evt-{uuid.uuid4().hex[:8]}",
+                    description=source.description, category_key=source.category_key,
+                    scope_type="EVENT", is_default=False, is_system=False, is_active=True,
+                    version=1, fields=fields, settings=raw_settings)
+                db.add(existing)
+            else:
+                existing.name = payload.name or existing.name
+                existing.fields, existing.settings = fields, raw_settings
+                existing.version = previous + 1
+                existing.updated_at = datetime.now(timezone.utc)
             await db.flush()
-            if idem is not None:
-                await complete_idempotent(db, idem, response_status=201, response_body=FormTemplateCommandService._response(clone).model_dump(mode="json"), resource_id=clone.id)
-            await db.commit()
-            await db.refresh(clone)
-            return clone
+            response = FormTemplateCommandService._response(existing)
+            selector = db.info.get("customer_request_selector")
+            db.add(AuditLog(organization_id=organization_id, actor_user_id=actor.id,
+                resource_type="form_template", resource_id=existing.id,
+                action_type="EVENT_FORM_TEMPLATE_SAVED", correlation_id=receipt.id,
+                old_state={"version": previous}, new_state={"version": response.version,
+                    "event_id": str(event.id), "workspace_id": str(event.operational_workspace_id),
+                    "source_template_id": str(source.id), "field_count": len(fields),
+                    "acting_organization_id": str(getattr(selector, "acting_organization_id", None) or organization_id),
+                    "target_organization_id": str(organization_id),
+                    "access_mode": getattr(selector, "access_mode", "DIRECT")}))
+            if _transaction_receipt is None:
+                await complete_idempotent(db, receipt, response_status=200,
+                    response_body=response.model_dump(mode="json"), resource_id=existing.id)
+                await db.commit()
         except Exception:
             await db.rollback()
             raise
+        if _transaction_receipt is None:
+            await cache_service.invalidate_domain("registration_form", organization_id, payload.event_id)
+        return response
 
     @staticmethod
-    async def delete(db: AsyncSession, *, template_id: uuid.UUID, actor, if_match: str | None = None, idempotency_key: str | None = None) -> None:
-        organization_id = getattr(actor, "organization_id", None)
-        try:
-            idem = None
-            if idempotency_key and organization_id is not None:
-                idem = await begin_idempotent(db, organization_id=organization_id, actor_id=actor.id, operation="registration.form_template.delete", key=idempotency_key, payload={"template_id": str(template_id), "if_match": if_match})
-                if replay_response(idem) is not None:
-                    await db.commit()
-                    return
-            template = await db.scalar(
-                select(FormTemplate)
-                .where(
-                    FormTemplate.id == template_id,
-                    FormTemplate.organization_id == organization_id,
-                    FormTemplate.deleted_at.is_(None),
-                )
-                .with_for_update()
-            )
-            if template is None:
-                raise HTTPException(status_code=404, detail="Form template not found")
-            if template.is_system:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="System templates cannot be deleted by organizers.")
-            if if_match is not None:
-                expected_version = require_if_match(if_match)
-                current_version = int(template.version or 1)
-                if current_version != expected_version:
-                    raise_version_conflict(current_version)
-            template.deleted_at = datetime.now(timezone.utc)
-            template.deleted_by = actor.id
-            template.version = int(template.version or 1) + 1
-            await db.flush()
-            if idem is not None:
-                await complete_idempotent(db, idem, response_status=204, response_body={})
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            raise
+    async def delete(db, *, template_id, actor, if_match=None, idempotency_key=None, audience="CUSTOMER"):
+        from .template_commands import TemplateCommands
+        return await TemplateCommands.execute(db, operation="delete", template_id=template_id,
+            actor=actor, if_match=if_match, idempotency_key=idempotency_key, audience=audience)
 
-    @staticmethod
-    async def update(
-        db: AsyncSession,
-        *,
-        category_id: uuid.UUID,
-        payload: FormCategoryUpdate,
-        actor,
-        idempotency_key: str | None = None,
-    ) -> FormCategory:
-        organization_id = getattr(actor, "organization_id", None)
-        is_platform_admin = FormCategoryCommandService._is_platform_admin(actor)
-        try:
-            idem = None
-            if idempotency_key and organization_id is not None:
-                idem = await begin_idempotent(
-                    db,
-                    organization_id=organization_id,
-                    actor_id=actor.id,
-                    operation="registration.form_category.update",
-                    key=idempotency_key,
-                    payload={"category_id": str(category_id), "payload": payload.model_dump(mode="json")},
-                )
-                replay = replay_response(idem)
-                if replay is not None:
-                    category = await db.scalar(select(FormCategory).where(FormCategory.id == idem.resource_id))
-                    if category is None:
-                        raise RuntimeError("Completed category idempotency resource is missing.")
-                    await db.commit()
-                    return category
-
-            conditions = [FormCategory.id == category_id, FormCategory.deleted_at.is_(None)]
-            if not is_platform_admin:
-                conditions.append(FormCategory.organization_id == organization_id)
-            category = await db.scalar(select(FormCategory).where(*conditions))
-            if category is None:
-                raise HTTPException(status_code=404, detail="Form category not found")
-            if category.is_system and not is_platform_admin:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="System categories are protected by Command Center governance and cannot be modified by organizers.")
-            for field in ("name", "description", "icon", "sort_order", "is_active"):
-                value = getattr(payload, field)
-                if value is not None:
-                    setattr(category, field, value)
-            await db.flush()
-            if idem is not None:
-                await complete_idempotent(db, idem, response_status=200, response_body=FormCategoryResponse.model_validate(category).model_dump(mode="json"), resource_id=category.id)
-            await db.commit()
-            await db.refresh(category)
-            return category
-        except Exception:
-            await db.rollback()
-            raise
-
-    @staticmethod
-    async def delete(
-        db: AsyncSession,
-        *,
-        category_id: uuid.UUID,
-        actor,
-        idempotency_key: str | None = None,
-    ) -> None:
-        organization_id = getattr(actor, "organization_id", None)
-        try:
-            idem = None
-            if idempotency_key:
-                idem = await begin_idempotent(
-                    db,
-                    organization_id=organization_id,
-                    actor_id=actor.id,
-                    operation="registration.form_category.delete",
-                    key=idempotency_key,
-                    payload={"category_id": str(category_id)},
-                )
-                if replay_response(idem) is not None:
-                    await db.commit()
-                    return
-            category = await db.scalar(
-                select(FormCategory).where(
-                    FormCategory.id == category_id,
-                    FormCategory.organization_id == organization_id,
-                    FormCategory.deleted_at.is_(None),
-                )
-            )
-            if category is None:
-                raise HTTPException(status_code=404, detail="Form category not found")
-            if category.is_system:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="System categories are permanent platform categories and cannot be deleted.")
-            category.deleted_at = datetime.now(timezone.utc)
-            category.deleted_by = actor.id
-            await db.flush()
-            if idem is not None:
-                await complete_idempotent(db, idem, response_status=204, response_body={})
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            raise
-
-    @staticmethod
-    async def save_matrix(
-        db: AsyncSession,
-        *,
-        event: Event,
-        pricing_data: dict,
-        tier_schedules: dict | None = None,
-    ) -> dict[str, float]:
-        try:
-            normalized = await TicketPricingService.replace_matrix(
-                db,
-                event,
-                pricing_data,
-                tier_schedules=tier_schedules,
-            )
-            await db.commit()
-            await db.refresh(event)
-            await cache_service.invalidate_event(event.organization_id, event.id)
-            return normalized
-        except Exception:
-            await db.rollback()
-            raise
 
 
 class RegistrationFormCommandService:
     """Own the transaction for organizer registration-form configuration."""
+
+    @staticmethod
+    async def set_live(db: AsyncSession, *, event: Event, actor_user_id: uuid.UUID,
+                       is_live: bool, expected_version: int, idempotency_key: str) -> dict:
+        from app.core.dependencies.feature_gate import enforce_event_operation
+        from app.modules.audit.models.audit_log import AuditLog
+        if actor_user_id is None:
+            raise HTTPException(401, detail={"code": "AUTHENTICATION_REQUIRED"})
+        if expected_version < 1 or type(is_live) is not bool:
+            raise HTTPException(400, detail={"code": "INVALID_PORTAL_STATUS_INPUT"})
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 8 <= len(idempotency_key.strip()) <= 200:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
+        try:
+            await enforce_event_operation(db, event.organization_id, event.id,
+                "registration.forms.manage", user_id=actor_user_id)
+            receipt = await begin_idempotent(db, organization_id=event.organization_id,
+                actor_id=actor_user_id, operation="registration.portal-status.update",
+                key=idempotency_key, payload={"event_id": str(event.id),
+                    "is_live": is_live, "version": expected_version})
+            replay = replay_response(receipt)
+            if replay is not None:
+                await db.commit()
+                return replay[1]
+            from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+            await lock_catalogue_reference_writes(db)
+            # Serialize first creation as well as existing-record updates.
+            owned = await db.scalar(select(Event.id).where(Event.id == event.id,
+                Event.organization_id == event.organization_id,
+                Event.deleted_at.is_(None)).with_for_update(of=Event))
+            if owned is None:
+                raise HTTPException(404, detail={"code": "EVENT_NOT_FOUND"})
+            await enforce_event_operation(db, event.organization_id, event.id,
+                "registration.forms.manage", user_id=actor_user_id)
+            config = await db.scalar(select(RegistrationFormConfig).where(
+                RegistrationFormConfig.event_id == event.id).with_for_update()
+                .execution_options(populate_existing=True))
+            version = int(config.version or 1) if config else 1
+            if version != expected_version:
+                raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT",
+                    "current_version": version})
+            previous_live = config.is_live if config else True
+            if config is not None:
+                from .aggregate_reference_validation import aggregate_reference_issues
+                issues = (await aggregate_reference_issues(db, rows=[config],
+                    organization_id=event.organization_id, resource_type="REGISTRATION_FORM", lock=True))[config.id]
+                if issues:
+                    raise HTTPException(409, detail={"code": "FORM_TEMPLATE_RECONCILIATION_REQUIRED"
+                        if "TEMPLATE_REFERENCE_UNAVAILABLE" in issues else "FORM_CATEGORY_RECONCILIATION_REQUIRED"})
+                from app.modules.registration.schemas.event_form_contracts import form_document
+                try:
+                    document = form_document(config.fields or [], config.settings or {}, stored=True, event_id=event.id)
+                except ValueError:
+                    raise HTTPException(409, detail={"code": "FORM_DOCUMENT_RECONCILIATION_REQUIRED"})
+                from app.modules.registration.services.managed_form_assets import require_form_assets
+                await require_form_assets(db, organization_id=event.organization_id,
+                    settings=document["settings"], lock=True)
+            if config is None:
+                config = RegistrationFormConfig(event_id=event.id, fields=[], settings={})
+                db.add(config)
+            config.is_live, config.version = is_live, version + 1
+            await db.flush()
+            result = {"id": str(config.id), "event_id": str(event.id),
+                "is_live": config.is_live, "version": config.version}
+            selector = db.info.get("customer_request_selector")
+            db.add(AuditLog(organization_id=event.organization_id, actor_user_id=actor_user_id,
+                resource_type="registration_form", resource_id=config.id,
+                action_type="REGISTRATION_PORTAL_STATUS_UPDATED", is_sensitive=True, correlation_id=receipt.id,
+                old_state={"is_live": previous_live, "version": version},
+                new_state={**result, "workspace_id": str(event.operational_workspace_id),
+                    "acting_organization_id": str(getattr(selector, "acting_organization_id", None) or event.organization_id),
+                    "access_mode": getattr(selector, "access_mode", "DIRECT")}))
+            await complete_idempotent(db, receipt, response_status=200,
+                response_body=result, resource_id=config.id)
+            organization_id, event_id = event.organization_id, event.id
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+        await cache_service.invalidate_domain("registration_form", organization_id, event_id)
+        return result
 
     @staticmethod
     async def update(
@@ -1262,8 +1261,19 @@ class RegistrationFormCommandService:
         if_match: str | None = None,
         actor_user_id: uuid.UUID | None = None,
         idempotency_key: str | None = None,
-    ) -> RegistrationFormConfig:
+    ) -> dict:
+        from app.core.dependencies.feature_gate import enforce_event_operation
+        from app.modules.audit.models.audit_log import AuditLog
+        if actor_user_id is None:
+            raise HTTPException(401, detail={"code": "AUTHENTICATION_REQUIRED"})
+        expected_version = require_if_match(if_match)
+        if not idempotency_key:
+            raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+        if not 16 <= len(idempotency_key.strip()) <= 160:
+            raise HTTPException(400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
         try:
+            await enforce_event_operation(db, event.organization_id, event.id,
+                "registration.forms.manage", user_id=actor_user_id)
             idem = None
             if actor_user_id is not None and idempotency_key:
                 idem = await begin_idempotent(
@@ -1275,44 +1285,58 @@ class RegistrationFormCommandService:
                     payload={
                         "event_id": str(event.id),
                         "payload": payload.model_dump(mode="json"),
-                        "if_match": if_match,
+                        "if_match": expected_version,
                     },
                 )
                 replay = replay_response(idem)
                 if replay is not None:
-                    if idem.resource_id is None:
-                        raise RuntimeError("Completed form idempotency record has no resource.")
-                    existing = await db.scalar(
-                        select(RegistrationFormConfig).where(
-                            RegistrationFormConfig.id == idem.resource_id,
-                            RegistrationFormConfig.event_id == event.id,
-                        )
-                    )
-                    if existing is None:
-                        raise RuntimeError("Completed form idempotency resource is missing.")
+                    if not {"event_id", "fields", "is_live", "version"}.issubset(replay[1]):
+                        raise HTTPException(409, detail={"code": "LEGACY_FORM_RECEIPT_RELOAD_REQUIRED"})
+                    projected = RegistrationFormConfigResponse.model_validate(replay[1]).model_dump(mode="json")
                     await db.commit()
-                    await db.refresh(existing)
-                    return existing
+                    return projected
 
             config = await RegistrationFormCommandService._update(
-                db, event=event, payload=payload, if_match=if_match
+                db, event=event, payload=payload, if_match=if_match,
+                actor_user_id=actor_user_id,
             )
+            registration_settings = event.registration_settings or {}
+            result = RegistrationFormConfigResponse.model_validate({
+                "id": config.id, "event_id": event.id, "template_id": config.template_id,
+                "category_id": config.category_id, "is_live": config.is_live,
+                "fields": config.fields, "settings": config.settings or {}, "version": config.version,
+                "terms_and_conditions": registration_settings.get("terms_and_conditions", ""),
+                "faqs": registration_settings.get("faqs"),
+                "include_default_faqs": registration_settings.get("include_default_faqs", True),
+            }).model_dump(mode="json")
+            selector = db.info.get("customer_request_selector")
+            db.add(AuditLog(organization_id=event.organization_id, actor_user_id=actor_user_id,
+                resource_type="registration_form", resource_id=config.id,
+                action_type="REGISTRATION_FORM_UPDATED", is_sensitive=True,
+                correlation_id=idem.id,
+                old_state={"version": expected_version}, new_state={"version": config.version,
+                    "event_id": str(event.id), "workspace_id": str(event.operational_workspace_id),
+                    "changed_fields": sorted(payload.model_fields_set),
+                    "target_organization_id": str(event.organization_id),
+                    "acting_organization_id": str(getattr(selector, "acting_organization_id", None) or event.organization_id),
+                    "access_mode": getattr(selector, "access_mode", "DIRECT")}))
             # The application command owns the single transaction boundary.
             if idem is not None:
                 await complete_idempotent(
                     db,
                     idem,
                     response_status=200,
-                    response_body={"id": str(config.id), "version": config.version},
+                    response_body=result,
                     resource_id=config.id,
                 )
+            organization_id, event_id = event.organization_id, event.id
             await db.commit()
-            await db.refresh(config)
-            await cache_service.invalidate_domain("registration_form", event.organization_id, event.id)
-            return config
         except Exception:
             await db.rollback()
             raise
+        await cache_service.invalidate_domain("registration_form", organization_id, event_id)
+        await cache_service.invalidate_event(organization_id, event_id)
+        return result
 
     @staticmethod
     async def _update(
@@ -1321,80 +1345,111 @@ class RegistrationFormCommandService:
         event: Event,
         payload: RegistrationFormConfigUpdate,
         if_match: str | None = None,
+        actor_user_id: uuid.UUID,
     ) -> RegistrationFormConfig:
+        from .catalogue_lifecycle_locks import lock_catalogue_reference_writes
+        await lock_catalogue_reference_writes(db)
+        # Match portal publication ordering: event before its form record.
+        # This also serializes concurrent first-time form creation.
+        owned = await db.scalar(select(Event).where(Event.id == event.id,
+            Event.organization_id == event.organization_id,
+            Event.deleted_at.is_(None)).with_for_update(of=Event).execution_options(populate_existing=True))
+        if owned is None:
+            raise HTTPException(404, detail={"code": "EVENT_NOT_FOUND"})
+        from app.core.dependencies.feature_gate import enforce_event_operation
+        await enforce_event_operation(db, event.organization_id, event.id,
+            "registration.forms.manage", user_id=actor_user_id)
         result = await db.execute(
             select(RegistrationFormConfig)
             .where(RegistrationFormConfig.event_id == event.id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         config = result.scalar_one_or_none()
 
+        expected_version = require_if_match(if_match)
+        current_version = int(config.version or 1) if config else 1
+        if current_version != expected_version:
+            raise HTTPException(412, detail={"code": "RESOURCE_VERSION_CONFLICT",
+                "current_version": current_version})
         if config is None:
-            if if_match:
-                require_if_match(if_match)
-            config = RegistrationFormConfig(event_id=event.id)
+            # Preserve the existing GET projection for an unconfigured form.
+            config = RegistrationFormConfig(event_id=event.id, is_live=True)
             db.add(config)
             await db.flush()
-        elif if_match:
-            expected_version = require_if_match(if_match)
-            current_version = int(config.version or 1)
-            if current_version != expected_version:
-                raise_version_conflict(current_version)
-
-        # Setup is an authenticated command. Public reads never create roles.
-        existing_role = await db.scalar(
-            select(ParticipantRole.id)
-            .where(ParticipantRole.event_id == event.id)
-            .limit(1)
-        )
-        if existing_role is None:
-            db.add(
-                ParticipantRole(
-                    event_id=event.id,
-                    category="General",
-                    name="Delegate",
-                    role_code="DEL",
-                    is_active=True,
-                    is_default=True,
-                    sort_order=0,
-                )
-            )
 
         if payload.is_live is not None:
             config.is_live = payload.is_live
 
+        template_scope = or_(
+            and_(FormTemplate.organization_id.is_(None), FormTemplate.scope_type == "GLOBAL"),
+            and_(FormTemplate.organization_id == event.organization_id,
+                or_(FormTemplate.scope_type == "ORGANIZATION",
+                    and_(FormTemplate.scope_type == "EVENT", or_(
+                        FormTemplate.settings["event_id"].astext == str(event.id),
+                        FormTemplate.settings["_event_id"].astext == str(event.id),
+                    )))))
         if payload.template_id is not None:
-            if isinstance(payload.template_id, uuid.UUID):
-                config.template_id = payload.template_id
-            elif isinstance(payload.template_id, str):
-                try:
-                    config.template_id = uuid.UUID(payload.template_id)
-                except ValueError:
-                    # Look up template by slug to resolve UUID if possible
-                    tpl = await db.scalar(
-                        select(FormTemplate.id).where(
-                            FormTemplate.slug == payload.template_id,
-                            FormTemplate.deleted_at.is_(None),
-                        ).limit(1)
-                    )
-                    config.template_id = tpl
+            try:
+                template_uuid = uuid.UUID(str(payload.template_id))
+                template_selector = FormTemplate.id == template_uuid
+            except ValueError:
+                template_selector = FormTemplate.slug == str(payload.template_id)
+            matches = list((await db.scalars(select(FormTemplate).where(template_selector,
+                FormTemplate.category_key == "registration",
+                template_scope, FormTemplate.is_active.is_(True),
+                FormTemplate.deleted_at.is_(None)).order_by(FormTemplate.id).limit(2)
+                .with_for_update(read=True).execution_options(
+                    shared_form_catalogue=True, populate_existing=True))).all())
+            if not matches:
+                raise HTTPException(404, detail={"code": "FORM_TEMPLATE_NOT_FOUND"})
+            if len(matches) != 1:
+                raise HTTPException(409, detail={"code": "AMBIGUOUS_FORM_TEMPLATE"})
+            config.template_id = matches[0].id
 
         if payload.category_id is not None:
+            category = await db.scalar(select(FormCategory.id).where(
+                FormCategory.id == payload.category_id, FormCategory.deleted_at.is_(None),
+                FormCategory.is_active.is_(True), or_(FormCategory.organization_id == event.organization_id,
+                    and_(FormCategory.organization_id.is_(None), FormCategory.is_system.is_(True))))
+                .with_for_update(read=True).execution_options(shared_form_catalogue=True))
+            if category is None:
+                raise HTTPException(404, detail={"code": "FORM_CATEGORY_NOT_FOUND"})
             config.category_id = payload.category_id
 
-        if payload.settings is not None:
-            config.settings = payload.settings
+        # Every aggregate write revalidates retained references after acquiring
+        # the shared lifecycle lock. A status/settings-only save must not carry
+        # a retired template or category into a new registration-form version.
+        from .aggregate_reference_validation import aggregate_reference_issues
+        issues = (await aggregate_reference_issues(db, rows=[config],
+            organization_id=event.organization_id, resource_type="REGISTRATION_FORM", lock=True))[config.id]
+        if issues:
+            raise HTTPException(409, detail={"code": "FORM_TEMPLATE_RECONCILIATION_REQUIRED"
+                if "TEMPLATE_REFERENCE_UNAVAILABLE" in issues else "FORM_CATEGORY_RECONCILIATION_REQUIRED"})
 
-        if payload.fields is not None:
-            fields = [
-                field.model_dump() if hasattr(field, "model_dump") else dict(field)
-                for field in payload.fields
-            ]
+        from app.modules.registration.schemas.event_form_contracts import form_document
+        # Validate the effective pair, including partial saves, before any field writes.
+        effective_settings = dict(payload.settings if payload.settings is not None else config.settings or {})
+        for key in ("event_id", "_event_id", "_source_template_id"):
+            if key in (config.settings or {}):
+                effective_settings[key] = config.settings[key]
+        try:
+            document = form_document(payload.fields if payload.fields is not None else config.fields or [],
+                effective_settings, stored=True, event_id=event.id)
+        except ValueError:
+            raise HTTPException(409, detail={"code": "FORM_DOCUMENT_RECONCILIATION_REQUIRED"})
+        from app.modules.registration.services.managed_form_assets import require_form_assets
+        await require_form_assets(db, organization_id=event.organization_id,
+            settings=document["settings"], lock=True)
+        config.settings = document["settings"]
+
+        if payload.fields is not None or payload.settings is not None:
+            fields = document["fields"]
             config.fields = fields
             await db.execute(delete(FormField).where(FormField.form_id == config.id))
 
             sort_index = 0
-            has_state = False
+            has_state = any((field.get("name") or field.get("id")) == "state" for field in fields)
             for field in fields:
                 field_name = field.get("name") or field.get("id") or f"field_{sort_index}"
                 field_type = field.get("type", "text")
@@ -1436,6 +1491,97 @@ class RegistrationFormCommandService:
                         sort_index += 1
                         has_state = True
 
+            # Auto-create or update event-scoped FormTemplate in design.form_templates
+            event_template = None
+            if config.template_id:
+                event_template = await db.scalar(
+                    select(FormTemplate).where(
+                        FormTemplate.id == config.template_id,
+                        FormTemplate.category_key == "registration",
+                        template_scope,
+                        FormTemplate.is_active.is_(True),
+                        FormTemplate.deleted_at.is_(None),
+                    ).with_for_update(read=True).execution_options(
+                        shared_form_catalogue=True, populate_existing=True)
+                )
+                if event_template is None:
+                    raise HTTPException(404, detail={"code": "FORM_TEMPLATE_NOT_FOUND"})
+
+            merged_settings = dict(config.settings or {})
+            merged_settings["event_id"] = str(event.id)
+            merged_settings["_event_id"] = str(event.id)
+            # Provenance comes from an authorised source, never a caller-supplied ID.
+            merged_settings.pop("_source_template_id", None)
+            if event_template is not None:
+                if event_template.scope_type != "EVENT":
+                    merged_settings["_source_template_id"] = str(event_template.id)
+                else:
+                    from .template_lineage import require_historical_lineage
+                    original_id = await require_historical_lineage(db, event_template)
+                    if original_id is not None:
+                        merged_settings["_source_template_id"] = str(original_id)
+            config.settings = merged_settings
+
+            if event_template is None or event_template.is_system or event_template.scope_type != "EVENT":
+                custom_name = f"{event.name} — Registration Form"
+                custom_slug = f"event-reg-{event.id.hex}"
+                reg_categories = list((await db.scalars(
+                    select(FormCategory).where(FormCategory.slug == "registration",
+                        FormCategory.organization_id.is_(None), FormCategory.is_system.is_(True),
+                        FormCategory.is_active.is_(True), FormCategory.deleted_at.is_(None))
+                        .order_by(FormCategory.id).limit(2)
+                        .execution_options(shared_form_catalogue=True)
+                )).all())
+                if len(reg_categories) > 1:
+                    raise HTTPException(409, detail={"code": "CATEGORY_RECONCILIATION_REQUIRED"})
+                reg_cat = reg_categories[0] if reg_categories else None
+                cat_id = config.category_id or (reg_cat.id if reg_cat else None)
+
+                existing_event_templates = list((await db.scalars(
+                    select(FormTemplate).where(
+                        FormTemplate.slug == custom_slug,
+                        FormTemplate.organization_id == event.organization_id,
+                        FormTemplate.scope_type == "EVENT",
+                        or_(FormTemplate.settings["event_id"].astext == str(event.id),
+                            FormTemplate.settings["_event_id"].astext == str(event.id)),
+                        FormTemplate.deleted_at.is_(None),
+                    ).order_by(FormTemplate.id).limit(2).with_for_update()
+                    .execution_options(populate_existing=True)
+                )).all())
+                if len(existing_event_templates) > 1:
+                    raise HTTPException(409, detail={"code": "EVENT_TEMPLATE_RECONCILIATION_REQUIRED"})
+                existing_event_tpl = existing_event_templates[0] if existing_event_templates else None
+                if existing_event_tpl:
+                    existing_event_tpl.fields = fields
+                    existing_event_tpl.settings = merged_settings
+                    existing_event_tpl.version = int(existing_event_tpl.version or 1) + 1
+                    config.template_id = existing_event_tpl.id
+                else:
+                    new_event_tpl = FormTemplate(
+                        id=uuid.uuid4(),
+                        name=custom_name,
+                        slug=custom_slug,
+                        description=f"Custom registration questionnaire for {event.name}.",
+                        category_key="registration",
+                        category_id=cat_id,
+                        organization_id=event.organization_id,
+                        scope_type="EVENT",
+                        is_default=False,
+                        is_system=False,
+                        is_active=True,
+                        version=1,
+                        fields=fields,
+                        settings=merged_settings,
+                    )
+                    db.add(new_event_tpl)
+                    await db.flush()
+                    config.template_id = new_event_tpl.id
+            elif event_template and not event_template.is_system:
+                event_template.fields = fields
+                event_template.settings = merged_settings
+                event_template.version = int(event_template.version or 1) + 1
+                event_template.updated_at = datetime.now(timezone.utc)
+
         registration_settings = dict(event.registration_settings or {})
         if payload.terms_and_conditions is not None:
             registration_settings["terms_and_conditions"] = payload.terms_and_conditions
@@ -1446,14 +1592,38 @@ class RegistrationFormCommandService:
             ]
         if payload.include_default_faqs is not None:
             registration_settings["include_default_faqs"] = payload.include_default_faqs
-        event.registration_settings = registration_settings
+        if {"terms_and_conditions", "faqs", "include_default_faqs"} & payload.model_fields_set:
+            event.registration_settings = registration_settings
+            event.version = int(event.version or 1) + 1
 
         config.version = int(config.version or 1) + 1
+        await db.flush()
         return config
 
 
 class ParticipantCommandService:
     """Own participant mutation transactions while reusing domain rules."""
+
+    @staticmethod
+    async def _validate_upload_answers(db, *, event: Event, values: dict | None) -> None:
+        if values is None:
+            return
+        config = await db.scalar(select(RegistrationFormConfig).where(
+            RegistrationFormConfig.event_id == event.id))
+        if config is None:
+            return
+        from app.modules.registration.schemas.event_form_contracts import form_document
+        try:
+            document = form_document(config.fields or [], config.settings or {},
+                stored=True, event_id=event.id)
+        except ValueError as exc:
+            raise HTTPException(409, detail={"code": "FORM_DOCUMENT_RECONCILIATION_REQUIRED"}) from exc
+        from app.modules.registration.services.managed_registration_uploads import (
+            validate_managed_registration_upload_answers,
+        )
+        await validate_managed_registration_upload_answers(db,
+            organization_id=event.organization_id, event_id=event.id,
+            fields=document["fields"], values=values)
 
     @staticmethod
     async def create(
@@ -1496,6 +1666,8 @@ class ParticipantCommandService:
                     raise RuntimeError("Completed participant idempotency resource is missing.")
                 return refreshed, bool((replay[1] or {}).get("is_free", False)), "REPLAYED"
 
+            await ParticipantCommandService._validate_upload_answers(db,
+                event=event, values=payload.custom_fields or {})
             participant, is_free, outcome = await EventParticipantMutationService.create(
                 db,
                 event=event,
@@ -1576,6 +1748,9 @@ class ParticipantCommandService:
                     await db.commit()
                     return refreshed, bool((replay[1] or {}).get("is_free", False)), {}, {}
 
+            if "custom_fields" in payload.model_fields_set:
+                await ParticipantCommandService._validate_upload_answers(db,
+                    event=event, values=payload.custom_fields or {})
             participant, is_free, changes, old = await EventParticipantMutationService.update(
                 db,
                 event=event,

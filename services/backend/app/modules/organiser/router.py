@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 import hashlib
 import json
@@ -10,21 +11,25 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_current_user, get_db
+from app.dependencies import get_current_user, get_db, require_step_up, require_active_user, TokenDep
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
-from app.modules.billing.models.billing_domain_tables import Invoice
-from app.modules.billing.models.subscription import Addon, OrganizationAddon
+from app.modules.billing.services.invoice_pdf_service import (
+    InvoicePdfSigningConfig,
+    render_invoice_pdf,
+)
+from app.modules.billing.services.invoice_snapshot_service import build_invoice_pdf_snapshot
+from app.modules.billing.models.billing_domain_tables import Invoice, InvoiceItem, PaymentMethod, PaymentMethodSetup
 from app.modules.events.models.event import Event
 from app.modules.events.services.event_mutation_service import EventMutationService
 from app.modules.rbac.schemas.event import EventCreate
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
 from app.modules.platform.models.organization_console import (
-    CommercialAccessRequest,
     OrganizationBrandProfile,
     OrganizationCustomField,
     OrganizationLocation,
@@ -38,11 +43,18 @@ from app.modules.platform.models.organization_console import (
     OrganizationApprovalRule,
     OrganizationAttentionState,
 )
-from app.modules.files.models.file import Asset
+from app.modules.files.models.file import Asset, AssetTag
 from app.modules.files.services.file_service import FileService
+from app.modules.presentations.services.upload_service import create_presigned_download
+from app.config import settings
 from app.modules.organiser.application.member_commands import OrganizationMemberCommandService
 from app.modules.organiser.application.organization_commands import OrganizerOrganizationCommandService
 from app.modules.organiser.application.billing_commands import OrganizerBillingCommandService
+from app.modules.organiser.application.payment_method_commands import OrganizerPaymentMethodCommandService
+from app.modules.billing.services.payment_method_provider_service import PaymentMethodProviderService
+from app.modules.rbac.services.access_contexts import selected_request_context
+from app.modules.rbac.services.platform_permissions import require_platform_permission
+from app.core.tenant_context import TenantContextGuard
 from app.modules.organiser.application.approval_commands import OrganizerApprovalRuleCommandService
 from app.modules.organiser.application.notification_commands import OrganizerNotificationCommandService
 from app.modules.organiser.application.custom_field_commands import OrganizerCustomFieldCommandService
@@ -67,7 +79,6 @@ from app.modules.organiser.application.queries import (
     OrganiserEntitlementQueryService,
     OrganiserReportQueryService,
     OrganiserAttentionQueryService,
-    OrganiserAddonQueryService,
     OrganiserDashboardQueryService,
     OrganiserBillingQueryService,
     OrganiserDocumentQueryService,
@@ -75,6 +86,14 @@ from app.modules.organiser.application.queries import (
     OrganiserAccessQueryService,
 )
 from app.modules.platform.application.organization_team_commands import OrganizationTeamCommandService
+from app.modules.rbac.services.access_administration import (
+    scoped_branding_administration,
+    scoped_member_administration,
+    scoped_organization_profile,
+    scoped_role_administration,
+    scoped_team_administration,
+)
+from app.modules.rbac.schemas.teams import TeamCreationResult, TeamMutationResult, TeamReason, TeamBindingReason, TeamMemberMutationResult, TeamEventBindingWrite, TeamEventMutationResult, TeamEventActionsResult
 from app.schemas.cursor_pagination import CursorPage
 
 
@@ -126,34 +145,44 @@ class CustomFieldWrite(BaseModel):
 
 
 class TeamWrite(BaseModel):
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
     name: str = Field(min_length=2, max_length=160)
     description: str | None = Field(default=None, max_length=2000)
     owner_member_id: uuid.UUID | None = None
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class MemberSummary(BaseModel):
+    total: int = Field(ge=0)
+    active: int = Field(ge=0)
+    pending: int = Field(ge=0)
+    teams: int = Field(ge=0)
+    role_assignments: int = Field(ge=0)
 
 
 class MemberStatusWrite(BaseModel):
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
     is_active: bool
     reason: str = Field(min_length=3, max_length=500)
 
 
 class MemberRoleWrite(BaseModel):
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
     org_role: str = Field(pattern=r"^(owner|admin|member|billing_only)$")
     reason: str = Field(min_length=3, max_length=500)
 
 
 class BulkMemberRef(BaseModel):
+    model_config = {"extra": "forbid"}
     id: uuid.UUID
     version: int = Field(ge=1)
 
 
 class BulkMemberStatusWrite(BaseModel):
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
     members: list[BulkMemberRef] = Field(min_length=1, max_length=100)
     is_active: bool
     reason: str = Field(min_length=3, max_length=500)
-
-
-class TeamAssignmentWrite(BaseModel):
-    permissions: dict[str, Any] = Field(default_factory=dict)
 
 
 class NotificationRuleToggle(BaseModel):
@@ -171,7 +200,9 @@ class SecurityPolicyWrite(BaseModel):
 
 
 class BrandingWrite(BaseModel):
-    logo_url: str | None = Field(default=None, max_length=2000)
+    model_config = {"extra": "forbid"}
+    logo_asset_id: uuid.UUID | None = None
+    favicon_asset_id: uuid.UUID | None = None
     primary_color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
     secondary_color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
 
@@ -205,12 +236,24 @@ class CustomReportWrite(BaseModel):
 
 
 class BillingProfileWrite(BaseModel):
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
     billing_name: str = Field(min_length=2, max_length=255)
     billing_email: str = Field(min_length=3, max_length=255)
     billing_phone: str | None = Field(default=None, max_length=50)
     gst_number: str | None = Field(default=None, max_length=40)
     country: str = Field(min_length=2, max_length=2)
     currency: str = Field(min_length=3, max_length=10)
+
+
+class PaymentMethodSetupWrite(BaseModel):
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
+    provider: str | None = Field(default="STRIPE", pattern=r"^(STRIPE|RAZORPAY)$")
+    return_url: str = Field(min_length=8, max_length=2000)
+
+
+class PaymentMethodRetireWrite(BaseModel):
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
+    reason: str = Field(min_length=12, max_length=500)
 
 
 class ApprovalRuleWrite(BaseModel):
@@ -235,8 +278,20 @@ class AttentionResolveWrite(BaseModel):
     resolution: str = Field(min_length=3, max_length=1000)
 
 
+class BillingAddressWrite(BaseModel):
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
+    line1: str | None = Field(default=None, max_length=255)
+    line2: str | None = Field(default=None, max_length=255)
+    city: str | None = Field(default=None, max_length=120)
+    state: str | None = Field(default=None, max_length=120)
+    postal_code: str | None = Field(default=None, max_length=30)
+    country: str | None = Field(default=None, max_length=100)
+
+
 class OrganizationProfileWrite(BaseModel):
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
     name: str = Field(min_length=2, max_length=255)
+    description: str | None = Field(default=None, max_length=500)
     legal_name: str | None = Field(default=None, max_length=255)
     registration_number: str | None = Field(default=None, max_length=100)
     organization_type: str | None = Field(default=None, max_length=50)
@@ -245,7 +300,7 @@ class OrganizationProfileWrite(BaseModel):
     contact_email: str | None = Field(default=None, max_length=255)
     contact_phone: str | None = Field(default=None, max_length=50)
     website_url: str | None = Field(default=None, max_length=2000)
-    billing_address: dict[str, Any] = Field(default_factory=dict)
+    billing_address: BillingAddressWrite = Field(default_factory=BillingAddressWrite)
     portal_name: str | None = Field(default=None, max_length=255)
     country: str = Field(min_length=2, max_length=2)
     timezone: str = Field(min_length=1, max_length=50)
@@ -253,58 +308,62 @@ class OrganizationProfileWrite(BaseModel):
     date_format: str = Field(min_length=1, max_length=20)
     time_format: str = Field(min_length=1, max_length=20)
     currency: str = Field(min_length=1, max_length=20)
-    logo_url: str | None = Field(default=None, max_length=2000)
-    primary_color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
-    secondary_color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
 
 
 def _organization_profile(org: Organization) -> dict[str, Any]:
+    address = org.billing_address or {}
     return {
-        "id": str(org.id), "name": org.name, "legal_name": org.legal_name,
+        "id": str(org.id), "name": org.name, "description": org.description, "legal_name": org.legal_name,
         "registration_number": org.registration_number, "organization_type": org.organization_type,
         "industry": org.industry, "billing_email": org.billing_email,
         "contact_email": org.contact_email, "contact_phone": org.contact_phone,
-        "website_url": org.website_url, "billing_address": org.billing_address or {},
+        "website_url": org.website_url,
+        "billing_address": {key: address.get(key) for key in ("line1", "line2", "city", "state", "postal_code", "country") if address.get(key) is not None},
         "portal_name": org.portal_name, "country": org.country, "timezone": org.timezone,
         "language": org.language, "date_format": org.date_format, "time_format": org.time_format,
         "currency": org.currency, "logo_url": org.logo_url, "primary_color": org.primary_color,
         "secondary_color": org.secondary_color,
         "verification_status": org.verification_status, "version": org.profile_version,
+        "lifecycle_state": org.lifecycle_state, "member_since": org.created_at.isoformat(),
         "updated_at": org.updated_at.isoformat(), "source": "platform.organizations",
     }
 
 
 async def _current_org(db: AsyncSession, current_user: User) -> Organization:
-    if not current_user.organization_id:
+    token = getattr(current_user, "_request_token_data", None)
+    if token is None or not token.active_organization_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "ORGANIZATION_CONTEXT_REQUIRED"},
         )
-    org = await db.get(Organization, current_user.organization_id)
-    if not org:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
-    return org
+    if token.access_mode != "DIRECT":
+        raise HTTPException(status_code=403, detail={"code": "DIRECT_MEMBERSHIP_REQUIRED"})
+    from app.modules.rbac.services.access_contexts import selected_request_context
+    async with selected_request_context(db, current_user, token):
+        org = await db.get(Organization, token.active_organization_id)
+        if not org:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
+        return org
 
 
 async def _require_org_admin(db: AsyncSession, current_user: User, organization_id: uuid.UUID) -> None:
-    if current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False):
-        return
     member = await db.scalar(select(OrganizationMember).where(
         OrganizationMember.organization_id == organization_id,
         OrganizationMember.user_id == current_user.id,
         OrganizationMember.is_active.is_(True),
+        OrganizationMember.accepted_at.is_not(None),
     ))
     if not member or member.org_role not in {"owner", "admin"}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "ORGANIZATION_ADMIN_REQUIRED"})
 
 
-@router.get("/organisation/profile")
+@router.get("/organisation/profile", dependencies=[Depends(scoped_organization_profile)])
 async def get_organiser_profile(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     return _organization_profile(await _current_org(db, current_user))
 
 
-@router.put("/organisation/profile")
-async def update_organiser_profile(payload: OrganizationProfileWrite, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str | None = Header(None, alias="Idempotency-Key"), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+@router.put("/organisation/profile", dependencies=[Depends(scoped_organization_profile)])
+async def update_organiser_profile(payload: OrganizationProfileWrite, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
     updated = await OrganizerOrganizationCommandService(db).update_profile(
         organization_id=org.id, actor=current_user, values=payload.model_dump(), if_match=if_match,
@@ -317,7 +376,7 @@ def _custom_field_out(row: OrganizationCustomField) -> dict[str, Any]:
     return {"id": str(row.id), "field_key": row.field_key, "label": row.label, "field_type": row.field_type, "required": row.required, "options": row.options, "is_active": row.is_active, "version": row.version, "updated_at": row.updated_at.isoformat()}
 
 
-@router.get("/teams")
+@router.get("/teams", dependencies=[Depends(scoped_team_administration)])
 async def organiser_teams(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
@@ -339,7 +398,7 @@ async def organiser_teams(
     }
 
 
-@router.get("/members")
+@router.get("/members", dependencies=[Depends(scoped_member_administration)])
 async def organiser_members(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
@@ -359,7 +418,26 @@ async def organiser_members(
     return _page(items, total, page, page_size, "organizer_access.organization_members")
 
 
-@router.get("/members/cursor", response_model=CursorPage[dict])
+@router.get("/members/summary", response_model=MemberSummary, dependencies=[Depends(scoped_member_administration)])
+async def organiser_member_summary(current_user: User = Depends(require_active_user), db: AsyncSession = Depends(get_db)):
+    org = await _current_org(db, current_user)
+    # Count at the database; do not load a directory to manufacture totals.
+    m = OrganizationMember.__table__
+    row = (await db.execute(select(
+        func.count(m.c.id).label("total"),
+        func.count(m.c.id).filter(m.c.is_active.is_(True), m.c.accepted_at.is_not(None)).label("active"),
+        func.count(m.c.id).filter(m.c.is_active.is_(True), m.c.accepted_at.is_(None)).label("pending"),
+    ).where(m.c.organization_id == org.id))).one()
+    teams = int(await db.scalar(select(func.count(OrganizationTeam.id)).where(
+        OrganizationTeam.organization_id == org.id, OrganizationTeam.deleted_at.is_(None)
+    )) or 0)
+    role_assignments = int(await db.scalar(select(func.count(UserRoleAssignment.id)).where(
+        UserRoleAssignment.organization_id == org.id, UserRoleAssignment.revoked_at.is_(None)
+    )) or 0)
+    return {"total": row.total, "active": row.active, "pending": row.pending, "teams": teams, "role_assignments": role_assignments}
+
+
+@router.get("/members/cursor", response_model=CursorPage[dict], dependencies=[Depends(scoped_member_administration)])
 async def organiser_members_cursor(
     cursor: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=100),
@@ -379,36 +457,38 @@ async def organiser_members_cursor(
     )
 
 
-@router.post("/invitations/{member_id}/resend")
-async def resend_organiser_invitation(member_id: uuid.UUID, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str | None = Header(None, alias="Idempotency-Key"), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+@router.post("/invitations/{member_id}/resend", dependencies=[Depends(scoped_member_administration)])
+async def resend_organiser_invitation(member_id: uuid.UUID, response: Response, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
-    member = await OrganizationMemberCommandService(db).resend_invitation(organization_id=org.id, member_id=member_id, actor=current_user, if_match=if_match, idempotency_key=idempotency_key)
-    return {"id": str(member.id), "message": "Invitation resent", "version": member.version}
+    member, token = await OrganizationMemberCommandService(db).resend_invitation(organization_id=org.id, member_id=member_id, actor=current_user, if_match=if_match, idempotency_key=idempotency_key)
+    return {"id": str(member.id), "message": "Invitation link replaced. Share the new link; the previous one no longer works.", "version": member.version,
+            "invite_token": token, "expires_at": member.invite_expires_at.isoformat(), "delivery_mode": "MANUAL", "replayed": token is None}
 
 
-@router.delete("/invitations/{member_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response, response_model=None)
-async def revoke_organiser_invitation(member_id: uuid.UUID, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str | None = Header(None, alias="Idempotency-Key"), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> Response:
+@router.delete("/invitations/{member_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response, response_model=None, dependencies=[Depends(scoped_member_administration)])
+async def revoke_organiser_invitation(member_id: uuid.UUID, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> Response:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
     await OrganizationMemberCommandService(db).revoke_invitation(organization_id=org.id, member_id=member_id, actor=current_user, if_match=if_match, idempotency_key=idempotency_key)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.patch("/members/{member_id}/role")
-async def update_organiser_member_role(member_id: uuid.UUID, payload: MemberRoleWrite, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str | None = Header(None, alias="Idempotency-Key"), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+@router.patch("/members/{member_id}/role", dependencies=[Depends(scoped_member_administration)])
+async def update_organiser_member_role(member_id: uuid.UUID, payload: MemberRoleWrite, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
     member = await OrganizationMemberCommandService(db).update_role(organization_id=org.id, member_id=member_id, actor=current_user, org_role=payload.org_role, if_match=if_match, reason=payload.reason, idempotency_key=idempotency_key)
     return {"id": str(member.id), "org_role": member.org_role, "version": member.version}
 
 
-@router.patch("/members/{member_id}/status")
-async def update_organiser_member_status(member_id: uuid.UUID, payload: MemberStatusWrite, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str | None = Header(None, alias="Idempotency-Key"), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+@router.patch("/members/{member_id}/status", dependencies=[Depends(scoped_member_administration)])
+async def update_organiser_member_status(member_id: uuid.UUID, payload: MemberStatusWrite, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
     member = await OrganizationMemberCommandService(db).update_status(organization_id=org.id, member_id=member_id, actor=current_user, is_active=payload.is_active, if_match=if_match, reason=payload.reason, idempotency_key=idempotency_key)
     return {"id": str(member.id), "is_active": member.is_active, "version": member.version}
 
 
-@router.patch("/members-bulk/status")
-async def bulk_update_organiser_member_status(payload: BulkMemberStatusWrite, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+@router.patch("/members-bulk/status", dependencies=[Depends(scoped_member_administration)])
+async def bulk_update_organiser_member_status(payload: BulkMemberStatusWrite, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
     updated = await OrganizationMemberCommandService(db).bulk_update_status(
         organization_id=org.id,
@@ -416,11 +496,12 @@ async def bulk_update_organiser_member_status(payload: BulkMemberStatusWrite, cu
         actor=current_user,
         is_active=payload.is_active,
         reason=payload.reason,
+        idempotency_key=idempotency_key,
     )
     return {"items": updated, "updated": len(updated)}
 
 
-@router.post("/teams", status_code=status.HTTP_201_CREATED)
+@router.post("/teams", status_code=status.HTTP_201_CREATED, response_model=TeamCreationResult, dependencies=[Depends(scoped_team_administration)])
 async def create_organiser_team(
     payload: TeamWrite,
     idempotency_key: str = Header(alias="Idempotency-Key", min_length=8, max_length=160),
@@ -432,17 +513,18 @@ async def create_organiser_team(
     row = await OrganizationTeamCommandService(db).create(
         organization_id=org.id, actor=current_user, name=payload.name,
         description=payload.description, owner_member_id=payload.owner_member_id,
-        reason="organiser team creation",
+        reason=payload.reason,
         idempotency_key=idempotency_key,
     )
-    return {"id": str(row.id), "name": row.name, "description": row.description, "owner_member_id": str(row.owner_member_id) if row.owner_member_id else None, "status": row.status, "version": row.version}
+    return row
 
 
-@router.patch("/teams/{team_id}")
+@router.patch("/teams/{team_id}", response_model=TeamMutationResult, dependencies=[Depends(scoped_team_administration)])
 async def update_organiser_team(
     team_id: uuid.UUID,
     payload: TeamWrite,
-    expected_version: int = Header(alias="If-Match", ge=1),
+    expected_version: int | None = Header(None, alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
@@ -452,61 +534,70 @@ async def update_organiser_team(
         organization_id=org.id, team_id=team_id, actor=current_user,
         name=payload.name, description=payload.description,
         owner_member_id=payload.owner_member_id, if_match=expected_version,
-        reason="organiser team update",
+        reason=payload.reason, idempotency_key=idempotency_key,
     )
-    return {"id": str(row.id), "name": row.name, "description": row.description, "owner_member_id": str(row.owner_member_id) if row.owner_member_id else None, "status": row.status, "version": row.version}
+    return row
 
 
-@router.delete("/teams/{team_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response, response_model=None)
+@router.delete("/teams/{team_id}", response_model=TeamMutationResult, dependencies=[Depends(scoped_team_administration)])
 async def delete_organiser_team(
     team_id: uuid.UUID,
-    expected_version: int = Header(alias="If-Match", ge=1),
+    payload: TeamReason,
+    expected_version: int | None = Header(None, alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Response:
+) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    await OrganizationTeamCommandService(db).archive(
+    result = await OrganizationTeamCommandService(db).archive(
         organization_id=org.id, team_id=team_id, actor=current_user,
-        if_match=expected_version, reason="organiser team archive",
+        if_match=expected_version, reason=payload.reason, idempotency_key=idempotency_key,
         audit_action="ORGANIZATION_TEAM_DELETED",
     )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return result
 
 
-@router.post("/teams/{team_id}/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response, response_model=None)
+@router.post("/teams/{team_id}/members/{member_id}", response_model=TeamMemberMutationResult, dependencies=[Depends(scoped_team_administration)])
 async def assign_organiser_team_member(
     team_id: uuid.UUID,
     member_id: uuid.UUID,
+    payload: TeamBindingReason,
+    expected_version: int | None = Header(None, alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> None:
+) -> dict:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    await OrganizationTeamCommandService(db).assign_member(
+    return await OrganizationTeamCommandService(db).assign_member(
         organization_id=org.id, team_id=team_id, member_id=member_id,
-        actor=current_user, reason="organiser team member assignment",
+        actor=current_user, reason=payload.reason, if_match=expected_version,
+        idempotency_key=idempotency_key,
     )
 
 
-@router.delete("/teams/{team_id}/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response, response_model=None)
+@router.delete("/teams/{team_id}/members/{member_id}", response_model=TeamMemberMutationResult, dependencies=[Depends(scoped_team_administration)])
 async def remove_organiser_team_member(
     team_id: uuid.UUID,
     member_id: uuid.UUID,
+    payload: TeamBindingReason,
+    expected_version: int | None = Header(None, alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Response:
+) -> dict:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    await OrganizationTeamCommandService(db).unassign_member(
+    return await OrganizationTeamCommandService(db).unassign_member(
         organization_id=org.id, team_id=team_id, member_id=member_id,
-        actor=current_user, reason="organiser team member removal",
+        actor=current_user, reason=payload.reason, if_match=expected_version,
+        idempotency_key=idempotency_key,
         audit_action="ORGANIZATION_TEAM_MEMBER_REMOVED",
     )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/teams/{team_id}/members/{member_id}/access-loss-preview")
+@router.get("/teams/{team_id}/members/{member_id}/access-loss-preview", dependencies=[Depends(scoped_team_administration)])
 async def preview_team_member_access_loss(team_id: uuid.UUID, member_id: uuid.UUID, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
     preview = await OrganiserTeamQueryService(db).preview_member_access_loss(
@@ -514,43 +605,58 @@ async def preview_team_member_access_loss(team_id: uuid.UUID, member_id: uuid.UU
     )
     if preview is None:
         raise HTTPException(status_code=404, detail={"code": "TEAM_MEMBERSHIP_NOT_FOUND"})
-    return {**preview, "source": "organizer_access.team_effective_access", "freshness_at": datetime.now(timezone.utc).isoformat()}
+    return {**preview, "impact_status": "PARTIAL", "source": "organizer_access.team_binding_projection", "freshness_at": datetime.now(timezone.utc).isoformat()}
 
 
-@router.put("/teams/{team_id}/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response, response_model=None)
+@router.get("/teams/event-actions", response_model=TeamEventActionsResult, dependencies=[Depends(scoped_team_administration)])
+async def organiser_team_event_actions(event_id: uuid.UUID, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from app.modules.rbac.services.event_scope import customer_event
+    from app.modules.rbac.services.permission_service import get_user_permissions
+    from app.modules.rbac.services.permission_catalogue import OPERATIONAL_ACTIONS
+    org = await _current_org(db, current_user)
+    await customer_event(db, current_user, event_id)
+    actions = set(await get_user_permissions(db, current_user.id, organization_id=org.id, event_id=event_id))
+    return {"event_id": event_id, "actions": sorted(actions & OPERATIONAL_ACTIONS)}
+
+
+@router.put("/teams/{team_id}/events/{event_id}", response_model=TeamEventMutationResult, dependencies=[Depends(scoped_team_administration)])
 async def assign_organiser_team_event(
     team_id: uuid.UUID,
     event_id: uuid.UUID,
-    payload: TeamAssignmentWrite,
+    payload: TeamEventBindingWrite,
+    expected_version: int | None = Header(None, alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> None:
+) -> dict:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    await OrganizationTeamCommandService(db).assign_event(
+    return await OrganizationTeamCommandService(db).assign_event(
         organization_id=org.id, team_id=team_id, event_id=event_id,
         actor=current_user, permissions=payload.permissions,
-        reason="organiser team event assignment",
+        reason=payload.reason, if_match=expected_version, idempotency_key=idempotency_key,
     )
 
 
-@router.delete("/teams/{team_id}/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response, response_model=None)
+@router.delete("/teams/{team_id}/events/{event_id}", response_model=TeamEventMutationResult, dependencies=[Depends(scoped_team_administration)])
 async def remove_organiser_team_event(
     team_id: uuid.UUID,
     event_id: uuid.UUID,
+    payload: TeamBindingReason,
+    expected_version: int | None = Header(None, alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Response:
+) -> dict:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    await OrganizationTeamCommandService(db).unassign_event(
+    return await OrganizationTeamCommandService(db).unassign_event(
         organization_id=org.id, team_id=team_id, event_id=event_id,
-        actor=current_user, reason="organiser team event removal",
+        actor=current_user, reason=payload.reason, if_match=expected_version, idempotency_key=idempotency_key,
     )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/teams/{team_id}/events/{event_id}/access-loss-preview")
+@router.get("/teams/{team_id}/events/{event_id}/access-loss-preview", dependencies=[Depends(scoped_team_administration)])
 async def preview_team_event_access_loss(team_id: uuid.UUID, event_id: uuid.UUID, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
     preview = await OrganiserTeamQueryService(db).preview_event_access_loss(
@@ -558,7 +664,7 @@ async def preview_team_event_access_loss(team_id: uuid.UUID, event_id: uuid.UUID
     )
     if preview is None:
         raise HTTPException(status_code=404, detail={"code": "TEAM_EVENT_ASSIGNMENT_NOT_FOUND"})
-    return {**preview, "source": "organizer_access.team_effective_access", "freshness_at": datetime.now(timezone.utc).isoformat()}
+    return {**preview, "impact_status": "PARTIAL", "source": "organizer_access.team_binding_projection", "freshness_at": datetime.now(timezone.utc).isoformat()}
 
 
 @router.get("/locations")
@@ -621,10 +727,11 @@ async def organiser_events(
     year: int | None = Query(default=None, ge=2000, le=2200),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
+    from app.modules.rbac.services.event_scope import listed_event_predicate
     today = date.today()
     rows, total, summary = await OrganiserEventQueryService(db).list_events(
         organization_id=org.id,
@@ -634,18 +741,23 @@ async def organiser_events(
         page=page,
         page_size=page_size,
         today=today,
+        access_predicate=listed_event_predicate(db, current_user.id, org.id),
     )
     items: list[dict[str, Any]] = []
     for event in rows:
         display_status = "live" if event.status == "active" and event.start_date <= today <= event.end_date else "upcoming" if event.start_date > today and event.status != "draft" else event.status
         items.append({
             "id": str(event.id), "name": event.name, "short_code": event.short_code,
-            "start_date": event.start_date.isoformat(), "end_date": event.end_date.isoformat(),
+            "version": int(getattr(event, "version", 1) or 1),
+            "start_date": event.start_date.isoformat() if hasattr(event.start_date, "isoformat") else str(event.start_date or ""),
+            "end_date": event.end_date.isoformat() if hasattr(event.end_date, "isoformat") else str(event.end_date or ""),
             "venue": event.venue_name or event.location, "country": event.country,
             "timezone": event.timezone, "owner": event.organizer_name,
+            "banner_url": event.banner_url,
             "status": display_status, "source_status": event.status,
             "registrations": event.registrations, "readiness_pct": event.readiness_pct,
-            "created_at": event.created_at.isoformat(), "updated_at": event.updated_at.isoformat(),
+            "created_at": event.created_at.isoformat() if hasattr(event.created_at, "isoformat") else str(event.created_at or ""),
+            "updated_at": event.updated_at.isoformat() if hasattr(event.updated_at, "isoformat") else str(event.updated_at or ""),
         })
     response = _page(items, total, page, page_size, "events.events+registration.participants")
     response["summary"] = summary
@@ -688,28 +800,344 @@ async def duplicate_organiser_event(
 @router.post("/events/{event_id}/restore")
 async def restore_organiser_event(
     event_id: uuid.UUID,
+    token: TokenDep,
+    if_match: int = Header(..., alias="If-Match", ge=1),
     reason: str = Header(..., alias="X-Change-Reason", min_length=12, max_length=1000),
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    async with selected_request_context(
+        db, current_user, token, event_id=event_id, action="EVENTS:EDIT", write=True,
+        include_archived_event=True,
+    ) as context:
+        return await OrganizerEventCommandService(db).restore(
+            organization_id=context.organization_id, event_id=event_id, actor=current_user,
+            reason=reason, expected_version=if_match, idempotency_key=idempotency_key,
+        )
+
+
+@router.get("/billing/summary")
+async def organiser_billing_summary(
+    token: TokenDep,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Bounded organiser billing header and overview projection."""
     org = await _current_org(db, current_user)
-    await _require_org_admin(db, current_user, org.id)
-    return await OrganizerEventCommandService(db).restore(
-        organization_id=org.id, event_id=event_id, actor=current_user,
-        reason=reason, idempotency_key=idempotency_key,
+    await _require_billing_authority(db, current_user, token, action="billing:view")
+    contract = await EntitlementResolver.get_active_contract(db, org.id)
+    offer = contract.offer if contract else None
+    invoice_rows, total_invoices = await OrganiserBillingQueryService(db).list_invoices(
+        organization_id=org.id, page=1, page_size=5, receipts_only=False
+    )
+    outstanding = float(await db.scalar(select(func.coalesce(func.sum(Invoice.total_amount_inr), 0)).where(
+        Invoice.organization_id == org.id,
+        func.lower(Invoice.status).in_(["unpaid", "open", "overdue", "pending"]),
+    )) or 0)
+    payment_method = await db.scalar(select(PaymentMethod).where(
+        PaymentMethod.organization_id == org.id,
+        PaymentMethod.retired_at.is_(None),
+    ).order_by(PaymentMethod.is_default.desc(), PaymentMethod.created_at.desc()).limit(1))
+    dashboard_metrics = await OrganiserDashboardQueryService(db).metrics(organization_id=org.id)
+    organization_email_usage = await OrganiserBillingQueryService(db).get_organization_email_usage(
+        organization_id=org.id
+    )
+    unrestricted = bool(org.has_unrestricted_capabilities)
+    limit_keys = ("max_events", "max_users", "max_registrations", "storage_quota_mb")
+    limits = ({key: None for key in limit_keys} if unrestricted else
+              await EntitlementResolver.get_org_limits(db, org.id, limit_keys))
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "plan": {
+            "name": "Enterprise" if unrestricted else (offer.name if offer else "Not configured"),
+            "status": "ACTIVE" if unrestricted or contract else "UNAVAILABLE",
+            "billing_cycle": "PLATFORM" if unrestricted else getattr(contract, "billing_interval", None),
+            "renews_at": getattr(contract, "ends_at", None),
+            "unrestricted": unrestricted,
+        },
+        "outstanding": outstanding,
+        "invoice_count": total_invoices,
+        "usage": {
+            "registrations": {"used": dashboard_metrics["total_registrations"], "max": limits["max_registrations"]},
+            "active_events": {"used": dashboard_metrics["active_events"], "max": limits["max_events"]},
+            "team_members": {"used": dashboard_metrics["team_members"], "max": limits["max_users"]},
+            "organization_email_credits": {
+                "used": organization_email_usage["used"],
+                "max": organization_email_usage["allowed"],
+                "source": "active_workspace_plan_allocations",
+            },
+            "storage_gb": {
+                "used": round(float(dashboard_metrics["storage_used_bytes"]) / (1024 ** 3), 2),
+                "max": None if limits["storage_quota_mb"] is None else round(float(limits["storage_quota_mb"]) / 1024, 2),
+            },
+        },
+        "recent_invoices": [{
+            "id": str(row.id), "reference": row.invoice_number or row.stripe_invoice_id,
+            "status": row.status, "amount": float(row.total_amount_inr or row.amount),
+            "currency": row.currency, "issued_at": row.issued_at.isoformat(),
+        } for row in invoice_rows],
+        "default_payment_method": None if payment_method is None else {
+            "id": str(payment_method.id), "provider": payment_method.provider,
+            "card_brand": payment_method.card_brand, "card_last4": payment_method.card_last4,
+            "expires_month": payment_method.expires_month, "expires_year": payment_method.expires_year,
+            "version": payment_method.version,
+        },
+        "freshness_at": datetime.now(timezone.utc).isoformat(),
+        "source": "commerce.organiser_billing_summary",
+    }
+
+
+@router.get("/internal-enterprise/summary")
+async def internal_enterprise_summary(
+    token: TokenDep,
+    response: Response,
+    current_user: User = Depends(require_platform_permission("platform:billing:view")),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Read-only self projection for the canonical Eventos platform tenant.
+
+    Platform identities are deliberately not customer members and therefore
+    cannot use customer commercial endpoints.  This endpoint exposes only the
+    signed-in platform tenant's own unrestricted-plan and usage projection; it
+    cannot select or inspect another customer organisation.
+    """
+    if (
+        token.access_mode != "DIRECT"
+        or token.active_organization_id != current_user.organization_id
+    ):
+        raise HTTPException(status_code=404, detail={"code": "INTERNAL_ENTERPRISE_CONTEXT_NOT_FOUND"})
+
+    org = await db.scalar(
+        select(Organization)
+        .where(
+            Organization.id == token.active_organization_id,
+            Organization.is_platform_org.is_(True),
+            Organization.is_internal_unrestricted.is_(True),
+            Organization.is_active.is_(True),
+            Organization.suspended_at.is_(None),
+            Organization.archived_at.is_(None),
+        )
+        .execution_options(skip_tenant_filter=True)
+    )
+    if org is None or not org.has_unrestricted_capabilities:
+        raise HTTPException(status_code=404, detail={"code": "INTERNAL_ENTERPRISE_CONTEXT_NOT_FOUND"})
+
+    six_months_ago = datetime.now(timezone.utc) - timedelta(days=190)
+    async with TenantContextGuard.scoped(db, org.id):
+        metrics = await OrganiserDashboardQueryService(db).metrics(organization_id=org.id)
+        recent_invoices = list((await db.scalars(
+            select(Invoice)
+            .where(Invoice.organization_id == org.id)
+            .order_by(Invoice.issued_at.desc())
+            .limit(8)
+        )).all())
+        trend_rows = (await db.execute(
+            select(
+                func.date_trunc("month", Invoice.issued_at).label("month"),
+                func.coalesce(func.sum(Invoice.total_amount_inr), 0).label("amount"),
+            )
+            .where(
+                Invoice.organization_id == org.id,
+                Invoice.issued_at >= six_months_ago,
+                func.lower(Invoice.status).not_in(["void", "cancelled"]),
+            )
+            .group_by("month")
+            .order_by("month")
+        )).all()
+
+    usage_values = {
+        "registrations": float(metrics["total_registrations"]),
+        "active_events": float(metrics.get("active_events", metrics.get("total_events", 0))),
+        "team_members": float(metrics["team_members"]),
+        "organization_email_credits": 0,
+        "storage_gb": round(float(metrics["storage_used_bytes"]) / (1024 ** 3), 2),
+    }
+    usage_items = [
+        {
+            "id": f"internal-enterprise:{key}",
+            "entitlement_key": key,
+            "total": None,
+            "reserved": 0,
+            "consumed": value,
+            "remaining": None,
+            "unit_type": "GB" if key == "storage_gb" else None,
+            "status": "ACTIVE",
+        }
+        for key, value in usage_values.items()
+    ]
+    invoice_projection = [
+        {
+            "id": str(row.id),
+            "reference": row.invoice_number or row.stripe_invoice_id,
+            "status": row.status,
+            "amount": float(row.total_amount_inr or row.amount),
+            "currency": row.currency,
+            "issued_at": row.issued_at.isoformat(),
+        }
+        for row in recent_invoices
+    ]
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "plan": {
+            "name": "Enterprise",
+            "status": "ACTIVE",
+            "billing_cycle": "PLATFORM",
+            "renews_at": None,
+            "unrestricted": True,
+        },
+        "usage": {
+            key: {"used": value, "max": None}
+            for key, value in usage_values.items()
+        },
+        "recent_invoices": invoice_projection[:5],
+        "outstanding": 0,
+        "invoice_count": len(recent_invoices),
+        "default_payment_method": None,
+        "commercial": {
+            "plan": {"name": "Enterprise", "status": "ACTIVE", "unrestricted": True},
+            "account": {"account_type": "PLATFORM", "status": "ACTIVE", "currency": org.currency},
+            "active_contracts": 0,
+            "contracts": [],
+            "usage": {"items": usage_items},
+            "open_orders": 0,
+            "recent_orders": [],
+            "purchased_addons": 0,
+            "recent_purchases": [],
+            "commitment_trend": [
+                {"month": row.month.isoformat(), "amount": float(row.amount or 0)}
+                for row in trend_rows
+            ],
+            "recent_transactions": invoice_projection,
+            "source": "platform.internal_enterprise_self_projection",
+        },
+        "freshness_at": datetime.now(timezone.utc).isoformat(),
+        "source": "platform.internal_enterprise_self_projection",
+    }
+
+
+async def _require_billing_authority(
+    db: AsyncSession, current_user: User, token: TokenDep, *, action: str, write: bool = False,
+) -> None:
+    if token.access_mode != "DIRECT":
+        raise HTTPException(status_code=403, detail={"code": "DIRECT_BILLING_MEMBERSHIP_REQUIRED"})
+    async with selected_request_context(
+        db, current_user, token, action=action, write=write,
+    ):
+        return
+
+
+async def _require_payment_method_authority(
+    db: AsyncSession, current_user: User, token: TokenDep,
+) -> None:
+    await _require_billing_authority(
+        db, current_user, token, action="billing:purchase", write=True,
+    )
+
+
+@router.post(
+    "/billing/payment-methods/setup-session",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_step_up)],
+)
+async def create_organiser_payment_method_setup(
+    payload: PaymentMethodSetupWrite,
+    token: TokenDep,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    org = await _current_org(db, current_user)
+    await _require_payment_method_authority(db, current_user, token)
+    return await PaymentMethodProviderService.create_setup_session(
+        db, organization=org, actor=current_user, provider=payload.provider,
+        return_url=payload.return_url, idempotency_key=idempotency_key,
+    )
+
+
+@router.get("/billing/payment-method-setups/{setup_id}")
+async def get_organiser_payment_method_setup(
+    setup_id: uuid.UUID,
+    token: TokenDep,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    org = await _current_org(db, current_user)
+    await _require_billing_authority(db, current_user, token, action="billing:view")
+    row = await db.scalar(select(PaymentMethodSetup).where(
+        PaymentMethodSetup.id == setup_id,
+        PaymentMethodSetup.organization_id == org.id,
+    ))
+    if row is None:
+        raise HTTPException(status_code=404, detail={"code": "PAYMENT_METHOD_SETUP_NOT_FOUND"})
+    status_value = row.status
+    if status_value == "PENDING" and row.expires_at <= datetime.now(timezone.utc):
+        status_value = "EXPIRED"
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "id": str(row.id), "status": status_value,
+        "expires_at": row.expires_at.isoformat(),
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+    }
+
+
+@router.patch(
+    "/billing/payment-methods/{payment_method_id}/default",
+    dependencies=[Depends(require_step_up)],
+)
+async def set_organiser_default_payment_method(
+    payment_method_id: uuid.UUID,
+    token: TokenDep,
+    if_match: int = Header(..., alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    org = await _current_org(db, current_user)
+    await _require_payment_method_authority(db, current_user, token)
+    return await OrganizerPaymentMethodCommandService(db).set_default(
+        organization_id=org.id, payment_method_id=payment_method_id,
+        actor=current_user, if_match=if_match, idempotency_key=idempotency_key,
+    )
+
+
+@router.delete(
+    "/billing/payment-methods/{payment_method_id}",
+    dependencies=[Depends(require_step_up)],
+)
+async def retire_organiser_payment_method(
+    payment_method_id: uuid.UUID,
+    payload: PaymentMethodRetireWrite,
+    token: TokenDep,
+    if_match: int = Header(..., alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    org = await _current_org(db, current_user)
+    await _require_payment_method_authority(db, current_user, token)
+    return await OrganizerPaymentMethodCommandService(db).retire(
+        organization_id=org.id, payment_method_id=payment_method_id,
+        actor=current_user, if_match=if_match, idempotency_key=idempotency_key,
+        reason=payload.reason,
     )
 
 
 @router.get("/billing/{section}")
 async def organiser_billing(
     section: str,
+    token: TokenDep,
+    response: Response,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
+    await _require_billing_authority(db, current_user, token, action="billing:view")
+    response.headers["Cache-Control"] = "no-store"
     offset = (page - 1) * page_size
 
     if section in {"overview", "invoices", "receipts"}:
@@ -717,6 +1145,24 @@ async def organiser_billing(
             organization_id=org.id, page=page, page_size=page_size,
             receipts_only=section == "receipts",
         )
+        invoice_ids = [row.id for row in rows]
+        item_rows = list((await db.scalars(
+            select(InvoiceItem).where(InvoiceItem.invoice_id.in_(invoice_ids))
+            .order_by(InvoiceItem.invoice_id, InvoiceItem.id)
+        )).all()) if invoice_ids else []
+        items_by_invoice: dict[uuid.UUID, list[dict[str, Any]]] = {}
+        for item in item_rows:
+            items_by_invoice.setdefault(item.invoice_id, []).append({
+                "id": str(item.id),
+                "description": item.description,
+                "offer_code": item.commercial_offer_code,
+                "offer_version_id": str(item.commercial_offer_version_id) if item.commercial_offer_version_id else None,
+                "contract_item_id": str(item.commercial_contract_item_id) if item.commercial_contract_item_id else None,
+                "quantity": item.quantity,
+                "amount": float(item.amount),
+                "tax_rate": float(item.tax_rate or 0),
+                "tax_amount": float(item.tax_amount or 0),
+            })
         items = [{
             "id": str(row.id), "reference": row.invoice_number or row.stripe_invoice_id,
             "receipt_number": row.invoice_number if section == "receipts" and row.paid_at else None,
@@ -726,6 +1172,7 @@ async def organiser_billing(
             "paid_at": row.paid_at.isoformat() if row.paid_at else None, "status": row.status,
             "amount": float(row.total_amount_inr or row.amount), "gst_amount": float(row.gst_amount or 0),
             "currency": row.currency, "version": row.version,
+            "line_items": items_by_invoice.get(row.id, []),
         } for row in rows]
         return _page(items, total, page, page_size, "commerce.invoices")
 
@@ -734,12 +1181,12 @@ async def organiser_billing(
             organization_id=org.id, page=page, page_size=page_size
         )
         items = [{
-            "id": str(row.id), "reference": row.provider_transaction_id or str(row.id),
-            "created_at": row.created_at.isoformat(), "provider": row.provider, "status": row.status,
-            "amount": float(row.amount), "refunded_amount": float(row.refunded_amount or 0),
-            "currency": row.currency, "reconciliation_status": row.reconciliation_status,
+            "id": str(row.id), "reference": row.stripe_invoice_id or str(row.id),
+            "created_at": row.issued_at.isoformat(), "provider": "INVOICE", "status": row.status,
+            "amount": float(row.total_amount_inr or row.amount), "refunded_amount": 0,
+            "currency": row.currency, "reconciliation_status": "RECONCILED" if row.paid_at else "PENDING",
         } for row in rows]
-        return _page(items, total, page, page_size, "commerce.subscription_transactions")
+        return _page(items, total, page, page_size, "commerce.invoices")
 
     if section == "payment-methods":
         rows, total = await OrganiserBillingQueryService(db).list_payment_methods(
@@ -748,7 +1195,8 @@ async def organiser_billing(
         items = [{
             "id": str(row.id), "provider": row.provider, "card_brand": row.card_brand,
             "card_last4": row.card_last4, "is_default": row.is_default,
-            "created_at": row.created_at.isoformat(),
+            "expires_month": row.expires_month, "expires_year": row.expires_year,
+            "version": row.version, "created_at": row.created_at.isoformat(),
         } for row in rows]
         return _page(items, total, page, page_size, "commerce.payment_methods")
 
@@ -776,7 +1224,7 @@ async def organiser_billing(
             "currency": profile.currency if profile else latest.currency if latest else org.currency,
             "version": profile.version if profile else 0,
             "freshness_at": (profile.updated_at if profile else latest.updated_at if latest else org.updated_at).isoformat(),
-            "source": "commerce.organization_billing_profiles" if profile else "commerce.subscription_transactions" if latest else "platform.organizations",
+            "source": "commerce.organization_billing_profiles" if profile else "platform.organizations",
         }
 
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "BILLING_SECTION_NOT_FOUND"})
@@ -876,16 +1324,17 @@ async def update_organiser_approval_rule(rule_id: uuid.UUID, payload: ApprovalRu
     return {"id": str(row.id), "name": row.name, "domain": row.domain, "version": row.version}
 
 
-@router.put("/billing/tax")
+@router.put("/billing/tax", dependencies=[Depends(require_step_up)])
 async def update_organiser_billing_profile(
     payload: BillingProfileWrite,
+    token: TokenDep,
     expected_version: int = Header(..., alias="If-Match", ge=0),
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
-    await _require_org_admin(db, current_user, org.id)
+    await _require_billing_authority(db, current_user, token, action="billing:purchase", write=True)
     profile = await OrganizerBillingCommandService(db).update_profile(
         organization_id=org.id, actor=current_user, values=payload.model_dump(),
         expected_version=expected_version, idempotency_key=idempotency_key,
@@ -896,24 +1345,38 @@ async def update_organiser_billing_profile(
 @router.get("/billing/invoices/{invoice_id}/download")
 async def download_organiser_invoice(
     invoice_id: uuid.UUID,
+    token: TokenDep,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     org = await _current_org(db, current_user)
+    await _require_billing_authority(db, current_user, token, action="billing:view")
     invoice = await OrganiserBillingQueryService(db).get_invoice_for_download(
         organization_id=org.id, invoice_id=invoice_id
     )
     if not invoice:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "INVOICE_NOT_FOUND"})
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["invoice_number", "issued_at", "due_date", "status", "subtotal", "gst_amount", "total", "currency"])
-    writer.writerow([
-        invoice.invoice_number or invoice.stripe_invoice_id or str(invoice.id),
-        invoice.issued_at.isoformat(), invoice.due_date.isoformat() if invoice.due_date else "",
-        invoice.status, float(invoice.amount), float(invoice.gst_amount or 0),
-        float(invoice.total_amount_inr or invoice.amount), invoice.currency,
-    ])
+    snapshot = await build_invoice_pdf_snapshot(
+        db,
+        organization=org,
+        invoice=invoice,
+        settings=settings,
+    )
+    signing_config = InvoicePdfSigningConfig.from_settings(settings)
+    try:
+        pdf_bytes = await asyncio.to_thread(
+            render_invoice_pdf,
+            snapshot,
+            signing_config=signing_config,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "INVOICE_SIGNATURE_UNAVAILABLE",
+                "message": "Signed invoice generation is temporarily unavailable.",
+            },
+        ) from exc
     await AuditService.write_log(AuditContext(
         organization_id=org.id,
         actor_user_id=current_user.id,
@@ -921,11 +1384,22 @@ async def download_organiser_invoice(
         resource_type="invoice",
         resource_id=invoice.id,
         action_type="ORGANIZATION_INVOICE_DOWNLOADED",
-        new_state={"format": "csv"},
+        new_state={
+            "format": "pdf",
+            "invoice_version": invoice.version,
+            "cryptographic_signature_required": signing_config.required,
+            "cryptographic_signature_applied": bool(signing_config.pkcs12_path),
+        },
         is_sensitive=True,
     ))
-    filename = f"invoice-{invoice.invoice_number or invoice.id}.csv"
-    return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    reference = str(invoice.invoice_number or invoice.id)
+    safe_reference = "".join(char for char in reference if char.isalnum() or char in {"-", "_"})[:120] or str(invoice.id)
+    filename = f"invoice-{safe_reference}.pdf"
+    return Response(content=pdf_bytes, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+    })
 
 
 @router.get("/integrations")
@@ -950,6 +1424,10 @@ async def organiser_integrations(
 async def organiser_audit(
     resource_type: str | None = None,
     resource: str | None = None,
+    search: str | None = Query(default=None, max_length=160),
+    actor_role: str | None = Query(default=None, max_length=100),
+    occurred_from: datetime | None = None,
+    occurred_to: datetime | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=250),
     current_user: User = Depends(get_current_user),
@@ -968,6 +1446,10 @@ async def organiser_audit(
         resource_types=resource_types,
         page=page,
         page_size=effective_page_size,
+        search=search,
+        actor_role=actor_role,
+        occurred_from=occurred_from,
+        occurred_to=occurred_to,
     )
     items = [{
             "id": str(row.id), "action": row.action_type, "resource_type": row.resource_type,
@@ -998,7 +1480,7 @@ async def export_organiser_audit(
     return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
-@router.get("/access/roles")
+@router.get("/access/roles", dependencies=[Depends(scoped_role_administration)])
 async def organiser_user_roles(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=100),
@@ -1018,7 +1500,7 @@ async def organiser_user_roles(
     } for row in rows], total, page, page_size, "organizer_access.user_roles")
 
 
-@router.get("/access/roles/page", response_model=CursorPage[dict])
+@router.get("/access/roles/page", response_model=CursorPage[dict], dependencies=[Depends(scoped_role_administration)])
 async def organiser_user_roles_cursor(
     cursor: str | None = Query(default=None, max_length=512),
     page_size: int = Query(default=50, ge=1, le=100),
@@ -1032,7 +1514,7 @@ async def organiser_user_roles_cursor(
     )
 
 
-@router.get("/access/assignments")
+@router.get("/access/assignments", dependencies=[Depends(scoped_role_administration)])
 async def organiser_role_assignments(
     scope: str = Query(pattern=r"^(ORGANIZATION|EVENT)$"),
     page: int = Query(default=1, ge=1),
@@ -1043,18 +1525,18 @@ async def organiser_role_assignments(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     rows, total = await OrganiserAccessQueryService(db).list_assignments(
-        organization_id=org.id, scope=scope, page=page, page_size=page_size, search=search
+        organization_id=org.id, actor_id=current_user.id, scope=scope, page=page, page_size=page_size, search=search
     )
     return _page([{
         "id": str(row.id), "user_id": str(row.user_id),
         "user_name": f"{row.user_first_name} {row.user_last_name}".strip(), "user_email": row.user_email,
         "role_id": str(row.role_id), "role_name": row.role_name, "scope": scope,
         "event_id": str(row.event_id) if row.event_id else None,
-        "event_name": row.event_name, "assigned_at": row.assigned_at.isoformat(),
+        "event_name": row.event_name, "assigned_at": row.assigned_at.isoformat(), "version": row.version,
     } for row in rows], total, page, page_size, "organizer_access.user_role_assignments")
 
 
-@router.get("/access/assignments/page", response_model=CursorPage[dict])
+@router.get("/access/assignments/page", response_model=CursorPage[dict], dependencies=[Depends(scoped_role_administration)])
 async def organiser_role_assignments_cursor(
     scope: str = Query(pattern=r"^(ORGANIZATION|EVENT)$"),
     cursor: str | None = Query(default=None, max_length=512),
@@ -1065,25 +1547,19 @@ async def organiser_role_assignments_cursor(
 ) -> CursorPage[dict]:
     org = await _current_org(db, current_user)
     return await OrganiserAccessQueryService(db).list_assignments_cursor(
-        organization_id=org.id, scope=scope, cursor=cursor, limit=page_size, search=search
+        organization_id=org.id, actor_id=current_user.id, scope=scope, cursor=cursor, limit=page_size, search=search
     )
 
 
-@router.get("/access/effective-preview")
+@router.get("/access/effective-preview", dependencies=[Depends(scoped_role_administration)])
 async def organiser_effective_access_preview(
     user_id: uuid.UUID = Query(...), role_id: uuid.UUID = Query(...), event_id: uuid.UUID | None = Query(default=None),
     current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
-    preview = await OrganiserAccessQueryService(db).effective_preview(
-        organization_id=org.id, user_id=user_id, role_id=role_id, event_id=event_id
-    )
-    if not preview["member_found"] or not preview["role_found"]:
-        raise HTTPException(status_code=404, detail={"code": "MEMBER_OR_ROLE_NOT_FOUND"})
-    if event_id and not preview["event_found"]:
-        raise HTTPException(status_code=404, detail={"code": "EVENT_NOT_FOUND"})
-    proposed, existing = preview["proposed"], preview["existing"]
-    return {"user_id": str(user_id), "role_id": str(role_id), "role_name": preview["role_name"], "scope": "EVENT" if event_id else "ORGANIZATION", "event_id": str(event_id) if event_id else None, "existing_permissions": sorted(existing), "added_permissions": sorted(proposed - existing), "effective_permissions": sorted(existing | proposed), "duplicate_assignment": preview["duplicate"], "source": "organizer_access.user_roles+role_permissions+user_role_assignments", "freshness_at": datetime.now(timezone.utc).isoformat()}
+    # The old union-only preview omitted inherited grants and explicit denials.
+    # No portal caller remains; do not present it as authoritative access.
+    raise HTTPException(410, detail={"code": "ACCESS_PREVIEW_RETIRED",
+        "message": "Use the versioned role assignment workflow. Effective access is validated by the command."})
 
 
 @router.get("/settings/custom-fields")
@@ -1167,11 +1643,11 @@ async def update_organiser_security_policy(
     )
 
 
-@router.put("/settings/branding")
+@router.put("/settings/branding", dependencies=[Depends(scoped_branding_administration)])
 async def update_organiser_branding(
     payload: BrandingWrite,
-    if_match: int = Header(default=0, alias="If-Match", ge=0),
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    if_match: int = Header(..., alias="If-Match", ge=0),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
@@ -1183,7 +1659,50 @@ async def update_organiser_branding(
     )
 
 
-@router.get("/settings/{domain}")
+@router.get("/public-brand-assets/{organization_id}/{kind}", include_in_schema=False)
+async def public_organiser_brand_asset(
+    organization_id: uuid.UUID,
+    kind: str,
+    db: AsyncSession = Depends(get_db),
+) -> RedirectResponse:
+    """Deliver only a currently referenced, scan-ready public brand image."""
+    if kind not in {"logo", "favicon"}:
+        raise HTTPException(status_code=404, detail="Brand asset not found.")
+    profile = await db.scalar(select(OrganizationBrandProfile).where(
+        OrganizationBrandProfile.organization_id == organization_id,
+    ))
+    asset_key = f"{kind}_asset_id"
+    try:
+        asset_id = uuid.UUID(str((profile.assets or {}).get(asset_key))) if profile else None
+    except (TypeError, ValueError):
+        asset_id = None
+    if asset_id is None:
+        raise HTTPException(status_code=404, detail="Brand asset not found.")
+    asset = await db.scalar(select(Asset).where(
+        Asset.id == asset_id,
+        Asset.organization_id == organization_id,
+        Asset.processing_status == "READY",
+        Asset.mime_type.in_(["image/png", "image/jpeg", "image/webp", "image/svg+xml", "image/x-icon"]),
+    ))
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Brand asset not found.")
+    if asset.mime_type == "image/svg+xml" and await db.scalar(select(AssetTag.id).where(
+        AssetTag.asset_id == asset.id,
+        AssetTag.tag == "system:sanitized-svg-v1",
+    ).limit(1)) is None:
+        raise HTTPException(status_code=404, detail="Brand asset not found.")
+    url = await asyncio.to_thread(
+        create_presigned_download,
+        bucket=settings.S3_BUCKET_ASSETS,
+        storage_path=asset.file_path,
+        expiry_seconds=300,
+        inline=True,
+        verified_organization_id=organization_id,
+    )
+    return RedirectResponse(url, headers={"Cache-Control": "public, max-age=300, must-revalidate"})
+
+
+@router.get("/settings/{domain}", dependencies=[Depends(scoped_organization_profile)])
 async def organiser_settings_domain(
     domain: str,
     current_user: User = Depends(get_current_user),
@@ -1437,45 +1956,37 @@ async def organiser_dashboard(
     org = await _current_org(db, current_user)
     unrestricted = bool(getattr(org, "has_unrestricted_capabilities", False))
 
-    all_event_refs = await OrganiserReportQueryService(db).list_dashboard_event_refs(
-        organization_id=org.id
-    )
-    event_ids = [row.id for row in all_event_refs]
-
-    active_events = sum(1 for row in all_event_refs if row.status not in {"archived", "completed"})
     dashboard_metrics = await OrganiserDashboardQueryService(db).metrics(
         organization_id=org.id
     )
+    active_events = dashboard_metrics["active_events"]
     team_members = dashboard_metrics["team_members"]
     total_registrations = dashboard_metrics["total_registrations"]
     total_revenue = dashboard_metrics["total_revenue"]
     storage_used_mb = float(dashboard_metrics["storage_used_bytes"]) / (1024 * 1024)
 
-    plan = None
-    usage = {"events": {}, "users": {}, "registrations": {}, "storage": {}}
-    try:
-        sub = await EntitlementResolver.get_active_subscription(db, org.id)
-        plan = sub.plan if sub else None
-        max_events = None if unrestricted else await EntitlementResolver.get_limit(db, org.id, "max_events")
-        max_users = None if unrestricted else await EntitlementResolver.get_limit(db, org.id, "max_users")
-        max_registrations = None if unrestricted else await EntitlementResolver.get_limit(db, org.id, "max_registrations")
-        storage_quota_mb = None if unrestricted else await EntitlementResolver.get_limit(db, org.id, "storage_quota_mb")
-        usage = {
-            "events": {"used": len(all_event_refs), "max": max_events},
-            "users": {"used": team_members, "max": max_users},
-            "registrations": {"used": total_registrations, "max": max_registrations},
-            "storage": {"used_mb": storage_used_mb, "max_mb": storage_quota_mb},
-        }
-    except Exception:
-        pass
+    contract = await EntitlementResolver.get_active_contract(db, org.id)
+    offer = contract.offer if contract else None
+    limit_keys = ("max_events", "max_users", "max_registrations", "storage_quota_mb")
+    limits = ({key: None for key in limit_keys} if unrestricted else
+              await EntitlementResolver.get_org_limits(db, org.id, limit_keys))
+    usage = {
+        "events": {"used": dashboard_metrics["total_events"], "max": limits["max_events"]},
+        "users": {"used": team_members, "max": limits["max_users"]},
+        "registrations": {"used": total_registrations, "max": limits["max_registrations"]},
+        "storage": {"used_mb": storage_used_mb, "max_mb": limits["storage_quota_mb"]},
+    }
 
     today = date.today()
     trend = await OrganiserReportQueryService(db).registration_revenue_trend(
-        event_ids=event_ids, today=today
+        organization_id=org.id, today=today
     )
 
     event_rows, _ = await OrganiserReportQueryService(db).list_event_reports(
         organization_id=org.id, page=1, page_size=6, search=None
+    )
+    session_distribution = await OrganiserDashboardQueryService(db).session_distribution(
+        organization_id=org.id
     )
 
     activity_rows, _ = await AuditQueryService(db).list_organization_activity(
@@ -1492,25 +2003,34 @@ async def organiser_dashboard(
             "name": org.name,
             "slug": org.slug,
             "is_internal_unrestricted": unrestricted,
+            "lifecycle_state": org.lifecycle_state,
         },
         "metrics": {
             "active_events": active_events,
+            "total_events": dashboard_metrics["total_events"],
             "team_members": team_members,
             "total_registrations": total_registrations,
+            "total_sessions": dashboard_metrics["total_sessions"],
+            "total_speakers": dashboard_metrics["total_speakers"],
+            "total_checkins": dashboard_metrics["total_checkins"],
             "total_revenue": total_revenue,
         },
-        "plan": {
-            "name": "Internal Unlimited" if unrestricted else (plan.name if plan else org.plan.title()),
-            "status": "ACTIVE" if unrestricted or plan else "UNAVAILABLE",
+        "registration_overview": dashboard_metrics["registration_overview"],
+        "commercial": {
+            "offer_name": "Enterprise" if unrestricted else (offer.name if offer else "Not configured"),
+            "status": "ACTIVE" if unrestricted or offer else "UNAVAILABLE",
+            "billing_cycle": getattr(contract, "billing_interval", None),
+            "valid_till": getattr(contract, "ends_at", None),
             "registrations_used": int(usage.get("registrations", {}).get("used") or total_registrations),
             "registrations_max": None if unrestricted else usage.get("registrations", {}).get("max"),
             "storage_used_gb": round((usage.get("storage", {}).get("used_mb") or storage_used_mb) / 1024, 2),
             "storage_max_gb": None if unrestricted else (round((usage.get("storage", {}).get("max_mb") or 0) / 1024, 2) if usage.get("storage", {}).get("max_mb") else None),
-            "events_used": int(usage.get("events", {}).get("used") or len(all_event_refs)),
+            "events_used": int(usage.get("events", {}).get("used") or dashboard_metrics["total_events"]),
             "events_max": None if unrestricted else usage.get("events", {}).get("max"),
             "unrestricted": unrestricted,
         },
         "trend": trend,
+        "session_distribution": session_distribution,
         "events": event_rows,
         "recent_activity": [{
             "id": str(row.id),
@@ -1524,90 +2044,6 @@ async def organiser_dashboard(
         "freshness_at": datetime.now(timezone.utc).isoformat(),
         "source": "ORGANISER_DASHBOARD_READ_MODEL",
     }
-
-
-@router.get("/addons/status")
-async def organiser_addon_status(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    """Return the catalogue with this organisation's effective add-on state."""
-    org = await _current_org(db, current_user)
-    unrestricted = bool(getattr(org, "has_unrestricted_capabilities", False))
-    now = datetime.now(timezone.utc)
-    addons, assignments, requested_addon_keys = await OrganiserAddonQueryService(db).get_status_data(
-        organization_id=org.id
-    )
-
-    plan_name: str | None = None
-    if not unrestricted:
-        try:
-            subscription = await EntitlementResolver.get_active_subscription(db, org.id)
-            plan_name = subscription.plan.name if subscription and subscription.plan else None
-        except Exception:
-            plan_name = None
-
-    assignments_by_addon: dict[uuid.UUID, list[OrganizationAddon]] = {}
-    for assignment in assignments:
-        assignments_by_addon.setdefault(assignment.addon_id, []).append(assignment)
-    pending_keys = {
-        str(key).upper()
-        for keys in requested_addon_keys
-        for key in keys
-    }
-
-    items: list[dict[str, Any]] = []
-    for addon in addons:
-        addon_assignments = assignments_by_addon.get(addon.id, [])
-        active = [
-            row for row in addon_assignments
-            if row.status.upper() == "ACTIVE" and (row.expires_at is None or row.expires_at > now)
-        ]
-        expired = [
-            row for row in addon_assignments
-            if row.expires_at is not None and row.expires_at <= now
-        ]
-        included = bool(
-            plan_name
-            and addon.included_in_plan
-            and addon.included_in_plan.lower() == plan_name.lower()
-        )
-        if unrestricted:
-            effective_status = "UNRESTRICTED"
-        elif active:
-            effective_status = "ACTIVE"
-        elif included:
-            effective_status = "INCLUDED"
-        elif addon.key.upper() in pending_keys:
-            effective_status = "PENDING"
-        elif expired:
-            effective_status = "EXPIRED"
-        else:
-            effective_status = "AVAILABLE"
-
-        expires_at = max(
-            (row.expires_at for row in active if row.expires_at is not None),
-            default=None,
-        )
-        scopes = sorted({
-            "event" if row.event_id else "activation" if row.activation_id else "organisation"
-            for row in active
-        })
-        items.append({
-            "id": str(addon.id),
-            "key": addon.key,
-            "name": addon.name,
-            "description": addon.short_description or addon.description,
-            "addon_type": addon.addon_type,
-            "status": effective_status,
-            "quantity": sum(row.quantity for row in active),
-            "scopes": scopes,
-            "expires_at": expires_at.isoformat() if expires_at else None,
-            "included_in_plan": addon.included_in_plan,
-            "price_inr": float(addon.final_price if addon.final_price is not None else addon.price_inr) if (addon.final_price is not None or addon.price_inr is not None) else None,
-        })
-
-    return _page(items, len(items), 1, max(len(items), 1), "ORGANISER_ADDON_STATUS_READ_MODEL")
 
 
 @router.get("/entitlements/features")
@@ -1747,6 +2183,12 @@ async def download_organiser_report_export(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     org = await _current_org(db, current_user)
+    token = getattr(current_user, "_request_token_data", None)
+    ws_id = getattr(token, "active_workspace_id", None) if token else None
+    from app.modules.rbac.services.permission_service import get_user_permissions
+    perms = await get_user_permissions(db, current_user.id, organization_id=org.id, workspace_id=ws_id)
+    if "reports:view" not in perms and "reports:export" not in perms and "REPORTS:VIEW" not in perms and "REPORTS:EXPORT" not in perms:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "PERMISSION_DENIED", "message": "Report viewing permission is required"})
     record = await AuditQueryService(db).get_organization_action(
         organization_id=org.id,
         resource_id=export_id,
@@ -1789,10 +2231,11 @@ async def event_needs_attention(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
-    event = await OrganiserAttentionQueryService(db).get_event_target(
-        event_id=event_id,
-        organization_id=None if current_user.role == "super_admin" else current_user.organization_id,
-    )
+    from app.modules.rbac.services.event_scope import customer_event
+    token = getattr(current_user, "_request_token_data", None)
+    if token is None:
+        raise HTTPException(status_code=401, detail={"code": "SESSION_CONTEXT_REQUIRED"})
+    event = await customer_event(db, current_user, event_id, token)
     if not event or event.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
     return await _attention_for_event(db, event)

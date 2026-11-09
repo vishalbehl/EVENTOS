@@ -1,6 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
+import { useRef, useState } from 'react'
 import { 
     Send, 
     RefreshCcw, 
@@ -13,50 +14,81 @@ import {
 import { sendCampaign, resendFailed, deleteCampaign, Campaign } from '@/services/email-service'
 import { toast } from 'sonner'
 import { CapabilityAction, useOperationAccess } from '@/lib/capabilities'
+import { useAuthStore } from '@/store/use-auth-store'
+import { useRetryAfter } from '@/hooks/useRetryAfter'
+import type { ApiError } from '@/lib/api-client'
 
 interface Props {
     campaigns: Campaign[]
     eventId: string
     onSelect?: (campaign: Campaign) => void
     onDeleted?: () => void
+    loading?: boolean
+    errorText?: string | null
 }
 
-export default function CampaignList({ campaigns, eventId, onSelect, onDeleted }: Props) {
+export default function CampaignList({ campaigns, eventId, onSelect, onDeleted, loading, errorText }: Props) {
     const campaignReadAccess = useOperationAccess('communications.campaign.read')
+    const manageAccess = useOperationAccess('communications.campaign.manage')
+    const sendAccess = useOperationAccess('communications.bulk_email.send')
+    const inFlight = useRef(false)
+    const [pending, setPending] = useState(false)
+    const [command, setCommand] = useState<{ operation: 'send' | 'resend' | 'archive'; campaign: Campaign; key: string } | null>(null)
+    const [reason, setReason] = useState('')
+    const [failure, setFailure] = useState<ApiError | null>(null)
+    const retrySeconds = useRetryAfter(failure)
+    const mutate = async (operation: 'send' | 'resend' | 'archive', id: string) => {
+        if (inFlight.current || loading || !!errorText || !manageAccess.enabled
+            || retrySeconds > 0 || !command || command.campaign.id !== id
+            || command.operation !== operation || reason.trim().length < 10
+            || (operation !== 'archive' && !sendAccess.enabled)) return
+        const identity = useAuthStore.getState().user
+        inFlight.current = true
+        setPending(true)
+        setFailure(null)
+        const options = { version: command.campaign.version, reason: reason.trim(), idempotencyKey: command.key }
+        try {
+            if (operation === 'send') await sendCampaign(eventId, id, options)
+            else if (operation === 'resend') await resendFailed(eventId, id, options)
+            else await deleteCampaign(eventId, id, options)
+            const current = useAuthStore.getState().user
+            if (current?.id !== identity?.id || current?.organization_id !== identity?.organization_id) return
+            toast.success(operation === 'archive' ? 'Campaign archived; history is retained.' : 'Transmission request accepted.')
+            setCommand(null)
+            setReason('')
+            onDeleted?.()
+        } catch (error) {
+            const current = useAuthStore.getState().user
+            if (current?.id !== identity?.id || current?.organization_id !== identity?.organization_id) return
+            setFailure(error as ApiError)
+        } finally {
+            inFlight.current = false
+            setPending(false)
+        }
+    }
+    const selectCommand = (operation: 'send' | 'resend' | 'archive', id: string) => {
+        if (pending || command) return
+        const campaign = campaigns.find(item => item.id === id)
+        if (!campaign || !Number.isSafeInteger(campaign.version) || campaign.version < 1) {
+            toast.error('Reload the campaign to obtain its current version.'); return
+        }
+        setReason('')
+        setFailure(null)
+        setCommand({ operation, campaign, key: crypto.randomUUID() })
+    }
     const handleSend = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation()
-        try {
-            await sendCampaign(eventId, id)
-            toast.success('Campaign transmission initialized.')
-            onDeleted?.() // Reload list
-        } catch (err) {
-            toast.error('Transmission failure.')
-        }
+        selectCommand('send', id)
     }
 
     const handleResend = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation()
-        try {
-            await resendFailed(eventId, id)
-            toast.success('Retry sequence dispatched.')
-            onDeleted?.() // Reload list
-        } catch (err) {
-            toast.error('Retry failure.')
-        }
+        selectCommand('resend', id)
     }
 
     const handleDelete = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation()
-        if (!confirm('Are you sure you want to delete this campaign? All associated logs will also be permanently deleted.')) {
-            return
-        }
-        try {
-            await deleteCampaign(eventId, id)
-            toast.success('Campaign deleted successfully.')
-            onDeleted?.()
-        } catch (err) {
-            toast.error('Failed to delete campaign.')
-        }
+        selectCommand('archive', id)
     }
 
     return (
@@ -64,6 +96,30 @@ export default function CampaignList({ campaigns, eventId, onSelect, onDeleted }
             <h3 className="text-sm font-black uppercase tracking-[0.3em] text-[var(--muted)] px-2 shrink-0">
                 Active Campaign Registry
             </h3>
+            {command && <form className="glass-card rounded-2xl p-5 space-y-3" onSubmit={(event) => {
+                event.preventDefault(); void mutate(command.operation, command.campaign.id)
+            }}>
+                <p>{command.operation === 'archive' ? 'Archive' : command.operation === 'send' ? 'Send' : 'Retry failed deliveries for'} {command.campaign.name}?</p>
+                <p className="text-sm text-[var(--muted)]">Version {command.campaign.version}. Archiving retains history. Sending may deliver external emails.</p>
+                <label className="block">Audit reason
+                    <textarea required minLength={10} maxLength={500} value={reason} disabled={pending || !!failure}
+                        onChange={event => setReason(event.target.value)} className="block w-full bg-white/5 p-3 rounded-xl" />
+                </label>
+                {failure && <div role="alert">
+                    <p>{failure.code === 'STEP_UP_REQUIRED' ? 'Recent MFA is required. Re-authenticate, then explicitly retry.'
+                        : failure.status === 412 || failure.status === 409 ? 'The state or request conflicts. Refresh and review before starting a new command.'
+                        : failure.status === 429 ? 'This request was throttled.'
+                        : failure.status === 503 ? 'The service is unavailable; the outcome is not confirmed.'
+                        : 'The outcome could not be confirmed. Reusing this unchanged request checks its receipt.'}</p>
+                    {failure.correlationId && <p>Reference: {failure.correlationId}</p>}
+                    {retrySeconds > 0 && <p>Try again in {retrySeconds}s.</p>}
+                </div>}
+                <div className="flex gap-3">
+                    <button type="submit" disabled={pending || retrySeconds > 0 || reason.trim().length < 10
+                        || [409, 412].includes(failure?.status ?? 0)}>{pending ? 'Submitting…' : failure ? 'Retry unchanged request' : 'Confirm'}</button>
+                    <button type="button" disabled={pending} onClick={() => { setCommand(null); setFailure(null) }}>Close</button>
+                </div>
+            </form>}
 
             <div className="glass-card rounded-[2rem] border border-white/5 flex flex-col flex-1 min-h-0 overflow-hidden">
                 <div className="overflow-auto flex-1 min-h-0 custom-scrollbar">
@@ -85,6 +141,10 @@ export default function CampaignList({ campaigns, eventId, onSelect, onDeleted }
                                         Campaign access is unavailable for this event.
                                     </td>
                                 </tr>
+                            ) : errorText ? (
+                                <tr><td colSpan={6} className="p-12 text-center" role="alert">{errorText}</td></tr>
+                            ) : loading ? (
+                                <tr><td colSpan={6} className="p-12 text-center" role="status">Loading campaigns…</td></tr>
                             ) : campaigns.length === 0 ? (
                                 <tr>
                                     <td colSpan={6} className="p-12 text-center text-[var(--muted)] uppercase text-[10px] font-black tracking-widest opacity-50">
@@ -162,6 +222,7 @@ export default function CampaignList({ campaigns, eventId, onSelect, onDeleted }
                                                     quantity={Math.max(campaign.total_recipients, 1)}
                                                   >
                                                     <button
+                                                        disabled={pending || !manageAccess.enabled || !sendAccess.enabled}
                                                         onClick={(e) => handleSend(e, campaign.id)}
                                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--pri)] text-[var(--primary-contrast)] hover:scale-105 active:scale-95 transition-all text-[9px] font-black uppercase tracking-widest rounded-lg shadow-md shadow-[var(--pri)]/20"
                                                     >
@@ -177,6 +238,7 @@ export default function CampaignList({ campaigns, eventId, onSelect, onDeleted }
                                                     quantity={Math.max(campaign.total_recipients - campaign.sent_count, 1)}
                                                   >
                                                     <button
+                                                        disabled={pending || !manageAccess.enabled || !sendAccess.enabled}
                                                         onClick={(e) => handleResend(e, campaign.id)}
                                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 text-[var(--text)] border border-white/10 hover:bg-white/10 transition-all text-[9px] font-black uppercase tracking-widest rounded-lg"
                                                     >
@@ -186,6 +248,8 @@ export default function CampaignList({ campaigns, eventId, onSelect, onDeleted }
                                                   </CapabilityAction>
                                                 )}
                                                 <button 
+                                                    disabled={pending || !manageAccess.enabled}
+                                                    aria-label={`Archive campaign ${campaign.name}`}
                                                     onClick={(e) => handleDelete(e, campaign.id)}
                                                     className="p-2 rounded-lg text-red-400/50 hover:text-red-400 hover:bg-red-400/10 transition-all"
                                                 >
@@ -199,6 +263,7 @@ export default function CampaignList({ campaigns, eventId, onSelect, onDeleted }
                         </tbody>
                     </table>
                 </div>
+
             </div>
         </div>
     )

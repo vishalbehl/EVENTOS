@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, Float, ForeignKey, ForeignKeyConstraint, Index, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import CIDR, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -208,6 +208,8 @@ class OrganizationLifecycleJob(Base):
     failure_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     manifest_checksum: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    dispatch_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    next_dispatch_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
@@ -217,6 +219,8 @@ class OrganizationLifecycleJob(Base):
     __table_args__ = (
         UniqueConstraint("organization_id", "idempotency_key", name="uq_org_lifecycle_idempotency"),
         Index("ix_org_lifecycle_jobs_org_status", "organization_id", "status"),
+        Index("ix_lifecycle_dispatch_due", "organization_id", "next_dispatch_at", "id",
+              postgresql_where=text("status IN ('PENDING','RETRY_PENDING')")),
         {"schema": "operations"},
     )
 
@@ -234,7 +238,18 @@ class OrganizationTeam(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    __table_args__ = (Index("uq_organization_team_name_active", "organization_id", "name", unique=True, postgresql_where=text("deleted_at IS NULL")), Index("ix_organization_teams_org_active", "organization_id", "deleted_at"), {"schema": "organizer_access"})
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_organization_team_owner"),
+        # Defer NO ACTION so the existing single-column SET NULL can clear only
+        # owner_member_id on deletion, never the non-null tenant identifier.
+        ForeignKeyConstraint(["organization_id", "owner_member_id"],
+            ["organizer_access.organization_members.organization_id", "organizer_access.organization_members.id"],
+            name="fk_team_owner_tenant", deferrable=True, initially="DEFERRED"),
+        Index("ix_team_owner_member", "organization_id", "owner_member_id"),
+        Index("uq_organization_team_name_active", "organization_id", "name", unique=True, postgresql_where=text("deleted_at IS NULL")),
+        Index("ix_organization_teams_org_active", "organization_id", "deleted_at"),
+        {"schema": "organizer_access"},
+    )
 
 
 class OrganizationTeamMember(Base):
@@ -245,7 +260,18 @@ class OrganizationTeamMember(Base):
     organization_member_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizer_access.organization_members.id", ondelete="CASCADE"), nullable=False)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
-    __table_args__ = (UniqueConstraint("team_id", "organization_member_id", name="uq_organization_team_member"), Index("ix_organization_team_members_org_team", "organization_id", "team_id"), {"schema": "organizer_access"})
+    __table_args__ = (
+        UniqueConstraint("team_id", "organization_member_id", name="uq_organization_team_member"),
+        ForeignKeyConstraint(["organization_id", "team_id"],
+            ["organizer_access.organization_teams.organization_id", "organizer_access.organization_teams.id"],
+            name="fk_team_member_team_tenant", ondelete="CASCADE"),
+        ForeignKeyConstraint(["organization_id", "organization_member_id"],
+            ["organizer_access.organization_members.organization_id", "organizer_access.organization_members.id"],
+            name="fk_team_member_subject_tenant", ondelete="CASCADE"),
+        Index("ix_organization_team_members_org_team", "organization_id", "team_id"),
+        Index("ix_team_member_subject", "organization_id", "organization_member_id"),
+        {"schema": "organizer_access"},
+    )
 
 
 class OrganizationTeamEvent(Base):
@@ -255,9 +281,25 @@ class OrganizationTeamEvent(Base):
     team_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizer_access.organization_teams.id", ondelete="CASCADE"), nullable=False)
     event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=False)
     permissions: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    # Default zero protects legacy bindings and older application writers.
+    authorization_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
-    __table_args__ = (UniqueConstraint("team_id", "event_id", name="uq_organization_team_event"), Index("ix_organization_team_events_org_team", "organization_id", "team_id"), {"schema": "organizer_access"})
+    __table_args__ = (
+        UniqueConstraint("team_id", "event_id", name="uq_organization_team_event"),
+        CheckConstraint("authorization_version IN (0, 1)", name="ck_team_event_authorization_version"),
+        CheckConstraint("authorization_version = 0 OR organizer_access.category_a_team_permissions_valid_v1(permissions)", name="ck_team_event_approved_permissions"),
+        ForeignKeyConstraint(["organization_id", "team_id"],
+            ["organizer_access.organization_teams.organization_id", "organizer_access.organization_teams.id"],
+            name="fk_team_event_team_tenant", ondelete="CASCADE"),
+        ForeignKeyConstraint(["organization_id", "event_id"],
+            ["events.events.organization_id", "events.events.id"],
+            name="fk_team_event_resource_tenant", ondelete="CASCADE"),
+        Index("ix_organization_team_events_org_team", "organization_id", "team_id"),
+        Index("ix_team_event_resource", "organization_id", "event_id"),
+        Index("ix_team_event_approved_context", "organization_id", "event_id", "team_id", postgresql_where=text("authorization_version = 1")),
+        {"schema": "organizer_access"},
+    )
 
 
 class OrganizationCustomField(Base):
@@ -710,33 +752,3 @@ class PrivilegedMutationReceipt(Base):
     )
 
 
-class CommercialAccessRequest(Base):
-    __tablename__ = "commercial_access_requests"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False)
-    event_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="SET NULL"), nullable=True)
-    request_type: Mapped[str] = mapped_column(String(30), nullable=False, default="PLAN_AND_ADDONS")
-    requested_plan_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("commerce.subscription_plans.id", ondelete="RESTRICT"), nullable=False)
-    requested_addon_keys: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
-    billing_profile: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    quoted_amount: Mapped[Optional[float]] = mapped_column(Numeric(14, 2), nullable=True)
-    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="INR")
-    reason: Mapped[str] = mapped_column(Text, nullable=False)
-    case_reference: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
-    status: Mapped[str] = mapped_column(String(24), nullable=False, default="PENDING")
-    requested_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
-    decided_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=True)
-    decision_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    applied_subscription_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("commerce.organization_subscriptions.id", ondelete="SET NULL"), nullable=True)
-    idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
-    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
-
-    __table_args__ = (
-        UniqueConstraint("organization_id", "idempotency_key", name="uq_commercial_access_request_idempotency"),
-        Index("ix_commercial_access_request_status", "organization_id", "status", "created_at"),
-        {"schema": "business"},
-    )

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from app.modules.identity.models.user import User
     from app.modules.events.models.event import Event
     from app.modules.identity.models.organization_member import OrganizationMember
-    from app.modules.billing.models.subscription import OrganizationSubscription
 
 
 class Organization(Base):
@@ -21,22 +20,22 @@ class Organization(Base):
     Every event, user, and resource belongs to an organization.
     """
     __tablename__ = "organizations"
-    __table_args__ = {"schema": "platform"}
+    __table_args__ = (
+        CheckConstraint("archived_at IS NULL OR (is_active = false AND suspended_at IS NULL)",
+                        name="ck_organization_archive_state"),
+        {"schema": "platform"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    organization_kind: Mapped[str] = mapped_column(String(10), nullable=False, default="NORMAL", server_default="NORMAL")
     slug: Mapped[str] = mapped_column(
         String(100), unique=True, nullable=False, index=True
     )
     logo_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    plan: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="trial"
-        # DEPRECATED: Use billing entitlement queries instead
-        # trial | basic | pro | enterprise
-    )
-    plan_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_platform_org: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # The single seeded Eventos tenant is an internal verification tenant.  It
     # receives a resolver-owned commercial baseline rather than a mutable plan
@@ -63,9 +62,6 @@ class Organization(Base):
     primary_color: Mapped[str] = mapped_column(String(7), nullable=False, default="#6366f1")
     secondary_color: Mapped[str] = mapped_column(String(7), nullable=False, default="#8b5cf6")
     custom_domain: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    max_events: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # DEPRECATED: Use billing entitlement queries instead
-    max_users: Mapped[int] = mapped_column(Integer, nullable=False, default=2)  # DEPRECATED: Use billing entitlement queries instead
-    max_storage_gb: Mapped[int] = mapped_column(Integer, nullable=False, default=10)  # DEPRECATED: Use billing entitlement queries instead
     billing_email: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     legal_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     registration_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -81,6 +77,14 @@ class Organization(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     suspended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     suspension_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    @property
+    def lifecycle_state(self) -> str:
+        if self.archived_at is not None:
+            return "ARCHIVED"
+        return "ACTIVE" if self.is_active and self.suspended_at is None else "SUSPENDED"
+
     onboarding_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     
     # ── Expanded Onboarding Profile ───────────────────────
@@ -118,9 +122,6 @@ class Organization(Base):
     )
     memberships: Mapped[List["OrganizationMember"]] = relationship(
         "OrganizationMember", back_populates="organization", cascade="all, delete-orphan"
-    )
-    subscription: Mapped[List["OrganizationSubscription"]] = relationship(
-        "OrganizationSubscription", back_populates="organization", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:

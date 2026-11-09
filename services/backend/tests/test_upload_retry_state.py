@@ -25,6 +25,8 @@ async def test_retry_exhaustion_marks_nonterminal_upload_failed(monkeypatch):
     committed = False
 
     class Session:
+        info = {}
+
         async def __aenter__(self):
             return self
 

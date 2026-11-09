@@ -3,7 +3,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Clock, Users, AlertTriangle, GripVertical, CheckCircle2 } from "lucide-react";
-import { cn, formatTimeRangeInTZ } from "@/lib/utils";
+import { cn, formatTimeRangeInTZ, getFallbackTimezone } from "@/lib/utils";
 import { BuilderSession, useSessionBuilderStore } from "@/store/useSessionBuilderStore";
 import { useAssignSpeakerToSession } from "@/hooks/useSessionBuilder";
 import { useParams } from "next/navigation";
@@ -44,7 +44,8 @@ export function SessionCard({ session, isDragging }: SessionCardProps) {
   const isSelected = selectedSessionId === session.id;
   const hasConflict = conflicts.some((c) => c.session_ids.includes(session.id));
   const typeStyle = TYPE_COLORS[session.session_type] || TYPE_COLORS.regular;
-  const timezone = session.event_timezone || "UTC";
+  const storeTz = useSessionBuilderStore((s) => s.eventTimezone);
+  const timezone = session.event_timezone || storeTz || getFallbackTimezone();
 
   return (
     <div

@@ -33,6 +33,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from functools import wraps
+from contextlib import suppress
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -48,6 +51,7 @@ from app.websocket.manager import (
     venue_ws_room,
 )
 from app.config import settings
+from app.websocket.protection import RealtimeQuotaError, ingress, acquire, control, watchdog, cleanup
 from app.database import AsyncSessionLocal
 from app.websocket.auth import (
     RealtimeAuthError,
@@ -191,7 +195,11 @@ async def _handle_client_message(
             )
             return
         try:
-            authorize_moderator_command(principal)
+            if not room.startswith("room:"):
+                raise RealtimeAuthError("A scoped room command is required.")
+            async with AsyncSessionLocal() as db:
+                target = await authorize_room(db, principal, uuid.UUID(room.split(":", 1)[1]))
+                await authorize_moderator_command(db, principal, target.event_id)
         except RealtimeAuthError:
             await manager.send_to(
                 websocket,
@@ -217,6 +225,47 @@ async def _handle_client_message(
         logger.debug(f"Unhandled WS message type: {msg_type}")
 
 
+async def _receive_message(websocket):
+    message = await websocket.receive()
+    if message["type"] == "websocket.disconnect":
+        raise WebSocketDisconnect(message.get("code", 1000))
+    body = message.get("text")
+    if body is None:
+        body = message.get("bytes") or b""
+    size = len(body.encode()) if isinstance(body, str) else len(body)
+    principal = getattr(websocket.state, "realtime_principal", None)
+    limit = 1024 * 1024 if principal is not None and principal.kind == "device" else 16 * 1024
+    if size > limit:
+        await websocket.close(code=1009)
+        raise WebSocketDisconnect(1009)
+    try:
+        data = json.loads(body)
+        if not isinstance(data, dict):
+            raise ValueError()
+    except (ValueError, TypeError, RecursionError):
+        await websocket.close(code=1008)
+        raise WebSocketDisconnect(1008)
+    if principal is not None:
+        try:
+            await control(principal, data)
+        except RealtimeQuotaError as exc:
+            await websocket.send_json(build_message("error", {"code": exc.code, "retry_after": exc.retry_after}))
+            await websocket.close(code=1013 if exc.status in {429, 503} else 1008)
+            raise WebSocketDisconnect(1013)
+    return data
+
+
+def _with_connection_resources(handler):
+    @wraps(handler)
+    async def wrapped(websocket, *args, **kwargs):
+        try:
+            return await handler(websocket, *args, **kwargs)
+        finally:
+            await cleanup(getattr(websocket.state, "realtime_lease", None),
+                          getattr(websocket.state, "realtime_watchdog", None))
+    return wrapped
+
+
 async def _authenticate_native_connection(
     websocket: WebSocket,
     *,
@@ -224,15 +273,20 @@ async def _authenticate_native_connection(
     room_id: uuid.UUID | None = None,
     require_device: bool = False,
 ) -> RealtimePrincipal | None:
-    await websocket.accept()
+    accepted = False
     try:
+        await ingress(websocket.scope)
+        await websocket.accept()
+        accepted = True
         message = await asyncio.wait_for(
-            websocket.receive_json(),
+            _receive_message(websocket),
             timeout=settings.WS_AUTH_TIMEOUT_SECONDS,
         )
         if message.get("type") != "authenticate":
             raise RealtimeAuthError("Authentication must be the first message.")
-        credentials = message.get("payload") or message
+        credentials = message.get("payload")
+        if credentials is None:
+            credentials = {key: value for key, value in message.items() if key != "type"}
         async with AsyncSessionLocal() as db:
             principal = await authenticate_realtime(db, credentials)
             if require_device and principal.kind != "device":
@@ -241,15 +295,48 @@ async def _authenticate_native_connection(
                 await authorize_event(db, principal, event_id)
             if room_id is not None:
                 await authorize_room(db, principal, room_id)
+        lease = await acquire(principal)
+        websocket.state.realtime_lease = lease
+        websocket.state.realtime_principal = principal
+        websocket.state.realtime_event_id = event_id
+        websocket.state.realtime_room_id = room_id
+
+        async def validate():
+            async with AsyncSessionLocal() as db:
+                if room_id is not None:
+                    await authorize_room(db, principal, room_id)
+                elif event_id is not None:
+                    await authorize_event(db, principal, event_id)
+                else:
+                    raise RealtimeAuthError("A scoped channel is required.")
+
+        async def terminate(error):
+            unavailable = not isinstance(error, RealtimeAuthError)
+            await websocket.close(code=1013 if unavailable else 1008)
+        websocket.state.realtime_watchdog = watchdog(lease, validate, terminate)
         return principal
+    except RealtimeQuotaError as exc:
+        if accepted:
+            await websocket.send_json(build_message(EventType.AUTH_FAILED, {"code": exc.code, "retry_after": exc.retry_after}))
+        await websocket.close(code=1013 if exc.status in {429, 503} else 1008)
+        return None
+    except WebSocketDisconnect:
+        return None
     except (asyncio.TimeoutError, RealtimeAuthError, TypeError, ValueError):
         await websocket.send_json(build_message(EventType.AUTH_FAILED, {"code": "PERMISSION_DENIED"}))
         await websocket.close(code=1008)
+        return None
+    except Exception:
+        with suppress(Exception):
+            if accepted:
+                await websocket.send_json(build_message(EventType.AUTH_FAILED, {"code": "REALTIME_UNAVAILABLE"}))
+            await websocket.close(code=1013)
         return None
 
 
 # ── WebSocket route handlers ──────────────────────────────────
 
+@_with_connection_resources
 async def handle_monitor_connection(
     websocket: WebSocket,
     event_id: uuid.UUID,
@@ -287,7 +374,7 @@ async def handle_monitor_connection(
 
     try:
         while True:
-            data = await websocket.receive_json()
+            data = await _receive_message(websocket)
             await _handle_client_message(websocket, data, room, principal=principal)
 
     except WebSocketDisconnect:
@@ -298,6 +385,7 @@ async def handle_monitor_connection(
         manager.disconnect(websocket)
 
 
+@_with_connection_resources
 async def handle_venue_sync_connection(
     websocket: WebSocket,
     event_id: uuid.UUID,
@@ -340,7 +428,7 @@ async def handle_venue_sync_connection(
 
     try:
         while True:
-            data = await websocket.receive_json()
+            data = await _receive_message(websocket)
             msg_type = data.get("type", "")
 
             if msg_type == EventType.PONG:
@@ -389,6 +477,7 @@ async def handle_venue_sync_connection(
         manager.disconnect(websocket)
 
 
+@_with_connection_resources
 async def handle_room_connection(
     websocket: WebSocket,
     room_id: uuid.UUID,
@@ -420,7 +509,7 @@ async def handle_room_connection(
 
     try:
         while True:
-            data = await websocket.receive_json()
+            data = await _receive_message(websocket)
             msg_type = data.get("type", "")
 
             if msg_type == EventType.PONG:
@@ -442,6 +531,7 @@ async def handle_room_connection(
         manager.disconnect(websocket)
 
 
+@_with_connection_resources
 async def handle_srr_connection(
     websocket: WebSocket,
     event_id: uuid.UUID,
@@ -473,7 +563,7 @@ async def handle_srr_connection(
 
     try:
         while True:
-            data = await websocket.receive_json()
+            data = await _receive_message(websocket)
             msg_type = data.get("type", "")
 
             if msg_type == EventType.PONG:

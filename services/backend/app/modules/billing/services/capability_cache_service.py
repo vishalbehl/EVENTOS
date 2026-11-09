@@ -46,7 +46,18 @@ def _revision_scopes(session: Session) -> set[tuple[str, uuid.UUID, uuid.UUID | 
     from app.modules.analytics.models.analytics_domain_tables import ApiUsageMetric
     from app.modules.billing.models.event_activation import EventActivation
     from app.modules.billing.models.licensing import EventEntitlementSnapshotSet
-    from app.modules.billing.models.subscription import Addon, AddonFeature, OrganizationAddon, OrganizationSubscription, PlanFeature, SubscriptionPlan
+    from app.modules.billing.models.cloud_commercial import (
+        CommercialAccount,
+        CommercialAccountWorkspace,
+        CommercialAllocation,
+        CommercialContract,
+        CommercialContractItem,
+        CommercialOffer,
+        CommercialOfferEntitlement,
+        CommercialOfferPrice,
+        CommercialOfferVersion,
+        CommercialUsageLedger,
+    )
     from app.modules.events.models.event import Event
     from app.modules.agenda.models import Room
     from app.modules.agenda.models import Session as EventSession
@@ -62,8 +73,29 @@ def _revision_scopes(session: Session) -> set[tuple[str, uuid.UUID, uuid.UUID | 
     from app.modules.registration.models.participant_registration import ParticipantRegistration
     from app.modules.registration.models.print_template import PrintTemplate
 
-    global_models = (FeatureCatalog, PlatformFlagDefinition, PlatformFlagOverride, PlanFeature, AddonFeature, SubscriptionPlan, Addon)
-    org_models = (Organization, FeatureFlag, OrganizationSubscription, OrganizationAddon, OrganizationNotificationChannelConfig, User, IntegrationConnection, ApiUsageMetric)
+    global_models = (
+        FeatureCatalog,
+        PlatformFlagDefinition,
+        PlatformFlagOverride,
+        CommercialOffer,
+        CommercialOfferVersion,
+        CommercialOfferPrice,
+        CommercialOfferEntitlement,
+    )
+    org_models = (
+        Organization,
+        CommercialAccount,
+        CommercialAccountWorkspace,
+        CommercialContract,
+        CommercialContractItem,
+        CommercialAllocation,
+        CommercialUsageLedger,
+        FeatureFlag,
+        OrganizationNotificationChannelConfig,
+        User,
+        IntegrationConnection,
+        ApiUsageMetric,
+    )
     event_models = (Event, EventCommercialContract, EventActivation, EventEntitlementSnapshotSet, Speaker, EventSession, Room, Participant, ParticipantRegistration, PresentationFile, PrintTemplate)
     metered_models = (UsageLedgerEntry, UsageReservation, UsageCounterEpoch)
 
@@ -71,12 +103,25 @@ def _revision_scopes(session: Session) -> set[tuple[str, uuid.UUID, uuid.UUID | 
     for instance in {*session.new, *session.dirty, *session.deleted}:
         if isinstance(instance, CapabilityRevision) or not _changed(session, instance):
             continue
+        # The organization row and its revision rows are removed in the same
+        # transaction. Re-inserting an organization-scoped revision after the
+        # delete violates the FK and serves no cache-invalidation purpose.
+        if isinstance(instance, Organization) and instance in session.deleted:
+            continue
         if isinstance(instance, global_models):
             scopes.add(_scope("GLOBAL", GLOBAL_SCOPE_ID))
         if isinstance(instance, org_models):
-            organization_id = getattr(instance, "organization_id", None) or getattr(instance, "id", None)
+            organization_id = getattr(instance, "organization_id", None) or getattr(instance, "owner_organization_id", None)
+            if isinstance(instance, Organization):
+                organization_id = instance.id
             if isinstance(organization_id, uuid.UUID):
                 scopes.add(_scope("ORGANIZATION", organization_id, organization_id))
+            else:
+                # Contracts and contract items are linked to an account rather
+                # than carrying organization_id directly. Their primary key is
+                # not an organization id; invalidate globally instead of
+                # writing an invalid FK-backed revision row.
+                scopes.add(_scope("GLOBAL", GLOBAL_SCOPE_ID))
         if isinstance(instance, event_models):
             event_id = getattr(instance, "event_id", None) or (getattr(instance, "id", None) if isinstance(instance, Event) else None)
             organization_id = getattr(instance, "organization_id", None)
@@ -84,7 +129,7 @@ def _revision_scopes(session: Session) -> set[tuple[str, uuid.UUID, uuid.UUID | 
                 scopes.add(_scope("EVENT", event_id, organization_id if isinstance(organization_id, uuid.UUID) else None))
             if isinstance(organization_id, uuid.UUID):
                 scopes.add(_scope("ORGANIZATION", organization_id, organization_id))
-        if isinstance(instance, (EntitlementOverrideRequest, CapabilityRestriction, *metered_models)):
+        if isinstance(instance, (EntitlementOverrideRequest, CapabilityRestriction)):
             organization_id = getattr(instance, "organization_id", None)
             event_id = getattr(instance, "event_id", None)
             if isinstance(event_id, uuid.UUID):
@@ -93,6 +138,22 @@ def _revision_scopes(session: Session) -> set[tuple[str, uuid.UUID, uuid.UUID | 
                 scopes.add(_scope("ORGANIZATION", organization_id, organization_id))
             else:
                 scopes.add(_scope("GLOBAL", GLOBAL_SCOPE_ID))
+        if isinstance(instance, metered_models):
+            # Quota/usage mutations change usage-bearing capability responses,
+            # but cannot grant or revoke a feature. Keeping their revision
+            # separate prevents an upload reservation from invalidating the
+            # feature-only authorization result that must be rechecked after
+            # external storage I/O.
+            organization_id = getattr(instance, "organization_id", None)
+            event_id = getattr(instance, "event_id", None)
+            if isinstance(event_id, uuid.UUID):
+                scopes.add(_scope(
+                    "USAGE_EVENT",
+                    event_id,
+                    organization_id if isinstance(organization_id, uuid.UUID) else None,
+                ))
+            elif isinstance(organization_id, uuid.UUID):
+                scopes.add(_scope("USAGE_ORGANIZATION", organization_id, organization_id))
     return scopes
 
 
@@ -133,6 +194,13 @@ def register_capability_revision_listeners() -> None:
             )
             connection.execute(statement)
 
+    @sqlalchemy_event.listens_for(Session, "after_rollback")
+    def clear_rolled_back_capability_scopes(session: Session) -> None:
+        # Test transactions and failed requests may reuse the Session object.
+        # A scope collected before rollback must never leak into the next
+        # transaction, where its organization may no longer exist.
+        session.info.pop(_PENDING_KEY, None)
+
 
 class CapabilityCacheService:
     # Compatibility default; callers should use ttl_seconds() so operators
@@ -151,15 +219,24 @@ class CapabilityCacheService:
         global_revision: int = 0,
         organization_revision: int = 0,
         event_revision: int = 0,
+        usage_organization_revision: int = 0,
+        usage_event_revision: int = 0,
+        include_usage: bool = False,
     ) -> str:
         """Build the same revision token from values already loaded by a query."""
         requested = [("GLOBAL", GLOBAL_SCOPE_ID), ("ORGANIZATION", organization_id)]
         if event_id:
             requested.append(("EVENT", event_id))
+        if include_usage:
+            requested.append(("USAGE_ORGANIZATION", organization_id))
+            if event_id:
+                requested.append(("USAGE_EVENT", event_id))
         revisions = {
             ("GLOBAL", GLOBAL_SCOPE_ID): global_revision,
             ("ORGANIZATION", organization_id): organization_revision,
             ("EVENT", event_id): event_revision,
+            ("USAGE_ORGANIZATION", organization_id): usage_organization_revision,
+            ("USAGE_EVENT", event_id): usage_event_revision,
         }
         material = [
             (scope_type, str(scope_id), int(revisions.get((scope_type, scope_id), 0)))
@@ -173,10 +250,20 @@ class CapabilityCacheService:
         return bool(session.new or session.dirty or session.deleted or session.info.get(_PENDING_KEY))
 
     @staticmethod
-    async def revision_token(db: AsyncSession, organization_id: uuid.UUID, event_id: uuid.UUID | None = None) -> str:
+    async def revision_token(
+        db: AsyncSession,
+        organization_id: uuid.UUID,
+        event_id: uuid.UUID | None = None,
+        *,
+        include_usage: bool = True,
+    ) -> str:
         requested = [("GLOBAL", GLOBAL_SCOPE_ID), ("ORGANIZATION", organization_id)]
         if event_id:
             requested.append(("EVENT", event_id))
+        if include_usage:
+            requested.append(("USAGE_ORGANIZATION", organization_id))
+            if event_id:
+                requested.append(("USAGE_EVENT", event_id))
         rows = (await db.execute(
             select(CapabilityRevision.scope_type, CapabilityRevision.scope_id, CapabilityRevision.revision)
             .where(tuple_(CapabilityRevision.scope_type, CapabilityRevision.scope_id).in_(requested))
@@ -201,7 +288,12 @@ class CapabilityCacheService:
 
     @staticmethod
     async def get(db: AsyncSession, organization_id: uuid.UUID, event_id: uuid.UUID | None, environment: str, user_id: uuid.UUID | None, variant: str = "full", revision: str | None = None) -> tuple[str, dict[str, Any] | None]:
-        revision = revision or await CapabilityCacheService.revision_token(db, organization_id, event_id)
+        revision = revision or await CapabilityCacheService.revision_token(
+            db,
+            organization_id,
+            event_id,
+            include_usage=not variant.startswith("features"),
+        )
         if CapabilityCacheService.has_pending_changes(db):
             return revision, None
         value = await cache_service.get_json(

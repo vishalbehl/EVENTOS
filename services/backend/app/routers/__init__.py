@@ -25,6 +25,7 @@ from app.modules.platform.permissions.router import router as permissions_router
 from app.modules.rbac.routers import events, settings, rbac, global_settings, organisations
 from app.modules.speakers.routers import sessions, speakers, portal, speaker_profiles
 from app.modules.abstracts.router import router as abstracts_router
+from app.modules.programme.router import public_router as programme_public_router, router as programme_router
 from app.modules.speakers.routers.session_builder import router as session_builder_router, tracks_router
 from app.modules.presentations.routers import bundles, files, queue, posters, storage
 from app.modules.venue.routers import rooms, rooms_devices, attendance, capacity, srr, sync
@@ -66,6 +67,10 @@ from app.modules.website_builder.router import event_website_router, platform_we
 
 
 api_router = APIRouter()
+from app.modules.rbac.routers.access_foundation import router as access_foundation_router
+api_router.include_router(access_foundation_router)
+from app.modules.rbac.routers.client_relationships import router as client_relationship_router
+api_router.include_router(client_relationship_router)
 
 # ── Phase 5: Commercial Catalog, Inventory & Pricing Engine ────
 from app.modules.commercial.router import router as commercial_router
@@ -130,6 +135,8 @@ api_router.include_router(sessions.router)
 api_router.include_router(tracks_router)
 api_router.include_router(speakers.router)
 api_router.include_router(abstracts_router)
+api_router.include_router(programme_router)
+api_router.include_router(programme_public_router)
 api_router.include_router(speaker_profiles.router)
 api_router.include_router(bundles.router)
 api_router.include_router(rooms.router)
@@ -162,7 +169,9 @@ api_router.include_router(participant_roles.router)
 api_router.include_router(registrations.router)
 api_router.include_router(registration_portal.router)
 api_router.include_router(form_categories.router)
+api_router.include_router(form_categories.platform_router)
 api_router.include_router(form_templates.router)
+api_router.include_router(form_templates.platform_router)
 api_router.include_router(design_studio_settings.router)
 api_router.include_router(capacity.router)
 api_router.include_router(badges.router)
@@ -173,6 +182,7 @@ api_router.include_router(sync.organizer_router)
 api_router.include_router(sync.source_router)
 api_router.include_router(payments.router)
 api_router.include_router(portal_auth.router)
+api_router.include_router(portal_auth.users_router)
 api_router.include_router(portal_dashboard.router)
 
 # ── Agenda Domain Architecture ──────────────────────────────
@@ -196,15 +206,17 @@ from app.modules.developer.routers.developer import router as developer_router
 api_router.include_router(developer_router)
 
 # ── Phase 4: Billing & Plan Usage ─────────────────────────────
-from app.modules.billing.routers.billing import router as billing_router
-from app.modules.billing.routers.activations import router as activations_router
+# Cloud billing is served only by the versioned commercial router.  The
+# pre-Phase-1 plan/activation routers were removed so no request can resolve
+# through the deleted subscription pricing model.
 from app.modules.billing.routers.provider_webhooks import router as provider_webhooks_router
 from app.modules.billing.routers.capabilities import router as capabilities_router, admin_router as capability_admin_router
-api_router.include_router(billing_router)
-api_router.include_router(activations_router)
+from app.modules.billing.routers.cloud_commercial import router as cloud_commercial_router, admin_router as cloud_commercial_admin_router
 api_router.include_router(provider_webhooks_router)
 api_router.include_router(capabilities_router)
 api_router.include_router(capability_admin_router)
+api_router.include_router(cloud_commercial_router)
+api_router.include_router(cloud_commercial_admin_router)
 
 # ── Super Admin Namespace ──────────────────────────────────────
 from app.modules.superadmin.router import commercial_staff_router, superadmin_router

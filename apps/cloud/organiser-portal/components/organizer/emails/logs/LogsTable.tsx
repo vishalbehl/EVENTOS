@@ -14,50 +14,61 @@ import {
     ChevronLeft,
     ChevronRight
 } from 'lucide-react'
-import { getEmailLogs, EmailLog, PaginatedResponse } from '@/services/email-service'
+import { useDeliveryLogPage } from '@/hooks/useCommunicationPages'
+import { usePermissions } from '@/hooks/usePermissions'
+import { useAuthStore } from '@/store/use-auth-store'
+import type { ApiError } from '@/lib/api-client'
+import { safeCsv } from '@/lib/safe-csv'
 import { formatDateTimeInTZ } from '@/lib/utils'
 
 interface Props {
     eventId: string
     targetType?: 'speaker' | 'participant'
+    campaignId?: string
 }
 
-export default function LogsTable({ eventId, targetType = 'speaker' }: Props) {
-    const [data, setData] = useState<PaginatedResponse<EmailLog>>({
-        items: [],
-        total: 0,
-        page: 1,
-        page_size: 50
-    })
-    const [loading, setLoading] = useState(true)
+export default function LogsTable({ eventId, targetType = 'speaker', campaignId }: Props) {
+    const { user } = useAuthStore()
+    const access = usePermissions(eventId)
+    // Reset all local filters/cursors when the identity, tenant or policy changes.
+    return <ScopedLogsTable key={JSON.stringify([user?.id, user?.organization_id,
+        eventId, targetType, campaignId, access.policyRevision])} eventId={eventId} targetType={targetType} campaignId={campaignId} />
+}
+
+function ScopedLogsTable({ eventId, targetType = 'speaker', campaignId }: Props) {
+    const access = usePermissions(eventId)
+    const [cursors, setCursors] = useState<(string | undefined)[]>([undefined])
     const [statusFilter, setStatusFilter] = useState('')
     const [search, setSearch] = useState('')
-
+    const logs = useDeliveryLogPage(eventId, {
+        target: targetType, campaignId, cursor: cursors[cursors.length - 1], status: statusFilter || undefined,
+    })
+    const problem = (logs.accessError || logs.error) as ApiError | null
+    const [retrySeconds, setRetrySeconds] = useState(0)
     useEffect(() => {
-        if (eventId && eventId !== 'undefined' && eventId !== '[eventId]') {
-            fetchLogs(1)
-        }
-    }, [eventId, statusFilter, targetType])
-
-    const fetchLogs = async (page: number) => {
-        setLoading(true)
-        try {
-            const res = await getEmailLogs(eventId, {
-                page,
-                page_size: 50,
-                status: statusFilter || undefined,
-                target_type: targetType,
-            } as any)
-            setData(res)
-        } catch (err) {
-            console.error('Failed to load logs', err)
-        } finally {
-            setLoading(false)
-        }
-    }
+        const delay = Math.min(86400, Math.max(0, problem?.retryAfter ?? 0))
+        const deadline = Date.now() + delay * 1000
+        const update = () => setRetrySeconds(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)))
+        update()
+        if (!delay) return
+        const timer = window.setInterval(update, 1000)
+        return () => window.clearInterval(timer)
+    }, [problem])
+    const loading = logs.accessLoading || logs.isFetching
+        || (!problem && !logs.accessDenied && !logs.data)
+    const exportAllowed = !access.isFetching && !access.error
+        && access.permissions.includes('ANALYTICS:EXPORT')
+    const errorText = logs.accessDenied ? 'You do not have permission to view these logs.'
+        : problem?.status === 401 ? 'Your session expired. Please sign in again.'
+        : problem?.status === 403 ? 'Your access to these logs is no longer available.'
+        : problem?.status === 404 ? 'These logs are not available in this context.'
+        : problem?.status === 429 ? 'Too many requests. Wait before trying again.'
+        : problem?.status === 503 ? 'The service is temporarily unavailable.'
+        : problem?.status === 409 || problem?.status === 412 ? 'The context changed. Reload the first page.'
+        : problem ? 'Logs could not be loaded. Please try again.' : null
 
     // Client-side search filter for current page
-    const filteredLogs = data.items.filter((log) => {
+    const filteredLogs = (logs.data?.items ?? []).filter((log) => {
         const matchesSearch =
             log.to_email.toLowerCase().includes(search.toLowerCase()) ||
             log.subject.toLowerCase().includes(search.toLowerCase())
@@ -65,6 +76,7 @@ export default function LogsTable({ eventId, targetType = 'speaker' }: Props) {
     })
 
     const exportCSV = () => {
+        if (!exportAllowed || !logs.data || loading || errorText) return
         const headers = ['Email', 'Subject', 'Status', 'Opened At', 'Sent At']
         const rows = filteredLogs.map((log) => [
             log.to_email,
@@ -73,11 +85,14 @@ export default function LogsTable({ eventId, targetType = 'speaker' }: Props) {
             log.opened_at || '',
             log.sent_at,
         ])
-        const csvContent = 'data:text/csv;charset=utf-8,' + [headers, ...rows].map((e) => e.join(',')).join('\n')
+        const url = URL.createObjectURL(new Blob([safeCsv([headers, ...rows])], { type: 'text/csv;charset=utf-8' }))
         const link = document.createElement('a')
-        link.href = encodeURI(csvContent)
-        link.download = 'email_logs.csv'
+        link.href = url
+        link.download = 'email_logs_visible_page.csv'
+        document.body.appendChild(link)
         link.click()
+        link.remove()
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000)
     }
 
     return (
@@ -88,7 +103,7 @@ export default function LogsTable({ eventId, targetType = 'speaker' }: Props) {
                     <div className="relative flex-1 group">
                         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--muted)] group-focus-within:text-[var(--pri)] transition-colors" />
                         <input
-                            placeholder="Search by email or subject..."
+                            placeholder="Filter this page by email or subject..."
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             className="w-full bg-white/5 border border-white/5 rounded-2xl py-3 pl-12 pr-4 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--pri)]/50 focus:bg-white/10 transition-all"
@@ -99,7 +114,7 @@ export default function LogsTable({ eventId, targetType = 'speaker' }: Props) {
                         <Filter className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--muted)]" />
                         <select
                             value={statusFilter}
-                            onChange={(e) => setStatusFilter(e.target.value)}
+                            onChange={(e) => { setStatusFilter(e.target.value); setCursors([undefined]) }}
                             className="bg-white/5 border border-white/5 rounded-2xl py-3 pl-12 pr-10 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--pri)]/50 appearance-none cursor-pointer"
                         >
                             <option value="">All Status</option>
@@ -107,16 +122,20 @@ export default function LogsTable({ eventId, targetType = 'speaker' }: Props) {
                             <option value="delivered">Delivered</option>
                             <option value="failed">Failed</option>
                             <option value="bounced">Bounced</option>
+                            <option value="sending">Sending</option>
+                            <option value="delivery_unknown">Outcome unconfirmed</option>
                         </select>
                     </div>
                 </div>
 
                 <button
                     onClick={exportCSV}
+                    disabled={!exportAllowed || loading || !!errorText || !filteredLogs.length}
+                    title={exportAllowed ? 'Only the visible, filtered page is exported.' : 'Export permission is required.'}
                     className="flex items-center gap-2 px-6 py-3 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-widest text-[var(--text)] hover:bg-white/10 transition-all active:scale-95"
                 >
                     <Download className="w-4 h-4" />
-                    Export CSV
+                    Export visible page
                 </button>
             </div>
 
@@ -134,7 +153,23 @@ export default function LogsTable({ eventId, targetType = 'speaker' }: Props) {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5">
-                            {loading ? (
+                            {errorText ? (
+                                <tr><td colSpan={5} className="p-12 text-center" role="alert">
+                                    <p>{errorText}</p>
+                                    {retrySeconds > 0 && <p>Try again in {retrySeconds}s.</p>}
+                                    {problem?.correlationId && <p>Reference: {problem.correlationId}</p>}
+                                    {!logs.accessDenied && problem?.status !== 401 && problem?.status !== 403
+                                        && problem?.status !== 404 && <button disabled={retrySeconds > 0 || logs.isFetching}
+                                        onClick={() => {
+                                            if (logs.accessError) { void logs.refreshAccess(); return }
+                                            if (cursors.length > 1 && (problem?.status === 409 || problem?.status === 412)) {
+                                                setCursors([undefined]); return
+                                            }
+                                            void logs.refetch()
+                                        }}
+                                        className="mt-3 px-4 py-2">Retry</button>}
+                                </td></tr>
+                            ) : loading ? (
                                 <tr>
                                     <td colSpan={5} className="p-12 text-center text-[var(--muted)] animate-pulse uppercase text-[10px] font-black tracking-widest">
                                         Synchronizing Registry...
@@ -199,30 +234,20 @@ export default function LogsTable({ eventId, targetType = 'speaker' }: Props) {
                 </div>
 
                 {/* Pagination Controls */}
-                <div className="p-5 border-t border-white/5 flex items-center justify-between bg-white/[0.02] shrink-0">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-[var(--muted)]">
-                        Showing {filteredLogs.length} of {data.total} records
-                    </p>
-                    <div className="flex items-center gap-4">
-                        <button
-                            onClick={() => fetchLogs(data.page - 1)}
-                            disabled={data.page === 1 || loading}
-                            className="p-2 bg-white/5 rounded-xl text-[var(--muted)] hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-                        >
-                            <ChevronLeft className="w-4 h-4" />
-                        </button>
-                        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text)]">
-                            Page {data.page}
-                        </span>
-                        <button
-                            onClick={() => fetchLogs(data.page + 1)}
-                            disabled={data.page * data.page_size >= data.total || loading}
-                            className="p-2 bg-white/5 rounded-xl text-[var(--muted)] hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-                        >
-                            <ChevronRight className="w-4 h-4" />
-                        </button>
+                <div className="flex items-center justify-between gap-3 p-4">
+                    <span className="text-sm text-[var(--muted)]">{filteredLogs.length} visible records · up to 50 per page</span>
+                    <div className="flex items-center gap-3">
+                        <button disabled={loading || !!errorText || cursors.length <= 1}
+                            onClick={() => setCursors(previous => previous.slice(0, -1))}
+                            aria-label="Previous log page"><ChevronLeft className="w-4 h-4" /></button>
+                        <button disabled={loading || cursors.length <= 1}
+                            onClick={() => setCursors([undefined])}>First page</button>
+                        <button disabled={loading || !!errorText || !logs.data?.has_next || !logs.data?.next_cursor}
+                            onClick={() => { const next = logs.data?.next_cursor; if (next) setCursors(previous => [...previous.slice(-99), next]) }}
+                            aria-label="Next log page"><ChevronRight className="w-4 h-4" /></button>
                     </div>
                 </div>
+                {cursors.length >= 100 && <p className="p-4 text-sm">The most recent 100 page cursors are retained. Use First page to restart.</p>}
             </div>
         </div>
     )

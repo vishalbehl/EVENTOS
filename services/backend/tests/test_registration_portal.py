@@ -6,6 +6,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, Response
 
+from app.core.tenant_context import TenantContextGuard
 from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
 from app.modules.registration.schemas.registration_form_config import RegistrationFormConfigUpdate, FormFieldConfig
@@ -27,11 +28,11 @@ async def test_get_form_config_default(
     config = await get_registration_form_config(event=event, response=Response(), db=db)
     
     # Endpoints now return a dict with merged terms_and_conditions
-    assert config["event_id"] == event.id
-    assert "is_live" in config
-    assert len(config["fields"]) > 0
+    assert config.event_id == event.id
+    assert isinstance(config.is_live, bool)
+    assert len(config.fields) > 0
     # Check First Name is a default field
-    first_name_field = next(f for f in config["fields"] if f["id"] == "first_name")
+    first_name_field = next(f for f in config.fields if f["id"] == "first_name")
     assert first_name_field["is_default"] is True
     assert first_name_field["is_required"] is True
 
@@ -94,8 +95,10 @@ async def test_registration_query_service_uses_stable_cursor_pages(
 @pytest.mark.asyncio
 async def test_update_form_config(
     db: AsyncSession,
-    event: Event
+    event: Event,
+    organizer: User,
 ):
+    await activate_event_for_test(db, event)
     # Form fields payload
     fields_payload = [
         FormFieldConfig(
@@ -133,24 +136,34 @@ async def test_update_form_config(
         fields=[field.model_dump() for field in fields_payload]
     )
     
-    config = await update_registration_form_config(payload=payload, event=event, db=db)
-    
-    # Endpoints now return a dict with merged terms_and_conditions
-    assert config["is_live"] is True
-    assert len(config["fields"]) == 3
-    assert config["fields"][0]["label"] == "Custom Full Name Label"
-    assert config["fields"][2]["id"] == "custom_diet"
-    assert config["version"] == 2
-
-    with pytest.raises(HTTPException) as stale:
-        await update_registration_form_config(
-            payload=RegistrationFormConfigUpdate(is_live=False),
+    async with TenantContextGuard.scoped(db, event.organization_id):
+        config = await update_registration_form_config(
+            payload=payload,
             event=event,
+            current_user=organizer,
             db=db,
             if_match='"1"',
+            idempotency_key=f"form-update-{event.id}",
         )
-    assert stale.value.status_code == 409
-    assert stale.value.detail["code"] == "RESOURCE_VERSION_CONFLICT"
+
+        # Endpoints now return a dict with merged terms_and_conditions
+        assert config["is_live"] is True
+        assert len(config["fields"]) == 3
+        assert config["fields"][0]["label"] == "Custom Full Name Label"
+        assert config["fields"][2]["id"] == "custom_diet"
+        assert config["version"] == 2
+
+        with pytest.raises(HTTPException) as stale:
+            await update_registration_form_config(
+                payload=RegistrationFormConfigUpdate(is_live=False),
+                event=event,
+                current_user=organizer,
+                db=db,
+                if_match='"1"',
+                idempotency_key=f"form-stale-{event.id}",
+            )
+        assert stale.value.status_code == 412
+        assert stale.value.detail["code"] == "RESOURCE_VERSION_CONFLICT"
 
 
 @pytest.mark.asyncio
@@ -172,21 +185,23 @@ async def test_public_registration_closed_rejected(
     db: AsyncSession,
     event: Event
 ):
-    # Attempting to register when not live should raise HTTPException (400)
+    # Draft and otherwise unavailable public events are concealed.
     with pytest.raises(HTTPException) as exc_info:
         await public_register_participant(
             event_id=event.id,
             payload={"name": "John Doe", "email": "johndoe@example.com"},
-            db=db
+            db=db,
+            idempotency_key=f"closed-registration-{event.id}",
         )
-    assert exc_info.value.status_code == 400
-    assert "closed" in exc_info.value.detail.lower()
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail["code"] == "PUBLIC_FORM_NOT_FOUND"
 
 
 @pytest.mark.asyncio
 async def test_public_registration_flow(
     db: AsyncSession,
-    event: Event
+    event: Event,
+    organizer: User,
 ):
     await activate_event_for_test(db, event)
     # 1. Update form config to live
@@ -224,7 +239,24 @@ async def test_public_registration_flow(
         is_live=True,
         fields=[field.model_dump() for field in fields_payload]
     )
-    await update_registration_form_config(payload=setup_payload, event=event, db=db)
+    await update_registration_form_config(
+        payload=setup_payload,
+        event=event,
+        current_user=organizer,
+        db=db,
+        if_match='"1"',
+        idempotency_key=f"public-form-setup-{event.id}",
+    )
+    from app.modules.registration.models.participant_role import ParticipantRole
+    db.add(ParticipantRole(
+        event_id=event.id,
+        category="General",
+        name="Delegate",
+        role_code="DEL",
+        is_active=True,
+        is_default=True,
+    ))
+    await db.commit()
     
     # 2. Public submission of registration form
     reg_payload = {
@@ -237,7 +269,8 @@ async def test_public_registration_flow(
     res = await public_register_participant(
         event_id=event.id,
         payload=reg_payload,
-        db=db
+        db=db,
+        idempotency_key=f"public-registration-{event.id}",
     )
     
     assert res["status"] == "submitted"
@@ -263,7 +296,8 @@ async def test_public_registration_flow(
         await public_register_participant(
             event_id=event.id,
             payload=reg_payload,
-            db=db
+            db=db,
+            idempotency_key=f"public-registration-duplicate-{event.id}",
         )
     assert exc_info.value.status_code == 400
     assert "already registered" in exc_info.value.detail.lower()

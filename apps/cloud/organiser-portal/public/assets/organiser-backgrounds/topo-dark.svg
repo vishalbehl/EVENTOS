@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1200" viewBox="0 0 1920 1200" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="150" y1="20" x2="1770" y2="1180" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#08090B"/><stop offset=".3" stop-color="#0F1116"/><stop offset=".65" stop-color="#151821"/><stop offset="1" stop-color="#0C0E13"/>
+    </linearGradient>
+    <linearGradient id="topoWaveA" x1="960" y1="440" x2="960" y2="1080" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1C202C"/><stop offset="1" stop-color="#12151E"/>
+    </linearGradient>
+    <linearGradient id="topoWaveB" x1="960" y1="600" x2="960" y2="1200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#151924"/><stop offset="1" stop-color="#090B10"/>
+    </linearGradient>
+    <filter id="softGlow"><feGaussianBlur stdDeviation="50"/></filter>
+    <pattern id="topoGrid" width="140" height="140" patternUnits="userSpaceOnUse">
+      <path d="M140 0H0V140" stroke="#38BDF8" stroke-opacity=".04"/>
+      <path d="M70 0C70 38.66 38.66 70 0 70M140 70C101.34 70 70 101.34 70 140" stroke="#38BDF8" stroke-opacity=".03" fill="none"/>
+    </pattern>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#sky)"/>
+  <ellipse cx="560" cy="240" rx="500" ry="240" fill="#38BDF8" fill-opacity=".15" filter="url(#softGlow)"/>
+  <ellipse cx="1420" cy="220" rx="480" ry="250" fill="#94A3B8" fill-opacity=".14" filter="url(#softGlow)"/>
+  <path d="M0 660C170 590 320 640 490 570C670 490 820 580 1000 500C1180 430 1340 510 1520 450C1680 390 1800 430 1920 380V1200H0V660Z" fill="url(#topoWaveA)" fill-opacity=".9"/>
+  <path d="M0 820C180 740 340 800 520 720C710 640 870 730 1060 650C1250 570 1420 660 1610 590C1750 540 1850 570 1920 530V1200H0V820Z" fill="#161A24" fill-opacity=".88"/>
+  <path d="M0 960C200 880 380 930 580 850C770 770 940 860 1130 780C1330 700 1500 790 1700 710C1820 660 1880 680 1920 650V1200H0V960Z" fill="url(#topoWaveB)" fill-opacity=".98"/>
+  <rect width="1920" height="1200" fill="url(#topoGrid)"/>
+</svg>
+

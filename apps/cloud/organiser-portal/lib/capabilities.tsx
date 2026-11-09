@@ -2,6 +2,7 @@
 
 import { cloneElement, createContext, isValidElement, useContext, type ReactElement, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { accessContextCacheKey, isPlatformSelfSession, useAuthStore } from "@/store/use-auth-store";
 import { AlertTriangle, Lock, RefreshCw, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api-client";
@@ -143,14 +144,18 @@ const DEFAULT_CAPABILITY_CONTEXT: CapabilityContextValue = {
 };
 
 export function OrganizationCapabilitiesProvider({ children }: { children: ReactNode }) {
+  const platformSelf = useAuthStore(isPlatformSelfSession);
+  const { user, activeContext, isContextSwitching, isAuthenticated } = useAuthStore();
+  const contextKey = accessContextCacheKey(activeContext, user?.organization_id);
   const query = useQuery({
-    queryKey: ["organization-capabilities"],
-    queryFn: () => apiGet<CapabilityResponse>("/organizations/current/capabilities"),
+    queryKey: ["organization-capabilities", user?.id, contextKey],
+    queryFn: ({ signal }) => apiGet<CapabilityResponse>("/organizations/current/capabilities", { signal }),
+    enabled: isAuthenticated && !isContextSwitching && !platformSelf,
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
     retry: 1,
   });
-  return <OrganizationCapabilityContext.Provider value={{ data: query.data, isLoading: query.isLoading, isError: query.isError, refetch: () => void query.refetch() }}>{children}</OrganizationCapabilityContext.Provider>;
+  return <OrganizationCapabilityContext.Provider value={{ data: isContextSwitching ? undefined : query.data, isLoading: query.isLoading || isContextSwitching, isError: query.isError, refetch: () => void query.refetch() }}>{children}</OrganizationCapabilityContext.Provider>;
 }
 
 export function useOrganizationCapabilities() {
@@ -177,10 +182,9 @@ export function useOrganizationOperationAccess(operation: string) {
   const { data, isLoading, isError } = useOrganizationCapabilities();
   const permissionState = usePermissions();
   const feature = Object.values(data?.features ?? {}).find(item => item.operations?.includes(operation));
-  const requiredPermission = feature?.operation_permissions?.[operation] ?? null;
-  const permissionAllowed = requiredPermission === null
-    || permissionState.permissions.includes("*")
-    || permissionState.permissions.includes(requiredPermission);
+  const requiredPermission = feature?.operation_permissions?.[operation];
+  const permissionAllowed = requiredPermission !== undefined && (requiredPermission === null
+    || permissionState.permissions.includes(requiredPermission));
   const availabilityReason = data?.availability?.available === false
     ? (data.availability.reason as CapabilityReason | undefined) ?? "RESOLUTION_UNAVAILABLE"
     : null;
@@ -230,10 +234,12 @@ export function useRemoteEventLimitAccess(
   limitKey: string,
   quantity = 1,
 ) {
+  const { user, activeContext, isContextSwitching, isAuthenticated } = useAuthStore();
+  const contextKey = accessContextCacheKey(activeContext, user?.organization_id);
   const query = useQuery({
-    queryKey: ["event-capabilities", eventId],
-    queryFn: () => apiGet<CapabilityResponse>(`/events/${eventId}/capabilities`),
-    enabled: Boolean(eventId),
+    queryKey: ["event-capabilities", user?.id, contextKey, eventId],
+    queryFn: ({ signal }) => apiGet<CapabilityResponse>(`/events/${eventId}/capabilities`, { signal }),
+    enabled: Boolean(eventId) && isAuthenticated && !isContextSwitching,
     staleTime: 0,
     refetchOnWindowFocus: true,
     retry: 1,
@@ -268,15 +274,17 @@ export function useRemoteEventLimitAccess(
 }
 
 export function EventCapabilitiesProvider({ eventId, children }: { eventId?: string; children: ReactNode }) {
+  const { user, activeContext, isContextSwitching, isAuthenticated } = useAuthStore();
+  const contextKey = accessContextCacheKey(activeContext, user?.organization_id);
   const query = useQuery({
-    queryKey: ["event-capabilities", eventId],
-    queryFn: () => apiGet<CapabilityResponse>(`/events/${eventId}/capabilities`),
-    enabled: Boolean(eventId),
+    queryKey: ["event-capabilities", user?.id, contextKey, eventId],
+    queryFn: ({ signal }) => apiGet<CapabilityResponse>(`/events/${eventId}/capabilities`, { signal }),
+    enabled: Boolean(eventId) && isAuthenticated && !isContextSwitching,
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
     retry: 1,
   });
-  return <EventCapabilityContext.Provider value={{ data: query.data, eventId, isLoading: query.isLoading, isError: query.isError, refetch: () => void query.refetch() }}>{children}</EventCapabilityContext.Provider>;
+  return <EventCapabilityContext.Provider value={{ data: isContextSwitching ? undefined : query.data, eventId, isLoading: query.isLoading || isContextSwitching, isError: query.isError, refetch: () => void query.refetch() }}>{children}</EventCapabilityContext.Provider>;
 }
 
 export function useEventCapabilities() {
@@ -301,6 +309,11 @@ export function useFeatureAccess(featureKey?: string) {
 
 export function capabilityForPath(features: Record<string, ResolvedFeature> | undefined, pathname: string, eventId?: string) {
   if (!pathname) return undefined;
+  // Commercial management is governed by the account/contract APIs themselves.
+  // It must stay reachable when an Event plan has excluded operational planning.
+  if (eventId && (pathname === `/events/${eventId}/commercial` || pathname.startsWith(`/events/${eventId}/commercial/`))) {
+    return undefined;
+  }
   const matches: Array<{ key: string; length: number }> = [];
   PORTAL_ROUTE_BINDINGS.forEach(binding => {
     const concrete = eventId ? binding.route.replaceAll(":eventId", eventId) : binding.route;
@@ -392,7 +405,7 @@ export function LockedFeature({
       </p>
       {commercial ? (
         <Link
-          href={feature?.upgrade_url || "/subscriptions"}
+          href={feature?.upgrade_url || "/commercial/overview"}
           className="mt-6 rounded-xl bg-[var(--color-primary-mid)] px-4 py-2 text-sm font-semibold text-black"
         >
           Request access
@@ -426,7 +439,7 @@ export function QuotaExceeded({
       </p>
       {limit?.period ? <p className="mt-2 text-xs uppercase tracking-wide text-[var(--color-text-muted)]">Period: {limit.period.replaceAll("_", " ")}</p> : null}
       <Link
-        href="/subscriptions"
+        href="/commercial/overview"
         className="mt-6 rounded-xl bg-[var(--color-primary-mid)] px-4 py-2 text-sm font-semibold text-black"
       >
         Request extra allocation
@@ -490,10 +503,9 @@ export function useOperationAccess(operation: string) {
   const { data, eventId, isLoading, isError } = useEventCapabilities();
   const permissionState = usePermissions(eventId);
   const feature = Object.values(data?.features ?? {}).find(item => item.operations?.includes(operation));
-  const requiredPermission = feature?.operation_permissions?.[operation] ?? null;
-  const permissionAllowed = requiredPermission === null
-    || permissionState.permissions.includes("*")
-    || permissionState.permissions.includes(requiredPermission);
+  const requiredPermission = feature?.operation_permissions?.[operation];
+  const permissionAllowed = requiredPermission !== undefined && (requiredPermission === null
+    || permissionState.permissions.includes(requiredPermission));
   const availabilityReason = data?.availability?.available === false
     ? (data.availability.reason as CapabilityReason | undefined) ?? "RESOLUTION_UNAVAILABLE"
     : null;

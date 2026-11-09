@@ -66,7 +66,6 @@ async def test_platform_support_read_is_tenant_scoped_and_audited(
     other_org = Organization(
         name="Other Support Tenant",
         slug=f"support-other-{uuid.uuid4().hex[:8]}",
-        plan="pro",
     )
     db.add(other_org)
     await db.flush()
@@ -108,7 +107,7 @@ async def test_platform_support_read_is_tenant_scoped_and_audited(
 
 
 @pytest.mark.asyncio
-async def test_billing_support_endpoint_has_same_scope_contract(
+async def test_retired_billing_support_endpoint_is_unavailable(
     client: AsyncClient,
     super_admin: User,
     organization: Organization,
@@ -117,14 +116,13 @@ async def test_billing_support_endpoint_has_same_scope_contract(
         "/superadmin/billing-admin/entitlements",
         headers={**auth_headers(super_admin), "X-Support-Reason": SUPPORT_REASON},
     )
-    assert unscoped.status_code == 422
+    assert unscoped.status_code == 404
 
     scoped = await client.get(
         f"/superadmin/billing-admin/entitlements?organization_id={organization.id}",
         headers={**auth_headers(super_admin), "X-Support-Reason": SUPPORT_REASON},
     )
-    assert scoped.status_code == 200, scoped.text
-    assert scoped.json() == {"items": [], "next_cursor": None, "has_next": False}
+    assert scoped.status_code == 404, scoped.text
 
 
 @pytest.mark.asyncio
@@ -280,7 +278,6 @@ async def test_crm_mutations_reject_cross_tenant_references_and_active_dependenc
     other_org = Organization(
         name="CRM Reference Isolation Tenant",
         slug=f"crm-reference-{uuid.uuid4().hex[:8]}",
-        plan="pro",
     )
     db.add(other_org)
     await db.flush()
@@ -547,7 +544,6 @@ async def test_crm_opportunity_list_and_account_workspace_are_complete_scoped_an
     other_org = Organization(
         name="Hidden CRM Workspace Tenant",
         slug=f"hidden-workspace-{uuid.uuid4().hex[:8]}",
-        plan="pro",
     )
     db.add(other_org)
     await db.flush()

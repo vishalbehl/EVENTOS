@@ -2,9 +2,11 @@
 
 import { useState, useMemo } from "react";
 import { Clock, MapPin, Users, AlertTriangle, CheckCircle2, Building2, Layers } from "lucide-react";
-import { cn, formatTimeRangeInTZ } from "@/lib/utils";
+import { cn, formatTimeRangeInTZ, getFallbackTimezone } from "@/lib/utils";
 import { BuilderSession, BuilderRoom, useSessionBuilderStore } from "@/store/useSessionBuilderStore";
 import { Badge } from "@/components/ui/badge";
+import { TablePagination } from "@/components/organizer/common/TablePagination";
+import { useTablePagination } from "@/hooks/useTablePagination";
 
 interface SessionTableProps {
   sessions?: BuilderSession[];
@@ -14,6 +16,7 @@ interface SessionTableProps {
 export function SessionTable({ sessions = [], onSelectSession }: SessionTableProps) {
   const conflicts = useSessionBuilderStore((s) => s.conflicts);
   const rooms = useSessionBuilderStore((s) => s.rooms);
+  const eventTimezone = useSessionBuilderStore((s) => s.eventTimezone);
   const [selectedRoomFilter, setSelectedRoomFilter] = useState<string>("ALL");
 
   // Group sessions roomwise
@@ -187,80 +190,12 @@ export function SessionTable({ sessions = [], onSelectSession }: SessionTablePro
             </div>
 
             {/* Session Table for Room */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-[12px]">
-                <thead>
-                  <tr className="border-b border-default text-[10px] font-black uppercase tracking-wider text-muted bg-[color-mix(in_srgb,var(--text)_1%,transparent)]">
-                    <th className="py-3 px-6">Code</th>
-                    <th className="py-3 px-4">Session Name</th>
-                    <th className="py-3 px-4">Type</th>
-                    <th className="py-3 px-4">Schedule Time</th>
-                    <th className="py-3 px-4">Speakers</th>
-                    <th className="py-3 px-6">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-default/50 font-medium">
-                  {sessionList.length > 0 ? (
-                    sessionList.map((s) => {
-                      const hasConflict = conflicts.some((c) => c.session_ids.includes(s.id));
-                      const timezone = s.event_timezone || "UTC";
-
-                      return (
-                        <tr
-                          key={s.id}
-                          onClick={() => onSelectSession?.(s.id)}
-                          className="hover:bg-[color-mix(in_srgb,var(--text)_3%,transparent)] cursor-pointer transition-colors"
-                        >
-                          <td className="py-3.5 px-6 font-mono font-bold text-[var(--pri)]">
-                            {s.session_code?.toUpperCase()}
-                          </td>
-                          <td className="py-3.5 px-4 font-bold text-[var(--text)]">
-                            <div className="flex items-center gap-2">
-                              <span>{s.name}</span>
-                              {hasConflict && (
-                                <Badge variant="destructive" className="text-[9px] font-bold px-1 py-0">
-                                  Conflict
-                                </Badge>
-                              )}
-                            </div>
-                          </td>
-                          <td className="py-3.5 px-4">
-                            <Badge variant="outline" className="text-[10px] uppercase font-bold">
-                              {s.session_type}
-                            </Badge>
-                          </td>
-                          <td className="py-3.5 px-4 font-mono font-semibold text-[var(--pri)]">
-                            {formatTimeRangeInTZ(s.start_time, s.end_time, timezone)}
-                          </td>
-                          <td className="py-3.5 px-4 text-muted">
-                            {s.speakers && s.speakers.length > 0
-                              ? s.speakers.map((sp) => sp.full_name).join(", ")
-                              : "No speakers"}
-                          </td>
-                          <td className="py-3.5 px-6">
-                            {(s.readiness_pct || 0) >= 100 ? (
-                              <span className="text-[var(--success)] font-bold flex items-center gap-1 text-[11px]">
-                                <CheckCircle2 className="h-3 w-3" /> Ready
-                              </span>
-                            ) : (
-                              <span className="text-[var(--warn)] font-bold text-[11px]">
-                                {Math.round(s.readiness_pct || 0)}% ready
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })
-                  ) : (
-                    <tr>
-                      <td colSpan={6} className="py-8 text-center text-muted italic text-[11px]">
-                        No sessions scheduled for this room.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <RoomSessionGrid
+              sessionList={sessionList}
+              conflicts={conflicts}
+              eventTimezone={eventTimezone}
+              onSelectSession={onSelectSession}
+            />
           </div>
         ))}
 
@@ -284,60 +219,132 @@ export function SessionTable({ sessions = [], onSelectSession }: SessionTablePro
               </span>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-[12px]">
-                <thead>
-                  <tr className="border-b border-default text-[10px] font-black uppercase tracking-wider text-muted bg-[color-mix(in_srgb,var(--text)_1%,transparent)]">
-                    <th className="py-3 px-6">Code</th>
-                    <th className="py-3 px-4">Session Name</th>
-                    <th className="py-3 px-4">Type</th>
-                    <th className="py-3 px-4">Schedule Time</th>
-                    <th className="py-3 px-4">Speakers</th>
-                    <th className="py-3 px-6">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-default/50 font-medium">
-                  {unassignedSessions.map((s) => {
-                    const timezone = s.event_timezone || "UTC";
-                    return (
-                      <tr
-                        key={s.id}
-                        onClick={() => onSelectSession?.(s.id)}
-                        className="hover:bg-[color-mix(in_srgb,var(--text)_3%,transparent)] cursor-pointer transition-colors"
-                      >
-                        <td className="py-3.5 px-6 font-mono font-bold text-[var(--pri)]">
-                          {s.session_code?.toUpperCase()}
-                        </td>
-                        <td className="py-3.5 px-4 font-bold text-[var(--text)]">
-                          {s.name}
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <Badge variant="outline" className="text-[10px] uppercase font-bold">
-                            {s.session_type}
-                          </Badge>
-                        </td>
-                        <td className="py-3.5 px-4 font-mono font-semibold text-[var(--pri)]">
-                          {formatTimeRangeInTZ(s.start_time, s.end_time, timezone)}
-                        </td>
-                        <td className="py-3.5 px-4 text-muted">
-                          {s.speakers && s.speakers.length > 0
-                            ? s.speakers.map((sp) => sp.full_name).join(", ")
-                            : "No speakers"}
-                        </td>
-                        <td className="py-3.5 px-6">
-                          <span className="text-[var(--warn)] font-bold text-[11px]">
-                            Needs Room
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <RoomSessionGrid
+              sessionList={unassignedSessions}
+              conflicts={conflicts}
+              eventTimezone={eventTimezone}
+              onSelectSession={onSelectSession}
+              emptyMessage="No unallocated sessions."
+              statusFallback="Needs Room"
+            />
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+function RoomSessionGrid({
+  sessionList,
+  conflicts,
+  eventTimezone,
+  onSelectSession,
+  emptyMessage = "No sessions scheduled for this room.",
+  statusFallback = "Needs Room",
+}: {
+  sessionList: BuilderSession[];
+  conflicts: any[];
+  eventTimezone?: string;
+  onSelectSession?: (id: string) => void;
+  emptyMessage?: string;
+  statusFallback?: string;
+}) {
+  const {
+    currentPage,
+    setCurrentPage,
+    pageSize,
+    setPageSize,
+    paginatedItems,
+  } = useTablePagination(sessionList, 10);
+
+  return (
+    <>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-[12px]">
+          <thead>
+            <tr className="border-b border-default text-[10px] font-black uppercase tracking-wider text-muted bg-[color-mix(in_srgb,var(--text)_1%,transparent)]">
+              <th className="py-3 px-6">Code</th>
+              <th className="py-3 px-4">Session Name</th>
+              <th className="py-3 px-4">Type</th>
+              <th className="py-3 px-4">Schedule Time</th>
+              <th className="py-3 px-4">Speakers</th>
+              <th className="py-3 px-6">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-default/50 font-medium">
+            {paginatedItems.length > 0 ? (
+              paginatedItems.map((s) => {
+                const hasConflict = conflicts.some((c) => c.session_ids.includes(s.id));
+                const timezone = s.event_timezone || eventTimezone || getFallbackTimezone();
+
+                return (
+                  <tr
+                    key={s.id}
+                    onClick={() => onSelectSession?.(s.id)}
+                    className="hover:bg-[color-mix(in_srgb,var(--text)_3%,transparent)] cursor-pointer transition-colors"
+                  >
+                    <td className="py-3.5 px-6 font-mono font-bold text-[var(--pri)]">
+                      {s.session_code?.toUpperCase()}
+                    </td>
+                    <td className="py-3.5 px-4 font-bold text-[var(--text)]">
+                      <div className="flex items-center gap-2">
+                        <span>{s.name}</span>
+                        {hasConflict && (
+                          <Badge variant="destructive" className="text-[9px] font-bold px-1 py-0">
+                            Conflict
+                          </Badge>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <Badge variant="outline" className="text-[10px] uppercase font-bold">
+                        {s.session_type}
+                      </Badge>
+                    </td>
+                    <td className="py-3.5 px-4 font-mono font-semibold text-[var(--pri)]">
+                      {formatTimeRangeInTZ(s.start_time, s.end_time, timezone)}
+                    </td>
+                    <td className="py-3.5 px-4 text-muted">
+                      {s.speakers && s.speakers.length > 0
+                        ? s.speakers.map((sp) => sp.full_name).join(", ")
+                        : "No speakers"}
+                    </td>
+                    <td className="py-3.5 px-6">
+                      {(s.readiness_pct || 0) >= 100 ? (
+                        <span className="text-[var(--success)] font-bold flex items-center gap-1 text-[11px]">
+                          <CheckCircle2 className="h-3 w-3" /> Ready
+                        </span>
+                      ) : (
+                        <span className="text-[var(--warn)] font-bold text-[11px]">
+                          {statusFallback === "Needs Room" && !s.room_id
+                            ? "Needs Room"
+                            : `${Math.round(s.readiness_pct || 0)}% ready`}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
+            ) : (
+              <tr>
+                <td colSpan={6} className="py-8 text-center text-muted italic text-[11px]">
+                  {emptyMessage}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {sessionList.length > 0 && (
+        <TablePagination
+          currentPage={currentPage}
+          totalItems={sessionList.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+          itemLabel="sessions"
+        />
+      )}
+    </>
   );
 }

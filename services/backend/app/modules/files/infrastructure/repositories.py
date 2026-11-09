@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from app.modules.files.models.file import DurableUpload
+from app.modules.rbac.services.event_scope import owned_event_scope
 
 
 class DurableUploadRepository:
@@ -19,6 +20,8 @@ class DurableUploadRepository:
         return select(DurableUpload).where(
             DurableUpload.id == upload_id,
             DurableUpload.organization_id == organization_id,
+            or_(DurableUpload.event_id.is_(None),
+                owned_event_scope(self.db, DurableUpload.event_id, organization_id)),
         )
 
     async def get_by_id(

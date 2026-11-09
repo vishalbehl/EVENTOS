@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="10" time="43.390" timestamp="2026-10-16T22:31:32.902413+05:30" hostname="Vishal"><testcase classname="tests.test_platform_commercial_capabilities" name="test_support_can_read_crm_but_not_billing" time="18.104"><failure message="TypeError: require_platform_permission.&lt;locals&gt;.admission() missing 2 required positional arguments: 'response' and 'token'">@pytest.mark.asyncio
+    async def test_support_can_read_crm_but_not_billing():
+&gt;       assert await require_crm_read(_user("SUPPORT_ADMIN"))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: require_platform_permission.&lt;locals&gt;.admission() missing 2 required positional arguments: 'response' and 'token'
+
+tests\test_platform_commercial_capabilities.py:16: TypeError</failure></testcase><testcase classname="tests.test_platform_commercial_capabilities" name="test_finance_can_read_billing_but_not_crm" time="0.005"><failure message="TypeError: require_platform_permission.&lt;locals&gt;.admission() missing 2 required positional arguments: 'response' and 'token'">@pytest.mark.asyncio
+    async def test_finance_can_read_billing_but_not_crm():
+&gt;       assert await require_billing_read(_user("FINANCE_ADMIN"))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: require_platform_permission.&lt;locals&gt;.admission() missing 2 required positional arguments: 'response' and 'token'
+
+tests\test_platform_commercial_capabilities.py:24: TypeError</failure></testcase><testcase classname="tests.test_platform_commercial_capabilities" name="test_support_crm_mutation_fails_closed" time="0.005" /><testcase classname="tests.test_organizer_portal_capability_coverage" name="test_every_event_page_gate_has_a_code_owned_portal_route_binding" time="0.036" /><testcase classname="tests.test_organizer_portal_capability_coverage" name="test_every_event_page_resolves_to_a_fail_closed_page_boundary" time="0.028" /><testcase classname="tests.test_organizer_portal_capability_coverage" name="test_portal_action_gates_use_only_canonical_operation_identifiers" time="14.921" /><testcase classname="tests.test_organizer_portal_capability_coverage" name="test_customer_managed_operations_have_a_portal_gate_literal" time="1.231"><failure message="AssertionError: sessions.manage&#10;assert not ['sessions.manage']">def test_customer_managed_operations_have_a_portal_gate_literal():
+        source = _portal_source()
+        source_literals = set(re.findall(r'["\']([a-z][a-z0-9_.]+)["\']', source))
+        server_or_public_only = {
+            "abstracts.submit",
+            "branding.custom_domain.manage",
+            "branding.custom_login.publish",
+            "branding.white_label.publish",
+            "registration.submit",
+            "support.dedicated_manager",
+            "support.sla.apply",
+        }
+        expected = set(OPERATION_FEATURES) - server_or_public_only
+        missing = sorted(expected - source_literals)
+&gt;       assert not missing, "\n".join(missing)
+E       AssertionError: sessions.manage
+E       assert not ['sessions.manage']
+
+tests\test_organizer_portal_capability_coverage.py:105: AssertionError</failure></testcase><testcase classname="tests.test_organizer_portal_capability_coverage" name="test_customer_managed_operations_are_used_by_action_gate_apis" time="1.365"><failure message="AssertionError: ['sessions.manage']&#10;assert {'abstracts.a....review', ...} &lt;= {'abstracts.a....review', ...}&#10;  &#10;  Extra items in the left set:&#10;  'sessions.manage'">def test_customer_managed_operations_are_used_by_action_gate_apis():
+        source = _portal_source()
+        gated = set(
+            re.findall(
+                r'(?:useOperationAccess|useOrganizationOperationAccess)\(\s*["\']([^"\']+)["\']\s*\)',
+                source,
+            )
+        )
+        gated.update(
+            re.findall(r'\boperation\s*=\s*["\']([^"\']+)["\']', source)
+        )
+        for expression in re.findall(
+            r'\boperation\s*=\s*\{(.{1,500}?)\}',
+            source,
+            flags=re.DOTALL,
+        ):
+            gated.update(
+                operation
+                for operation in re.findall(
+                    r'["\']([a-z][a-z0-9_.]+)["\']',
+                    expression,
+                )
+                if operation in OPERATION_FEATURES
+            )
+        server_or_public_only = {
+            "abstracts.submit",
+            "branding.custom_domain.manage",
+            "branding.custom_login.publish",
+            "branding.white_label.publish",
+            "registration.submit",
+            "support.dedicated_manager",
+            "support.sla.apply",
+        }
+&gt;       assert set(OPERATION_FEATURES) - server_or_public_only &lt;= gated, sorted(
+            set(OPERATION_FEATURES) - server_or_public_only - gated
+        )
+E       AssertionError: ['sessions.manage']
+E       assert {'abstracts.a....review', ...} &lt;= {'abstracts.a....review', ...}
+E         
+E         Extra items in the left set:
+E         'sessions.manage'
+
+tests\test_organizer_portal_capability_coverage.py:141: AssertionError</failure></testcase><testcase classname="tests.test_organizer_portal_capability_coverage" name="test_every_portal_limit_has_an_action_gate_or_explicit_non_action_mode" time="0.018" /><testcase classname="tests.test_organizer_portal_capability_coverage" name="test_portal_exports_distinct_locked_quota_and_unavailable_states" time="6.026" /></testsuite></testsuites>

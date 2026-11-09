@@ -1,0 +1,55 @@
+{
+  "status": "PASSED",
+  "stage": "completed",
+  "database": "category_a_restore_20261021_b94aaac7b572",
+  "cases": [
+    {
+      "worker_first": false,
+      "outcome": "PASSED",
+      "blocked_on_revision": true,
+      "legacy_page_evidence_delta": 0,
+      "later_page_denied": true
+    },
+    {
+      "worker_first": true,
+      "outcome": "PASSED",
+      "blocked_on_revision": true,
+      "legacy_page_evidence_delta": 100,
+      "later_page_denied": true
+    }
+  ],
+  "actual_lifecycle_jobs": [
+    {
+      "kind": "ARCHIVE",
+      "job_id": "1e69ffb2-5a76-47dd-9749-7fc3cc74230b",
+      "status": "COMPLETED",
+      "separate_approval": true,
+      "hash_valid_audits": 3,
+      "attempts": 1
+    },
+    {
+      "kind": "RESTORE",
+      "job_id": "73dc9c71-68a8-404d-aa27-798629dc6c6d",
+      "status": "COMPLETED",
+      "separate_approval": true,
+      "hash_valid_audits": 3,
+      "attempts": 1
+    },
+    {
+      "kind": "ARCHIVE",
+      "job_id": "06e79073-5604-4b04-9b29-76b3fba26232",
+      "status": "COMPLETED",
+      "separate_approval": true,
+      "hash_valid_audits": 3,
+      "attempts": 1
+    }
+  ],
+  "staging_acceptance": "NOT_RUN",
+  "production_acceptance": "NOT_RUN",
+  "actual_restricted_login": true,
+  "runtime_role_is_safe": true,
+  "missing_canary_policies": [],
+  "default_platform_customer_flow": "NOT_RUN",
+  "broker_publications": "NOT_RUN",
+  "provider_io": "NOT_RUN"
+}

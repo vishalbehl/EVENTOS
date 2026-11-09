@@ -36,11 +36,15 @@ export const PermissionGate: React.FC<PermissionGateProps> = ({
   const params = useParams();
   const eventId = propEventId || (params?.eventId as string);
   
-  const { checkPermission, isLoading } = usePermissions(eventId);
+  const { checkPermission, isLoading, isFetching, error } = usePermissions(eventId);
 
-  if (isLoading) {
+  if (isLoading || isFetching) {
     // Optionally return a skeleton or nothing while loading permissions
     return null;
+  }
+
+  if (error) {
+    return <div role="alert">Access could not be verified. Reload this page before trying again.</div>;
   }
 
   const isAllowed = checkPermission(permission);
@@ -51,7 +55,7 @@ export const PermissionGate: React.FC<PermissionGateProps> = ({
 
   if (showDisabled) {
     return (
-      <div className="opacity-50 pointer-events-none grayscale cursor-not-allowed select-none" title="You do not have permission for this action">
+      <div inert aria-disabled="true" className="opacity-50 pointer-events-none grayscale cursor-not-allowed select-none" title="You do not have permission for this action">
         {children}
       </div>
     );

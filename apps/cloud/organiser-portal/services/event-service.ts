@@ -27,6 +27,7 @@ export interface ActivityItem {
 
 export interface EventSummary {
   id: string;
+  operational_workspace_id: string | null;
   name: string;
   short_code: string;
   location?: string;

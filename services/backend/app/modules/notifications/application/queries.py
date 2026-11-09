@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
+from fastapi import HTTPException
 from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.integrations.models.webhook import Webhook
 from app.modules.notifications.schemas.webhook import WebhookResponse
-from app.modules.notifications.schemas.notification import EmailLogResponse
+from app.modules.notifications.schemas.notification import EmailLogResponse, CampaignDeliverySummary
+from datetime import datetime, timezone
 from app.modules.communications.models.email_log import EmailLog
 from app.modules.communications.models.email_campaign import EmailCampaign
 from app.modules.communications.models.email_template import EmailTemplate
@@ -17,7 +19,8 @@ from app.modules.notifications.schemas.email_template_studio import TemplateVers
 from app.modules.registration.models.participant import Participant
 from app.modules.events.models.speaker import Speaker
 from app.modules.communications.models.channel_delivery import CommunicationDeliveryBatch
-from app.modules.rbac.models.rbac import UserAccessNode
+from app.modules.notifications.services.read_scope import communication_read_scope
+from app.modules.notifications.services.campaign_recipient_counts import batch_recipient_counts
 from app.modules.platform.models.organization_console import OrganizationNotificationChannelConfig
 from app.modules.communications.models.email_component import EmailComponent
 from app.schemas.cursor_pagination import CursorPage, decode_cursor, encode_cursor
@@ -124,15 +127,55 @@ class EmailLogQueryService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    async def campaign_summary(
+        self, *, event_id: uuid.UUID, user_id: uuid.UUID, campaign_id: uuid.UUID,
+    ) -> CampaignDeliverySummary:
+        ownership = await communication_read_scope(self.db, user_id, event_id, campaign_id=campaign_id)
+        campaign = (await self.db.execute(select(
+            EmailCampaign.version, EmailCampaign.status, EmailCampaign.target_type,
+            EmailCampaign.name, EmailCampaign.created_at,
+        ).where(EmailCampaign.id == campaign_id, EmailCampaign.event_id == event_id,
+            EmailCampaign.deleted_at.is_(None), ownership))).mappings().one_or_none()
+        if campaign is None:
+            raise HTTPException(404, detail={"code": "RESOURCE_NOT_FOUND"})
+        if campaign["target_type"] == "participant":
+            recipient = select(Participant.id).where(
+                Participant.id == EmailLog.participant_id, Participant.event_id == event_id,
+                Participant.deleted_at.is_(None)).exists()
+        elif campaign["target_type"] == "speaker":
+            recipient = select(Speaker.id).where(
+                Speaker.id == EmailLog.speaker_id, Speaker.event_id == event_id,
+                Speaker.deleted_at.is_(None)).exists()
+        else:
+            raise HTTPException(503, detail={"code": "CAMPAIGN_RECONCILIATION_REQUIRED"})
+        # One aggregate statement; no log hydration and no query-per-recipient.
+        counts = (await self.db.execute(select(
+            func.count().label("total_logs"),
+            func.count().filter(EmailLog.status.in_(("sent", "delivered"))).label("sent_count"),
+            func.count().filter(EmailLog.status.in_(("failed", "bounced"))).label("failed_count"),
+            func.count().filter(EmailLog.opened_at.is_not(None)).label("opened_count"),
+            func.count().filter(EmailLog.status == "queued").label("queued_count"),
+            func.count().filter(EmailLog.status == "sending").label("sending_count"),
+            func.count().filter(EmailLog.status == "delivery_unknown").label("unknown_count"),
+        ).select_from(EmailLog).where(
+            EmailLog.event_id == event_id, EmailLog.campaign_id == campaign_id,
+            ownership, recipient))).mappings().one()
+        return CampaignDeliverySummary(
+            campaign_id=campaign_id, event_id=event_id, observed_at=datetime.now(timezone.utc),
+            **dict(campaign), **dict(counts))
+
     async def list_legacy(
-        self, *, event_id: uuid.UUID, target_type: str = "speaker",
+        self, *, event_id: uuid.UUID, user_id: uuid.UUID, target_type: str = "speaker",
         campaign_id: uuid.UUID | None = None, status: str | None = None,
         page: int = 1, limit: int = 50,
     ) -> dict:
         """Serve the offset compatibility contract from the same scoped projection."""
         if page < 1 or limit < 1 or limit > self.MAX_PAGE_SIZE:
-            raise ValueError("page must be >= 1 and limit must be between 1 and 100")
+            raise HTTPException(422, detail={"code": "INVALID_LIST_FILTER"})
         target_type = target_type.lower()
+        if target_type not in {"speaker", "participant"}:
+            raise HTTPException(422, detail={"code": "INVALID_LIST_FILTER"})
+        ownership = await communication_read_scope(self.db, user_id, event_id, campaign_id=campaign_id)
         columns = (
             EmailLog.id, EmailLog.campaign_id, EmailLog.speaker_id,
             EmailLog.participant_id, EmailLog.to_email, EmailLog.subject,
@@ -152,6 +195,9 @@ class EmailLogQueryService:
             statement = statement.where(EmailLog.campaign_id == campaign_id)
         if status:
             statement = statement.where(EmailLog.status == status)
+        statement = statement.where(ownership, or_(EmailLog.campaign_id.is_(None),
+            select(EmailCampaign.id).where(EmailCampaign.id == EmailLog.campaign_id,
+                EmailCampaign.event_id == event_id, EmailCampaign.deleted_at.is_(None)).exists()))
         total = int(await self.db.scalar(select(func.count()).select_from(statement.subquery())) or 0)
         rows = (await self.db.execute(
             statement.order_by(desc(EmailLog.sent_at), desc(EmailLog.id))
@@ -166,6 +212,7 @@ class EmailLogQueryService:
         self,
         *,
         event_id: uuid.UUID,
+        user_id: uuid.UUID,
         target_type: str = "speaker",
         campaign_id: uuid.UUID | None = None,
         status: str | None = None,
@@ -173,8 +220,11 @@ class EmailLogQueryService:
         limit: int = 50,
     ) -> CursorPage[EmailLogResponse]:
         if limit < 1 or limit > self.MAX_PAGE_SIZE:
-            raise ValueError(f"limit must be between 1 and {self.MAX_PAGE_SIZE}")
+            raise HTTPException(422, detail={"code": "INVALID_LIST_FILTER"})
         target_type = target_type.lower()
+        if target_type not in {"speaker", "participant"}:
+            raise HTTPException(422, detail={"code": "INVALID_LIST_FILTER"})
+        ownership = await communication_read_scope(self.db, user_id, event_id, campaign_id=campaign_id)
         if target_type == "participant":
             statement = select(
                 EmailLog.id,
@@ -215,6 +265,9 @@ class EmailLogQueryService:
             statement = statement.where(EmailLog.campaign_id == campaign_id)
         if status:
             statement = statement.where(EmailLog.status == status)
+        statement = statement.where(ownership, or_(EmailLog.campaign_id.is_(None),
+            select(EmailCampaign.id).where(EmailCampaign.id == EmailLog.campaign_id,
+                EmailCampaign.event_id == event_id, EmailCampaign.deleted_at.is_(None)).exists()))
         if cursor:
             position = decode_cursor(cursor)
             statement = statement.where(
@@ -240,9 +293,57 @@ class EmailLogQueryService:
             next_cursor = encode_cursor(last["sent_at"], last["id"])
         return CursorPage(items=items, next_cursor=next_cursor, has_next=has_more)
 
+    async def list_for_export(
+        self,
+        *,
+        event_id: uuid.UUID,
+        user_id: uuid.UUID,
+        target_type: str = "speaker",
+        maximum: int = 10_000,
+    ) -> list[SimpleNamespace]:
+        """Load a bounded, explicit delivery-log projection for CSV export."""
+        bounded = max(1, min(int(maximum), 10_000))
+        if target_type.lower() not in {"speaker", "participant"}:
+            raise HTTPException(422, detail={"code": "INVALID_LIST_FILTER"})
+        ownership = await communication_read_scope(self.db, user_id, event_id)
+        await communication_read_scope(self.db, user_id, event_id, action="ANALYTICS:EXPORT")
+        columns = (
+            EmailLog.to_email,
+            EmailLog.subject,
+            EmailLog.status,
+            EmailLog.opened_at,
+            EmailLog.sent_at,
+            EmailLog.id,
+        )
+        if target_type.lower() == "participant":
+            statement = select(*columns).join(
+                Participant, EmailLog.participant_id == Participant.id
+            ).where(
+                EmailLog.event_id == event_id,
+                Participant.event_id == event_id,
+                Participant.deleted_at.is_(None),
+            )
+        else:
+            statement = select(*columns).join(
+                Speaker, EmailLog.speaker_id == Speaker.id
+            ).where(
+                EmailLog.event_id == event_id,
+                Speaker.event_id == event_id,
+                Speaker.deleted_at.is_(None),
+            )
+        statement = statement.where(ownership, or_(EmailLog.campaign_id.is_(None),
+            select(EmailCampaign.id).where(EmailCampaign.id == EmailLog.campaign_id,
+                EmailCampaign.event_id == event_id, EmailCampaign.deleted_at.is_(None)).exists()))
+        rows = (await self.db.execute(
+            statement.order_by(desc(EmailLog.sent_at), desc(EmailLog.id)).limit(bounded + 1)
+        )).mappings().all()
+        if len(rows) > bounded:
+            raise HTTPException(413, detail={"code": "EXPORT_TOO_LARGE", "message": "This export exceeds the synchronous download limit; narrow the requested dataset."})
+        return [SimpleNamespace(**dict(row)) for row in rows]
+
 
 class EmailCampaignQueryService:
-    """Explicit, bounded campaign list projection with assignment scoping."""
+    """Explicit bounded campaign projection through canonical event authority."""
 
     MAX_PAGE_SIZE = 100
 
@@ -251,9 +352,12 @@ class EmailCampaignQueryService:
 
     async def list_for_event(
         self, *, event_id: uuid.UUID, target_type: str, user_id: uuid.UUID,
-        unrestricted: bool, limit: int = 100,
+        limit: int = 50,
     ) -> list[SimpleNamespace]:
-        bounded = min(max(limit, 1), self.MAX_PAGE_SIZE)
+        if target_type not in {"speaker", "participant"} or not 1 <= limit <= self.MAX_PAGE_SIZE:
+            raise HTTPException(422, detail={"code": "INVALID_LIST_FILTER"})
+        bounded = limit
+        ownership = await communication_read_scope(self.db, user_id, event_id)
         columns = (
             EmailCampaign.id, EmailCampaign.event_id, EmailCampaign.template_id,
             EmailCampaign.name, EmailCampaign.recipient_filter,
@@ -263,31 +367,36 @@ class EmailCampaignQueryService:
             EmailCampaign.total_recipients, EmailCampaign.sent_count,
             EmailCampaign.target_type, EmailCampaign.created_at,
             EmailCampaign.version,
+            and_(EmailCampaign.send_actor_id.is_not(None), EmailCampaign.send_organization_id.is_not(None),
+                 EmailCampaign.send_audience.is_not(None), EmailCampaign.send_dispatch_id.is_not(None),
+                 EmailCampaign.send_authorized_at.is_not(None)).label("dispatch_authorized"),
         )
         filters = [
+            ownership,
             EmailCampaign.event_id == event_id,
             EmailCampaign.target_type == target_type,
             EmailCampaign.deleted_at.is_(None),
         ]
-        if not unrestricted:
-            assigned_nodes = select(UserAccessNode.node_id).where(UserAccessNode.user_id == user_id)
-            filters.append(or_(
-                EmailCampaign.created_by == user_id,
-                EmailCampaign.session_id_filter.in_(assigned_nodes),
-                EmailCampaign.room_id_filter.in_(assigned_nodes),
-            ))
         rows = (await self.db.execute(
             select(*columns).where(*filters)
             .order_by(EmailCampaign.created_at.desc(), EmailCampaign.id.desc())
             .limit(bounded)
         )).mappings().all()
-        return [SimpleNamespace(**dict(row)) for row in rows]
+        items = [SimpleNamespace(**dict(row)) for row in rows]
+        totals = await batch_recipient_counts(self.db, items)
+        for item in items:
+            if item.id in totals:
+                item.total_recipients = totals[item.id]
+        return items
 
     async def list_for_event_cursor(
         self, *, event_id: uuid.UUID, target_type: str, user_id: uuid.UUID,
-        unrestricted: bool, cursor: str | None = None, limit: int = 50,
+        cursor: str | None = None, limit: int = 50,
     ) -> CursorPage[dict]:
-        bounded = min(max(limit, 1), self.MAX_PAGE_SIZE)
+        if target_type not in {"speaker", "participant"} or not 1 <= limit <= self.MAX_PAGE_SIZE:
+            raise HTTPException(422, detail={"code": "INVALID_LIST_FILTER"})
+        bounded = limit
+        ownership = await communication_read_scope(self.db, user_id, event_id)
         columns = (
             EmailCampaign.id, EmailCampaign.event_id, EmailCampaign.template_id,
             EmailCampaign.name, EmailCampaign.recipient_filter,
@@ -297,11 +406,11 @@ class EmailCampaignQueryService:
             EmailCampaign.total_recipients, EmailCampaign.sent_count,
             EmailCampaign.target_type, EmailCampaign.created_at,
             EmailCampaign.version,
+            and_(EmailCampaign.send_actor_id.is_not(None), EmailCampaign.send_organization_id.is_not(None),
+                 EmailCampaign.send_audience.is_not(None), EmailCampaign.send_dispatch_id.is_not(None),
+                 EmailCampaign.send_authorized_at.is_not(None)).label("dispatch_authorized"),
         )
-        filters = [EmailCampaign.event_id == event_id, EmailCampaign.target_type == target_type, EmailCampaign.deleted_at.is_(None)]
-        if not unrestricted:
-            assigned_nodes = select(UserAccessNode.node_id).where(UserAccessNode.user_id == user_id)
-            filters.append(or_(EmailCampaign.created_by == user_id, EmailCampaign.session_id_filter.in_(assigned_nodes), EmailCampaign.room_id_filter.in_(assigned_nodes)))
+        filters = [ownership, EmailCampaign.event_id == event_id, EmailCampaign.target_type == target_type, EmailCampaign.deleted_at.is_(None)]
         if cursor:
             position = decode_cursor(cursor)
             filters.append(or_(EmailCampaign.created_at < position.occurred_at, and_(EmailCampaign.created_at == position.occurred_at, EmailCampaign.id < position.record_id)))
@@ -309,6 +418,10 @@ class EmailCampaignQueryService:
         has_next = len(rows) > bounded
         rows = rows[:bounded]
         items = [dict(row) for row in rows]
+        totals = await batch_recipient_counts(self.db, [SimpleNamespace(**item) for item in items])
+        for item in items:
+            if item["id"] in totals:
+                item["total_recipients"] = totals[item["id"]]
         next_cursor = encode_cursor(items[-1]["created_at"], items[-1]["id"]) if has_next and items else None
         return CursorPage(items=items, next_cursor=next_cursor, has_next=has_next)
 

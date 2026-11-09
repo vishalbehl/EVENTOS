@@ -23,17 +23,17 @@ export default function BillingPageScreen() {
   if (!data?.availability?.available) return <UnavailableDomain reason={data?.availability?.reason} />;
 
   const domainData = data?.data as any;
-  const subscriptions: any[] = domainData?.subscriptions ?? [];
+  const contracts: any[] = domainData?.contracts ?? [];
   const invoiceAgg = domainData?.invoices ?? { count: 0, total: 0 };
   const invoices: any[] = invoiceAgg.items ?? [];
   const payments: any[] = domainData?.payments ?? [];
   const paymentMethods: any[] = domainData?.payment_methods ?? [];
-  const active = subscriptions.find((s: any) => s.status === "active") ?? subscriptions[0];
+  const active = contracts.find((s: any) => s.status === "ACTIVE") ?? contracts[0];
 
   const tabs = [
     { key: "overview", label: "Overview" },
     { key: "invoices", label: "Invoices" },
-    { key: "subscriptions", label: "History" },
+    { key: "contracts", label: "History" },
     { key: "payments", label: "Payments & refunds" },
     { key: "methods", label: "Payment methods" },
   ];
@@ -42,14 +42,14 @@ export default function BillingPageScreen() {
     <div className="p-6 space-y-6">
       <OrgPageHeader
         icon={CircleDollarSign}
-        title="Subscription & Billing"
-        description="Manage your plan, usage, invoices and payment methods."
+        title="Commercial Contracts & Billing"
+        description="Review contract composition, usage, invoices and payment methods."
         generatedAt={data?.generated_at}
       />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <OrgMetricCard label="Current Plan" value={active?.status ? active.status.toUpperCase() : "No subscription"} />
-        <OrgMetricCard label="Period End" value={active?.current_period_end ? new Date(active.current_period_end).toLocaleDateString() : "—"} />
+        <OrgMetricCard label="Current Contract" value={active?.status ? active.status.toUpperCase() : "No contract"} />
+        <OrgMetricCard label="Period End" value={active?.ends_at ? new Date(active.ends_at).toLocaleDateString() : "—"} />
         <OrgMetricCard label="Total Invoices" value={invoiceAgg.count ?? 0} />
         <OrgMetricCard label="Total Billed" value={formatCurrency(invoiceAgg.total)} />
       </div>
@@ -59,13 +59,13 @@ export default function BillingPageScreen() {
       {activeTab === "overview" && active && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           <OrgCard>
-            <OrgSectionTitle>Subscription Details</OrgSectionTitle>
+            <OrgSectionTitle>Contract Details</OrgSectionTitle>
             <div className="space-y-3">
               {[
-                { label: "Plan ID", value: active.plan_id },
+                { label: "Offer", value: active.items?.[0]?.offer_code || active.contract_type },
                 { label: "Status", value: active.status },
-                { label: "Trial Ends", value: active.trial_ends_at ? new Date(active.trial_ends_at).toLocaleDateString() : "N/A" },
-                { label: "Period End", value: active.current_period_end ? new Date(active.current_period_end).toLocaleDateString() : "—" },
+                { label: "Contract Ends", value: active.ends_at ? new Date(active.ends_at).toLocaleDateString() : "N/A" },
+                { label: "Period End", value: active.ends_at ? new Date(active.ends_at).toLocaleDateString() : "—" },
                 { label: "Auto-renew", value: active.cancel_at_period_end ? "Off (cancels at period end)" : "On" },
                 { label: "Created", value: active.created_at ? new Date(active.created_at).toLocaleDateString() : "—" },
               ].map(({ label, value }) => (
@@ -96,7 +96,7 @@ export default function BillingPageScreen() {
 
       {activeTab === "overview" && !active && (
         <OrgCard>
-          <p className="text-xs text-[var(--text-tertiary)]">No active subscription found for this organization.</p>
+          <p className="text-xs text-[var(--text-tertiary)]">No active commercial contract found for this organization.</p>
         </OrgCard>
       )}
 
@@ -125,16 +125,16 @@ export default function BillingPageScreen() {
         { key: "created", header: "Created", render: (row: any) => <span className="text-[10px]">{row.created_at ? new Date(row.created_at).toLocaleDateString() : "—"}</span> },
       ]} rows={paymentMethods} keyFn={(row: any) => row.id} emptyMessage="No payment methods recorded" /></OrgCard>}
 
-      {activeTab === "subscriptions" && (
+      {activeTab === "contracts" && (
         <OrgDataTable
           columns={[
             { key: "status", header: "Status", render: (s: any) => <OrgStatusBadge status={s.status?.toUpperCase()} /> },
-            { key: "plan", header: "Plan", render: (s: any) => (
-              <span className="text-xs font-mono text-[var(--text-secondary)]">{s.plan_id?.slice(0, 18) || "—"}</span>
+            { key: "offer", header: "Offer", render: (s: any) => (
+              <span className="text-xs font-mono text-[var(--text-secondary)]">{s.items?.[0]?.offer_code || s.contract_type || "—"}</span>
             )},
             { key: "period_end", header: "Period End", render: (s: any) => (
               <span className="text-[10px] font-mono text-[var(--text-tertiary)]">
-                {s.current_period_end ? new Date(s.current_period_end).toLocaleDateString() : "—"}
+                {s.ends_at ? new Date(s.ends_at).toLocaleDateString() : "—"}
               </span>
             )},
             { key: "cancel", header: "Cancel at Period End", render: (s: any) => (
@@ -148,9 +148,9 @@ export default function BillingPageScreen() {
               </span>
             )},
           ]}
-          rows={subscriptions}
+          rows={contracts}
           keyFn={(s: any) => s.id}
-          emptyMessage="No subscription records found"
+          emptyMessage="No commercial contract records found"
         />
       )}
     </div>

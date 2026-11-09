@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1200" viewBox="0 0 1920 1200" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="180" y1="30" x2="1740" y2="1170" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFDF7"/><stop offset=".28" stop-color="#FFEED9"/><stop offset=".62" stop-color="#FEDECC"/><stop offset="1" stop-color="#ECC6D8"/>
+    </linearGradient>
+    <linearGradient id="solarisWaveA" x1="960" y1="430" x2="960" y2="1080" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E7B1BF"/><stop offset="1" stop-color="#C5A1C8"/>
+    </linearGradient>
+    <linearGradient id="solarisWaveB" x1="960" y1="590" x2="960" y2="1200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#AF9BCB"/><stop offset="1" stop-color="#7B8EC0"/>
+    </linearGradient>
+    <filter id="softGlow"><feGaussianBlur stdDeviation="55"/></filter>
+    <pattern id="solarisGrid" width="128" height="128" patternUnits="userSpaceOnUse">
+      <path d="M128 0H0V128" stroke="#B87D70" stroke-opacity=".06"/>
+    </pattern>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#sky)"/>
+  <ellipse cx="620" cy="210" rx="540" ry="250" fill="#FDE047" fill-opacity=".45" filter="url(#softGlow)"/>
+  <ellipse cx="1460" cy="240" rx="480" ry="260" fill="#FB923C" fill-opacity=".4" filter="url(#softGlow)"/>
+  <circle cx="960" cy="200" r="260" fill="#F472B6" fill-opacity=".4" filter="url(#softGlow)"/>
+  <path d="M0 650C160 580 300 630 470 560C640 480 790 570 970 490C1150 420 1310 500 1490 440C1660 380 1790 420 1920 370V1200H0V650Z" fill="url(#solarisWaveA)" fill-opacity=".85"/>
+  <path d="M0 810C170 730 330 790 510 710C690 630 850 720 1030 640C1220 560 1390 650 1580 580C1730 530 1840 560 1920 520V1200H0V810Z" fill="#CBB0CC" fill-opacity=".8"/>
+  <path d="M0 950C190 870 370 920 560 840C750 760 920 850 1110 770C1300 690 1470 780 1670 700C1800 650 1870 670 1920 640V1200H0V950Z" fill="url(#solarisWaveB)" fill-opacity=".95"/>
+  <rect width="1920" height="1200" fill="url(#solarisGrid)"/>
+</svg>
+

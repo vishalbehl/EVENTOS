@@ -19,7 +19,7 @@ from app.config import settings
 from app.dependencies import StepUpAuth, get_current_user, get_db
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.audit.services.audit_service import AuditContext, AuditService
-from app.modules.billing.models.subscription import ActivityTimeline
+from app.modules.billing.models.commercial_support import ActivityTimeline
 from app.modules.identity.models.user import User
 from app.modules.files.models.file import Asset, VirusScan
 from app.modules.platform.support_access import (
